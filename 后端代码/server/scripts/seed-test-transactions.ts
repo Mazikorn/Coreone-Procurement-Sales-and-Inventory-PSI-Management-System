@@ -69,11 +69,12 @@ function seedPurchaseOrders(db: any) {
   ]
 
   const insert = db.prepare(
-    'INSERT INTO purchase_orders (id, order_no, material_id, material_name, supplier_id, ordered_qty, received_qty, unit, unit_price, total_amount, expected_date, status, remark, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO purchase_orders (id, order_no, material_id, material_name, supplier_id, ordered_qty, received_qty, unit, unit_price, total_amount, expected_date, status, remark, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   )
   for (const o of orders) {
     const unit = db.prepare('SELECT unit FROM materials WHERE id = ?').get(o.material_id) as any
-    insert.run(o.id, generatePurchaseOrderNo(Number(o.id.split('-')[1])), o.material_id, o.material_name, o.supplier_id, o.ordered_qty, unit?.unit || '瓶', o.unit_price, o.total_amount, o.expected_date, o.status, '', now, now)
+    const receivedQty = o.status === 'completed' ? o.ordered_qty : 0
+    insert.run(o.id, generatePurchaseOrderNo(Number(o.id.split('-')[1])), o.material_id, o.material_name, o.supplier_id, o.ordered_qty, receivedQty, unit?.unit || '瓶', o.unit_price, o.total_amount, o.expected_date, o.status, '', now, now)
   }
   log(`采购订单创建完成: ${orders.length} 笔`)
 }
@@ -103,8 +104,9 @@ function seedInboundRecords(db: any) {
     { id: 'IB-006', material_id: 'MAT-HE-003', batch_no: 'LEICA-HE-20260401', quantity: 3, price: 80, supplier_id: 'SUP-003', location_id: 'LOC-A01', production_date: '2026-04-01', expiry_date: '2027-04-01', operator: '赵采购', purchase_order_id: null },
     { id: 'IB-007', material_id: 'MAT-HE-004', batch_no: 'LEICA-HE-20260401', quantity: 3, price: 60, supplier_id: 'SUP-003', location_id: 'LOC-A01', production_date: '2026-04-01', expiry_date: '2027-04-01', operator: '赵采购', purchase_order_id: null },
 
-    // === 乙醇/二甲苯 ===
+    // === 乙醇/二甲苯 (PO-012 ordered_qty=20) ===
     { id: 'IB-008', material_id: 'MAT-HE-005', batch_no: 'SINOPHARM-20260501', quantity: 15, price: 25, supplier_id: 'SUP-009', location_id: 'LOC-F01', production_date: '2026-05-01', expiry_date: '2028-05-01', operator: '赵采购', purchase_order_id: 'PO-012' },
+    { id: 'IB-008b', material_id: 'MAT-HE-005', batch_no: 'SINOPHARM-20260508', quantity: 5, price: 25, supplier_id: 'SUP-009', location_id: 'LOC-F01', production_date: '2026-05-08', expiry_date: '2028-05-08', operator: '赵采购', purchase_order_id: 'PO-012' },
     { id: 'IB-009', material_id: 'MAT-HE-006', batch_no: 'SINOPHARM-20260501', quantity: 12, price: 20, supplier_id: 'SUP-009', location_id: 'LOC-F01', production_date: '2026-05-01', expiry_date: '2028-05-01', operator: '赵采购', purchase_order_id: null },
     { id: 'IB-010', material_id: 'MAT-HE-007', batch_no: 'SINOPHARM-20260501', quantity: 8, price: 35, supplier_id: 'SUP-009', location_id: 'LOC-F01', production_date: '2026-05-01', expiry_date: '2028-05-01', operator: '赵采购', purchase_order_id: null },
 
@@ -133,18 +135,21 @@ function seedInboundRecords(db: any) {
     { id: 'IB-023', material_id: 'MAT-GLASS-001', batch_no: 'LEICA-GL-20260501', quantity: 10, price: 180, supplier_id: 'SUP-003', location_id: 'LOC-B01', production_date: '2026-05-01', expiry_date: '2029-05-01', operator: '赵采购', purchase_order_id: 'PO-010' },
     { id: 'IB-024', material_id: 'MAT-GLASS-001', batch_no: 'LEICA-GL-20260508', quantity: 10, price: 185, supplier_id: 'SUP-003', location_id: 'LOC-B01', production_date: '2026-05-08', expiry_date: '2029-05-08', operator: '赵采购', purchase_order_id: 'PO-010' },
 
-    // === 手套/防护用品 ===
+    // === 手套/防护用品 (PO-011 ordered_qty=30, 需要两笔入库) ===
     { id: 'IB-025', material_id: 'MAT-LAB-010', batch_no: 'YUHUA-LAB-20260501', quantity: 15, price: 65, supplier_id: 'SUP-010', location_id: 'LOC-B02', production_date: '2026-05-01', expiry_date: '2031-05-01', operator: '赵采购', purchase_order_id: 'PO-011' },
+    { id: 'IB-025b', material_id: 'MAT-LAB-010', batch_no: 'YUHUA-LAB-20260508', quantity: 15, price: 65, supplier_id: 'SUP-010', location_id: 'LOC-B02', production_date: '2026-05-08', expiry_date: '2031-05-08', operator: '赵采购', purchase_order_id: 'PO-011' },
     { id: 'IB-026', material_id: 'MAT-LAB-011', batch_no: 'YUHUA-LAB-20260501', quantity: 15, price: 65, supplier_id: 'SUP-010', location_id: 'LOC-B02', production_date: '2026-05-01', expiry_date: '2031-05-01', operator: '赵采购', purchase_order_id: null },
 
-    // === 固定液 ===
+    // === 固定液 (PO-013 ordered_qty=10, 补第二笔入库) ===
     { id: 'IB-027', material_id: 'MAT-FIX-001', batch_no: 'SINOPHARM-FIX-20260501', quantity: 8, price: 85, supplier_id: 'SUP-009', location_id: 'LOC-F01', production_date: '2026-05-01', expiry_date: '2028-05-01', operator: '赵采购', purchase_order_id: 'PO-013' },
+    { id: 'IB-027b', material_id: 'MAT-FIX-001', batch_no: 'SINOPHARM-FIX-20260508', quantity: 2, price: 85, supplier_id: 'SUP-009', location_id: 'LOC-F01', production_date: '2026-05-08', expiry_date: '2028-05-08', operator: '赵采购', purchase_order_id: 'PO-013' },
 
-    // === 细胞学 ===
-    { id: 'IB-028', material_id: 'MAT-CYTO-005', batch_no: 'BD-CYTO-20260501', quantity: 2, price: 1200, supplier_id: 'SUP-008', location_id: 'LOC-E02', production_date: '2026-05-01', expiry_date: '2027-05-01', operator: '赵采购', purchase_order_id: 'PO-014' },
+    // === 细胞学 (PO-014 ordered_qty=3) ===
+    { id: 'IB-028', material_id: 'MAT-CYTO-005', batch_no: 'BD-CYTO-20260501', quantity: 3, price: 1200, supplier_id: 'SUP-008', location_id: 'LOC-E02', production_date: '2026-05-01', expiry_date: '2027-05-01', operator: '赵采购', purchase_order_id: 'PO-014' },
 
-    // === 设备耗材 ===
+    // === 设备耗材 (PO-015 ordered_qty=5) ===
     { id: 'IB-029', material_id: 'MAT-DEV-001', batch_no: 'LEICA-DEV-20260501', quantity: 3, price: 350, supplier_id: 'SUP-003', location_id: 'LOC-G01', production_date: '2026-05-01', expiry_date: '2031-05-01', operator: '赵采购', purchase_order_id: 'PO-015' },
+    { id: 'IB-029b', material_id: 'MAT-DEV-001', batch_no: 'LEICA-DEV-20260508', quantity: 2, price: 350, supplier_id: 'SUP-003', location_id: 'LOC-G01', production_date: '2026-05-08', expiry_date: '2031-05-08', operator: '赵采购', purchase_order_id: 'PO-015' },
 
     // === 临期物料（用于有效期预警测试） ===
     { id: 'IB-030', material_id: 'MAT-IHC-002', batch_no: 'DAKO-IHC-20250601-OLD', quantity: 1, price: 1150, supplier_id: 'SUP-001', location_id: 'LOC-C01', production_date: '2025-06-01', expiry_date: '2026-05-16', operator: '赵采购', purchase_order_id: null },
@@ -219,8 +224,22 @@ function seedInventory(db: any) {
        FROM inbound_records WHERE material_id = ? AND status = 'completed' AND is_deleted = 0`
     ).get(m.id) as any
 
-    if (inbound && inbound.total > 0) {
-      insert.run(uuidv4(), m.id, inbound.total, inbound.location_id, inbound.last_id, inbound.last_date?.slice(0, 10) || today, now)
+    const outbound = db.prepare(
+      `SELECT COALESCE(SUM(quantity),0) as total FROM outbound_items WHERE material_id = ?`
+    ).get(m.id) as any
+
+    const stockReturn = db.prepare(
+      `SELECT COALESCE(SUM(quantity),0) as total FROM return_records WHERE material_id = ? AND status = 'completed'`
+    ).get(m.id) as any
+
+    const scrap = db.prepare(
+      `SELECT COALESCE(SUM(quantity),0) as total FROM scrap_records WHERE material_id = ? AND status = 'completed'`
+    ).get(m.id) as any
+
+    const stock = Number(inbound?.total || 0) - Number(outbound?.total || 0) + Number(stockReturn?.total || 0) - Number(scrap?.total || 0)
+
+    if (stock > 0 || (inbound && inbound.total > 0)) {
+      insert.run(uuidv4(), m.id, Math.max(0, stock), inbound?.location_id || null, inbound?.last_id || null, inbound?.last_date?.slice(0, 10) || today, now)
     }
   }
   log('库存汇总创建完成')
@@ -522,8 +541,8 @@ function main() {
     seedPurchaseOrders(db)
     seedInboundRecords(db)
     seedBatches(db)
-    seedInventory(db)
     seedOutboundRecords(db)
+    seedInventory(db)
     seedStocktaking(db)
     seedReturns(db)
     seedScraps(db)

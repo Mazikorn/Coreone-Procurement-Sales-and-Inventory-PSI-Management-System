@@ -124,7 +124,7 @@ router.get('/next-code', (req, res) => {
 
 router.post('/', (req, res) => {
   try {
-    const { name, spec, unit, specQty, specUnit, categoryId, supplierId, price, minStock, maxStock, safetyStock, locationId, remark } = req.body
+    const { name, spec, unit, specQty, specUnit, categoryId, supplierId, price, minStock, maxStock, safetyStock, locationId, remark, code: userCode } = req.body
     if (!name || !unit || !categoryId) {
       error(res, 'Name, unit and category required', 'INVALID_PARAMETER', 400)
       return
@@ -132,7 +132,14 @@ router.post('/', (req, res) => {
 
     const db = getDatabase()
     const id = uuidv4()
-    const finalCode = generateMaterialCode(db, categoryId)
+    let finalCode: string
+    if (userCode) {
+      const exists = db.prepare('SELECT 1 FROM materials WHERE code = ?').get(userCode)
+      if (exists) { error(res, 'Code already exists', 'RESOURCE_CONFLICT', 409); return }
+      finalCode = userCode
+    } else {
+      finalCode = generateMaterialCode(db, categoryId)
+    }
 
     db.prepare(`
       INSERT INTO materials (id, code, name, spec, unit, spec_qty, spec_unit, category_id, supplier_id, price, min_stock, max_stock, safety_stock, location_id, status, remark)
