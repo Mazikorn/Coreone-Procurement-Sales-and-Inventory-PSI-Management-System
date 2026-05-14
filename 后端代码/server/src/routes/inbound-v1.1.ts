@@ -5,6 +5,16 @@ import { success, successList, error } from '../utils/response.js'
 
 const router = Router()
 
+// 写入权限检查：仅 admin 和 warehouse_manager 可操作写入
+function requireWriteAccess(req: any, res: any, next: any) {
+  const role = req.user?.role
+  if (role === 'admin' || role === 'warehouse_manager') {
+    next()
+    return
+  }
+  error(res, 'Forbidden: insufficient permissions', 'FORBIDDEN', 403)
+}
+
 function generateInboundNo(): string {
   const date = new Date().toISOString().slice(0, 10).replace(/-/g, '')
   const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0')
@@ -104,7 +114,7 @@ router.get('/:id/check-deletable', (req, res) => {
   } catch (err: any) { error(res, err.message) }
 })
 
-router.post('/', (req, res) => {
+router.post('/', requireWriteAccess, (req, res) => {
   try {
     const { type, materialId, batchNo, quantity, price, supplierId, locationId, purchaseOrderId, productionDate, expiryDate, remark } = req.body
     if (!type || !materialId || !quantity || !locationId) {
@@ -181,7 +191,7 @@ router.post('/', (req, res) => {
   } catch (err: any) { error(res, err.message) }
 })
 
-router.put('/:id', (req, res) => {
+router.put('/:id', requireWriteAccess, (req, res) => {
   try {
     const { id } = req.params
     const { batchNo, quantity, price, supplierId, locationId, productionDate, expiryDate, remark } = req.body
@@ -200,7 +210,7 @@ router.put('/:id', (req, res) => {
   } catch (err: any) { error(res, err.message) }
 })
 
-router.delete('/:id', (req, res) => {
+router.delete('/:id', requireWriteAccess, (req, res) => {
   try {
     const { id } = req.params
     const db = getDatabase()
@@ -277,7 +287,7 @@ router.delete('/:id', (req, res) => {
   } catch (err: any) { error(res, err.message) }
 })
 
-router.post('/:id/cancel', (req, res) => {
+router.post('/:id/cancel', requireWriteAccess, (req, res) => {
   try {
     const { id } = req.params
     const { reason } = req.body

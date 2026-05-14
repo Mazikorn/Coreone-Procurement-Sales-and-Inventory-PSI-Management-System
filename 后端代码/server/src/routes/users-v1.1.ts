@@ -48,6 +48,8 @@ router.put('/:id', (req, res) => {
     const { id } = req.params
     const data = req.body
     const db = getDatabase()
+    const existing = db.prepare('SELECT * FROM users WHERE id = ? AND is_deleted = 0').get(id) as any
+    if (!existing) { error(res, 'Not found', 'NOT_FOUND', 404); return }
     const fields: string[] = []; const params: any[] = []
     if (data.realName !== undefined) { fields.push('real_name = ?'); params.push(data.realName) }
     if (data.role !== undefined) { fields.push('role = ?'); params.push(data.role) }

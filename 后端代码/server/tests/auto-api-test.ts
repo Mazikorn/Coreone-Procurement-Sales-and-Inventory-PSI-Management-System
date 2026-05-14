@@ -199,14 +199,16 @@ async function runTests() {
     if (data.data?.pagination?.page !== 2) throw new Error('Page wrong')
   })
 
+  const testUsername = `testuser_${Date.now().toString(36)}`
+
   await recordTest('USER', 'ADMIN-创建新用户', async () => {
-    const res = await postJSON('/users', { username: 'testuser_new_001', password: 'Test123!', realName: '测试用户', role: 'technician' }, tokens.admin)
+    const res = await postJSON('/users', { username: testUsername, password: 'Test123!', realName: '测试用户', role: 'technician' }, tokens.admin)
     if (!res.success) throw new Error('Create failed')
   })
 
   await recordTest('USER', 'ADMIN-用户名唯一性', async () => {
     try {
-      await postJSON('/users', { username: 'testuser_new_001', password: 'Test123!', realName: '测试用户2', role: 'technician' }, tokens.admin)
+      await postJSON('/users', { username: testUsername, password: 'Test123!', realName: '测试用户2', role: 'technician' }, tokens.admin)
       throw new Error('Should fail')
     } catch (e: any) {
       if (!e.message.includes('exists') && !e.message.includes('UNIQUE') && !e.message.includes('409')) throw e
@@ -214,19 +216,25 @@ async function runTests() {
   })
 
   await recordTest('USER', 'ADMIN-编辑用户角色', async () => {
-    const res = await fetch(`${BASE_URL}/users/testuser_new_001`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokens.admin}` }, body: JSON.stringify({ role: 'pathologist' }) })
+    const users = await getJSON(`/users?keyword=${testUsername}`, tokens.admin)
+    const userId = users.data.list[0]?.id
+    if (!userId) throw new Error('User not found')
+    const res = await fetch(`${BASE_URL}/users/${userId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokens.admin}` }, body: JSON.stringify({ role: 'pathologist' }) })
     const data = await res.json()
     if (!data.success) throw new Error('Update failed')
   })
 
   await recordTest('USER', 'ADMIN-禁用用户', async () => {
-    const res = await fetch(`${BASE_URL}/users/testuser_new_001`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokens.admin}` }, body: JSON.stringify({ status: 'inactive' }) })
+    const users = await getJSON(`/users?keyword=${testUsername}`, tokens.admin)
+    const userId = users.data.list[0]?.id
+    if (!userId) throw new Error('User not found')
+    const res = await fetch(`${BASE_URL}/users/${userId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokens.admin}` }, body: JSON.stringify({ status: 'inactive' }) })
     const data = await res.json()
     if (!data.success) throw new Error('Disable failed')
   })
 
   await recordTest('USER', 'ADMIN-删除用户', async () => {
-    const users = await getJSON('/users?keyword=testuser_new_001', tokens.admin)
+    const users = await getJSON(`/users?keyword=${testUsername}`, tokens.admin)
     const userId = users.data.list[0]?.id
     if (!userId) throw new Error('User not found')
     const res = await fetch(`${BASE_URL}/users/${userId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${tokens.admin}` } })
@@ -333,21 +341,23 @@ async function runTests() {
     if (data.data?.list?.length !== 1) throw new Error('Search failed')
   })
 
+  const testSupName = `测试供应商_${Date.now().toString(36)}`
+
   await recordTest('SUPPLIER', 'ADMIN-创建供应商', async () => {
-    const res = await postJSON('/suppliers', { code: 'TEST-SUP', name: '测试供应商', contact: '测试联系人', phone: '13800000099', address: '测试地址', rating: 4 }, tokens.admin)
+    const res = await postJSON('/suppliers', { name: testSupName, contact: '测试联系人', phone: '13800000099', address: '测试地址', rating: 4 }, tokens.admin)
     if (!res.success) throw new Error('Create failed')
   })
 
   await recordTest('SUPPLIER', 'ADMIN-编辑供应商', async () => {
-    const list = await getJSON('/suppliers?keyword=TEST-SUP', tokens.admin)
+    const list = await getJSON(`/suppliers?keyword=${encodeURIComponent(testSupName)}`, tokens.admin)
     const id = list.data.list[0]?.id
-    const res = await fetch(`${BASE_URL}/suppliers/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokens.admin}` }, body: JSON.stringify({ code: 'TEST-SUP', name: '测试供应商更新', contact: '新联系人' }) })
+    const res = await fetch(`${BASE_URL}/suppliers/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokens.admin}` }, body: JSON.stringify({ name: `${testSupName}_更新`, contact: '新联系人' }) })
     const data = await res.json()
     if (!data.success) throw new Error('Update failed')
   })
 
   await recordTest('SUPPLIER', 'ADMIN-删除供应商', async () => {
-    const list = await getJSON('/suppliers?keyword=TEST-SUP', tokens.admin)
+    const list = await getJSON(`/suppliers?keyword=${encodeURIComponent(testSupName)}`, tokens.admin)
     const id = list.data.list[0]?.id
     const res = await fetch(`${BASE_URL}/suppliers/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${tokens.admin}` } })
     const data = await res.json()
@@ -952,17 +962,16 @@ async function runTests() {
     // 验证MAT-HE-001有>=3个入库批次
     const batches = db.prepare("SELECT batch_no, quantity FROM inbound_records WHERE material_id='MAT-HE-001' AND status='completed' AND is_deleted=0 ORDER BY created_at").all() as any[]
     if (batches.length < 3) throw new Error('Expected >=3 batches')
-    // 验证batches表中有按过期日期排序的批次
-    const batchStatus = db.prepare("SELECT batch_no, remaining, expiry_date FROM batches WHERE material_id='MAT-HE-001' AND status=1 ORDER BY expiry_date ASC").all() as any[]
-    if (batchStatus.length < 2) throw new Error('Expected >=2 active batches')
+    // 查询所有批次（包括已用完的），按过期日期排序
+    const allBatches = db.prepare("SELECT batch_no, quantity, remaining, expiry_date FROM batches WHERE material_id='MAT-HE-001' ORDER BY expiry_date ASC").all() as any[]
+    if (allBatches.length < 2) throw new Error('Expected >=2 batches')
     // 验证有出库消耗记录
     const hasOutbound = db.prepare("SELECT 1 FROM outbound_items WHERE material_id='MAT-HE-001' LIMIT 1").get()
     if (!hasOutbound) throw new Error('No outbound consumption for MAT-HE-001')
     // 验证最早批次有被消耗（remaining < initial quantity 或 有出库记录指向它）
-    const firstBatch = batchStatus[0].batch_no
+    const firstBatch = allBatches[0].batch_no
     const firstConsumed = db.prepare("SELECT COALESCE(SUM(quantity),0) as total FROM outbound_items WHERE material_id='MAT-HE-001' AND batch_no = ?").get(firstBatch) as any
-    const firstInitial = db.prepare("SELECT quantity FROM batches WHERE material_id='MAT-HE-001' AND batch_no = ?").get(firstBatch) as any
-    const wasConsumed = (firstConsumed?.total || 0) > 0 || (firstInitial?.quantity || 0) > (batchStatus[0].remaining || 0)
+    const wasConsumed = (firstConsumed?.total || 0) > 0 || (allBatches[0].quantity || 0) > (allBatches[0].remaining || 0)
     if (!wasConsumed) throw new Error('FIFO not working: first batch not used')
   })
 
@@ -1132,7 +1141,7 @@ async function runTests() {
   })
 
   await recordTest('BOUNDARY', '创建物料价格=0', async () => {
-    const res = await postJSON('/materials', { code: 'TEST-PRICE-0', name: '价格0测试', unit: '瓶', categoryId: 'CAT-HE-01', price: 0 }, tokens.admin)
+    const res = await postJSON('/materials', { code: `TEST-PRICE-0-${Date.now().toString(36)}`, name: '价格0测试', unit: '瓶', categoryId: 'CAT-HE-01', price: 0 }, tokens.admin)
     if (!res.success) throw new Error('Failed')
   })
 
@@ -1209,7 +1218,7 @@ async function runTests() {
   })
 
   await recordTest('SECURITY', 'XSS脚本尝试被防御', async () => {
-    const res = await postJSON('/materials', { code: 'XSS-TEST', name: '<script>alert(1)</script>', unit: '瓶', categoryId: 'CAT-HE-01' }, tokens.admin)
+    const res = await postJSON('/materials', { code: `XSS-TEST-${Date.now().toString(36)}`, name: '<script>alert(1)</script>', unit: '瓶', categoryId: 'CAT-HE-01' }, tokens.admin)
     if (!res.success) throw new Error('Create failed')
   })
 
