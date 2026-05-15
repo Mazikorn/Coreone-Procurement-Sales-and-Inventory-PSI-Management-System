@@ -75,12 +75,12 @@ test.describe('用户管理 -> 查看用户列表', () => {
   })
   test('USER-LIST-04. 正常用例：左侧显示角色列表面板', async ({ page }) => {
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/users`); await page.waitForTimeout(1500)
-    await expect(page.locator('text=/角色列表|系统角色/i').first().or(page.locator('body'))).toBeVisible()
+    await expect(page.locator('text=/角色列表|系统角色/i').first()).toBeVisible()
   })
   test('USER-LIST-05. 空数据边界：无用户数据显示空状态', async ({ page }) => {
     await page.route('**/api/v1/users**', r => r.fulfill({ status: 200, body: JSON.stringify({ data: { list: [], pagination: { total: 0 } } }) }))
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/users`); await page.waitForTimeout(1500)
-    await expect(page.locator('text=/暂无数据|暂无/i').first().or(page.locator('body'))).toBeVisible()
+    await expect(page.locator('text=/暂无数据|暂无/i').first()).toBeVisible()
     await page.unroute('**/api/v1/users**')
   })
   test('USER-LIST-06. 异常恢复：API 500显示错误', async ({ page }) => {
@@ -90,7 +90,7 @@ test.describe('用户管理 -> 查看用户列表', () => {
   })
   test('USER-LIST-07. 权限：technician访问返回403', async ({ page }) => {
     await loginAs(page, 'technician'); await page.goto(`${FE_BASE}/users`); await page.waitForTimeout(1200)
-    await expect(page.locator('text=/无权访问|403|Forbidden/i').first().or(page.locator('body'))).toBeVisible()
+    await expect(page.locator('text=/无权访问|403|Forbidden/i').first()).toBeVisible()
   })
   test('USER-LIST-08. 并发：快速刷新页面多次', async ({ page }) => {
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/users`)
@@ -103,7 +103,7 @@ test.describe('用户管理 -> 查看用户列表', () => {
   })
   test('USER-LIST-10. 正常用例：用户状态标签显示正常/禁用', async ({ page }) => {
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/users`); await page.waitForTimeout(1500)
-    await expect(page.locator('text=/正常|禁用|停用/i').first().or(page.locator('body'))).toBeVisible()
+    await expect(page.locator('text=/正常|禁用|停用/i').first()).toBeVisible()
   })
 })
 
@@ -251,8 +251,11 @@ test.describe('用户管理 -> 编辑用户', () => {
     }
   })
   test('USER-EDIT-02. 正常用例：admin修改用户状态', async ({ page }) => {
+    const token = await apiLogin('admin')
+    const createRes = await apiFetch(token, 'POST', '/users', { username: `testuser-edit-${Date.now()}`, password: 'pass', realName: '编辑测试', role: 'technician', status: 'active' })
+    const testId = createRes.data?.data?.id || createRes.data?.id
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/users`); await page.waitForTimeout(1500)
-    const editBtn = page.locator('text=/编辑|修改/i').first()
+    const editBtn = testId ? page.locator(`[data-id="${testId}"] >> text=/编辑|修改/i`).first() : page.locator('text=/编辑|修改/i').first()
     if (await editBtn.isVisible().catch(() => false)) {
       await editBtn.click(); await page.waitForTimeout(500)
       const statusSel = page.locator('select').filter({ hasText: /正常|禁用/i }).first()
@@ -299,7 +302,7 @@ test.describe('用户管理 -> 编辑用户', () => {
   })
   test('USER-EDIT-08. UI差异：admin显示编辑按钮', async ({ page }) => {
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/users`); await page.waitForTimeout(1500)
-    await expect(page.locator('text=/编辑|修改/i').first().or(page.locator('body'))).toBeVisible()
+    await expect(page.locator('text=/编辑|修改/i').first()).toBeVisible()
   })
   test('USER-EDIT-09. 正常用例：编辑后列表数据更新', async ({ page }) => {
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/users`); await page.waitForTimeout(1500)
@@ -360,7 +363,7 @@ test.describe('用户管理 -> 删除用户', () => {
   }
   test('USER-DELETE-05. UI差异：admin显示删除按钮', async ({ page }) => {
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/users`); await page.waitForTimeout(1500)
-    await expect(page.locator('text=/删除/i').first().or(page.locator('body'))).toBeVisible()
+    await expect(page.locator('text=/删除/i').first()).toBeVisible()
   })
 })
 
@@ -369,8 +372,11 @@ test.describe('用户管理 -> 删除用户', () => {
 // ───────────────────────────────────────────────
 test.describe('用户管理 -> 启用停用用户', () => {
   test('USER-TOGGLE-01. 正常用例：admin停用用户成功', async ({ page }) => {
+    const token = await apiLogin('admin')
+    const createRes = await apiFetch(token, 'POST', '/users', { username: `testuser-toggle-${Date.now()}`, password: 'pass', realName: '停用测试', role: 'technician', status: 'active' })
+    const testId = createRes.data?.data?.id || createRes.data?.id
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/users`); await page.waitForTimeout(1500)
-    const toggle = page.locator('text=/停用/i').first()
+    const toggle = testId ? page.locator(`[data-id="${testId}"] >> text=/停用/i`).first() : page.locator('text=/停用/i').first()
     if (await toggle.isVisible().catch(() => false)) { await toggle.click(); await page.waitForTimeout(800) }
   })
   test('USER-TOGGLE-02. 正常用例：admin启用已停用用户', async ({ page }) => {
@@ -388,7 +394,7 @@ test.describe('用户管理 -> 启用停用用户', () => {
   })
   test('USER-TOGGLE-04. UI差异：admin显示停用/启用按钮', async ({ page }) => {
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/users`); await page.waitForTimeout(1500)
-    await expect(page.locator('text=/停用|启用/i').first().or(page.locator('body'))).toBeVisible()
+    await expect(page.locator('text=/停用|启用/i').first()).toBeVisible()
   })
 })
 
@@ -426,10 +432,12 @@ test.describe('用户管理 -> 用户详情弹窗', () => {
   test('USER-DETAIL-01. 正常用例：点击详情打开弹窗', async ({ page }) => {
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/users`); await page.waitForTimeout(1500)
     const detail = page.locator('text=/详情/i').first()
-    if (await detail.isVisible().catch(() => false)) { await detail.click(); await page.waitForTimeout(1000) }
-    await expect(page.locator('text=/用户详情|权限列表|角色|部门/i').first().or(page.locator('body'))).toBeVisible()
-    const close = page.locator('text=/关闭/i').first()
-    if (await close.isVisible().catch(() => false)) await close.click()
+    if (await detail.isVisible().catch(() => false)) {
+      await detail.click(); await page.waitForTimeout(1000)
+      await expect(page.locator('text=/用户详情|权限列表|角色|部门/i').first()).toBeVisible()
+      const close = page.locator('text=/关闭/i').first()
+      if (await close.isVisible().catch(() => false)) await close.click()
+    }
   })
   test('USER-DETAIL-02. 正常用例：详情弹窗显示用户头像', async ({ page }) => {
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/users`); await page.waitForTimeout(1500)
@@ -446,7 +454,7 @@ test.describe('用户管理 -> 用户详情弹窗', () => {
     const detail = page.locator('text=/详情/i').first()
     if (await detail.isVisible().catch(() => false)) {
       await detail.click(); await page.waitForTimeout(1000)
-      await expect(page.locator('text=/权限列表|已授权/i').first().or(page.locator('body'))).toBeVisible()
+      await expect(page.locator('text=/权限列表|已授权/i').first()).toBeVisible()
       const close = page.locator('text=/关闭/i').first()
       if (await close.isVisible().catch(() => false)) await close.click()
     }
@@ -572,12 +580,12 @@ test.describe('用户管理 -> 盲点分析补充', () => {
   })
   test('BLIND-USER-02. 状态标签颜色区分', async ({ page }) => {
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/users`); await page.waitForTimeout(1500)
-    await expect(page.locator('text=/正常|禁用/i').first().or(page.locator('body'))).toBeVisible()
+    await expect(page.locator('text=/正常|禁用/i').first()).toBeVisible()
   })
   test('BLIND-USER-03. 新建用户初始密码默认显示', async ({ page }) => {
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/users`); await page.waitForTimeout(1500)
     await page.click('text=/新建用户|新建/i'); await page.waitForTimeout(500)
-    await expect(page.locator('text=/初始密码|Abc@123456|随机生成/i').first().or(page.locator('body'))).toBeVisible()
+    await expect(page.locator('text=/初始密码|Abc@123456|随机生成/i').first()).toBeVisible()
     const cancel = page.locator('text=/取消|关闭/i').first()
     if (await cancel.isVisible().catch(() => false)) await cancel.click()
   })
@@ -599,7 +607,7 @@ test.describe('用户管理 -> 盲点分析补充', () => {
   })
   test('BLIND-USER-06. 分页页码按钮样式', async ({ page }) => {
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/users`); await page.waitForTimeout(1500)
-    await expect(page.locator('text=/上一页|下一页|共.*条/i').first().or(page.locator('body'))).toBeVisible()
+    await expect(page.locator('text=/上一页|下一页|共.*条/i').first()).toBeVisible()
   })
   test('BLIND-USER-07. 响应式布局检查', async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 667 })
@@ -624,7 +632,7 @@ test.describe('用户管理 -> 盲点分析补充', () => {
     const detail = page.locator('text=/详情/i').first()
     if (await detail.isVisible().catch(() => false)) {
       await detail.click(); await page.waitForTimeout(1000)
-      await expect(page.locator('text=/权限列表|数据范围/i').first().or(page.locator('body'))).toBeVisible()
+      await expect(page.locator('text=/权限列表|数据范围/i').first()).toBeVisible()
       const close = page.locator('text=/关闭/i').first()
       if (await close.isVisible().catch(() => false)) await close.click()
     }

@@ -177,7 +177,7 @@ export default function Roles() {
 
   const getPermissionChips = (role: Role) => {
     if (role.code === 'admin') return [<span key="all" className="text-xs px-2.5 py-1 rounded-full bg-[#f0fdf4] text-[#22c55e] font-medium">全部权限</span>]
-    const perms = role.permissions || []
+    const perms = Array.isArray(role.permissions) ? role.permissions : []
     const chips: string[] = []
     const uniqueModules = new Set<string>()
     perms.forEach(p => {
