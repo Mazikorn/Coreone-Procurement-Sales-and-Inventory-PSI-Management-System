@@ -472,7 +472,7 @@ test.describe('库存盘点 -> 分页切换', () => {
     const token = await apiLogin('admin')
     const res = await apiFetch(token, 'GET', '/stocktaking?page=0')
     expect(res.status).toBe(200)
-    expect(res.data?.data?.page).toBeGreaterThanOrEqual(1)
+    expect(res.data?.data?.pagination?.page).toBeGreaterThanOrEqual(1)
   })
   test('ST-PAGE-04. 边界：page=999返回空列表', async () => {
     const token = await apiLogin('admin')
@@ -720,8 +720,8 @@ test.describe('库存盘点 -> 盲点分析补充', () => {
     expect(res.status).toBe(200)
     expect(res.data).toHaveProperty('data')
     expect(res.data?.data).toHaveProperty('list')
-    expect(res.data?.data).toHaveProperty('page')
-    expect(res.data?.data).toHaveProperty('total')
+    expect(res.data?.data?.pagination).toHaveProperty('page')
+    expect(res.data?.data?.pagination).toHaveProperty('total')
   })
   test('BLIND-ST-09. 盘点页面响应式布局', async ({ page }) => {
     await loginAs(page, 'admin')

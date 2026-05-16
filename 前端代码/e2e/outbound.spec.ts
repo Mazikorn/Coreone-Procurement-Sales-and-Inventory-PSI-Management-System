@@ -809,7 +809,8 @@ test.describe('出库管理 -> 分页切换', () => {
     const token = await apiLogin('admin')
     const res = await apiFetch(token, 'GET', '/outbound?page=0')
     expect(res.status).toBe(200)
-    expect(res.data?.data?.page).toBeGreaterThanOrEqual(1)
+    const pageVal = res.data?.data?.page ?? res.data?.data?.pagination?.page
+    expect(pageVal).toBeGreaterThanOrEqual(1)
   })
   test('OUT-PAGE-04. 边界：page=999返回空列表', async () => {
     const token = await apiLogin('admin')
@@ -1118,8 +1119,9 @@ test.describe('出库管理 -> 盲点分析补充', () => {
     expect(res.status).toBe(200)
     expect(res.data).toHaveProperty('data')
     expect(res.data?.data).toHaveProperty('list')
-    expect(res.data?.data).toHaveProperty('page')
-    expect(res.data?.data).toHaveProperty('total')
+    expect(res.data?.data).toHaveProperty('pagination')
+    expect(res.data?.data?.pagination).toHaveProperty('page')
+    expect(res.data?.data?.pagination).toHaveProperty('total')
   })
   test('BLIND-OUT-10. 出库单状态流转验证', async () => {
     const token = await apiLogin('admin')

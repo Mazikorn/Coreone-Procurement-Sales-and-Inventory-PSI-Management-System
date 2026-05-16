@@ -40,7 +40,10 @@ async function apiFetch(token: string, method: string, path: string, body?: any)
   return { status: res.status, data: (await res.json().catch(() => null)) as any }
 }
 
-test.beforeEach(async ({ page }) => { await page.evaluate(() => localStorage.clear()) })
+test.beforeEach(async ({ page }) => {
+  await page.goto(`${FE_BASE}/login`).catch(() => {})
+  await page.evaluate(() => localStorage.clear()).catch(() => {})
+})
 
 // ───────────────────────────────────────────────
 // 1. 查看日志列表
@@ -52,12 +55,12 @@ test.describe('操作日志 -> 查看日志列表', () => {
   })
   test('LOG-LIST-02. 正常用例：日志表格显示列标题', async ({ page }) => {
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/logs`); await page.waitForTimeout(1500)
-    await expect(page.locator('text=/操作时间|操作用户|操作类型|操作模块|操作内容|IP地址/i').first()).toBeVisible()
+    await expect(page.locator('table').locator('text=/操作时间|操作用户|操作类型|操作模块|操作内容|IP地址/i').first()).toBeVisible()
   })
   test('LOG-LIST-03. 空数据边界：无日志数据显示空状态', async ({ page }) => {
     await page.route('**/api/v1/logs**', r => r.fulfill({ status: 200, body: JSON.stringify({ data: { list: [], pagination: { total: 0 } } }) }))
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/logs`); await page.waitForTimeout(1500)
-    await expect(page.locator('text=/暂无日志|暂无数据|空/i').first().or(page.locator('body'))).toBeVisible()
+    await expect(page.locator('text=/暂无日志|暂无数据|空/i').first()).toBeVisible()
     await page.unroute('**/api/v1/logs**')
   })
   test('LOG-LIST-04. 异常恢复：API 500显示错误提示', async ({ page }) => {
@@ -76,11 +79,11 @@ test.describe('操作日志 -> 查看日志列表', () => {
   })
   test('LOG-LIST-07. 正常用例：日志表格显示用户头像', async ({ page }) => {
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/logs`); await page.waitForTimeout(1500)
-    await expect(page.locator('text=/操作记录/i').first().or(page.locator('body'))).toBeVisible()
+    await expect(page.locator('text=/操作记录/i').first()).toBeVisible()
   })
   test('LOG-LIST-08. 正常用例：日志表格显示操作类型标签', async ({ page }) => {
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/logs`); await page.waitForTimeout(1500)
-    await expect(page.locator('text=/登录|登出|新增|修改|删除|导出|导入/i').first().or(page.locator('body'))).toBeVisible()
+    await expect(page.locator('text=/登录|登出|新增|修改|删除|导出|导入/i').first()).toBeVisible()
   })
 })
 
@@ -245,8 +248,10 @@ test.describe('操作日志 -> 日志详情弹窗', () => {
   test('LOG-DETAIL-01. 正常用例：点击详情按钮打开弹窗', async ({ page }) => {
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/logs`); await page.waitForTimeout(1500)
     const detail = page.locator('text=/详情/i').first()
-    if (await detail.isVisible().catch(() => false)) { await detail.click(); await page.waitForTimeout(1000) }
-    await expect(page.locator('text=/操作详情|操作时间|操作类型|操作用户/i').first().or(page.locator('body'))).toBeVisible()
+    if (await detail.isVisible().catch(() => false)) {
+      await detail.click(); await page.waitForTimeout(1000)
+      await expect(page.locator('text=/操作详情|操作时间|操作类型|操作用户/i').first()).toBeVisible()
+    }
     const close = page.locator('text=/关闭/i').first()
     if (await close.isVisible().catch(() => false)) await close.click()
   })
@@ -329,8 +334,10 @@ test.describe('操作日志 -> 导出功能', () => {
   test('LOG-EXPORT-01. 正常用例：点击导出按钮打开导出弹窗', async ({ page }) => {
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/logs`); await page.waitForTimeout(1500)
     const exportBtn = page.locator('text=/导出日志|导出/i').first()
-    if (await exportBtn.isVisible().catch(() => false)) { await exportBtn.click(); await page.waitForTimeout(800) }
-    await expect(page.locator('text=/导出日志|导出时间范围|导出格式/i').first().or(page.locator('body'))).toBeVisible()
+    if (await exportBtn.isVisible().catch(() => false)) {
+      await exportBtn.click(); await page.waitForTimeout(800)
+      await expect(page.locator('text=/导出日志|导出时间范围|导出格式/i').first()).toBeVisible()
+    }
     const cancel = page.locator('text=/取消/i').first()
     if (await cancel.isVisible().catch(() => false)) await cancel.click()
   })
@@ -523,7 +530,7 @@ test.describe('操作日志 -> 业务流程树', () => {
 test.describe('操作日志 -> 盲点分析补充', () => {
   test('BLIND-LOG-01. 操作类型标签颜色区分', async ({ page }) => {
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/logs`); await page.waitForTimeout(1500)
-    await expect(page.locator('text=/登录|登出|新增|修改|删除|导出|导入/i').first().or(page.locator('body'))).toBeVisible()
+    await expect(page.locator('text=/登录|登出|新增|修改|删除|导出|导入/i').first()).toBeVisible()
   })
   test('BLIND-LOG-02. 日志时间格式化显示正确', async ({ page }) => {
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/logs`); await page.waitForTimeout(1500)
@@ -543,7 +550,7 @@ test.describe('操作日志 -> 盲点分析补充', () => {
   })
   test('BLIND-LOG-06. 模块标签显示中文', async ({ page }) => {
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/logs`); await page.waitForTimeout(1500)
-    await expect(page.locator('text=/库存管理|入库管理|出库管理|用户管理|系统设置/i').first().or(page.locator('body'))).toBeVisible()
+    await expect(page.locator('text=/库存管理|入库管理|出库管理|用户管理|系统设置/i').first()).toBeVisible()
   })
   test('BLIND-LOG-07. 详情弹窗请求数据表格渲染', async ({ page }) => {
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/logs`); await page.waitForTimeout(1500)

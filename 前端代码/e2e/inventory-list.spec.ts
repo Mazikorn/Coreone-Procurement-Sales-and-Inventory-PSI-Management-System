@@ -271,7 +271,7 @@ test.describe('库存列表 -> 筛选功能', () => {
     const token = await apiLogin('admin')
     const res = await apiFetch(token, 'GET', '/inventory?page=1&pageSize=10&keyword=REA')
     expect(res.status).toBe(200)
-    expect(res.data?.data?.page).toBe(1)
+    expect(res.data?.data?.pagination?.page).toBe(1)
   })
   test('INV-FILTER-13. UI差异：各角色筛选功能可见', async ({ page }) => {
     for (const role of INV_READ_ROLES) {
@@ -395,7 +395,7 @@ test.describe('库存列表 -> 分页', () => {
     const token = await apiLogin('admin')
     const res = await apiFetch(token, 'GET', '/inventory?page=0')
     expect(res.status).toBe(200)
-    expect(res.data?.data?.page).toBeGreaterThanOrEqual(1)
+    expect(res.data?.data?.pagination?.page).toBeGreaterThanOrEqual(1)
   })
   test('INV-PAGE-04. 边界：page=999返回空列表', async ({ page }) => {
     const token = await apiLogin('admin')

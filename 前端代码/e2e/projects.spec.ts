@@ -587,7 +587,7 @@ test.describe('检测项目 -> 分页切换', () => {
     const token = await apiLogin('admin')
     const res = await apiFetch(token, 'GET', '/projects?page=0')
     expect(res.status).toBe(200)
-    expect(res.data?.data?.page).toBeGreaterThanOrEqual(1)
+    expect(res.data?.data?.pagination?.page).toBeGreaterThanOrEqual(1)
   })
   test('PROJ-PAGE-04. 边界：page=999', async () => {
     const token = await apiLogin('admin')
