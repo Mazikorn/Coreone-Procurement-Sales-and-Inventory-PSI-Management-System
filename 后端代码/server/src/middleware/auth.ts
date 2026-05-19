@@ -23,7 +23,7 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
     'suppliers', 'purchase_orders', 'alerts'
   ],
   finance: [
-    'dashboard', 'cost_analysis', 'logs'
+    'dashboard', 'cost_analysis', 'logs', 'alerts'
   ],
 }
 

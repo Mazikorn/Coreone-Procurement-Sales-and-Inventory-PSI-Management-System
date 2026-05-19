@@ -21,6 +21,10 @@ router.get('/rules', (_req, res) => {
 
 router.put('/rules/:id', (req, res) => {
   try {
+    const user = (req as any).user
+    if (!user || user.role !== 'admin') {
+      return error(res, 'Forbidden', 'FORBIDDEN', 403)
+    }
     const { id } = req.params
     const { threshold, thresholdDays, enabled } = req.body
     const db = getDatabase()

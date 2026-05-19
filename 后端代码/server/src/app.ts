@@ -62,7 +62,7 @@ app.use('/api/v1/depletion', authenticateToken, requireRole('admin', 'pathologis
 
 // 路由注册 - warehouse/technician/pathologist/procurement共享 (库存/预警)
 app.use('/api/v1/inventory', authenticateToken, requireRole('admin', 'warehouse_manager', 'technician', 'pathologist', 'procurement'), inventoryRoutes)
-app.use('/api/v1/alerts', authenticateToken, requireRole('admin', 'warehouse_manager', 'technician', 'pathologist', 'procurement'), alertRoutes)
+app.use('/api/v1/alerts', authenticateToken, requireRole('admin', 'warehouse_manager', 'technician', 'pathologist', 'procurement', 'finance'), alertRoutes)
 
 // 路由注册 - warehouse/procurement共享 (入库相关)
 app.use('/api/v1/inbound', authenticateToken, requireRole('admin', 'warehouse_manager', 'procurement'), inboundRoutes)

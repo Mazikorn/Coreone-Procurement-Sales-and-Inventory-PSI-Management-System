@@ -248,7 +248,7 @@ Step 6: 重复 Step 1~5，直到所有文件修复完毕
 | 4 | `categories-v1.1.ts` | `categories.spec.ts` | v1.31 | 1 | ⏸️ 待补测 |
 | 5 | `depletion-v1.1.ts` | — | v1.25, v1.30 | 3 | ⏸️ 待补测 |
 | 6 | `inbound-v1.1.ts` | `inbound.spec.ts` | v1.28, v1.29, v1.32 | 5 | ⏸️ 待补测 |
-| 7 | `inventory-v1.1.ts` | `inventory-list.spec.ts` | v1.25 | 1 | ⏸️ 待补测 |
+| 7 | `inventory-v1.1.ts` | `inventory-list.spec.ts` | v1.25 | 1 | ✅ 已通过 |
 | 8 | `locations-v1.1.ts` | `locations.spec.ts` | —（未修改） | 0 | ⏸️ 待补测 |
 | 9 | `logs-v1.1.ts` | `logs.spec.ts` | v1.28, v1.36 | 2 | ✅ 已通过 |
 | 10 | `materials.ts` | `materials.spec.ts` | v1.25, v1.30 | 2 | ⏸️ 待补测 |
@@ -761,6 +761,7 @@ npx playwright test e2e/auth.spec.ts --debug
 | v1.34 | 2026-05-19 | 修订 3.6 E2E 回归测试执行规则：改为「文件级隔离」模式（按 TS 文件逐个修复后测试），添加已修复但未补测的文件清单 |
 | v1.35 | 2026-05-19 | 第33批修复（1个）：alerts PUT /rules/:id threshold/thresholdDays NaN/负数校验 |
 | v1.36 | 2026-05-19 | 补测 logs-v1.1.ts：发现 app.ts 中 /logs 路由 finance 权限配置错误并修复，logs.spec.ts 77/77 通过 |
+| v1.37 | 2026-05-19 | 补测 alerts-v1.1.ts：发现 auth.ts ROLE_PERMISSIONS 中 finance 缺少 alerts 权限（#114），修复后 alerts.spec.ts 84/84 通过 |
 
 ---
 
