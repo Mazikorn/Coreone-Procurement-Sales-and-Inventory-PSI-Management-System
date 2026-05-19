@@ -195,41 +195,77 @@ Step 6: 在本文档第六节对应表格中，将状态从“待确认”改为
 
 ### 3.6 🧪 E2E 回归测试执行规则（新增）
 
-> **每完成一批修复后，必须执行 E2E 回归测试验证修复效果，并将结果记录到本文档。**
+> **按「TS 文件」为单位进行修复和测试：一个文件的缺陷全部修复后，立即执行对应 E2E 测试，确认通过后再开始下一个文件。**
 
-#### 执行时机
+#### 核心原则：文件级隔离
 
-| 场景 | 执行策略 |
+| 规则 | 说明 |
 |:---|:---|
-| **单批修复后** | 至少运行该批修复涉及模块的 spec 文件（如修复了 `projects-v1.1.ts`，则运行 `projects.spec.ts`） |
-| **多批修复后** | 运行所有受影响模块 + 至少一个未修改模块作为回归基线 |
-| **重大修复后** | 运行全量 E2E 测试（`npx playwright test e2e/`） |
+| **修复单位** | 以单个 `.ts` 路由文件为单位（如 `inbound-v1.1.ts`），而非按批次数 |
+| **测试时机** | 一个文件的所有缺陷修复完成后，**立即**运行该文件对应的 spec |
+| **提交时机** | 该文件对应 spec 全部通过后，**立即** `git commit`，再开始下一个文件 |
+| **禁止行为** | ❌ 不得跨多个文件批量修复后统一测试；❌ 不得在测试未通过时开始下一个文件 |
 
 #### 执行流程
 
 ```
-Step 1: 确保前后端服务已启动
+Step 1: 选择一个待修复的 TS 文件（如 inbound-v1.1.ts）
+
+Step 2: 扫描并修复该文件内的所有缺陷（3~5个独立根因）
+
+Step 3: 确保前后端服务已启动
         - 后端: cd 后端代码/server && npx tsx src/app.ts (port 3001)
         - 前端: cd 前端代码 && npx vite --host 127.0.0.1 --port 8080
 
-Step 2: 运行目标 spec 文件
+Step 4: 运行该文件对应的 spec
         cd 前端代码
-        npx playwright test e2e/xxx.spec.ts --reporter=list
+        npx playwright test e2e/inbound.spec.ts --reporter=list
 
-Step 3: 记录测试结果到本文档「E2E 回归测试记录」章节
-        - 记录时间、模块、通过数、失败数、失败用例ID
-        - 分析失败原因（是否为本批修复引入的新问题）
+Step 5: 分析结果
+        - ✅ 通过 → git commit，标记该文件为「已完成」
+        - ❌ 有新失败 → 立即修复或回滚，不得进入下一文件
 
-Step 4: 如果引入新失败，立即回滚或修复，不得提交有回归的代码
+Step 6: 重复 Step 1~5，直到所有文件修复完毕
 ```
 
 #### 结果判定标准
 
 | 结果类型 | 判定条件 | 后续动作 |
 |:---|:---|:---|
-| **✅ 通过** | 所有测试通过，或失败仅为已知未修复缺陷 | 继续下一批修复 |
+| **✅ 通过** | 所有测试通过，或失败仅为已知未修复缺陷 | `git commit`，开始下一个文件 |
 | **⚠️ 部分通过** | 有新失败但与本次修复无关（如前端UI缺失） | 记录并继续，但需标注 |
-| **❌ 失败** | 有与本次修复直接相关的新失败 | 立即修复，不得进入下一批 |
+| **❌ 失败** | 有与本次修复直接相关的新失败 | 立即修复/回滚，不得进入下一文件 |
+
+#### 已修复但未补测的文件清单
+
+以下文件已完成缺陷修复，但尚未按「文件级隔离」规则执行对应 E2E 测试，需补测：
+
+| # | TS 文件 | 对应 Spec | 修复批次 | 修复缺陷数 | 补测状态 |
+|:---|:---|:---|:---:|:---:|:---:|
+| 1 | `alerts-v1.1.ts` | `alerts.spec.ts` | v1.20, v1.23 | 3 | ⏸️ 待补测 |
+| 2 | `auth.ts` | `auth.spec.ts` | —（未修改） | 0 | ✅ 基线通过 |
+| 3 | `bom-v1.1.ts` | `bom.spec.ts` | v1.24 | 1 | ⏸️ 待补测 |
+| 4 | `categories-v1.1.ts` | `categories.spec.ts` | v1.31 | 1 | ⏸️ 待补测 |
+| 5 | `depletion-v1.1.ts` | — | v1.25, v1.30 | 3 | ⏸️ 待补测 |
+| 6 | `inbound-v1.1.ts` | `inbound.spec.ts` | v1.28, v1.29, v1.32 | 5 | ⏸️ 待补测 |
+| 7 | `inventory-v1.1.ts` | `inventory-list.spec.ts` | v1.25 | 1 | ⏸️ 待补测 |
+| 8 | `locations-v1.1.ts` | `locations.spec.ts` | —（未修改） | 0 | ⏸️ 待补测 |
+| 9 | `logs-v1.1.ts` | `logs.spec.ts` | v1.28 | 1 | ⏸️ 待补测 |
+| 10 | `materials.ts` | `materials.spec.ts` | v1.25, v1.30 | 2 | ⏸️ 待补测 |
+| 11 | `outbound-v1.1.ts` | `outbound.spec.ts` | v1.20, v1.29 | 3 | ⏸️ 待补测 |
+| 12 | `projects-v1.1.ts` | `projects.spec.ts` | v1.31 | 1 | ✅ 已通过 |
+| 13 | `purchase-orders-v1.1.ts` | `purchase-orders.spec.ts` | v1.19, v1.22, v1.29 | 4 | ⏸️ 待补测 |
+| 14 | `reconciliation-v1.1.ts` | `reconciliation.spec.ts` | v1.21, v1.24, v1.26, v1.31, v1.32 | 8 | ⏸️ 待补测 |
+| 15 | `reports-v1.1.ts` | — | v1.23 | 1 | ⏸️ 待补测 |
+| 16 | `returns-v1.1.ts` | — | v1.27 | 2 | ⏸️ 待补测 |
+| 17 | `roles-v1.1.ts` | `roles.spec.ts` | —（未修改） | 0 | ⏸️ 待补测 |
+| 18 | `scraps-v1.1.ts` | — | v1.27 | 2 | ⏸️ 待补测 |
+| 19 | `stocktaking-v1.1.ts` | `stocktaking.spec.ts` | v1.28 | 2 | ⚠️ 已测（75/104通过，29个失败为前端UI缺失） |
+| 20 | `suppliers-v1.1.ts` | `suppliers.spec.ts` | —（未修改） | 0 | ⏸️ 待补测 |
+| 21 | `transfers-v1.1.ts` | — | v1.19 | 1 | ⏸️ 待补测 |
+| 22 | `users-v1.1.ts` | `users.spec.ts` | —（未修改） | 0 | ⏸️ 待补测 |
+
+> **说明**：`⏸️ 待补测` 表示该文件已有代码修改但未按「文件级隔离」规则执行对应 spec；`✅ 已通过` 表示已执行并通过；`⚠️ 已测` 表示已执行但有已知未修复缺陷导致的失败。
 
 ### 3.7 修复优先级建议（第一批：P0 前 5 项）
 
@@ -709,20 +745,7 @@ npx playwright test e2e/auth.spec.ts --debug
 | v1.31 | 2026-05-18 | 第31批修复（5个）：projects GET /:id costStats is_deleted=0、reconciliation GET /projects/:id/materials outbound is_deleted=0、reconciliation GET /materials projects is_deleted=0(2处)、categories generateCategoryCode parent is_deleted=0 |
 | v1.32 | 2026-05-19 | 新增 3.6 E2E 回归测试执行规则；添加 2026-05-19 Batch 29~31 E2E 回归测试记录 |
 | v1.33 | 2026-05-19 | 第32批修复（3个）：inbound GET / JOIN materials/suppliers/locations is_deleted=0、inbound check-deletable outboundExists is_deleted=0、reconciliation GET /materials actual outbound is_deleted=0 |
-| v1.32 | 2026-05-19 | 新增 3.6 E2E 回归测试执行规则；添加 2026-05-19 Batch 29~31 E2E 回归测试记录 |
-| v1.19 | 2026-05-18 | 第19批修复：purchase-orders is_deleted=0 过滤(4处)、transfers 物料/库位存在性校验、depletion 批次查询 JOIN 已删除物料过滤 |
-| v1.20 | 2026-05-18 | 第20批修复：purchase_orders 表添加 is_deleted 迁移、alerts expiry SQL注入+is_deleted=0、outbound LEFT JOIN projects is_deleted=0 |
-| v1.21 | 2026-05-18 | 第21批修复：reconciliation GET /cases SQL注入+分页page=0+projects is_deleted=0、PUT /cases/:id 404检查 |
-| v1.22 | 2026-05-18 | 第22批修复：inbound cancel 404+is_deleted=0、purchase-orders UPDATE is_deleted=0、reconciliation logs projects is_deleted=0 |
-| v1.23 | 2026-05-18 | 第23批修复：depletion remaining NaN/负数校验、reports amount null求和修复、alerts 重复处理拦截 |
-| v1.24 | 2026-05-18 | 第24批修复：reconciliation summary/projectsWithoutBom is_deleted=0、reconciliation boms is_deleted=0、outbound materials is_deleted=0、bom LEFT JOIN materials is_deleted=0 |
-| v1.25 | 2026-05-18 | 第25批修复：materials GET /:id JOIN 已删除 categories/suppliers/locations、depletion POST /tracking NaN/负数+日期校验、POST /:id/deplete 重复耗尽拦截+remain_qty校验 |
-| v1.26 | 2026-05-18 | 第26批修复：reconciliation GET /projects/:id/materials SQL注入(2处)、GET /materials SQL注入(2处) |
-| v1.27 | 2026-05-18 | 第27批修复：returns POST / 物料存在性+NaN校验、scraps POST / 物料存在性+NaN校验 |
-| v1.28 | 2026-05-18 | 第28批修复：stocktaking POST / actualStock负数+物料存在性、inbound POST / purchaseOrder is_deleted=0、logs GET / page=0修复 |
-| v1.29 | 2026-05-18 | 第29批修复（7个）：inbound POST/DELETE purchaseOrder is_deleted=0、outbound POST quantity NaN+batches is_deleted=0、purchase-orders POST/PUT quantity NaN、reconciliation GET /projects SQL注入 |
-| v1.30 | 2026-05-18 | 第30批修复（3个）：materials generateMaterialCode categories is_deleted=0、depletion POST /:id/deplete batch null guard、inbound DELETE outbound soft-delete filtering |
-| v1.31 | 2026-05-18 | 第31批修复（5个）：projects GET /:id costStats is_deleted=0、reconciliation GET /projects/:id/materials outbound is_deleted=0、reconciliation GET /materials projects is_deleted=0(2处)、categories generateCategoryCode parent is_deleted=0 |
+| v1.34 | 2026-05-19 | 修订 3.6 E2E 回归测试执行规则：改为「文件级隔离」模式（按 TS 文件逐个修复后测试），添加已修复但未补测的文件清单 |
 
 ---
 
