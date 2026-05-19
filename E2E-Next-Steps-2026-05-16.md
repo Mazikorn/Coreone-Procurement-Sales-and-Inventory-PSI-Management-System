@@ -193,7 +193,45 @@ Step 6: 在本文档第六节对应表格中，将状态从“待确认”改为
 | **禁止行为** | ❌ 不得遗漏未暂存的修改文件；❌ 不得一次性提交无关的修改。 |
 
 
-### 3.6 修复优先级建议（第一批：P0 前 5 项）
+### 3.6 🧪 E2E 回归测试执行规则（新增）
+
+> **每完成一批修复后，必须执行 E2E 回归测试验证修复效果，并将结果记录到本文档。**
+
+#### 执行时机
+
+| 场景 | 执行策略 |
+|:---|:---|
+| **单批修复后** | 至少运行该批修复涉及模块的 spec 文件（如修复了 `projects-v1.1.ts`，则运行 `projects.spec.ts`） |
+| **多批修复后** | 运行所有受影响模块 + 至少一个未修改模块作为回归基线 |
+| **重大修复后** | 运行全量 E2E 测试（`npx playwright test e2e/`） |
+
+#### 执行流程
+
+```
+Step 1: 确保前后端服务已启动
+        - 后端: cd 后端代码/server && npx tsx src/app.ts (port 3001)
+        - 前端: cd 前端代码 && npx vite --host 127.0.0.1 --port 8080
+
+Step 2: 运行目标 spec 文件
+        cd 前端代码
+        npx playwright test e2e/xxx.spec.ts --reporter=list
+
+Step 3: 记录测试结果到本文档「E2E 回归测试记录」章节
+        - 记录时间、模块、通过数、失败数、失败用例ID
+        - 分析失败原因（是否为本批修复引入的新问题）
+
+Step 4: 如果引入新失败，立即回滚或修复，不得提交有回归的代码
+```
+
+#### 结果判定标准
+
+| 结果类型 | 判定条件 | 后续动作 |
+|:---|:---|:---|
+| **✅ 通过** | 所有测试通过，或失败仅为已知未修复缺陷 | 继续下一批修复 |
+| **⚠️ 部分通过** | 有新失败但与本次修复无关（如前端UI缺失） | 记录并继续，但需标注 |
+| **❌ 失败** | 有与本次修复直接相关的新失败 | 立即修复，不得进入下一批 |
+
+### 3.7 修复优先级建议（第一批：P0 前 5 项）
 
 | 优先级 | 缺陷 | 预估工作量 | 修复后释放用例数 |
 |:---|:---|:---:|:---:|
@@ -624,11 +662,52 @@ npx playwright test e2e/auth.spec.ts --debug
 
 ---
 
+## 十、E2E 回归测试记录
+
+> **按 3.6 E2E 回归测试执行规则，每次修复后运行测试并记录结果。**
+
+### 2026-05-19 Batch 29~31 回归测试结果
+
+| 模块 | 用例数 | 通过 | 失败 | 结果判定 |
+|:---|:---:|:---:|:---:|:---:|
+| auth.spec.ts | 58 | 58 | 0 | ✅ 通过 |
+| stocktaking.spec.ts | 104 | 75 | 29 | ⚠️ 部分通过（29个失败均为前端UI缺失/盘点确认流程缺失，非本批修复引入） |
+| projects.spec.ts | 120 | 120 | 0 | ✅ 通过 |
+| materials.spec.ts | — | — | — | ⏸️ 等待执行（服务就绪后补测） |
+
+**失败分析（stocktaking）：**
+- 29个失败用例均与「盘点确认调整」前端UI流程缺失有关（ST-CREATE 系列成功创建盘点单，但 ST-ADJUST 系列需要前端确认按钮和弹窗）
+- **无与本批修复（is_deleted=0、NaN校验、SQL注入等）直接相关的新失败**
+- 判定：**✅ 无回归，可继续下一批修复**
+
+### 历史测试记录
+
+| 批次 | 时间 | 测试范围 | 结果摘要 |
+|:---|:---|:---|:---|
+| Batch 19~28 | 2026-05-18 | 未执行 | 需补测 |
+| Batch 29~31 | 2026-05-19 | auth + stocktaking + projects | 178 passed / 29 failed (已知UI缺失) |
+
+---
+
 ## 九、文档变更记录
 
 | 版本 | 时间 | 变更内容 |
 |:---|:---|:---|
 | v1.0 | 2026-05-16 | 初始版本，整合 18 个 spec 修复结果，建立 4 阶段后续路线 |
+| v1.19 | 2026-05-18 | 第19批修复：purchase-orders is_deleted=0 过滤(4处)、transfers 物料/库位存在性校验、depletion 批次查询 JOIN 已删除物料过滤 |
+| v1.20 | 2026-05-18 | 第20批修复：purchase_orders 表添加 is_deleted 迁移、alerts expiry SQL注入+is_deleted=0、outbound LEFT JOIN projects is_deleted=0 |
+| v1.21 | 2026-05-18 | 第21批修复：reconciliation GET /cases SQL注入+分页page=0+projects is_deleted=0、PUT /cases/:id 404检查 |
+| v1.22 | 2026-05-18 | 第22批修复：inbound cancel 404+is_deleted=0、purchase-orders UPDATE is_deleted=0、reconciliation logs projects is_deleted=0 |
+| v1.23 | 2026-05-18 | 第23批修复：depletion remaining NaN/负数校验、reports amount null求和修复、alerts 重复处理拦截 |
+| v1.24 | 2026-05-18 | 第24批修复：reconciliation summary/projectsWithoutBom is_deleted=0、reconciliation boms is_deleted=0、outbound materials is_deleted=0、bom LEFT JOIN materials is_deleted=0 |
+| v1.25 | 2026-05-18 | 第25批修复：materials GET /:id JOIN 已删除 categories/suppliers/locations、depletion POST /tracking NaN/负数+日期校验、POST /:id/deplete 重复耗尽拦截+remain_qty校验 |
+| v1.26 | 2026-05-18 | 第26批修复：reconciliation GET /projects/:id/materials SQL注入(2处)、GET /materials SQL注入(2处) |
+| v1.27 | 2026-05-18 | 第27批修复：returns POST / 物料存在性+NaN校验、scraps POST / 物料存在性+NaN校验 |
+| v1.28 | 2026-05-18 | 第28批修复：stocktaking POST / actualStock负数+物料存在性、inbound POST / purchaseOrder is_deleted=0、logs GET / page=0修复 |
+| v1.29 | 2026-05-18 | 第29批修复（7个）：inbound POST/DELETE purchaseOrder is_deleted=0、outbound POST quantity NaN+batches is_deleted=0、purchase-orders POST/PUT quantity NaN、reconciliation GET /projects SQL注入 |
+| v1.30 | 2026-05-18 | 第30批修复（3个）：materials generateMaterialCode categories is_deleted=0、depletion POST /:id/deplete batch null guard、inbound DELETE outbound soft-delete filtering |
+| v1.31 | 2026-05-18 | 第31批修复（5个）：projects GET /:id costStats is_deleted=0、reconciliation GET /projects/:id/materials outbound is_deleted=0、reconciliation GET /materials projects is_deleted=0(2处)、categories generateCategoryCode parent is_deleted=0 |
+| v1.32 | 2026-05-19 | 新增 3.6 E2E 回归测试执行规则；添加 2026-05-19 Batch 29~31 E2E 回归测试记录 |
 | v1.19 | 2026-05-18 | 第19批修复：purchase-orders is_deleted=0 过滤(4处)、transfers 物料/库位存在性校验、depletion 批次查询 JOIN 已删除物料过滤 |
 | v1.20 | 2026-05-18 | 第20批修复：purchase_orders 表添加 is_deleted 迁移、alerts expiry SQL注入+is_deleted=0、outbound LEFT JOIN projects is_deleted=0 |
 | v1.21 | 2026-05-18 | 第21批修复：reconciliation GET /cases SQL注入+分页page=0+projects is_deleted=0、PUT /cases/:id 404检查 |
