@@ -242,7 +242,7 @@ Step 6: 重复 Step 1~5，直到所有文件修复完毕
 
 | # | TS 文件 | 对应 Spec | 修复批次 | 修复缺陷数 | 补测状态 |
 |:---|:---|:---|:---:|:---:|:---:|
-| 1 | `alerts-v1.1.ts` | `alerts.spec.ts` | v1.20, v1.23 | 3 | ⏸️ 待补测 |
+| 1 | `alerts-v1.1.ts` | `alerts.spec.ts` | v1.20, v1.23, v1.35 | 4 | ⏸️ 待补测 |
 | 2 | `auth.ts` | `auth.spec.ts` | —（未修改） | 0 | ✅ 基线通过 |
 | 3 | `bom-v1.1.ts` | `bom.spec.ts` | v1.24 | 1 | ⏸️ 待补测 |
 | 4 | `categories-v1.1.ts` | `categories.spec.ts` | v1.31 | 1 | ⏸️ 待补测 |
@@ -746,6 +746,7 @@ npx playwright test e2e/auth.spec.ts --debug
 | v1.32 | 2026-05-19 | 新增 3.6 E2E 回归测试执行规则；添加 2026-05-19 Batch 29~31 E2E 回归测试记录 |
 | v1.33 | 2026-05-19 | 第32批修复（3个）：inbound GET / JOIN materials/suppliers/locations is_deleted=0、inbound check-deletable outboundExists is_deleted=0、reconciliation GET /materials actual outbound is_deleted=0 |
 | v1.34 | 2026-05-19 | 修订 3.6 E2E 回归测试执行规则：改为「文件级隔离」模式（按 TS 文件逐个修复后测试），添加已修复但未补测的文件清单 |
+| v1.35 | 2026-05-19 | 第33批修复（1个）：alerts PUT /rules/:id threshold/thresholdDays NaN/负数校验 |
 
 ---
 

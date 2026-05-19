@@ -27,8 +27,18 @@ router.put('/rules/:id', (req, res) => {
     const existing = db.prepare('SELECT * FROM alert_rules WHERE id = ?').get(id)
     if (!existing) { error(res, 'Not found', 'NOT_FOUND', 404); return }
     const fields: string[] = []; const params: any[] = []
-    if (threshold !== undefined) { fields.push('threshold = ?'); params.push(threshold) }
-    if (thresholdDays !== undefined) { fields.push('threshold_days = ?'); params.push(thresholdDays) }
+    if (threshold !== undefined) {
+      if (isNaN(Number(threshold)) || Number(threshold) < 0) {
+        error(res, 'Invalid threshold', 'INVALID_PARAMETER', 400); return
+      }
+      fields.push('threshold = ?'); params.push(threshold)
+    }
+    if (thresholdDays !== undefined) {
+      if (isNaN(Number(thresholdDays)) || Number(thresholdDays) < 0) {
+        error(res, 'Invalid thresholdDays', 'INVALID_PARAMETER', 400); return
+      }
+      fields.push('threshold_days = ?'); params.push(thresholdDays)
+    }
     if (enabled !== undefined) { fields.push('enabled = ?'); params.push(enabled ? 1 : 0) }
     if (fields.length > 0) { params.push(id); db.prepare(`UPDATE alert_rules SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(...params) }
     success(res, { id }, 'Updated')
