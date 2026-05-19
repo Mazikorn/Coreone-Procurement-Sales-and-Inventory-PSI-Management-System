@@ -86,7 +86,7 @@ app.use('/api/v1/reconciliation', authenticateToken, requireRole('admin', 'patho
 
 // 路由注册 - 通用主数据 (所有已认证角色可查看)
 app.use('/api/v1/categories', authenticateToken, categoryRoutes)
-app.use('/api/v1/materials', authenticateToken, materialRoutes)
+app.use('/api/v1/materials', authenticateToken, requireRole('admin', 'warehouse_manager', 'technician', 'pathologist', 'procurement'), materialRoutes)
 
 // 健康检查
 app.get('/api/health', (_req, res) => {

@@ -12,10 +12,10 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
     'purchase_orders', 'returns', 'scraps', 'transfers'
   ],
   technician: [
-    'dashboard', 'inventory', 'outbound', 'projects', 'bom', 'alerts'
+    'dashboard', 'inventory', 'outbound', 'projects', 'bom', 'materials', 'alerts'
   ],
   pathologist: [
-    'dashboard', 'inventory', 'outbound', 'projects', 'bom',
+    'dashboard', 'inventory', 'outbound', 'projects', 'bom', 'materials',
     'cost_analysis', 'alerts'
   ],
   procurement: [

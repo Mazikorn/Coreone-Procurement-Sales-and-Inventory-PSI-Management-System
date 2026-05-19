@@ -6,8 +6,8 @@ import { requireRole } from '../middleware/auth.js'
 
 const router = Router()
 
-// 物料写入权限：仅 admin / warehouse_manager / procurement 可操作
-const requireMaterialWrite = requireRole('admin', 'warehouse_manager', 'procurement')
+// 物料写入权限：仅 admin 可操作
+const requireMaterialWrite = requireRole('admin')
 
 router.get('/', (req, res) => {
   try {
