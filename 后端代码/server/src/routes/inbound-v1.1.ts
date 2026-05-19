@@ -38,9 +38,9 @@ router.get('/', (req, res) => {
     const sql = `
       SELECT r.*, m.name as material_name, s.name as supplier_name, l.name as location_name
       FROM inbound_records r
-      LEFT JOIN materials m ON r.material_id = m.id
-      LEFT JOIN suppliers s ON r.supplier_id = s.id
-      LEFT JOIN locations l ON r.location_id = l.id
+      LEFT JOIN materials m ON r.material_id = m.id AND m.is_deleted = 0
+      LEFT JOIN suppliers s ON r.supplier_id = s.id AND s.is_deleted = 0
+      LEFT JOIN locations l ON r.location_id = l.id AND l.is_deleted = 0
       WHERE ${where}
       ORDER BY r.created_at DESC
       LIMIT ? OFFSET ?
@@ -72,9 +72,12 @@ router.get('/:id/check-deletable', (req, res) => {
 
     if (record.status === 'completed') {
       // 1. 检查是否有出库记录
-      const outboundExists = db.prepare(
-        'SELECT COALESCE(SUM(quantity),0) as total FROM outbound_items WHERE material_id = ? AND batch_no = ?'
-      ).get(record.material_id, record.batch_no) as any
+      const outboundExists = db.prepare(`
+        SELECT COALESCE(SUM(oi.quantity),0) as total
+        FROM outbound_items oi
+        JOIN outbound_records o ON oi.outbound_id = o.id
+        WHERE oi.material_id = ? AND oi.batch_no = ? AND o.is_deleted = 0
+      `).get(record.material_id, record.batch_no) as any
       if (outboundExists && outboundExists.total > 0) {
         canDelete = false
         reasons.push(`该批次已有出库记录 ${outboundExists.total} ${record.unit}`)

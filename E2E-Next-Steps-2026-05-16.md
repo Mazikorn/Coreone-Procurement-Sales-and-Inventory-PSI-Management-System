@@ -708,6 +708,8 @@ npx playwright test e2e/auth.spec.ts --debug
 | v1.30 | 2026-05-18 | 第30批修复（3个）：materials generateMaterialCode categories is_deleted=0、depletion POST /:id/deplete batch null guard、inbound DELETE outbound soft-delete filtering |
 | v1.31 | 2026-05-18 | 第31批修复（5个）：projects GET /:id costStats is_deleted=0、reconciliation GET /projects/:id/materials outbound is_deleted=0、reconciliation GET /materials projects is_deleted=0(2处)、categories generateCategoryCode parent is_deleted=0 |
 | v1.32 | 2026-05-19 | 新增 3.6 E2E 回归测试执行规则；添加 2026-05-19 Batch 29~31 E2E 回归测试记录 |
+| v1.33 | 2026-05-19 | 第32批修复（3个）：inbound GET / JOIN materials/suppliers/locations is_deleted=0、inbound check-deletable outboundExists is_deleted=0、reconciliation GET /materials actual outbound is_deleted=0 |
+| v1.32 | 2026-05-19 | 新增 3.6 E2E 回归测试执行规则；添加 2026-05-19 Batch 29~31 E2E 回归测试记录 |
 | v1.19 | 2026-05-18 | 第19批修复：purchase-orders is_deleted=0 过滤(4处)、transfers 物料/库位存在性校验、depletion 批次查询 JOIN 已删除物料过滤 |
 | v1.20 | 2026-05-18 | 第20批修复：purchase_orders 表添加 is_deleted 迁移、alerts expiry SQL注入+is_deleted=0、outbound LEFT JOIN projects is_deleted=0 |
 | v1.21 | 2026-05-18 | 第21批修复：reconciliation GET /cases SQL注入+分页page=0+projects is_deleted=0、PUT /cases/:id 404检查 |

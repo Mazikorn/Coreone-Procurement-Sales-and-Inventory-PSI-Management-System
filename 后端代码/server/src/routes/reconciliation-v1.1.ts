@@ -245,7 +245,7 @@ router.get('/materials', (req, res) => {
         SELECT SUM(oi.quantity) as total_qty
         FROM outbound_items oi
         JOIN outbound_records o ON oi.outbound_id = o.id
-        WHERE oi.material_id = ? AND o.status = 'completed' ${hasDate ? 'AND o.created_at >= ? AND o.created_at <= ?' : ''}
+        WHERE oi.material_id = ? AND o.status = 'completed' AND o.is_deleted = 0 ${hasDate ? 'AND o.created_at >= ? AND o.created_at <= ?' : ''}
       `).get(m.id, ...dateParams) as any
 
       const actualTotal = actual?.total_qty || 0
