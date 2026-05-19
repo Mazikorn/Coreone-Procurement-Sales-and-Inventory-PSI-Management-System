@@ -160,7 +160,7 @@ router.get('/projects/:id/materials', (req, res) => {
       FROM outbound_items oi
       JOIN outbound_records o ON oi.outbound_id = o.id
       JOIN materials m ON oi.material_id = m.id
-      WHERE o.project_id = ? AND o.status = 'completed' ${hasDate ? 'AND o.created_at >= ? AND o.created_at <= ?' : ''}
+      WHERE o.project_id = ? AND o.status = 'completed' AND o.is_deleted = 0 ${hasDate ? 'AND o.created_at >= ? AND o.created_at <= ?' : ''}
       GROUP BY oi.material_id
     `).all(projectId, ...dateParams) as any[]
 
@@ -214,7 +214,7 @@ router.get('/materials', (req, res) => {
       SELECT m.id, m.name, m.spec, m.unit, m.price,
         (SELECT COUNT(DISTINCT p.id) FROM projects p
           JOIN bom_items bi ON bi.bom_id = p.bom_id
-          WHERE bi.material_id = m.id
+          WHERE bi.material_id = m.id AND p.is_deleted = 0
         ) as project_count
       FROM materials m
       WHERE m.is_deleted = 0 AND m.status = 1
@@ -227,7 +227,7 @@ router.get('/materials', (req, res) => {
         SELECT bi.usage_per_sample, bi.unit, p.id as project_id
         FROM bom_items bi
         JOIN projects p ON bi.bom_id = p.bom_id
-        WHERE bi.material_id = ?
+        WHERE bi.material_id = ? AND p.is_deleted = 0
       `).all(m.id) as any[]
 
       // 各项目病例数

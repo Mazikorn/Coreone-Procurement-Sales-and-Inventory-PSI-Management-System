@@ -84,7 +84,7 @@ function generateCategoryCode(db: any, parentId: string | null, level: number): 
     const max = db.prepare('SELECT MAX(CAST(code AS INTEGER)) as max FROM material_categories WHERE parent_id IS NULL').get() as any
     return String((max?.max || 0) + 100)
   } else {
-    const parent = db.prepare('SELECT code FROM material_categories WHERE id = ?').get(parentId) as any
+    const parent = db.prepare('SELECT code FROM material_categories WHERE id = ? AND is_deleted = 0').get(parentId) as any
     const prefix = Math.floor(Number(parent.code) / 100) * 100
     const max = db.prepare('SELECT MAX(CAST(code AS INTEGER)) as max FROM material_categories WHERE parent_id = ? AND CAST(code AS INTEGER) < ?').get(parentId, prefix + 100) as any
     return String((max?.max || prefix) + 1)

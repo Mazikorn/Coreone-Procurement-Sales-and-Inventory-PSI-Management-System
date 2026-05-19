@@ -41,7 +41,7 @@ router.get('/:id', (req, res) => {
 
     const costStats = db.prepare(`
       SELECT SUM(total_cost) as total_cost, COUNT(DISTINCT id) as sample_count
-      FROM outbound_records WHERE project_id = ? AND status = 'completed'
+      FROM outbound_records WHERE project_id = ? AND status = 'completed' AND is_deleted = 0
     `).get(id) as any
 
     success(res, {
