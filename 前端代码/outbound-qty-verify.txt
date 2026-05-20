@@ -1,0 +1,6 @@
+
+Running 1 test using 1 worker
+
+  -  1 [chromium] › e2e\outbound.spec.ts:342:3 › 出库管理 -> 创建项目领用出库单 › OUT-CREATE-PROJ-17. 边界：quantity=0
+
+  1 skipped

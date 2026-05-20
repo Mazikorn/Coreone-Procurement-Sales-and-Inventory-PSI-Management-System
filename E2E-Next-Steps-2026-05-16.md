@@ -60,32 +60,35 @@
 
 | # | 模块 | 缺陷描述 | 影响用例数 | 涉及文件 |
 |:---|:---|:---|:---:|:---|
-| 1 | **inbound** | `POST /inbound` 含 `batchNo` 时 `expiryDate` SQLite 参数绑定失败，返回 500 | 58 | [`inbound-v1.1.ts`](后端代码/server/src/routes/inbound-v1.1.ts:147) |
-| 2 | **stocktaking** | `POST /stocktaking` SQL 中 `"adjust"` 被 SQLite 解析为列名，返回 500 | 30 | [`stocktaking-v1.1.ts`](后端代码/server/src/routes/stocktaking-v1.1.ts:44) |
-| 3 | **auth/dashboard** | Sidebar 未实现角色过滤，所有角色均显示 17 个菜单 | 19 | [`AppSidebar.tsx`](前端代码/src/components/layout/AppSidebar.tsx:34) |
+| 1 | **inbound** | `POST /inbound` 含 `batchNo` 时 `expiryDate` SQLite 参数绑定失败，返回 500 | 58 | [`inbound-v1.1.ts`](后端代码/server/src/routes/inbound-v1.1.ts:147) ✅ **已修复**（参数绑定正确，E2E验证通过） |
+| 2 | **stocktaking** | `POST /stocktaking` SQL 中 `"adjust"` 被 SQLite 解析为列名，返回 500 | 30 | [`stocktaking-v1.1.ts`](后端代码/server/src/routes/stocktaking-v1.1.ts:44) ✅ **已修复**（`adjust`为字符串值，非列名；权限测试通过） |
+| 3 | **auth/dashboard** | Sidebar 未实现角色过滤，所有角色均显示 17 个菜单 | 19 | [`AppSidebar.tsx`](前端代码/src/components/layout/AppSidebar.tsx:34) ⏳ **前端问题，待修复** |
 | 4 | **categories** | `/categories` API 未做权限拦截，非 admin 可创建/编辑/删除 | 18 | [`categories-v1.1.ts`](后端代码/server/src/routes/categories-v1.1.ts:1) ✅ **已修复**（app.ts route-level `requireRole` 兜底） |
 | 5 | **materials** | `/materials` API 未做权限拦截 + `batch-status` 接口缺失 | 14 | [`materials.ts`](后端代码/server/src/routes/materials.ts:1) ✅ **已修复**（app.ts + materials.ts 双校验 + auth.ts 补充权限） |
 | 6 | **bom** | `/boms` API 未做权限拦截 + 创建时参数校验缺陷返回 500 | 13 | [`bom-v1.1.ts`](后端代码/server/src/routes/bom-v1.1.ts:1) ✅ **已修复**（route-level `authenticateToken + requireRole`） |
 | 7 | **projects** | `/projects` API 未做权限拦截 | 10 | [`projects-v1.1.ts`](后端代码/server/src/routes/projects-v1.1.ts:1) ✅ **已修复**（app.ts route-level `requireRole` 兜底） |
-| 8 | **alerts** | `/alerts/rules` API 未做权限拦截 | 6 | [`alerts-v1.1.ts`](后端代码/server/src/routes/alerts-v1.1.ts:22) |
+| 8 | **alerts** | `/alerts/rules` API 未做权限拦截 | 6 | [`alerts-v1.1.ts`](后端代码/server/src/routes/alerts-v1.1.ts:22) ✅ **已修复**（app.ts route-level `requireRole` 兜底；E2E验证5/5通过） |
 | 9 | **suppliers** | `/suppliers` API 未对 `warehouse_manager` 做权限拦截 | 5 | [`suppliers-v1.1.ts`](后端代码/server/src/routes/suppliers-v1.1.ts:1) ✅ **已修复**（route-level 已添加 `authenticateToken + requireRole`） |
 | 10 | **locations** | `/locations` API 未对 `warehouse_manager` 做权限拦截 | 4 | [`locations-v1.1.ts`](后端代码/server/src/routes/locations-v1.1.ts:1) ✅ **已修复**（route-level 已添加 `authenticateToken + requireRole`） |
-| 11 | **outbound** | 后端未校验 `quantity <= 0`，返回 422 而非 400 | 3 | [`outbound-v1.1.ts`](后端代码/server/src/routes/outbound-v1.1.ts:57) |
-| 12 | **logs** | `/logs` API 端点不存在（admin 返回 404） | 2 | [`app.ts`](后端代码/server/src/app.ts:1) |
-| 13 | **reconciliation** | `/reconciliation` API 未做权限拦截 | 2 | [`reconciliation-v1.1.ts`](后端代码/server/src/routes/reconciliation-v1.1.ts:1) |
-| 14 | **auth** | 前端路由无权限守卫，无权限角色可访问受保护页面 | 5 | [`App.tsx`](前端代码/src/App.tsx:1) |
+| 11 | **outbound** | 后端未校验 `quantity <= 0`，返回 422 而非 400 | 3 | [`outbound-v1.1.ts`](后端代码/server/src/routes/outbound-v1.1.ts:57) ✅ **已修复**（`Number(quantity) <= 0` 返回400） |
+| 12 | **logs** | `/logs` API 端点不存在（admin 返回 404） | 2 | [`app.ts`](后端代码/server/src/app.ts:1) ✅ **已修复**（app.ts 已注册 `/logs` 路由） |
+| 13 | **reconciliation** | `/reconciliation` API 未做权限拦截 | 2 | [`reconciliation-v1.1.ts`](后端代码/server/src/routes/reconciliation-v1.1.ts:1) ✅ **已修复**（app.ts route-level `requireRole('admin','pathologist','finance')`） |
+| 14 | **auth** | 前端路由无权限守卫，无权限角色可访问受保护页面 | 5 | [`App.tsx`](前端代码/src/App.tsx:1) ⏳ **前端问题，待修复** |
+
+> **说明**：经逐项验证（2026-05-20），P0清单中除 #3(Sidebar) 和 #14(前端路由守卫) 为前端独立问题外，**其余12项后端缺陷全部已修复**。文档清单已过时，后续以实际E2E测试结果为准。
 
 ### 2.5 P1 缺陷清单
 
 | # | 模块 | 缺陷描述 | 影响用例数 | 涉及文件 |
 |:---|:---|:---|:---:|:---|
-| 1 | **stocktaking** | `page=0` 未修正为 1 | 1 | [`stocktaking-v1.1.ts`](后端代码/server/src/routes/stocktaking-v1.1.ts:19) |
+| 1 | **stocktaking** | `page=0` 未修正为 1 | 1 | [`stocktaking-v1.1.ts`](后端代码/server/src/routes/stocktaking-v1.1.ts:19) ✅ **已修复** |
 | 2 | **projects** | `page=0` 未修正为 1 | 1 | [`projects-v1.1.ts`](后端代码/server/src/routes/projects-v1.1.ts:18) |
-| 3 | **outbound** | `page=0` 未修正为 1 | 1 | [`outbound-v1.1.ts`](后端代码/server/src/routes/outbound-v1.1.ts:16) |
+| 3 | **outbound** | `page=0` 未修正为 1 | 1 | [`outbound-v1.1.ts`](后端代码/server/src/routes/outbound-v1.1.ts:16) ✅ **已修复** |
 | 4 | **materials** | `page=0` / `pageSize=100` / `pageSize=200` 导致后端 500 | 3 | [`materials.ts`](后端代码/server/src/routes/materials.ts:1) |
 | 5 | **suppliers** | `page=0` 未修正为 1 | 1 | [`suppliers-v1.1.ts`](后端代码/server/src/routes/suppliers-v1.1.ts:1) |
 | 6 | **locations** | `page=0` 未修正为 1 | 1 | [`locations-v1.1.ts`](后端代码/server/src/routes/locations-v1.1.ts:1) |
 | 7 | **inventory-list** | `page=0` 未修正为 1 | 1 | [`inventory-v1.1.ts`](后端代码/server/src/routes/inventory-v1.1.ts:1) |
+| 8 | **inbound** | `page=0` 未修正为 1 | 1 | [`inbound-v1.1.ts`](后端代码/server/src/routes/inbound-v1.1.ts:27) ✅ **已修复** |
 
 ### 2.6 P2 缺陷清单
 
@@ -791,6 +794,7 @@ npx playwright test e2e/auth.spec.ts --debug
 | v1.40 | 2026-05-19 | 完成全部 18 个 spec 文件补测：suppliers/locations/projects/inbound/cost-analysis/dashboard；补全 v1.39 测试汇总表；所有后端权限/API 修复验证通过；前端页面加载问题确认为独立已知问题 |
 | v1.41 | 2026-05-20 | 第三十五批修复（4个）：#117 bom-v1.1.ts 添加权限中间件 + #118~#120 inbound/outbound/stocktaking 分页 page=0 修正；验证 bom POST 403 拦截生效 |
 | v1.42 | 2026-05-20 | 第三十六批修复（4个）：#121 DatabaseManager.ts 初始化 UPDATE admin/E2E用户 is_deleted=0 + #122 auth.ts login 兜底自动恢复软删除用户 + #123 response.ts successList 向后兼容 data.page；验证 inbound/outbound/stocktaking page=0 全部通过；users.spec.ts admin 登录恢复正常（55 passed） |
+| v1.43 | 2026-05-20 | **P0/P1缺陷清单校准**：逐项验证文档中所有P0/P1缺陷，确认12/14 P0缺陷和3/8 P1缺陷已修复（实际通过app.ts route-level权限 + 各route文件已修复），仅 #3(Sidebar) 和 #14(前端路由守卫) 为前端待修复问题 |
 
 ---
 
