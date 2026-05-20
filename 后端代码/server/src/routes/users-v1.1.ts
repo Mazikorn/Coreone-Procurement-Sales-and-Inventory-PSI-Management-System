@@ -50,6 +50,10 @@ router.put('/:id', (req, res) => {
     const db = getDatabase()
     const existing = db.prepare('SELECT * FROM users WHERE id = ? AND is_deleted = 0').get(id) as any
     if (!existing) { error(res, 'Not found', 'NOT_FOUND', 404); return }
+    // 禁止停用 admin 账户
+    if ((existing.username === 'admin' || existing.id === 'USER-001') && data.status !== undefined && data.status !== 'active') {
+      error(res, 'Cannot disable admin account', 'BUSINESS_CONFLICT', 409); return
+    }
     const fields: string[] = []; const params: any[] = []
     if (data.realName !== undefined) { fields.push('real_name = ?'); params.push(data.realName) }
     if (data.role !== undefined) { fields.push('role = ?'); params.push(data.role) }
@@ -69,6 +73,10 @@ router.delete('/:id', (req, res) => {
     const db = getDatabase()
     const existing = db.prepare('SELECT * FROM users WHERE id = ? AND is_deleted = 0').get(id)
     if (!existing) { error(res, 'Not found', 'NOT_FOUND', 404); return }
+    // 禁止删除 admin 账户
+    if (existing.username === 'admin' || existing.id === 'USER-001') {
+      error(res, 'Cannot delete admin account', 'BUSINESS_CONFLICT', 409); return
+    }
     db.prepare('UPDATE users SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(id)
     success(res, null, 'Deleted')
   } catch (err: any) { error(res, err.message) }

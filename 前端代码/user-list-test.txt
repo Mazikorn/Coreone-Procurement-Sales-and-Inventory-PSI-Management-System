@@ -1,0 +1,6 @@
+
+Running 1 test using 1 worker
+
+  ok 1 [chromium] › e2e\users.spec.ts:64:3 › 用户管理 -> 查看用户列表 › USER-LIST-01. 正常用例：admin可查看用户列表 (4.0s)
+
+  1 passed (7.1s)

@@ -1,0 +1,6 @@
+
+Running 1 test using 1 worker
+
+  ok 1 [chromium] › e2e\users.spec.ts:432:3 › 用户管理 -> 用户详情弹窗 › USER-DETAIL-01. 正常用例：点击详情打开弹窗 (4.5s)
+
+  1 passed (6.4s)
