@@ -82,7 +82,7 @@ router.post('/', authenticateToken, requireBomWrite, (req, res) => {
     for (const m of materials) {
       const itemId = uuidv4()
       const usage = Number(m.usagePerSample)
-      if (isNaN(usage) || usage <= 0) {
+      if (isNaN(usage) || usage < 0) {
         error(res, 'Invalid usage_per_sample', 'INVALID_PARAMETER', 400); return
       }
       db.prepare('INSERT INTO bom_items (id, bom_id, material_id, usage_per_sample, unit) VALUES (?, ?, ?, ?, ?)')
@@ -117,7 +117,7 @@ router.put('/:id', authenticateToken, requireBomWrite, (req, res) => {
       for (const m of materials) {
         const itemId = uuidv4()
         const usage = Number(m.usagePerSample)
-        if (isNaN(usage) || usage <= 0) {
+        if (isNaN(usage) || usage < 0) {
           error(res, 'Invalid usage_per_sample', 'INVALID_PARAMETER', 400); return
         }
         db.prepare('INSERT INTO bom_items (id, bom_id, material_id, usage_per_sample, unit) VALUES (?, ?, ?, ?, ?)')
