@@ -339,7 +339,7 @@ test.describe('供应商管理 -> 编辑供应商', () => {
     const token = await apiLogin('admin')
     const id = await getAnySupplierId(token)
     if (!id) { test.skip(); return }
-    const res = await apiFetch(token, 'PUT', `/suppliers/${id}`, { code: 'NEW-CODE' })
+    const res = await apiFetch(token, 'PUT', `/suppliers/${id}`, { code: `NEW-CODE-${Date.now()}` })
     expect([200, 404]).toContain(res.status)
   })
   test('SUP-EDIT-06. 并发：并发编辑同一供应商', async () => {

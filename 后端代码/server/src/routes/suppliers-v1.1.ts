@@ -78,7 +78,10 @@ router.put('/:id', authenticateToken, requireSupplierWrite, (req, res) => {
     if (data.status !== undefined) { fields.push('status = ?'); params.push(data.status === 'active' ? 1 : 0) }
     if (fields.length > 0) { params.push(id); db.prepare(`UPDATE suppliers SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND is_deleted = 0`).run(...params) }
     success(res, { id }, 'Updated')
-  } catch (err: any) { error(res, err.message) }
+  } catch (err: any) {
+    if (err.message.includes('UNIQUE')) { error(res, 'Code exists', 'RESOURCE_CONFLICT', 409); return }
+    error(res, err.message)
+  }
 })
 
 router.delete('/:id', authenticateToken, requireSupplierWrite, (req, res) => {

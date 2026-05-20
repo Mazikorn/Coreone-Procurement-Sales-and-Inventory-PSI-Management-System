@@ -7,7 +7,7 @@ import { authenticateToken, requireRole } from '../middleware/auth.js'
 const router = Router()
 
 const requireLocationRead = requireRole('admin', 'warehouse_manager')
-const requireLocationWrite = requireRole('admin', 'warehouse_manager')
+const requireLocationWrite = requireRole('admin')
 
 router.get('/', authenticateToken, requireLocationRead, (req, res) => {
   try {
@@ -78,6 +78,8 @@ router.put('/:id', authenticateToken, requireLocationWrite, (req, res) => {
     const { id } = req.params
     const data = req.body
     const db = getDatabase()
+    const existing = db.prepare('SELECT * FROM locations WHERE id = ? AND is_deleted = 0').get(id)
+    if (!existing) { error(res, 'Not found', 'NOT_FOUND', 404); return }
     const fields: string[] = []; const params: any[] = []
     if (data.code !== undefined) { fields.push('code = ?'); params.push(data.code) }
     if (data.name !== undefined) { fields.push('name = ?'); params.push(data.name) }
