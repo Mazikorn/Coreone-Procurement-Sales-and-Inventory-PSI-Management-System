@@ -82,13 +82,15 @@
 | # | 模块 | 缺陷描述 | 影响用例数 | 涉及文件 |
 |:---|:---|:---|:---:|:---|
 | 1 | **stocktaking** | `page=0` 未修正为 1 | 1 | [`stocktaking-v1.1.ts`](后端代码/server/src/routes/stocktaking-v1.1.ts:19) ✅ **已修复** |
-| 2 | **projects** | `page=0` 未修正为 1 | 1 | [`projects-v1.1.ts`](后端代码/server/src/routes/projects-v1.1.ts:18) |
+| 2 | **projects** | `page=0` 未修正为 1 | 1 | [`projects-v1.1.ts`](后端代码/server/src/routes/projects-v1.1.ts:18) ✅ **已修复** |
 | 3 | **outbound** | `page=0` 未修正为 1 | 1 | [`outbound-v1.1.ts`](后端代码/server/src/routes/outbound-v1.1.ts:16) ✅ **已修复** |
-| 4 | **materials** | `page=0` / `pageSize=100` / `pageSize=200` 导致后端 500 | 3 | [`materials.ts`](后端代码/server/src/routes/materials.ts:1) |
-| 5 | **suppliers** | `page=0` 未修正为 1 | 1 | [`suppliers-v1.1.ts`](后端代码/server/src/routes/suppliers-v1.1.ts:1) |
-| 6 | **locations** | `page=0` 未修正为 1 | 1 | [`locations-v1.1.ts`](后端代码/server/src/routes/locations-v1.1.ts:1) |
-| 7 | **inventory-list** | `page=0` 未修正为 1 | 1 | [`inventory-v1.1.ts`](后端代码/server/src/routes/inventory-v1.1.ts:1) |
+| 4 | **materials** | `page=0` / `pageSize=100` / `pageSize=200` 导致后端 500 | 3 | [`materials.ts`](后端代码/server/src/routes/materials.ts:1) ✅ **已修复** |
+| 5 | **suppliers** | `page=0` 未修正为 1 | 1 | [`suppliers-v1.1.ts`](后端代码/server/src/routes/suppliers-v1.1.ts:1) ✅ **已修复** |
+| 6 | **locations** | `page=0` 未修正为 1 | 1 | [`locations-v1.1.ts`](后端代码/server/src/routes/locations-v1.1.ts:1) ✅ **已修复** |
+| 7 | **inventory-list** | `page=0` 未修正为 1 | 1 | [`inventory-v1.1.ts`](后端代码/server/src/routes/inventory-v1.1.ts:1) ✅ **已修复** |
 | 8 | **inbound** | `page=0` 未修正为 1 | 1 | [`inbound-v1.1.ts`](后端代码/server/src/routes/inbound-v1.1.ts:27) ✅ **已修复** |
+
+> **全部8个P1分页缺陷已修复并验证通过**（2026-05-20）
 
 ### 2.6 P2 缺陷清单
 
@@ -795,6 +797,7 @@ npx playwright test e2e/auth.spec.ts --debug
 | v1.41 | 2026-05-20 | 第三十五批修复（4个）：#117 bom-v1.1.ts 添加权限中间件 + #118~#120 inbound/outbound/stocktaking 分页 page=0 修正；验证 bom POST 403 拦截生效 |
 | v1.42 | 2026-05-20 | 第三十六批修复（4个）：#121 DatabaseManager.ts 初始化 UPDATE admin/E2E用户 is_deleted=0 + #122 auth.ts login 兜底自动恢复软删除用户 + #123 response.ts successList 向后兼容 data.page；验证 inbound/outbound/stocktaking page=0 全部通过；users.spec.ts admin 登录恢复正常（55 passed） |
 | v1.43 | 2026-05-20 | **P0/P1缺陷清单校准**：逐项验证文档中所有P0/P1缺陷，确认12/14 P0缺陷和3/8 P1缺陷已修复（实际通过app.ts route-level权限 + 各route文件已修复），仅 #3(Sidebar) 和 #14(前端路由守卫) 为前端待修复问题 |
+| v1.44 | 2026-05-20 | 第三十七批修复（5个）：projects/suppliers/locations/materials/inventory-v1.1.ts 分页 page=0 规范化 + pageSize clamp；验证全部5个page=0 E2E测试通过（MAT/PROJ/INV/LOC/SUP-PAGE-03） |
 
 ---
 

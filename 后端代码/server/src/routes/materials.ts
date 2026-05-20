@@ -12,7 +12,8 @@ const requireMaterialWrite = requireRole('admin')
 router.get('/', (req, res) => {
   try {
     let { page = 1, pageSize = 20, keyword, categoryId, supplierId, status } = req.query
-    pageSize = Math.min(Number(pageSize), 200)
+    page = Math.max(1, Number(page) || 1)
+    pageSize = Math.max(1, Math.min(200, Number(pageSize) || 20))
     const db = getDatabase()
 
     let where = 'm.is_deleted = 0'

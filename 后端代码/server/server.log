@@ -3,15 +3,7 @@
 > tsx watch src/app.ts
 
 Database initialized successfully
-(node:30116) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(node:22172) ExperimentalWarning: SQLite is an experimental feature and might change at any time
 (Use `node --trace-warnings ...` to show where the warning was created)
 COREONE Backend Server running on port 3001
 API Base URL: http://localhost:3001/api/v1
-[2026-05-20T02:28:02.553Z] POST /api/v1/auth/login
-[2026-05-20T02:28:02.894Z] GET /api/v1/inbound
-[2026-05-20T02:28:03.622Z] POST /api/v1/auth/login
-[2026-05-20T02:28:04.002Z] GET /api/v1/inbound
-[2026-05-20T02:28:26.024Z] POST /api/v1/auth/login
-[2026-05-20T02:28:26.330Z] GET /api/v1/stocktaking
-[2026-05-20T02:28:26.334Z] POST /api/v1/auth/login
-[2026-05-20T02:28:26.633Z] GET /api/v1/stocktaking

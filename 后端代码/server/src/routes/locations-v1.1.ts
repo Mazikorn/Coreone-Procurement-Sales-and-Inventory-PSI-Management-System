@@ -11,7 +11,9 @@ const requireLocationWrite = requireRole('admin', 'warehouse_manager')
 
 router.get('/', authenticateToken, requireLocationRead, (req, res) => {
   try {
-    const { page = 1, pageSize = 20, zone, status, type } = req.query
+    let { page = 1, pageSize = 20, zone, status, type } = req.query
+    page = Math.max(1, Number(page) || 1)
+    pageSize = Math.max(1, Math.min(100, Number(pageSize) || 20))
     const db = getDatabase()
     let where = 'is_deleted = 0'
     const params: any[] = []
