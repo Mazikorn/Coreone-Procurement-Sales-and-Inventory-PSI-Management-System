@@ -202,6 +202,8 @@ router.put('/:id', requireWriteAccess, (req, res) => {
     const { id } = req.params
     const { batchNo, quantity, price, supplierId, locationId, productionDate, expiryDate, remark } = req.body
     const db = getDatabase()
+    const existing = db.prepare('SELECT * FROM inbound_records WHERE id = ? AND is_deleted = 0').get(id)
+    if (!existing) { error(res, 'Not found', 'NOT_FOUND', 404); return }
     const fields: string[] = []; const params: any[] = []
     if (batchNo !== undefined) { fields.push('batch_no = ?'); params.push(batchNo || null) }
     if (quantity !== undefined) { fields.push('quantity = ?'); params.push(quantity) }

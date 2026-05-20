@@ -1904,8 +1904,8 @@ test.describe('入库管理 -> 盲点分析补充', () => {
     await loginAs(page, 'admin')
     await page.goto(`${FE_BASE}/inbound`)
     await page.waitForTimeout(1000)
-    const printBtn = page.locator('button:has-text("打印"), button:has-text("Print")').first()
-    await expect(printBtn.or(page.locator('body'))).toBeVisible()
+    const printBtn = page.locator('button:has-text("打印"), button:has-text("Print")')
+    await expect(printBtn.or(page.locator('body')).first()).toBeVisible()
   })
   test('BLIND-IN-17. 入库单扫码功能', async ({ page }) => {
     await loginAs(page, 'admin')
