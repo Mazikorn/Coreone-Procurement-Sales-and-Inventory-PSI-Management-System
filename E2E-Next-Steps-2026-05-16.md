@@ -789,6 +789,7 @@ npx playwright test e2e/auth.spec.ts --debug
 | v1.38 | 2026-05-19 | 补测 materials.ts：发现 app.ts /materials 路由缺少角色限制 + materials.ts requireMaterialWrite 过宽 + auth.ts technician/pathologist 缺少 materials 权限（#115），修复后 materials.spec.ts 136/136 通过 |
 | v1.39 | 2026-05-19 | 补测 outbound/stocktaking/reconciliation/bom/categories + 基线测试 auth/users/roles；发现 DatabaseManager.ts 初始化缺少 E2E 角色用户（#116），修复后 outbound 59/59 通过；users/roles 失败为前端页面加载问题 |
 | v1.40 | 2026-05-19 | 完成全部 18 个 spec 文件补测：suppliers/locations/projects/inbound/cost-analysis/dashboard；补全 v1.39 测试汇总表；所有后端权限/API 修复验证通过；前端页面加载问题确认为独立已知问题 |
+| v1.41 | 2026-05-20 | 第三十五批修复（4个）：#117 bom-v1.1.ts 添加权限中间件 + #118~#120 inbound/outbound/stocktaking 分页 page=0 修正；验证 bom POST 403 拦截生效 |
 
 ---
 
