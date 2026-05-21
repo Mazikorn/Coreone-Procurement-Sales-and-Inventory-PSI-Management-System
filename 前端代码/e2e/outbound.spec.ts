@@ -353,7 +353,7 @@ test.describe('出库管理 -> 创建项目领用出库单', () => {
       type: 'project', projectId: pid, items: [{ materialId: mid, quantity: 1 }], remark: 'E2E格式',
     })
     if (res.status === 201) {
-      expect(res.data?.data?.outboundNo).toMatch(/^OB-\d{8}-\d{3}$/)
+      expect(res.data?.data?.outboundNo).toMatch(/^OB-\d{8}-\d{6}-\d{3}$/)
     }
   })
   test('OUT-CREATE-PROJ-17. 边界：quantity=0', async () => {

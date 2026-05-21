@@ -158,7 +158,105 @@ router.post('/', (req, res) => {
       throw err
     }
 
-    success(res, { id, outboundNo, type, projectId, totalCost, status: 'completed' }, 'Outbound created', 201)
+    success(res, { id, outboundNo, type, projectId, totalCost, status: 'completed', createdAt: new Date().toISOString() }, 'Outbound created', 201)
+  } catch (err: any) { error(res, err.message) }
+})
+
+router.post('/bom', (req, res) => {
+  try {
+    const { projectId, bomId, sampleCount, remark } = req.body
+    if (!bomId || sampleCount === undefined || sampleCount === null) {
+      error(res, 'Missing required fields', 'INVALID_PARAMETER', 400); return
+    }
+    const sc = Number(sampleCount)
+    if (isNaN(sc) || sc <= 0) {
+      error(res, 'Invalid sampleCount', 'INVALID_PARAMETER', 400); return
+    }
+
+    const db = getDatabase()
+    const outboundNo = generateOutboundNo()
+    const id = uuidv4()
+    const operator = req.body.operator || 'system'
+
+    const project = db.prepare('SELECT * FROM projects WHERE id = ? AND is_deleted = 0').get(projectId) as any
+    if (!project) { error(res, 'Project not found', 'NOT_FOUND', 404); return }
+
+    const bomItems = db.prepare(`
+      SELECT bi.*, m.name, m.spec FROM bom_items bi
+      JOIN materials m ON bi.material_id = m.id AND m.is_deleted = 0
+      WHERE bi.bom_id = ?
+    `).all(bomId) as any[]
+    if (!bomItems || bomItems.length === 0) {
+      error(res, 'BOM is empty', 'INVALID_PARAMETER', 400); return
+    }
+
+    let totalCost = 0
+    const outboundItems: any[] = []
+
+    for (const item of bomItems) {
+      const quantity = item.usage_per_sample * sc
+      if (quantity <= 0) continue
+      const inv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(item.material_id) as any
+      if (!inv || inv.stock < quantity) {
+        error(res, 'Insufficient stock', 'STOCK_INSUFFICIENT', 422); return
+      }
+      const batch = db.prepare(`
+        SELECT b.* FROM batches b
+        JOIN materials m ON b.material_id = m.id
+        WHERE b.material_id = ? AND b.remaining > 0 AND b.status = 1 AND m.is_deleted = 0
+        ORDER BY b.expiry_date ASC
+      `).get(item.material_id) as any
+      const unitCost = batch?.inbound_price || 0
+      const itemCost = unitCost * quantity
+      totalCost += itemCost
+      outboundItems.push({ materialId: item.material_id, batchId: batch?.id || null, batchNo: batch?.batch_no || null, quantity, unitCost, itemCost })
+    }
+
+    const materialUnits = db.prepare('SELECT id, unit FROM materials WHERE id IN (' + bomItems.map(() => '?').join(',') + ')').all(...bomItems.map((i: any) => i.material_id)) as any[]
+    const unitMap = new Map(materialUnits.map((m: any) => [m.id, m.unit]))
+
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      for (const item of bomItems) {
+        const quantity = item.usage_per_sample * sc
+        const invCheck = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(item.material_id) as any
+        if (!invCheck || invCheck.stock < quantity) {
+          db.exec('ROLLBACK')
+          error(res, 'Insufficient stock', 'STOCK_INSUFFICIENT', 422); return
+        }
+      }
+      db.prepare(`
+        INSERT INTO outbound_records (id, outbound_no, type, project_id, total_cost, operator, status, remark)
+        VALUES (?, ?, ?, ?, ?, ?, 'completed', ?)
+      `).run(id, outboundNo, 'bom', projectId || null, totalCost, operator, remark || null)
+      for (const oi of outboundItems) {
+        const itemId = uuidv4()
+        db.prepare(`
+          INSERT INTO outbound_items (id, outbound_id, material_id, batch_id, batch_no, quantity, unit, unit_cost, total_cost, usage, receiver)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(itemId, id, oi.materialId, oi.batchId, oi.batchNo, oi.quantity, unitMap.get(oi.materialId) || 'pcs', oi.unitCost, oi.itemCost, 'self', null)
+        db.prepare('UPDATE inventory SET stock = stock - ? WHERE material_id = ?').run(oi.quantity, oi.materialId)
+        if (oi.batchId) {
+          db.prepare('UPDATE batches SET remaining = remaining - ? WHERE id = ?').run(oi.quantity, oi.batchId)
+          const batchRemaining = (db.prepare('SELECT remaining FROM batches WHERE id = ?').get(oi.batchId) as any)?.remaining
+          if (batchRemaining <= 0) {
+            db.prepare('UPDATE batches SET status = 0 WHERE id = ?').run(oi.batchId)
+          }
+        }
+        const logId = uuidv4()
+        const beforeStock = (db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(oi.materialId) as any)?.stock || 0
+        const afterStock = beforeStock - oi.quantity
+        db.prepare(`
+          INSERT INTO stock_logs (id, type, material_id, quantity, before_stock, after_stock, related_id, related_type, operator)
+          VALUES (?, 'outbound', ?, ?, ?, ?, ?, 'outbound', ?)
+        `).run(logId, oi.materialId, -oi.quantity, beforeStock, afterStock, id, operator)
+      }
+      db.exec('COMMIT')
+    } catch (err) {
+      db.exec('ROLLBACK')
+      throw err
+    }
+    success(res, { id, outboundNo, type: 'bom', projectId, totalCost, status: 'completed', createdAt: new Date().toISOString() }, 'BOM outbound created', 201)
   } catch (err: any) { error(res, err.message) }
 })
 
