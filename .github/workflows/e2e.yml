@@ -1,0 +1,56 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # 1. 安装后端依赖并初始化数据库
+      - name: Install backend dependencies
+        working-directory: 后端代码/server
+        run: npm ci
+
+      - name: Seed database
+        working-directory: 后端代码/server
+        run: npx tsx scripts/seed-acceptance-data.ts
+
+      # 2. 安装前端依赖
+      - name: Install frontend dependencies
+        working-directory: 前端代码
+        run: npm ci
+
+      # 3. 安装 Playwright 浏览器
+      - name: Install Playwright browsers
+        working-directory: 前端代码
+        run: npx playwright install --with-deps chromium
+
+      # 4. 运行 E2E 测试
+      - name: Run E2E tests
+        working-directory: 前端代码
+        run: npm run test:e2e:ci
+        env:
+          CI: true
+
+      # 5. 上传测试报告（失败时也会上传）
+      - name: Upload E2E report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-report
+          path: 前端代码/e2e-report/
+          retention-days: 7

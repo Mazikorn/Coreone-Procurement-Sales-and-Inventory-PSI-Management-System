@@ -12,6 +12,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:e2e:ci": "playwright test --reporter=list",
     "watch:build": "powershell -ExecutionPolicy Bypass -File ./watch-and-build.ps1",
     "watch:dev": "powershell -ExecutionPolicy Bypass -File ./watch-and-build.ps1 -BuildCommand npm run build:dev"
   },
