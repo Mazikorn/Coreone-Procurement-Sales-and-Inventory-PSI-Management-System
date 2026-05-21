@@ -77,9 +77,26 @@ async function cleanupTestData(token: string) {
   } catch { /* ignore */ }
 }
 
+async function ensureStock(token: string, materialId: string, quantity: number): Promise<void> {
+  try {
+    const inv = await apiFetch(token, 'GET', `/inventory?page=1&pageSize=1&materialId=${materialId}`)
+    const stock = inv.data?.data?.list?.[0]?.stock || 0
+    if (stock >= quantity) return
+    const lid = await getAnyLocationId(token)
+    if (!lid) return
+    await apiFetch(token, 'POST', '/inbound', {
+      type: 'purchase', materialId, quantity: quantity - stock + 10,
+      locationId: lid, remark: 'E2E stock seed',
+    })
+  } catch { /* ignore */ }
+}
+
 test.beforeEach(async () => {
   const token = await apiLogin('admin')
   await cleanupTestData(token)
+  // Ensure first material has enough stock for outbound tests
+  const mid = await getAnyMaterialId(token)
+  if (mid) await ensureStock(token, mid, 20)
 })
 
 // ────────────────────────────────────────────
