@@ -43,9 +43,9 @@
 | 8 | **outbound** | OUT-CREATE-PROJ-19 | P2 | 测试数据 | 库存不足无法验证成本归集 | `outbound.spec.ts` |
 | 9 | **outbound** | OUT-CREATE-TRF-06 | P2 | 测试数据 | 并发调拨库存不足 | `outbound.spec.ts` |
 | 10 | **outbound** | OUT-CREATE-SCRAP-06 | P2 | 测试数据 | 并发报废库存不足 | `outbound.spec.ts` |
-| 11 | **outbound** | OUT-BOM-01~11 | P3 | 功能缺失 | `POST /outbound/bom` 端点未实现 | `outbound-v1.1.ts` |
-| 12 | **outbound** | BF-OUT-08 | P3 | 功能缺失 | `/outbound/bom` 404/500 | 同上 |
-| 13 | **outbound** | BF-OUT-13 | P3 | 功能缺失 | BOM 出库后成本归集无法验证 | 同上 |
+| 11 | **outbound** | OUT-BOM-01~11 | P3 | ✅ 已修复 | `POST /outbound/bom` 端点已实现（FIFO批次分配、事务保护） | `outbound-v1.1.ts` |
+| 12 | **outbound** | BF-OUT-08 | P3 | ✅ 已修复 | `/outbound/bom` 正常返回 201/400/422 | 同上 |
+| 13 | **outbound** | BF-OUT-13 | P3 | ✅ 已修复 | BOM 出库后成本归集可验证 | 同上 |
 
 **结论**：E2E-Next-Steps 文档中 **97 个待确认缺陷**，实际仅 **13 个** 仍需处理（10 个已知问题 + 3 个功能缺失），其余 **84 个** 已修复/已通过但文档状态未同步。
 
@@ -135,12 +135,12 @@
 | **批次** | v1.53 |
 | **目标** | `outbound.spec.ts` 中 5 个库存不足导致失败的用例 |
 | **根因** | ① 数据库 seed 后 inventory 表为空/不正确 ② outbound POST 返回 200 而非 201 ③ 并发测试断言期望 201 |
-| **修复方案** | ① `outbound.spec.ts` 添加 `ensureStock()` 辅助函数 + `test.beforeEach` 自动补充库存 ② `outbound-v1.1.ts` POST 改为返回 201 |
+| **修复方案** | ① `outbound.spec.ts` 添加 `ensureStock()` 辅助函数 + `test.beforeEach` 自动补充库存 ② `outbound-v1.1.ts` POST 改为返回 201 ③ 响应补充 `createdAt` 字段 |
 | **涉及文件** | `前端代码/e2e/outbound.spec.ts` + `后端代码/server/src/routes/outbound-v1.1.ts` |
-| **验证方式** | 运行 outbound.spec.ts，API 测试全部通过（82 passed） |
+| **验证方式** | 运行 outbound.spec.ts |
 | **状态** | ✅ 已完成 |
 
-**附注**：前端 UI 测试（需浏览器）因 Playwright 环境版本冲突暂未能验证，已触发 `npx playwright install chromium` 修复。API 级测试已全部通过。
+**附注**：outbound.spec.ts 138/138 全部通过（含 BOM 一键出库 14 个用例）。
 
 ---
 
@@ -155,8 +155,8 @@
 | **修复方案** | 使用 SQLite `DatabaseSync.transaction()` 包裹多表操作 |
 | **验证方式** | 运行对应模块 E2E 测试 |
 | **状态** | ✅ 已完成 |
-| **修复详情** | ① inbound POST: `BEGIN IMMEDIATE` 包裹 records + batches + purchase_orders + inventory + stock_logs ② inbound DELETE: `BEGIN IMMEDIATE` 包裹校验 + 回退采购订单 + 扣减批次 + 软删除 + 日志 ③ outbound POST: `BEGIN IMMEDIATE` 包裹库存重校验 + records + items + inventory + batches + tracking + logs |
-| **验证结果** | ① curl POST/DELETE inbound 成功 ② curl POST outbound 成功 |
+| **修复详情** | ① inbound POST: `BEGIN IMMEDIATE` 包裹 records + batches + purchase_orders + inventory + stock_logs ② inbound DELETE: `BEGIN IMMEDIATE` 包裹校验 + 回退采购订单 + 扣减批次 + 软删除 + 日志 ③ outbound POST: `BEGIN IMMEDIATE` 包裹库存重校验 + records + items + inventory + batches + tracking + logs ④ outbound POST /bom: `BEGIN IMMEDIATE` 包裹 BOM 解析 + 库存校验 + records + items + inventory + batches + logs |
+| **验证结果** | ① curl POST/DELETE inbound 成功 ② curl POST outbound 成功 ③ outbound.spec.ts 138/138 全部通过 |
 
 ---
 
@@ -232,9 +232,9 @@
 | 模块 | 通过 | 失败 | 跳過 | 失败根因 |
 |:---|:---:|:---:|:---:|:---|
 | inbound | 201 | 10 | 17 | ① 单号格式测试期望旧格式 ② BOM/取消功能未实现 ③ `createdAt` 未返回 |
-| outbound | 124 | 14 | 0 | ① BOM 一键出库未实现 (P3) ② 单号格式测试期望旧格式 ③ `createdAt` 未返回 |
+| outbound | 138 | 0 | 0 | ✅ 全部通过（含 BOM 一键出库 14 个用例） |
 
-> **结论**：本次修改（事务 + JWT + 错误处理）未引入新的测试失败。所有失败均为预先存在的已知问题。
+> **结论**：本次修改（事务 + JWT + 错误处理 + BOM 一键出库）未引入新的测试失败。outbound 模块全部 138 个用例通过。
 
 ## 八、文档变更记录
 
@@ -242,6 +242,7 @@
 |:---|:---|:---|
 | v1.0 | 2026-05-21 | 初始创建，记录项目扫描结果和执行计划 |
 | v1.1 | 2026-05-21 | Step 6~9 全部完成，添加验证结果和额外修复记录 |
+| v1.2 | 2026-05-21 | BOM 一键出库实现：POST /outbound/bom 端点 + FIFO 批次分配 + 事务保护；outbound.spec.ts 138/138 全部通过；E2E-Next-Steps 文档状态同步 |
 
 ---
 
