@@ -53,6 +53,13 @@ export const outboundApi = {
     request.post<OutboundRecord>('/outbound', data),
 }
 
+export const scrapApi = {
+  getList: (params?: PageParams) =>
+    request.get<PaginationData<any>>('/scraps', { params }),
+  create: (data: { materialId: string; quantity: number; reason: string; operator?: string; remark?: string }) =>
+    request.post<any>('/scraps', data),
+}
+
 export const depletionApi = {
   getTracking: (params?: { status?: string }) =>
     request.get<{ list: any[] }>('/depletion/tracking', { params }),

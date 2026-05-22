@@ -18,6 +18,7 @@ interface StocktakingRecord {
   actualStock: number
   difference: number
   operator: string
+  status: string
   createdAt: string
   remark?: string
 }
@@ -80,8 +81,8 @@ export default function Stocktaking() {
   useEffect(() => { fetchData() }, [page, keyword])
 
   const stats = useMemo(() => {
-    const inProgress = 0
-    const completed = data.length
+    const inProgress = data.filter(d => d.status === 'in_progress').length
+    const completed = data.filter(d => d.status === 'completed').length
     const diffCount = data.filter(d => d.difference !== 0).length
     const accuracy = data.length > 0
       ? ((data.filter(d => d.difference === 0).length / data.length) * 100).toFixed(1)

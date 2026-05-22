@@ -10,7 +10,7 @@ import {
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react'
-import { inventoryApi, outboundApi, depletionApi } from '@/api/inventory'
+import { inventoryApi, outboundApi, depletionApi, scrapApi } from '@/api/inventory'
 import { bomApi } from '@/api/master'
 import { materialApi, projectApi, userApi } from '@/api/master'
 import type { InventoryItem, InventoryStats, Project } from '@/types'
@@ -659,8 +659,44 @@ export default function InventoryList() {
     }
   }
 
+  const [scrapReason, setScrapReason] = useState('expired')
+  const [scrapRemark, setScrapRemark] = useState('')
+
   const confirmBatchScrap = async () => {
+    const selectedItems = data.filter(i => selectedIds.has(i.id))
+    if (selectedItems.length === 0) {
+      toast.error('请先选择要报废的物料')
+      return
+    }
+    if (!scrapReason) {
+      toast.error('请选择报废原因')
+      return
+    }
+    const operator = JSON.parse(localStorage.getItem('user') || '{}')?.name || 'system'
+    let successCount = 0
+    let failCount = 0
+    for (const item of selectedItems) {
+      try {
+        await scrapApi.create({
+          materialId: item.materialId,
+          quantity: item.totalQuantity,
+          reason: scrapReason,
+          operator,
+          remark: scrapRemark || undefined,
+        })
+        successCount++
+      } catch (e: any) {
+        failCount++
+        console.error(`报废 ${item.materialName} 失败:`, e)
+      }
+    }
+    if (failCount === 0) {
+      toast.success(`成功报废 ${successCount} 项物料`)
+    } else {
+      toast.success(`成功 ${successCount} 项，失败 ${failCount} 项`)
+    }
     setBatchScrapModalOpen(false)
+    setScrapRemark('')
     clearSelection()
     fetchData()
     fetchStats()
@@ -1739,8 +1775,8 @@ export default function InventoryList() {
       {batchScrapModalOpen && (
         <div className="fixed inset-0 z-50 flex items-start justify-center pt-20">
           <div className="absolute inset-0 bg-black/40" onClick={() => setBatchScrapModalOpen(false)} />
-          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-2xl overflow-hidden">
-            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-2xl overflow-hidden max-h-[80vh] flex flex-col">
+            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
               <h3 className="text-lg font-semibold text-gray-900">批量报废</h3>
               <button
                 onClick={() => setBatchScrapModalOpen(false)}
@@ -1749,10 +1785,57 @@ export default function InventoryList() {
                 &times;
               </button>
             </div>
-            <div className="p-6">
-              <p className="text-sm text-gray-600">确认对选中的 <strong>{selectedIds.size}</strong> 项物料进行批量报废操作？此操作不可撤销。</p>
+            <div className="p-6 overflow-y-auto">
+              <div className="mb-4">
+                <div className="text-sm font-medium text-gray-700 mb-2">选中物料 ({selectedIds.size})</div>
+                <div className="border border-gray-200 rounded-lg overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">物料名称</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">编码</th>
+                        <th className="px-3 py-2 text-right text-xs font-medium text-gray-500">数量</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {data.filter(i => selectedIds.has(i.id)).map(item => (
+                        <tr key={item.id}>
+                          <td className="px-3 py-2 text-gray-900">{item.materialName}</td>
+                          <td className="px-3 py-2 text-gray-500 font-mono text-xs">{item.materialCode}</td>
+                          <td className="px-3 py-2 text-right text-gray-700">{item.totalQuantity} {item.unit}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                  报废原因 <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={scrapReason}
+                  onChange={e => setScrapReason(e.target.value)}
+                  className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm bg-white focus:outline-none focus:border-[#3b82f6]"
+                >
+                  <option value="expired">过期</option>
+                  <option value="damaged">损坏</option>
+                  <option value="expired">变质</option>
+                  <option value="other">其他</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">备注（可选）</label>
+                <textarea
+                  value={scrapRemark}
+                  onChange={e => setScrapRemark(e.target.value)}
+                  rows={2}
+                  placeholder="请输入备注信息"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:border-[#3b82f6] resize-none"
+                />
+              </div>
             </div>
-            <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-end gap-3">
+            <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-end gap-3 flex-shrink-0">
               <button
                 onClick={() => setBatchScrapModalOpen(false)}
                 className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md text-sm font-medium hover:bg-gray-50 transition-all duration-150 ease"
