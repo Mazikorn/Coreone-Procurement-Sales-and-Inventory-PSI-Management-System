@@ -21,7 +21,15 @@ router.get('/', (req, res) => {
     const db = getDatabase()
     let sql = 'SELECT * FROM purchase_orders WHERE is_deleted = 0'
     const params: any[] = []
-    if (status) { sql += ' AND status = ?'; params.push(status) }
+    if (status) {
+      const statuses = String(status).split(',').filter(Boolean)
+      if (statuses.length === 1) {
+        sql += ' AND status = ?'; params.push(statuses[0])
+      } else if (statuses.length > 1) {
+        sql += ' AND status IN (' + statuses.map(() => '?').join(',') + ')'
+        params.push(...statuses)
+      }
+    }
     if (supplierId) { sql += ' AND supplier_id = ?'; params.push(supplierId) }
     if (keyword) { sql += ' AND (order_no LIKE ? OR material_name LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`) }
     sql += ' ORDER BY created_at DESC'

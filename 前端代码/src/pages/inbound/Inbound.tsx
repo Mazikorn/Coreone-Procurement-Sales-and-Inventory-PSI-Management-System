@@ -1,15 +1,18 @@
-﻿import { useState, useEffect, useMemo } from 'react'
+﻿import { useState, useEffect, useMemo, useRef } from 'react'
 import { QrCode } from 'lucide-react'
 import { inboundApi, purchaseOrderApi } from '@/api/inventory'
 import { materialApi, supplierApi, locationApi } from '@/api/master'
 import type { InboundRecord, Material, Supplier, Location } from '@/types'
 import { formatDateTime, formatCurrency, cn } from '@/lib/utils'
 import { toast } from 'sonner'
+import { Modal } from '@/components/ui/Modal'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import { Pagination } from '@/components/ui/Pagination'
 
 // ============================================
 // 类型扩展
 // ============================================
-type InboundStatus = 'completed' | 'cancelled' | 'pending'
+type InboundStatus = 'completed' | 'cancelled'
 
 interface FormData {
   type: 'purchase' | 'direct' | 'return' | 'transfer'
@@ -27,7 +30,7 @@ interface FormData {
   purchaseOrderId: string
 }
 
-type ModalType = 'create' | 'edit' | 'detail' | 'confirm' | 'restore' | 'scan' | 'import' | 'print' | null
+type ModalType = 'create' | 'edit' | 'detail' | 'restore' | 'scan' | 'import' | 'print' | null
 
 // ============================================
 // 辅助函数
@@ -154,15 +157,6 @@ function IconPrinter({ className }: { className?: string }) {
   )
 }
 
-function IconClose({ className }: { className?: string }) {
-  return (
-    <svg className={className} width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <line x1="18" y1="6" x2="6" y2="18" />
-      <line x1="6" y1="6" x2="18" y2="18" />
-    </svg>
-  )
-}
-
 function IconCheck({ className }: { className?: string }) {
   return (
     <svg className={className} width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -233,9 +227,31 @@ export default function Inbound() {
   const [modalType, setModalType] = useState<ModalType>(null)
   const [selectedRecord, setSelectedRecord] = useState<InboundRecord | null>(null)
 
+  // 自定义确认弹窗状态
+  const [confirmModal, setConfirmModal] = useState<{
+    open: boolean
+    title: string
+    message: string
+    onConfirm: (() => void) | null
+  }>({ open: false, title: '', message: '', onConfirm: null })
+
+  const openConfirmModal = (title: string, message: string, onConfirm: () => void) => {
+    setConfirmModal({ open: true, title, message, onConfirm })
+  }
+
+  const closeConfirmModal = () => {
+    setConfirmModal(prev => ({ ...prev, open: false, onConfirm: null }))
+  }
+
   // 表单状态
   const [purchaseOrders, setPurchaseOrders] = useState<any[]>([])
   const [selectedOrderId, setSelectedOrderId] = useState<string>('')
+
+  const selectedOrder = useMemo(() =>
+    purchaseOrders.find(o => o.id === selectedOrderId),
+    [purchaseOrders, selectedOrderId]
+  )
+
   const [form, setForm] = useState<FormData>({
     type: 'purchase', materialId: '', batchNo: '', quantity: 0, price: 0,
     supplierId: '', locationId: '', fromLocationId: '', fromLocationName: '', productionDate: '', expiryDate: '', remark: '', purchaseOrderId: ''
@@ -254,7 +270,7 @@ export default function Inbound() {
       pending: pendingCount,
       cancelled: cancelledCount,
       amount: totalAmount,
-      supplierCount: uniqueSuppliers || 12,
+      supplierCount: uniqueSuppliers,
     }
   }, [data])
 
@@ -373,7 +389,7 @@ export default function Inbound() {
 
   const fetchPurchaseOrders = async () => {
     try {
-      const res = await purchaseOrderApi.getList({ status: 'pending', pageSize: 100 })
+      const res = await purchaseOrderApi.getList({ status: 'pending,partial', pageSize: 100 })
       setPurchaseOrders(res.data?.list || [])
     } catch (e) {
       setPurchaseOrders([])
@@ -448,20 +464,16 @@ export default function Inbound() {
     setModalType('edit')
   }
 
-  const handleDelete = async (record: InboundRecord) => {
-    if (!confirm('确定删除该入库记录？')) return
-    try {
-      await inboundApi.delete(record.id)
-      toast.success('删除成功')
-      fetchData()
-    } catch (e) {
-      toast.error('删除失败')
-    }
-  }
-
-  const openConfirm = (record: InboundRecord) => {
-    setSelectedRecord(record)
-    setModalType('confirm')
+  const handleDelete = (record: InboundRecord) => {
+    openConfirmModal('删除确认', `确定删除入库记录 ${record.inboundNo} 吗？删除后不可恢复。`, async () => {
+      try {
+        await inboundApi.delete(record.id)
+        toast.success('删除成功')
+        fetchData()
+      } catch (e) {
+        toast.error('删除失败')
+      }
+    })
   }
 
   const openRestore = (record: InboundRecord) => {
@@ -481,6 +493,10 @@ export default function Inbound() {
     if (submitting) return
     if (!form.materialId || form.quantity <= 0) {
       toast.error('请选择耗材并输入数量')
+      return
+    }
+    if (selectedOrderId && selectedOrder && form.quantity > selectedOrder.remainingQty) {
+      toast.error(`入库数量不能超过待入库数量 ${selectedOrder.remainingQty}`)
       return
     }
     if (form.type === 'transfer' && !form.fromLocationId && !form.fromLocationName) {
@@ -535,20 +551,51 @@ export default function Inbound() {
     }
   }
 
-  const handleConfirmInbound = () => {
-    toast.success('入库确认成功', { description: '采购订单已确认入库，库存已更新' })
-    closeModal()
-    fetchData()
+  const handleRestoreInbound = async () => {
+    if (!selectedRecord) return
+    try {
+      await inboundApi.update(selectedRecord.id, { status: 'completed' } as any)
+      toast.success('恢复成功', { description: '入库记录已恢复' })
+      closeModal()
+      fetchData()
+    } catch (e: any) {
+      toast.error('恢复失败', { description: e?.message || '请检查后端接口是否支持状态恢复' })
+    }
   }
 
-  const handleRestoreInbound = () => {
-    toast.success('恢复成功', { description: '入库记录已恢复，库存已更新' })
-    closeModal()
-    fetchData()
-  }
-
-  const handleBatchExport = () => {
-    toast.success('导出成功', { description: `正在导出 ${selectedIds.size} 条入库记录...` })
+  const handleBatchExport = async () => {
+    const exportData = selectedIds.size > 0
+      ? data.filter(d => selectedIds.has(d.id))
+      : data
+    if (exportData.length === 0) {
+      toast.error('没有可导出的数据')
+      return
+    }
+    try {
+      const XLSX = await import('xlsx')
+      const rows = exportData.map(row => ({
+        入库单号: row.inboundNo,
+        耗材名称: row.materialName,
+        批号: row.batchNo || '-',
+        入库来源: getTypeLabel(row.type),
+        数量: row.quantity,
+        单位: row.unit,
+        单价: row.price,
+        金额: row.amount || row.price * row.quantity,
+        供应商: row.supplierName || '-',
+        入库时间: formatDateTime(row.createdAt),
+        状态: row.status === 'completed' ? '已完成' : '已取消',
+        备注: row.remark || '-',
+      }))
+      const ws = XLSX.utils.json_to_sheet(rows)
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, '入库记录')
+      const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+      XLSX.writeFile(wb, `入库记录_${dateStr}.xlsx`)
+      toast.success('导出成功', { description: `已导出 ${rows.length} 条记录` })
+    } catch (e) {
+      toast.error('导出失败')
+    }
   }
 
   const handleBatchPrint = () => {
@@ -569,12 +616,7 @@ export default function Inbound() {
     setActiveQuickFilter('all')
   }
 
-  // 处理状态，支持 pending
-  const getRecordStatus = (row: InboundRecord): InboundStatus => {
-    if (row.status === 'cancelled') return 'cancelled'
-    if ((row as any).status === 'pending' || row.quantity > 1000) return 'pending' // 演示用
-    return 'completed'
-  }
+  const getRecordStatus = (row: InboundRecord): InboundStatus => row.status
 
   // ============================================
   // 渲染
@@ -624,7 +666,7 @@ export default function Inbound() {
           className="bg-white rounded-lg p-5 shadow-sm border border-gray-100 cursor-pointer hover:shadow-md transition-shadow"
           style={{ borderLeft: '3px solid #3b82f6' }}
         >
-          <div className="text-2xl font-semibold text-gray-900">{stats.total || 156}</div>
+          <div className="text-2xl font-semibold text-gray-900">{stats.total}</div>
           <div className="text-sm text-gray-500 mt-1">本月入库</div>
         </div>
         <div
@@ -632,7 +674,7 @@ export default function Inbound() {
           className="bg-white rounded-lg p-5 shadow-sm border border-gray-100 cursor-pointer hover:shadow-md transition-shadow"
           style={{ borderLeft: '3px solid #10b981' }}
         >
-          <div className="text-2xl font-semibold text-gray-900">{formatCurrency(stats.amount || 45230)}</div>
+          <div className="text-2xl font-semibold text-gray-900">{formatCurrency(stats.amount)}</div>
           <div className="text-sm text-gray-500 mt-1">入库金额</div>
         </div>
         <div
@@ -640,7 +682,7 @@ export default function Inbound() {
           className="bg-white rounded-lg p-5 shadow-sm border border-gray-100 cursor-pointer hover:shadow-md transition-shadow"
           style={{ borderLeft: '3px solid #f59e0b' }}
         >
-          <div className="text-2xl font-semibold text-gray-900">{stats.pending || 3}</div>
+          <div className="text-2xl font-semibold text-gray-900">{stats.pending}</div>
           <div className="text-sm text-gray-500 mt-1">待入库</div>
         </div>
         <div
@@ -656,10 +698,10 @@ export default function Inbound() {
       {/* 快速筛选 */}
       <div className="flex flex-wrap gap-2">
         {[
-          { key: 'all', label: '全部', count: quickFilterCounts.all || 156 },
-          { key: 'today', label: '今日', count: quickFilterCounts.today || 12 },
-          { key: 'week', label: '本周', count: quickFilterCounts.week || 45 },
-          { key: 'month', label: '本月', count: quickFilterCounts.month || 156 },
+          { key: 'all', label: '全部', count: quickFilterCounts.all },
+          { key: 'today', label: '今日', count: quickFilterCounts.today },
+          { key: 'week', label: '本周', count: quickFilterCounts.week },
+          { key: 'month', label: '本月', count: quickFilterCounts.month },
         ].map(item => (
           <button
             key={item.key}
@@ -898,13 +940,6 @@ export default function Inbound() {
                             >
                               恢复
                             </button>
-                          ) : status === 'pending' ? (
-                            <button
-                              onClick={() => openConfirm(row)}
-                              className="px-2 py-1 text-xs text-white bg-[#3b82f6] hover:bg-blue-600 rounded transition-colors"
-                            >
-                              确认入库
-                            </button>
                           ) : (
                             <button
                               onClick={() => handlePrintRecord(row)}
@@ -924,49 +959,12 @@ export default function Inbound() {
         </div>
 
         {/* 分页 */}
-        {totalPages > 1 && (
-          <div className="px-5 py-4 border-t border-gray-100 flex items-center justify-between">
-            <span className="text-sm text-gray-500">
-              共 {filteredData.length} 条记录，第 {page} / {totalPages} 页
-            </span>
-            <div className="flex items-center gap-1.5">
-              <button
-                onClick={() => setPage(p => Math.max(1, p - 1))}
-                disabled={page === 1}
-                className="px-3 py-1.5 text-sm bg-white border border-gray-200 text-gray-600 rounded-[6px] hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              >
-                上一页
-              </button>
-              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                const pageNum = i + 1
-                return (
-                  <button
-                    key={pageNum}
-                    onClick={() => setPage(pageNum)}
-                    className={cn(
-                      'px-3 py-1.5 text-sm rounded-[6px] transition-colors',
-                      page === pageNum
-                        ? 'bg-[#3b82f6] text-white'
-                        : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'
-                    )}
-                  >
-                    {pageNum}
-                  </button>
-                )
-              })}
-              {totalPages > 5 && (
-                <span className="px-2 text-gray-400">...</span>
-              )}
-              <button
-                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                disabled={page === totalPages}
-                className="px-3 py-1.5 text-sm bg-white border border-gray-200 text-gray-600 rounded-[6px] hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              >
-                下一页
-              </button>
-            </div>
-          </div>
-        )}
+        <Pagination
+          page={page}
+          pageSize={pageSize}
+          total={filteredData.length}
+          onChange={setPage}
+        />
       </div>
 
       {/* ============================================ */}
@@ -1108,10 +1106,17 @@ export default function Inbound() {
                       ({materials.find(m => m.id === form.materialId)?.unit})
                     </span>
                   )}
+                  {selectedOrderId && selectedOrder && selectedOrder.remainingQty > 0 && (
+                    <span className="text-xs text-amber-600 ml-2">
+                      待入库: {selectedOrder.remainingQty}
+                    </span>
+                  )}
                 </label>
                 <input
                   type="number"
                   step="0.01"
+                  min={0.01}
+                  max={selectedOrderId && selectedOrder ? selectedOrder.remainingQty : undefined}
                   value={form.quantity}
                   onChange={e => setForm({ ...form, quantity: Number(e.target.value) })}
                   className="w-full px-3 py-2 h-10 text-sm border border-gray-300 rounded-[6px] focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -1302,73 +1307,6 @@ export default function Inbound() {
         </Modal>
       )}
 
-      {/* 确认入库弹窗 */}
-      {modalType === 'confirm' && selectedRecord && (
-        <Modal onClose={closeModal} title="确认入库">
-          <div className="text-center py-5">
-            <IconCheck className="mx-auto text-green-500 mb-4" />
-            <h4 className="text-base font-semibold text-gray-900 mb-2">确认入库此采购订单？</h4>
-            <p className="text-sm text-gray-500 mb-5">
-              入库单号: <span className="font-mono">{selectedRecord.inboundNo}</span>
-            </p>
-            <div className="bg-gray-50 rounded-lg p-4 text-left mb-4">
-              <div className="flex justify-between mb-2 text-sm">
-                <span className="text-gray-500">耗材名称</span>
-                <span className="font-medium">{selectedRecord.materialName}</span>
-              </div>
-              <div className="flex justify-between mb-2 text-sm">
-                <span className="text-gray-500">订单数量</span>
-                <span className="font-medium">{selectedRecord.quantity}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-500">已到货数量</span>
-                <span className="font-medium text-green-600">{Math.max(1, selectedRecord.quantity - 5)}</span>
-              </div>
-            </div>
-            <div className="text-left">
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                本次入库数量 <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="number"
-                defaultValue={Math.max(1, selectedRecord.quantity - 5)}
-                min={1}
-                max={selectedRecord.quantity}
-                className="w-full px-3 py-2 h-10 text-sm border border-gray-300 rounded-[6px] focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <div className="text-xs text-gray-500 mt-1">剩余待入库: {Math.min(5, selectedRecord.quantity - 1)}</div>
-            </div>
-            <div className="text-left mt-3">
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">入库后处理</label>
-              <div className="flex gap-4">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="radio" name="after-inbound" value="keep" defaultChecked className="text-blue-600" />
-                  <span className="text-sm">保持订单，等待剩余到货</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="radio" name="after-inbound" value="complete" className="text-blue-600" />
-                  <span className="text-sm">完成订单</span>
-                </label>
-              </div>
-            </div>
-          </div>
-          <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-gray-100">
-            <button
-              onClick={closeModal}
-              className="px-4 py-2 text-sm text-gray-600 bg-white border border-gray-300 rounded-[6px] hover:bg-gray-50 transition-colors"
-            >
-              取消
-            </button>
-            <button
-              onClick={handleConfirmInbound}
-              className="px-4 py-2 text-sm text-white bg-[#3b82f6] rounded-[6px] hover:bg-blue-600 transition-colors"
-            >
-              确认入库
-            </button>
-          </div>
-        </Modal>
-      )}
-
       {/* 恢复入库弹窗 */}
       {modalType === 'restore' && selectedRecord && (
         <Modal onClose={closeModal} title="恢复入库">
@@ -1414,19 +1352,46 @@ export default function Inbound() {
       {modalType === 'scan' && (
         <Modal onClose={closeModal} title="扫码入库">
           <div className="text-center py-6">
-            <div
-              className="border-2 border-dashed border-gray-300 rounded-xl p-8 cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-colors"
-              onClick={() => {
-                toast.success('扫码成功', { description: '已识别耗材：DNA提取试剂盒' })
-                setTimeout(() => {
-                  closeModal()
-                  openCreate()
-                }, 800)
-              }}
-            >
-              <QrCode className="w-16 h-16 mx-auto text-gray-400 mb-3" />
-              <div className="text-sm text-gray-600">点击开始扫描</div>
-              <div className="text-xs text-gray-400 mt-1">请将条码对准扫描区域</div>
+            <QrCode className="w-16 h-16 mx-auto text-gray-400 mb-3" />
+            <div className="text-sm text-gray-600 mb-1">请使用扫码枪扫描或手动输入条码</div>
+            <div className="text-xs text-gray-400 mb-4">系统将自动匹配物料信息</div>
+            <div className="max-w-sm mx-auto">
+              <input
+                type="text"
+                autoFocus
+                placeholder="请扫描或输入条码..."
+                className="w-full px-4 py-2.5 text-sm border border-gray-300 rounded-[6px] focus:outline-none focus:ring-2 focus:ring-blue-500"
+                onKeyDown={async (e) => {
+                  if (e.key === 'Enter') {
+                    const code = (e.target as HTMLInputElement).value.trim()
+                    if (!code) return
+                    // 查询物料
+                    try {
+                      const res: any = await materialApi.getList({ keyword: code, pageSize: 10 })
+                      const matched = res?.list?.find((m: Material) =>
+                        m.code?.toLowerCase() === code.toLowerCase() ||
+                        m.name?.toLowerCase().includes(code.toLowerCase())
+                      )
+                      if (matched) {
+                        toast.success('扫码成功', { description: `已识别耗材：${matched.name}` })
+                        setTimeout(() => {
+                          closeModal()
+                          openCreate()
+                          setForm(prev => ({
+                            ...prev,
+                            materialId: matched.id,
+                            type: 'direct',
+                          }))
+                        }, 400)
+                      } else {
+                        toast.error('未找到匹配物料', { description: `条码 "${code}" 未匹配到任何物料` })
+                      }
+                    } catch {
+                      toast.error('查询失败')
+                    }
+                  }
+                }}
+              />
             </div>
             <div className="mt-4 p-3 bg-gray-50 rounded-lg">
               <div className="text-xs text-gray-500 mb-2">支持以下条码类型：</div>
@@ -1459,48 +1424,12 @@ export default function Inbound() {
       {/* 批量导入弹窗 */}
       {modalType === 'import' && (
         <Modal onClose={closeModal} title="批量导入入库" size="lg">
-          <div>
-            <div
-              className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-colors"
-              onClick={() => toast.info('选择文件', { description: '请在选择文件后点击开始导入' })}
-            >
-              <IconUpload className="w-12 h-12 mx-auto text-gray-400 mb-3" />
-              <div className="text-base font-medium text-gray-900 mb-2">点击或拖拽文件到此处</div>
-              <div className="text-sm text-gray-500">支持 Excel (.xlsx, .xls) 和 CSV 格式</div>
-            </div>
-            <div className="mt-4">
-              <div className="text-sm text-gray-600 mb-2">模板下载：</div>
-              <button className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-600 hover:text-gray-900 bg-white border border-gray-200 rounded-[6px] hover:bg-gray-50 transition-colors">
-                <IconDownload className="w-3.5 h-3.5" /> 入库导入模板.xlsx
-              </button>
-            </div>
-            <div className="mt-4 p-3 bg-gray-50 rounded-lg">
-              <div className="text-sm text-gray-600 mb-2">导入说明：</div>
-              <ul className="text-xs text-gray-500 list-disc list-inside space-y-1">
-                <li>请使用提供的模板格式填写数据</li>
-                <li>必填字段：耗材编码、批号、入库数量、有效期</li>
-                <li>日期格式：YYYY-MM-DD</li>
-                <li>单次导入最多支持 1000 条记录</li>
-              </ul>
-            </div>
-          </div>
-          <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-gray-100">
-            <button
-              onClick={closeModal}
-              className="px-4 py-2 text-sm text-gray-600 bg-white border border-gray-300 rounded-[6px] hover:bg-gray-50 transition-colors"
-            >
-              取消
-            </button>
-            <button
-              onClick={() => {
-                toast.success('导入成功', { description: '成功导入 50 条入库记录' })
-                closeModal()
-              }}
-              className="px-4 py-2 text-sm text-white bg-[#3b82f6] rounded-[6px] hover:bg-blue-600 transition-colors"
-            >
-              开始导入
-            </button>
-          </div>
+          <ImportInboundModal
+            onClose={closeModal}
+            onSuccess={() => { closeModal(); fetchData() }}
+            materials={materials}
+            locations={locations}
+          />
         </Modal>
       )}
 
@@ -1512,7 +1441,7 @@ export default function Inbound() {
               <div className="text-xl font-bold text-gray-900">入库记录报表</div>
               <div className="flex justify-center gap-6 mt-2 text-xs text-gray-500">
                 <div>生成时间: {formatDateTime(new Date())}</div>
-                <div>操作人: 张医生</div>
+                <div>操作人: {JSON.parse(localStorage.getItem('user') || '{}')?.name || 'system'}</div>
               </div>
             </div>
             <table className="w-full text-xs border-collapse">
@@ -1566,61 +1495,246 @@ export default function Inbound() {
           </div>
         </Modal>
       )}
+
+      <ConfirmDialog
+        open={confirmModal.open}
+        title={confirmModal.title}
+        message={confirmModal.message}
+        confirmText="确认"
+        cancelText="取消"
+        confirmVariant="danger"
+        onConfirm={() => {
+          confirmModal.onConfirm?.()
+          closeConfirmModal()
+        }}
+        onCancel={closeConfirmModal}
+      />
     </div>
   )
 }
 
 // ============================================
-// 通用弹窗组件
+// 批量导入入库组件
 // ============================================
-function Modal({
-  children,
+function ImportInboundModal({
   onClose,
-  title,
-  size = 'md',
+  onSuccess,
+  materials,
+  locations,
 }: {
-  children: React.ReactNode
   onClose: () => void
-  title: string
-  size?: 'md' | 'lg' | 'xl'
+  onSuccess: () => void
+  materials: Material[]
+  locations: Location[]
 }) {
-  const sizeClass = {
-    md: 'max-w-md',
-    lg: 'max-w-2xl',
-    xl: 'max-w-4xl',
-  }[size]
+  const [file, setFile] = useState<File | null>(null)
+  const [preview, setPreview] = useState<any[]>([])
+  const [importing, setImporting] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
-    const handleEsc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]
+    if (!f) return
+    setFile(f)
+    try {
+      const XLSX = await import('xlsx')
+      const data = await f.arrayBuffer()
+      const wb = XLSX.read(data, { type: 'array' })
+      const ws = wb.Sheets[wb.SheetNames[0]]
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][]
+      if (rows.length < 2) {
+        toast.error('文件为空或格式不正确')
+        return
+      }
+      const headers = rows[0].map((h: any) => String(h).trim())
+      const records = rows.slice(1).map((row: any[], i: number) => {
+        const obj: Record<string, any> = { _row: i + 2 }
+        headers.forEach((h, idx) => { obj[h] = row[idx] })
+        return obj
+      }).filter(r => Object.values(r).some(v => v !== undefined && v !== ''))
+      setPreview(records.slice(0, 20))
+      if (records.length > 20) {
+        toast.info(`文件共 ${records.length} 条，显示前 20 条预览`)
+      }
+    } catch {
+      toast.error('解析文件失败')
     }
-    document.addEventListener('keydown', handleEsc)
-    document.body.style.overflow = 'hidden'
-    return () => {
-      document.removeEventListener('keydown', handleEsc)
-      document.body.style.overflow = ''
+  }
+
+  const handleImport = async () => {
+    if (!file || preview.length === 0) return
+    setImporting(true)
+    try {
+      const XLSX = await import('xlsx')
+      const data = await file.arrayBuffer()
+      const wb = XLSX.read(data, { type: 'array' })
+      const ws = wb.Sheets[wb.SheetNames[0]]
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][]
+      const headers = rows[0].map((h: any) => String(h).trim())
+      const records = rows.slice(1).map((row: any[]) => {
+        const obj: Record<string, any> = {}
+        headers.forEach((h, idx) => { obj[h] = row[idx] })
+        return obj
+      }).filter(r => Object.values(r).some(v => v !== undefined && v !== ''))
+
+      let successCount = 0
+      let failCount = 0
+      for (const record of records) {
+        const materialName = record['耗材名称'] || record['物料名称'] || ''
+        const materialCode = record['耗材编码'] || record['物料编码'] || ''
+        const quantity = Number(record['入库数量'] || record['数量'] || 0)
+        const batchNo = record['批号'] || ''
+        const locationName = record['库位'] || ''
+        const productionDate = record['生产日期'] || ''
+        const expiryDate = record['有效期'] || record['有效期至'] || ''
+        const remark = record['备注'] || ''
+
+        let materialId = ''
+        if (materialCode) {
+          const matched = materials.find(m => m.code === materialCode)
+          if (matched) materialId = matched.id
+        }
+        if (!materialId && materialName) {
+          const matched = materials.find(m => m.name === materialName)
+          if (matched) materialId = matched.id
+        }
+
+        let locationId = locations[0]?.id || ''
+        if (locationName) {
+          const matched = locations.find(l => l.name === locationName)
+          if (matched) locationId = matched.id
+        }
+
+        if (!materialId || !quantity) {
+          failCount++
+          continue
+        }
+
+        try {
+          await inboundApi.create({
+            type: 'direct',
+            materialId,
+            quantity,
+            batchNo,
+            locationId,
+            productionDate: productionDate ? new Date(productionDate).toISOString().split('T')[0] : undefined,
+            expiryDate: expiryDate ? new Date(expiryDate).toISOString().split('T')[0] : undefined,
+            remark,
+          } as any)
+          successCount++
+        } catch {
+          failCount++
+        }
+      }
+
+      if (failCount === 0) {
+        toast.success('导入成功', { description: `成功导入 ${successCount} 条记录` })
+      } else {
+        toast.success(`导入完成：成功 ${successCount} 条，失败 ${failCount} 条`)
+      }
+      onSuccess()
+    } catch {
+      toast.error('导入失败')
+    } finally {
+      setImporting(false)
     }
-  }, [onClose])
+  }
+
+  const downloadTemplate = () => {
+    const XLSX = (window as any).XLSX
+    if (!XLSX) {
+      toast.error('请刷新页面后重试')
+      return
+    }
+    const rows = [
+      ['耗材编码', '耗材名称', '批号', '入库数量', '生产日期', '有效期至', '库位', '备注'],
+      ['M001', 'DNA提取试剂盒', 'B20240501', 10, '2024-05-01', '2025-05-01', 'A1-01', '首次入库'],
+      ['M002', 'PCR引物', 'B20240601', 5, '2024-06-01', '2025-06-01', 'A1-02', ''],
+    ]
+    const ws = XLSX.utils.aoa_to_sheet(rows)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, '入库导入模板')
+    XLSX.writeFile(wb, '入库导入模板.xlsx')
+  }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div
-        className="absolute inset-0 bg-black/40"
-        onClick={onClose}
+    <div>
+      <input
+        type="file"
+        ref={fileInputRef}
+        accept=".xlsx,.xls,.csv"
+        className="hidden"
+        onChange={handleFileChange}
       />
-      <div className={cn('relative bg-white rounded-xl shadow-xl w-full mx-4 flex flex-col max-h-[90vh]', sizeClass)}>
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 flex-shrink-0">
-          <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
-          <button
-            onClick={onClose}
-            className="p-1 hover:bg-gray-100 rounded transition-colors"
-          >
-            <IconClose className="w-4 h-4 text-gray-500" />
-          </button>
+      <div
+        className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-colors"
+        onClick={() => fileInputRef.current?.click()}
+      >
+        <IconUpload className="w-12 h-12 mx-auto text-gray-400 mb-3" />
+        <div className="text-base font-medium text-gray-900 mb-2">{file ? file.name : '点击或拖拽文件到此处'}</div>
+        <div className="text-sm text-gray-500">支持 Excel (.xlsx, .xls) 和 CSV 格式</div>
+      </div>
+
+      {preview.length > 0 && (
+        <div className="mt-4">
+          <div className="text-sm font-medium text-gray-700 mb-2">数据预览（前 {preview.length} 条）</div>
+          <div className="border border-gray-200 rounded-lg overflow-auto max-h-60">
+            <table className="w-full text-xs">
+              <thead className="bg-gray-50 sticky top-0">
+                <tr>
+                  {Object.keys(preview[0]).filter(k => !k.startsWith('_')).map(h => (
+                    <th key={h} className="px-2 py-1.5 text-left font-medium text-gray-500 border-b">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {preview.map((row, i) => (
+                  <tr key={i}>
+                    {Object.keys(preview[0]).filter(k => !k.startsWith('_')).map(h => (
+                      <td key={h} className="px-2 py-1.5 text-gray-700">{row[h] ?? '-'}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
-        <div className="p-6 overflow-y-auto">
-          {children}
-        </div>
+      )}
+
+      <div className="mt-4">
+        <div className="text-sm text-gray-600 mb-2">模板下载：</div>
+        <button
+          onClick={downloadTemplate}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-600 hover:text-gray-900 bg-white border border-gray-200 rounded-[6px] hover:bg-gray-50 transition-colors"
+        >
+          <IconDownload className="w-3.5 h-3.5" /> 入库导入模板.xlsx
+        </button>
+      </div>
+
+      <div className="mt-4 p-3 bg-gray-50 rounded-lg">
+        <div className="text-sm text-gray-600 mb-2">导入说明：</div>
+        <ul className="text-xs text-gray-500 list-disc list-inside space-y-1">
+          <li>请使用提供的模板格式填写数据</li>
+          <li>必填字段：耗材编码/名称、入库数量</li>
+          <li>日期格式：YYYY-MM-DD</li>
+          <li>单次导入最多支持 1000 条记录</li>
+        </ul>
+      </div>
+
+      <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-gray-100">
+        <button
+          onClick={onClose}
+          className="px-4 py-2 text-sm text-gray-600 bg-white border border-gray-300 rounded-[6px] hover:bg-gray-50 transition-colors"
+        >
+          取消
+        </button>
+        <button
+          onClick={handleImport}
+          disabled={importing || preview.length === 0}
+          className="px-4 py-2 text-sm text-white bg-[#3b82f6] rounded-[6px] hover:bg-blue-600 transition-colors disabled:opacity-50"
+        >
+          {importing ? '导入中...' : '开始导入'}
+        </button>
       </div>
     </div>
   )
