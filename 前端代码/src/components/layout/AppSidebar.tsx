@@ -83,6 +83,11 @@ const ROLE_MENU_MAP: Record<string, string[]> = {
 
 function getUserRole(): string | null {
   try {
+    const token = localStorage.getItem('token')
+    if (token) {
+      const payload = JSON.parse(atob(token.split('.')[1]))
+      if (payload.role) return payload.role
+    }
     const userStr = localStorage.getItem('user')
     if (userStr) {
       const user = JSON.parse(userStr)
