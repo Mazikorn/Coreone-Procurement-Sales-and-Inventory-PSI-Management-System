@@ -62,7 +62,7 @@ test.beforeEach(async () => {
 // ───────────────────────────────────────────────
 test.describe('角色权限 -> 查看角色列表', () => {
   test('ROLE-LIST-01. 正常用例：admin可查看角色列表', async ({ page }) => {
-    await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/roles`); await page.waitForTimeout(2000); await page.waitForTimeout(1500)
+    await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/roles`); await page.waitForTimeout(2000)
     await expect(page.locator('text=/角色管理|角色权限|角色列表/i').first()).toBeVisible()
   })
   test('ROLE-LIST-02. 正常用例：角色列表显示统计卡片', async ({ page }) => {
@@ -72,13 +72,13 @@ test.describe('角色权限 -> 查看角色列表', () => {
   test('ROLE-LIST-03. 正常用例：角色以卡片形式展示', async ({ page }) => {
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/roles`); await page.waitForTimeout(1500)
     const btn = page.locator('text=/查看详情/i').first()
-    expect(await btn.isVisible().catch(() => false)).toBe(true)
+    await expect(btn).toBeVisible()
   })
   test('ROLE-LIST-04. 空数据边界：无角色数据卡片显示空状态', async ({ page }) => {
     await page.route('**/api/v1/roles**', r => r.fulfill({ status: 200, body: JSON.stringify({ data: { list: [], pagination: { total: 0 } } }) }))
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/roles`); await page.waitForTimeout(1500)
     const empty = page.locator('text=/暂无数据|暂无/i').first()
-    expect(await empty.isVisible().catch(() => false)).toBe(true)
+    await expect(empty).toBeVisible()
     await page.unroute('**/api/v1/roles**')
   })
   test('ROLE-LIST-05. 异常恢复：API 500显示错误提示', async ({ page }) => {
@@ -89,7 +89,7 @@ test.describe('角色权限 -> 查看角色列表', () => {
   test('ROLE-LIST-06. 权限：technician访问返回403', async ({ page }) => {
     await loginAs(page, 'technician'); await page.goto(`${FE_BASE}/roles`); await page.waitForTimeout(1200)
     const msg = page.locator('text=/无权访问|403|Forbidden/i').first()
-    expect(await msg.isVisible().catch(() => false)).toBe(true)
+    await expect(msg).toBeVisible()
   })
   test('ROLE-LIST-07. 并发：快速刷新页面多次', async ({ page }) => {
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/roles`)
@@ -293,7 +293,7 @@ test.describe('角色权限 -> 编辑角色', () => {
   test('ROLE-EDIT-08. UI差异：自定义角色显示编辑按钮', async ({ page }) => {
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/roles`); await page.waitForTimeout(1500)
     const btn = page.locator('text=/编辑/i').first()
-    expect(await btn.isVisible().catch(() => false)).toBe(true)
+    await expect(btn).toBeVisible()
   })
   test('ROLE-EDIT-09. 正常用例：编辑后列表数据更新', async ({ page }) => {
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/roles`); await page.waitForTimeout(1500)
@@ -363,7 +363,7 @@ test.describe('角色权限 -> 删除角色', () => {
   test('ROLE-DELETE-06. UI差异：自定义角色显示删除按钮', async ({ page }) => {
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/roles`); await page.waitForTimeout(1500)
     const btn = page.locator('text=/删除/i').first()
-    expect(await btn.isVisible().catch(() => false)).toBe(true)
+    await expect(btn).toBeVisible()
   })
   test('ROLE-DELETE-07. 正常用例：删除后列表自动刷新', async ({ page }) => {
     const token = await apiLogin('admin')
@@ -385,7 +385,7 @@ test.describe('角色权限 -> 角色详情弹窗', () => {
     const detail = page.locator('text=/查看详情/i').first()
     if (await detail.isVisible().catch(() => false)) { await detail.click(); await page.waitForTimeout(1000) }
     const title = page.locator('text=/角色详情/i').first()
-    expect(await title.isVisible().catch(() => false)).toBe(true)
+    await expect(title).toBeVisible()
     const close = page.locator('text=/关闭/i').first()
     if (await close.isVisible().catch(() => false)) await close.click()
   })
@@ -395,7 +395,7 @@ test.describe('角色权限 -> 角色详情弹窗', () => {
     if (await detail.isVisible().catch(() => false)) {
       await detail.click(); await page.waitForTimeout(1000)
       const label = page.locator('text=/用户数量/i').first()
-      expect(await label.isVisible().catch(() => false)).toBe(true)
+      await expect(label).toBeVisible()
       const close = page.locator('text=/关闭/i').first()
       if (await close.isVisible().catch(() => false)) await close.click()
     }
@@ -508,25 +508,25 @@ test.describe('角色权限 -> 盲点分析补充', () => {
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/roles`); await page.waitForTimeout(1500)
     await page.click('text=/新建角色|新建/i'); await page.waitForTimeout(500)
     const table = page.locator('text=/功能模块/i').first()
-    expect(await table.isVisible().catch(() => false)).toBe(true)
+    await expect(table).toBeVisible()
     const cancel = page.locator('text=/取消|关闭/i').first()
     if (await cancel.isVisible().catch(() => false)) await cancel.click()
   })
   test('BLIND-ROLE-02. 角色与用户关联数显示', async ({ page }) => {
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/roles`); await page.waitForTimeout(1500)
     const label = page.locator('text=/已分配用户|人/i').first()
-    expect(await label.isVisible().catch(() => false)).toBe(true)
+    await expect(label).toBeVisible()
   })
   test('BLIND-ROLE-03. 系统角色和自定义角色标签区分', async ({ page }) => {
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/roles`); await page.waitForTimeout(1500)
     const tag = page.locator('text=/系统角色|自定义/i').first()
-    expect(await tag.isVisible().catch(() => false)).toBe(true)
+    await expect(tag).toBeVisible()
   })
   test('BLIND-ROLE-04. 角色数据权限范围选项', async ({ page }) => {
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/roles`); await page.waitForTimeout(1500)
     await page.click('text=/新建角色|新建/i'); await page.waitForTimeout(500)
     const opt = page.locator('text=/全部数据|本部门数据|仅本人数据/i').first()
-    expect(await opt.isVisible().catch(() => false)).toBe(true)
+    await expect(opt).toBeVisible()
     const cancel = page.locator('text=/取消|关闭/i').first()
     if (await cancel.isVisible().catch(() => false)) await cancel.click()
   })
