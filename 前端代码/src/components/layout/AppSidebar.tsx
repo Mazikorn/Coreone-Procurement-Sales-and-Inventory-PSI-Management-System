@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { cn } from '@/lib/utils'
+import { ROLE_MENU_MAP } from '@/lib/permissions'
 import {
   LayoutDashboard,
   Package,
@@ -61,33 +62,6 @@ const ALL_SYSTEM_MENU: MenuItem[] = [
   { label: '角色权限', path: '/roles', icon: Shield },
   { label: '操作日志', path: '/logs', icon: FileText },
 ]
-
-// 角色-菜单权限映射（与后端 E2E 权限矩阵保持一致）
-const ROLE_MENU_MAP: Record<string, string[]> = {
-  admin: [
-    '/', '/inventory', '/inbound', '/outbound', '/returns', '/scraps', '/transfers', '/stocktaking',
-    '/projects', '/bom', '/reconciliation', '/cost-analysis',
-    '/categories', '/materials', '/alerts',
-    '/purchase-orders', '/suppliers', '/locations', '/users', '/roles', '/logs',
-  ],
-  warehouse_manager: [
-    '/', '/inventory', '/inbound', '/outbound', '/returns', '/scraps', '/transfers', '/stocktaking',
-    '/suppliers', '/locations', '/materials', '/alerts',
-  ],
-  technician: [
-    '/', '/inventory', '/projects', '/bom', '/reconciliation',
-    '/cost-analysis', '/materials',
-  ],
-  procurement: [
-    '/', '/inventory', '/inbound', '/materials', '/suppliers', '/purchase-orders',
-  ],
-  finance: [
-    '/', '/inventory', '/reconciliation', '/cost-analysis',
-  ],
-  pathologist: [
-    '/', '/inventory', '/projects', '/bom', '/reconciliation', '/cost-analysis',
-  ],
-}
 
 function decodeBase64Url(str: string): string {
   const padding = '='.repeat((4 - (str.length % 4)) % 4)
