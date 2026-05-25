@@ -15,8 +15,9 @@ const ROLES = {
 type RoleKey = keyof typeof ROLES
 
 async function loginAs(page: Page, role: RoleKey) {
-  await page.goto('about:blank')
-  await page.evaluate(() => localStorage.clear())
+  await page.goto(`${FE_BASE}/login`)
+  await page.waitForTimeout(100)
+  await page.evaluate(() => { localStorage.clear(); sessionStorage.clear() })
   await page.goto(`${FE_BASE}/login`)
   const r = ROLES[role]
   await page.fill('input[type="text"]', r.username)

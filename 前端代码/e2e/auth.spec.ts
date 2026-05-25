@@ -15,10 +15,10 @@ type RoleKey = keyof typeof ROLES
 const ROLE_KEYS: RoleKey[] = ['admin', 'warehouse_manager', 'technician', 'pathologist', 'procurement', 'finance']
 
 async function loginAs(page: Page, role: RoleKey) {
-  // Ensure clean state: clear localStorage before navigating to login
-  // to prevent login page auto-redirect from seeing stale tokens
-  await page.goto('about:blank')
-  await page.evaluate(() => localStorage.clear())
+  // Clear localStorage on the real origin (about:blank cannot access localStorage in Chromium)
+  await page.goto(`${FE_BASE}/login`)
+  await page.waitForTimeout(100)
+  await page.evaluate(() => { localStorage.clear(); sessionStorage.clear() })
   await page.goto(`${FE_BASE}/login`)
   const cred = ROLES[role]
   await page.fill('input[type="text"]', cred.username)
@@ -43,7 +43,8 @@ async function loginAs(page: Page, role: RoleKey) {
   if (actualRole !== role) {
     const currentUrl = page.url()
     const lsKeys = await page.evaluate(() => Object.keys(localStorage))
-    console.warn(`[E2E Auth Warning] Expected role: ${role}, actual: ${actualRole} for user: ${cred.username}, url: ${currentUrl}, localStorage keys: ${lsKeys.join(',')}`)
+    const lsUser = await page.evaluate(() => localStorage.getItem('user'))
+    console.warn(`[E2E Auth Warning] Expected role: ${role}, actual: ${actualRole} for user: ${cred.username}, url: ${currentUrl}, userObj: ${lsUser}, keys: ${lsKeys.join(',')}`)
   }
 }
 
@@ -65,10 +66,10 @@ async function apiFetch(token: string, method: string, path: string, body?: any)
 }
 
 test.beforeEach(async ({ page }) => {
-  // Clear localStorage on a blank page before navigating to login
-  // to prevent login page useEffect from seeing stale tokens
-  await page.goto('about:blank')
-  await page.evaluate(() => localStorage.clear())
+  // Clear localStorage on the real origin (about:blank cannot access localStorage in Chromium)
+  await page.goto(`${FE_BASE}/login`)
+  await page.waitForTimeout(100)
+  await page.evaluate(() => { localStorage.clear(); sessionStorage.clear() })
   await page.goto(`${FE_BASE}/login`)
 })
 
