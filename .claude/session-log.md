@@ -77,7 +77,7 @@
 |---|---|---|
 | Inbound.tsx | ✅ 完成 | 拆分 + P0 修复 + DESIGN.md 对齐 |
 | Outbound.tsx | ✅ 完成 | 拆分完成 |
-| InventoryList.tsx | ✅ DESIGN.md 对齐 | 仍有 1936 行，待拆分 |
+| InventoryList.tsx | ✅ 完成 | 217 行（原 1928 行），已拆分 |
 | Materials.tsx | ✅ DESIGN.md 对齐 | 742 行，待拆分 |
 | Suppliers.tsx | ✅ DESIGN.md 对齐 | 820 行，待拆分 |
 | Projects.tsx | ✅ DESIGN.md 对齐 | 1209 行，待拆分 |
@@ -106,7 +106,38 @@
 
 ---
 
+### 3. InventoryList.tsx 完整拆分（P1 页面）
+
+**目标**：将 `InventoryList.tsx` 从 1928 行拆分到 <400 行。
+
+**最终结果**：
+- `InventoryList.tsx`：217 行（原 1928 行）✅
+- TypeScript 编译通过 ✅
+- 已 commit：`fd173e58`
+
+**提取的子组件**（`前端代码/src/pages/inventory/components/`）：
+| 组件 | 功能 | 行数 |
+|---|---|---|
+| `InventoryTable.tsx` | 统计卡片 + 筛选栏 + 表格 + 分页 | ~350 |
+| `DepletionTab.tsx` | 使用中 Tab 内容 | ~55 |
+| `DepletedTab.tsx` | 已耗尽 Tab 内容 | ~45 |
+| `OutboundModal.tsx` | 出库登记弹窗 | ~170 |
+| `MaterialSelectorModal.tsx` | 物料选择弹窗（含BOM） | ~260 |
+| `InventoryDetailModal.tsx` | 库存详情弹窗 | ~65 |
+| `BatchOutboundModal.tsx` | 批量出库确认弹窗 | ~35 |
+| `BatchScrapModal.tsx` | 批量报废弹窗 | ~85 |
+| `EditRemainModal.tsx` | 修改剩余量弹窗 | ~55 |
+| `ConfirmDepleteModal.tsx` | 确认耗尽弹窗 | ~70 |
+| `StockLevelIndicator.tsx` | 库存水平指示器 | ~15 |
+| `ExpiryTag.tsx` | 有效期标签 | ~15 |
+
+**提取的自定义 Hook**：
+- `前端代码/src/pages/inventory/hooks/useInventoryPage.ts` — 所有状态管理、数据获取、业务逻辑（~730 行）
+
+---
+
 **本次会话新增 commits**：
+- `fd173e58` refactor(inventory): split InventoryList.tsx into components + hook
 - `39fe21c9` style(pages): align DESIGN.md spec across Alerts, BOM, Users, Logs
 - `9cd5fc6e` docs: add session startup rules to CLAUDE.md
 
@@ -114,17 +145,24 @@
 
 ## 待拆分文件清单（超 400 行）
 
-| 文件 | 当前行数 | 优先级 |
-|---|---|---|
-| InventoryList.tsx | 1936 | P1 |
-| BOM.tsx | 1313 | P1 |
-| Alerts.tsx | 1210 | P1 |
-| Projects.tsx | 1209 | P1 |
-| Suppliers.tsx | 820 | P1 |
-| Materials.tsx | 742 | P1 |
-| Stocktaking.tsx | 620 | P1 |
-| Users.tsx | 484 | P1 |
-| Logs.tsx | 484 | P1 |
+| 文件 | 当前行数 | 优先级 | 状态 |
+|---|---|---|---|
+| InventoryList.tsx | 217 | P1 | ✅ 已完成 |
+| BOM.tsx | 1313 | P1 | ⏳ 待拆分 |
+| Alerts.tsx | 1210 | P1 | ⏳ 待拆分 |
+| Projects.tsx | 1209 | P1 | ⏳ 待拆分 |
+| Suppliers.tsx | 820 | P1 | ⏳ 待拆分 |
+| Materials.tsx | 742 | P1 | ⏳ 待拆分 |
+| Stocktaking.tsx | 620 | P1 | ⏳ 待拆分 |
+| Users.tsx | 484 | P1 | ⏳ 待拆分 |
+| Logs.tsx | 484 | P1 | ⏳ 待拆分 |
+
+## 下一步建议
+
+按 plan 优先级继续推进：
+1. **BOM.tsx**（P1）— 1313 行，提取组件
+2. **Alerts.tsx**（P1）— 1210 行，提取组件
+3. **Projects.tsx**（P1）— 1209 行，提取组件
 
 ---
 
