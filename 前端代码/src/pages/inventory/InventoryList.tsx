@@ -740,7 +740,7 @@ export default function InventoryList() {
         </div>
         <button
           onClick={() => setOutboundModalOpen(true)}
-          className="inline-flex items-center gap-2 px-4 py-2.5 bg-[#3b82f6] text-white rounded-md hover:bg-[#2563eb] transition-all duration-150 ease text-sm font-medium shadow-[0_1px_2px_rgba(59,130,246,0.1)]"
+          className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-all duration-150 ease text-sm font-medium shadow-sm"
         >
           <Upload className="w-4 h-4" />
           出库登记
@@ -759,13 +759,13 @@ export default function InventoryList() {
             onClick={() => setActiveTab(tab.key as any)}
             className={`px-5 py-3 text-sm font-medium transition-all duration-150 ease relative ${
               activeTab === tab.key
-                ? 'text-[#3b82f6]'
+                ? 'text-blue-500'
                 : 'text-gray-500 hover:text-gray-700'
             }`}
           >
             {tab.label}
             {activeTab === tab.key && (
-              <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#3b82f6]" />
+              <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-500" />
             )}
           </button>
         ))}
@@ -785,7 +785,7 @@ export default function InventoryList() {
           <button
             key={stat.key}
             onClick={() => handleQuickFilter(stat.key as QuickFilterType)}
-            className={`bg-white rounded-lg shadow-[0_1px_3px_rgba(0,0,0,0.1)] p-5 text-left transition-all duration-150 ease hover:shadow-md ${stat.color}`}
+            className={`bg-white rounded-lg shadow-sm p-5 text-left transition-all duration-150 ease hover:shadow-md ${stat.color}`}
           >
             <div className="text-[28px] font-semibold text-gray-900">{stat.value}</div>
             <div className="text-sm text-gray-500 mt-1">{stat.label}</div>
@@ -808,7 +808,7 @@ export default function InventoryList() {
             onClick={() => handleQuickFilter(filter.key as QuickFilterType)}
             className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-150 ease ${
               quickFilter === filter.key
-                ? 'bg-[#3b82f6] text-white'
+                ? 'bg-blue-500 text-white'
                 : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
             }`}
           >
@@ -823,9 +823,9 @@ export default function InventoryList() {
       )}
 
       {activeTab === 'in-stock' && (
-      <div className="bg-white rounded-lg shadow-[0_1px_3px_rgba(0,0,0,0.1)] overflow-hidden">
+      <div className="bg-white rounded-lg shadow-sm overflow-hidden">
         {/* 卡片头部 - 筛选栏 */}
-        <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between gap-4 flex-wrap">
+        <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between gap-4 flex-wrap">
           <span className="text-base font-semibold text-gray-900">库存明细</span>
           <div className="flex items-center gap-3 flex-wrap">
             <div className="relative">
@@ -836,13 +836,13 @@ export default function InventoryList() {
                 value={keyword}
                 onChange={e => setKeyword(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && handleSearch()}
-                className="w-[260px] pl-10 pr-4 h-10 border border-gray-300 rounded-md text-sm focus:outline-none focus:border-[#3b82f6] focus:shadow-[0_0_0_3px_rgba(59,130,246,0.1)] transition-all duration-150 ease"
+                className="w-[260px] pl-10 pr-4 h-10 border border-gray-300 rounded-md text-sm focus:outline-none focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 transition-all duration-150 ease"
               />
             </div>
             <select
               value={category}
               onChange={e => setCategory(e.target.value)}
-              className="h-10 px-3 border border-gray-300 rounded-md text-sm text-gray-700 focus:outline-none focus:border-[#3b82f6] focus:shadow-[0_0_0_3px_rgba(59,130,246,0.1)] transition-all duration-150 ease bg-white"
+              className="h-10 px-3 border border-gray-300 rounded-md text-sm text-gray-700 focus:outline-none focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 transition-all duration-150 ease bg-white"
             >
               <option>全部分类</option>
               <option>试剂</option>
@@ -852,7 +852,7 @@ export default function InventoryList() {
             <select
               value={location}
               onChange={e => setLocation(e.target.value)}
-              className="h-10 px-3 border border-gray-300 rounded-md text-sm text-gray-700 focus:outline-none focus:border-[#3b82f6] focus:shadow-[0_0_0_3px_rgba(59,130,246,0.1)] transition-all duration-150 ease bg-white"
+              className="h-10 px-3 border border-gray-300 rounded-md text-sm text-gray-700 focus:outline-none focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 transition-all duration-150 ease bg-white"
             >
               <option>全部库位</option>
               <option>A区-试剂冷藏</option>
@@ -878,7 +878,7 @@ export default function InventoryList() {
         {selectedIds.size > 0 && (
           <div className="px-5 py-3 bg-blue-50 border-b border-blue-100 flex items-center justify-between">
             <span className="text-sm text-gray-700">
-              已选择 <strong className="text-[#3b82f6]">{selectedIds.size}</strong> 项
+              已选择 <strong className="text-blue-500">{selectedIds.size}</strong> 项
             </span>
             <div className="flex items-center gap-2">
               <button
@@ -916,7 +916,7 @@ export default function InventoryList() {
                     type="checkbox"
                     checked={selectedIds.size === sortedData.length && sortedData.length > 0}
                     onChange={toggleSelectAll}
-                    className="w-4 h-4 rounded border-gray-300 text-[#3b82f6] focus:ring-[#3b82f6]"
+                    className="w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-500"
                   />
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 tracking-wide">耗材名称</th>
@@ -968,7 +968,7 @@ export default function InventoryList() {
                       <div className="flex items-center gap-3">
                         <button
                           onClick={() => { window.location.href = '/inbound' }}
-                          className="px-4 py-2 bg-[#3b82f6] text-white rounded-md text-sm font-medium hover:bg-[#2563eb] transition-all duration-150 ease"
+                          className="px-4 py-2 bg-blue-500 text-white rounded-md text-sm font-medium hover:bg-blue-600 transition-all duration-150 ease"
                         >
                           添加入库
                         </button>
@@ -998,7 +998,7 @@ export default function InventoryList() {
                         <td className="px-4 py-3">
                           <input
                             type="checkbox"
-                            className="w-4 h-4 rounded border-gray-300 text-[#3b82f6] focus:ring-[#3b82f6]"
+                            className="w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-500"
                             onChange={(e) => e.stopPropagation()}
                           />
                         </td>
@@ -1028,7 +1028,7 @@ export default function InventoryList() {
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
                             <button onClick={(e) => { e.stopPropagation(); viewDetail(first!) }} className="text-sm text-gray-600 hover:text-gray-900 transition-colors">详情</button>
-                            <button onClick={(e) => { e.stopPropagation(); openOutboundModal(first!) }} className="text-sm text-[#3b82f6] hover:text-[#2563eb] transition-colors">出库</button>
+                            <button onClick={(e) => { e.stopPropagation(); openOutboundModal(first!) }} className="text-sm text-blue-500 hover:text-blue-600 transition-colors">出库</button>
                           </div>
                         </td>
                       </tr>
@@ -1046,7 +1046,7 @@ export default function InventoryList() {
                                 type="checkbox"
                                 checked={isSelected}
                                 onChange={() => toggleSelectOne(row.id)}
-                                className="w-4 h-4 rounded border-gray-300 text-[#3b82f6] focus:ring-[#3b82f6]"
+                                className="w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-500"
                               />
                             </td>
                             <td className="px-4 py-3 pl-12">
@@ -1071,7 +1071,7 @@ export default function InventoryList() {
                             <td className="px-4 py-3">
                               <div className="flex items-center gap-2">
                                 <button onClick={() => viewDetail(row)} className="text-sm text-gray-600 hover:text-gray-900 transition-colors">详情</button>
-                                <button onClick={() => openOutboundModal(row)} className="text-sm text-[#3b82f6] hover:text-[#2563eb] transition-colors">出库</button>
+                                <button onClick={() => openOutboundModal(row)} className="text-sm text-blue-500 hover:text-blue-600 transition-colors">出库</button>
                               </div>
                             </td>
                           </tr>
@@ -1086,7 +1086,7 @@ export default function InventoryList() {
         </div>
 
         {/* 分页 */}
-        <div className="px-5 py-4 border-t border-gray-100 flex items-center justify-between">
+        <div className="px-5 py-4 border-t border-gray-200 flex items-center justify-between">
           <span className="text-sm text-gray-500">共 {total} 条记录</span>
           <Pagination
             page={page}
@@ -1103,7 +1103,7 @@ export default function InventoryList() {
       {activeTab === 'in-use' && (
         <div className="space-y-4">
           {depletionTracking.map(dep => (
-            <div key={dep.id} className="bg-white rounded-lg shadow-[0_1px_3px_rgba(0,0,0,0.1)] p-5">
+            <div key={dep.id} className="bg-white rounded-lg shadow-sm p-5">
               <div className="flex items-center justify-between mb-3">
                 <div>
                   <div className="text-base font-semibold text-gray-900">{dep.materialName}</div>
@@ -1162,7 +1162,7 @@ export default function InventoryList() {
                     setExpiredRemark('')
                     setConfirmDepleteModalOpen(true)
                   }}
-                  className="px-3 py-1.5 text-sm text-[#3b82f6] hover:text-[#2563eb] transition-colors"
+                  className="px-3 py-1.5 text-sm text-blue-500 hover:text-blue-600 transition-colors"
                 >
                   确认耗尽
                 </button>
@@ -1174,8 +1174,8 @@ export default function InventoryList() {
 
       {/* ===== 已耗尽 Tab ===== */}
       {activeTab === 'depleted' && (
-        <div className="bg-white rounded-lg shadow-[0_1px_3px_rgba(0,0,0,0.1)] overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-100">
+        <div className="bg-white rounded-lg shadow-sm overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-200">
             <span className="text-base font-semibold text-gray-900">已耗尽记录</span>
           </div>
           <div className="overflow-x-auto">
@@ -1223,13 +1223,13 @@ export default function InventoryList() {
       {outboundModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/[0.6]">
           <div className="absolute inset-0" onClick={() => setOutboundModalOpen(false)} />
-          <div className="relative bg-white rounded-xl shadow-[0_20px_25px_rgba(0,0,0,0.1)] w-full max-w-[1100px] max-h-[90vh] flex flex-col overflow-hidden">
+          <div className="relative bg-white rounded-xl shadow-lg w-full max-w-[1100px] max-h-[90vh] flex flex-col overflow-hidden">
             {/* 弹窗头部 */}
-            <div className="px-6 py-5 border-b border-[#e5e7eb] flex items-center justify-between">
-              <h3 className="text-[18px] font-semibold text-[#111827] tracking-normal">出库登记</h3>
+            <div className="px-6 py-5 border-b border-gray-200 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-gray-900 tracking-normal">出库登记</h3>
               <button
                 onClick={() => setOutboundModalOpen(false)}
-                className="w-9 h-9 flex items-center justify-center text-[#6b7280] hover:text-[#111827] hover:bg-[#f3f4f6] rounded-md transition-all duration-150 ease"
+                className="w-9 h-9 flex items-center justify-center text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-all duration-150 ease"
               >
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
               </button>
@@ -1239,10 +1239,10 @@ export default function InventoryList() {
             <div className="flex-1 overflow-auto p-6">
               <div className="mb-5">
                 <div className="flex items-center justify-between mb-3">
-                  <h4 className="text-[16px] font-semibold text-[#111827]">出库明细</h4>
+                  <h4 className="text-base font-semibold text-gray-900">出库明细</h4>
                   <button
                     onClick={openMaterialSelector}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#3b82f6] text-white rounded-md text-sm font-medium hover:bg-[#2563eb] transition-all duration-150 ease shadow-[0_1px_2px_rgba(59,130,246,0.1)] focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-500 text-white rounded-md text-sm font-medium hover:bg-blue-600 transition-all duration-150 ease shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30"
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <line x1="12" y1="5" x2="12" y2="19"/>
@@ -1253,38 +1253,38 @@ export default function InventoryList() {
                 </div>
 
                 {outboundMaterials.length === 0 ? (
-                  <div className="text-center py-12 text-[#6b7280]">
+                  <div className="text-center py-12 text-gray-500">
                     <svg className="w-12 h-12 mx-auto mb-3 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                       <path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/>
                     </svg>
                     <div className="text-sm">请选择物料或点击"添加物料"按钮</div>
                   </div>
                 ) : (
-                  <div className="border border-[#e5e7eb] rounded-lg overflow-hidden">
+                  <div className="border border-gray-200 rounded-lg overflow-hidden">
                     <table className="w-full text-[13px] border-collapse">
                       <thead>
                         <tr>
-                          <th className="bg-[#f9fafb] px-4 py-3 text-left text-xs font-medium text-[#374151] tracking-wide border-b border-[#e5e7eb]">物料名称</th>
-                          <th className="bg-[#f9fafb] px-4 py-3 text-left text-xs font-medium text-[#374151] tracking-wide border-b border-[#e5e7eb]">关联项目</th>
-                          <th className="bg-[#f9fafb] px-4 py-3 text-left text-xs font-medium text-[#374151] tracking-wide border-b border-[#e5e7eb]">批次号</th>
-                          <th className="bg-[#f9fafb] px-4 py-3 text-left text-xs font-medium text-[#374151] tracking-wide border-b border-[#e5e7eb]">库存</th>
-                          <th className="bg-[#f9fafb] px-4 py-3 text-left text-xs font-medium text-[#374151] tracking-wide border-b border-[#e5e7eb] w-[90px]">出库数量</th>
-                          <th className="bg-[#f9fafb] px-4 py-3 text-left text-xs font-medium text-[#374151] tracking-wide border-b border-[#e5e7eb] w-[120px]">领用人</th>
-                          <th className="bg-[#f9fafb] px-4 py-3 text-left text-xs font-medium text-[#374151] tracking-wide border-b border-[#e5e7eb] w-[50px]">操作</th>
+                          <th className="bg-gray-50 px-4 py-3 text-left text-xs font-medium text-gray-700 tracking-wide border-b border-gray-200">物料名称</th>
+                          <th className="bg-gray-50 px-4 py-3 text-left text-xs font-medium text-gray-700 tracking-wide border-b border-gray-200">关联项目</th>
+                          <th className="bg-gray-50 px-4 py-3 text-left text-xs font-medium text-gray-700 tracking-wide border-b border-gray-200">批次号</th>
+                          <th className="bg-gray-50 px-4 py-3 text-left text-xs font-medium text-gray-700 tracking-wide border-b border-gray-200">库存</th>
+                          <th className="bg-gray-50 px-4 py-3 text-left text-xs font-medium text-gray-700 tracking-wide border-b border-gray-200 w-[90px]">出库数量</th>
+                          <th className="bg-gray-50 px-4 py-3 text-left text-xs font-medium text-gray-700 tracking-wide border-b border-gray-200 w-[120px]">领用人</th>
+                          <th className="bg-gray-50 px-4 py-3 text-left text-xs font-medium text-gray-700 tracking-wide border-b border-gray-200 w-[50px]">操作</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[#f3f4f6]">
                         {outboundMaterials.map(m => (
-                          <tr key={m.rowId} className="hover:bg-[#f9fafb] transition-colors duration-150 ease">
+                          <tr key={m.rowId} className="hover:bg-gray-50 transition-colors duration-150 ease">
                             <td className="px-4 py-3">
-                              <div className="font-medium text-[#111827]">{m.name}</div>
-                              <div className="text-xs text-[#6b7280]">{m.spec}</div>
+                              <div className="font-medium text-gray-900">{m.name}</div>
+                              <div className="text-xs text-gray-500">{m.spec}</div>
                             </td>
                             <td className="px-4 py-3">
                               <select
                                 value={m.project}
                                 onChange={e => updateOutboundProject(m.rowId, e.target.value)}
-                                className="h-8 px-3 border border-[#d1d5db] rounded-md text-xs bg-white focus:outline-none focus:border-[#3b82f6] focus:shadow-[0_0_0_3px_rgba(59,130,246,0.1)] transition-all duration-150 ease"
+                                className="h-8 px-3 border border-gray-300 rounded-md text-xs bg-white focus:outline-none focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 transition-all duration-150 ease"
                               >
                                 <option value="">公共成本</option>
                                 {projectList.map(p => (
@@ -1292,8 +1292,8 @@ export default function InventoryList() {
                                 ))}
                               </select>
                             </td>
-                            <td className="px-4 py-3 text-[#4b5563]">{m.batch || '-'}</td>
-                            <td className="px-4 py-3 text-[#111827]">{m.stock}</td>
+                            <td className="px-4 py-3 text-gray-600">{m.batch || '-'}</td>
+                            <td className="px-4 py-3 text-gray-900">{m.stock}</td>
                             <td className="px-4 py-3">
                               <input
                                 type="number"
@@ -1301,14 +1301,14 @@ export default function InventoryList() {
                                 min={1}
                                 max={m.stock}
                                 onChange={e => updateOutboundQuantity(m.rowId, e.target.value)}
-                                className="w-[70px] h-8 px-3 border border-[#d1d5db] rounded-md text-xs focus:outline-none focus:border-[#3b82f6] focus:shadow-[0_0_0_3px_rgba(59,130,246,0.1)] transition-all duration-150 ease"
+                                className="w-[70px] h-8 px-3 border border-gray-300 rounded-md text-xs focus:outline-none focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 transition-all duration-150 ease"
                               />
                             </td>
                             <td className="px-4 py-3">
                               <select
                                 value={m.user}
                                 onChange={e => updateOutboundUser(m.rowId, e.target.value)}
-                                className="h-8 px-3 border border-[#d1d5db] rounded-md text-xs bg-white focus:outline-none focus:border-[#3b82f6] focus:shadow-[0_0_0_3px_rgba(59,130,246,0.1)] transition-all duration-150 ease"
+                                className="h-8 px-3 border border-gray-300 rounded-md text-xs bg-white focus:outline-none focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 transition-all duration-150 ease"
                               >
                                 <option value="">选择领用人</option>
                                 {userList.map(u => (
@@ -1320,7 +1320,7 @@ export default function InventoryList() {
                               <select
                                 value={m.usage}
                                 onChange={e => updateOutboundUsage(m.rowId, e.target.value as 'self' | 'external')}
-                                className="h-8 px-3 border border-[#d1d5db] rounded-md text-xs bg-white focus:outline-none focus:border-[#3b82f6] focus:shadow-[0_0_0_3px_rgba(59,130,246,0.1)] transition-all duration-150 ease"
+                                className="h-8 px-3 border border-gray-300 rounded-md text-xs bg-white focus:outline-none focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 transition-all duration-150 ease"
                               >
                                 <option value="self">自用</option>
                                 <option value="external">外给</option>
@@ -1333,13 +1333,13 @@ export default function InventoryList() {
                                 onChange={e => updateOutboundReceiver(m.rowId, e.target.value)}
                                 placeholder={m.usage === 'external' ? '接收方名称' : '-'}
                                 disabled={m.usage === 'self'}
-                                className="w-[120px] h-8 px-3 border border-[#d1d5db] rounded-md text-xs focus:outline-none focus:border-[#3b82f6] focus:shadow-[0_0_0_3px_rgba(59,130,246,0.1)] disabled:bg-[#f3f4f6] disabled:text-[#9ca3af] transition-all duration-150 ease"
+                                className="w-[120px] h-8 px-3 border border-gray-300 rounded-md text-xs focus:outline-none focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 disabled:bg-gray-100 disabled:text-gray-400 transition-all duration-150 ease"
                               />
                             </td>
                             <td className="px-4 py-3 text-center">
                               <button
                                 onClick={() => removeOutboundItem(m.rowId)}
-                                className="text-[#ef4444] hover:text-[#dc2626] transition-colors duration-150 ease"
+                                className="text-red-500 hover:text-red-600 transition-colors duration-150 ease"
                               >
                                 <Trash2 className="w-4 h-4" />
                               </button>
@@ -1353,29 +1353,29 @@ export default function InventoryList() {
               </div>
 
               <div className="mt-5">
-                <label className="block text-[13px] font-medium text-[#374151] mb-1.5">备注</label>
+                <label className="block text-[13px] font-medium text-gray-700 mb-1.5">备注</label>
                 <textarea
                   value={outboundRemark}
                   onChange={e => setOutboundRemark(e.target.value)}
                   rows={2}
                   placeholder="请输入出库备注信息（可选）"
-                  className="w-full px-3 py-2 border border-[#d1d5db] rounded-md text-sm bg-white focus:outline-none focus:border-[#3b82f6] focus:shadow-[0_0_0_3px_rgba(59,130,246,0.1)] transition-all duration-150 ease resize-none"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm bg-white focus:outline-none focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 transition-all duration-150 ease resize-none"
                 />
               </div>
             </div>
 
             {/* 弹窗底部 */}
-            <div className="px-6 py-4 border-t border-[#e5e7eb] flex items-center justify-end gap-3 bg-[#f9fafb]">
+            <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-end gap-3 bg-gray-50">
               <button
                 onClick={() => setOutboundModalOpen(false)}
-                className="px-4 py-2 bg-white border border-[#d1d5db] text-[#374151] rounded-md text-sm font-medium hover:bg-[#f9fafb] transition-all duration-150 ease shadow-[0_1px_2px_rgba(0,0,0,0.05)] focus:outline-none focus:ring-2 focus:ring-gray-400/30"
+                className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-md text-sm font-medium hover:bg-gray-50 transition-all duration-150 ease shadow-sm focus:outline-none focus:ring-2 focus:ring-gray-400/30"
               >
                 取消
               </button>
               <button
                 onClick={confirmOutbound}
                 disabled={outboundMaterials.length === 0}
-                className="px-4 py-2 bg-[#3b82f6] text-white rounded-md text-sm font-medium hover:bg-[#2563eb] disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-150 ease shadow-[0_1px_2px_rgba(59,130,246,0.1)] focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                className="px-4 py-2 bg-blue-500 text-white rounded-md text-sm font-medium hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-150 ease shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30"
               >
                 确认出库
               </button>
@@ -1390,7 +1390,7 @@ export default function InventoryList() {
           <div className="absolute inset-0 bg-black/40" onClick={() => setMaterialSelectorOpen(false)} />
           <div className="relative bg-white rounded-xl shadow-xl w-full max-w-5xl max-h-[85vh] flex flex-col overflow-hidden">
             {/* 弹窗头部 */}
-            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
               <h3 className="text-lg font-semibold text-gray-900">添加物料</h3>
               <button
                 onClick={() => setMaterialSelectorOpen(false)}
@@ -1404,13 +1404,13 @@ export default function InventoryList() {
             <div className="flex-1 overflow-auto p-0">
               <div className="flex h-full" style={{ minHeight: '500px' }}>
                 {/* 左侧 */}
-                <div className="flex-1 p-6 border-r border-gray-100">
+                <div className="flex-1 p-6 border-r border-gray-200">
                   {/* Tab 切换 */}
                   <div className="flex items-center gap-0 border-b border-gray-200 mb-4">
                     <button
                       onClick={() => setMaterialSelectorTab('list')}
                       className={`inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-all duration-150 ease relative ${
-                        materialSelectorTab === 'list' ? 'text-[#3b82f6]' : 'text-gray-500 hover:text-gray-700'
+                        materialSelectorTab === 'list' ? 'text-blue-500' : 'text-gray-500 hover:text-gray-700'
                       }`}
                     >
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1429,7 +1429,7 @@ export default function InventoryList() {
                         fetchBomList()
                       }}
                       className={`inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-all duration-150 ease relative ${
-                        materialSelectorTab === 'bom' ? 'text-[#3b82f6]' : 'text-gray-500 hover:text-gray-700'
+                        materialSelectorTab === 'bom' ? 'text-blue-500' : 'text-gray-500 hover:text-gray-700'
                       }`}
                     >
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1449,7 +1449,7 @@ export default function InventoryList() {
                           placeholder="搜索物料名称或编号..."
                           value={materialKeyword}
                           onChange={e => setMaterialKeyword(e.target.value)}
-                          className="w-full pl-10 pr-4 h-9 border border-gray-300 rounded-md text-sm focus:outline-none focus:border-[#3b82f6] focus:shadow-[0_0_0_3px_rgba(59,130,246,0.1)] transition-all duration-150 ease"
+                          className="w-full pl-10 pr-4 h-9 border border-gray-300 rounded-md text-sm focus:outline-none focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 transition-all duration-150 ease"
                         />
                       </div>
                       {/* 表格 */}
@@ -1462,7 +1462,7 @@ export default function InventoryList() {
                                   type="checkbox"
                                   checked={filteredMaterialList.length > 0 && checkedMaterialIds.size === filteredMaterialList.length}
                                   onChange={toggleCheckAllMaterials}
-                                  className="w-4 h-4 rounded border-gray-300 text-[#3b82f6] focus:ring-[#3b82f6]"
+                                  className="w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-500"
                                 />
                               </th>
                               <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">物料名称</th>
@@ -1479,7 +1479,7 @@ export default function InventoryList() {
                               filteredMaterialList.map(m => (
                                 <tr key={m.id} className={`hover:bg-gray-50 transition-colors cursor-pointer ${checkedMaterialIds.has(m.id) ? 'bg-blue-50' : ''}`} onClick={() => toggleCheckMaterial(m.id)}>
                                   <td className="px-3 py-2 text-center" onClick={e => e.stopPropagation()}>
-                                    <input type="checkbox" checked={checkedMaterialIds.has(m.id)} onChange={() => toggleCheckMaterial(m.id)} className="w-4 h-4 rounded border-gray-300 text-[#3b82f6] focus:ring-[#3b82f6]" />
+                                    <input type="checkbox" checked={checkedMaterialIds.has(m.id)} onChange={() => toggleCheckMaterial(m.id)} className="w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-500" />
                                   </td>
                                   <td className="px-3 py-2 font-medium text-gray-900">{m.name}</td>
                                   <td className="px-3 py-2 text-gray-600">{m.spec}</td>
@@ -1492,11 +1492,11 @@ export default function InventoryList() {
                       </div>
                       {/* 底部 */}
                       <div className="mt-3 flex items-center justify-between">
-                        <div className="text-sm text-gray-500">已勾选 <strong className="text-[#3b82f6]">{checkedMaterialIds.size}</strong> 项</div>
+                        <div className="text-sm text-gray-500">已勾选 <strong className="text-blue-500">{checkedMaterialIds.size}</strong> 项</div>
                         <button
                           onClick={addCheckedToSelected}
                           disabled={checkedMaterialIds.size === 0}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#3b82f6] text-white rounded-md text-sm font-medium hover:bg-[#2563eb] disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-150 ease"
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-500 text-white rounded-md text-sm font-medium hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-150 ease"
                         >
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                           添加到已选
@@ -1514,7 +1514,7 @@ export default function InventoryList() {
                             setSelectedBomId(e.target.value)
                             loadBomDetail(e.target.value)
                           }}
-                          className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm bg-white focus:outline-none focus:border-[#3b82f6]"
+                          className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm bg-white focus:outline-none focus:border-blue-500"
                         >
                           <option value="">请选择检测项目/BOM</option>
                           {bomList.map(b => (
@@ -1550,7 +1550,7 @@ export default function InventoryList() {
                                         type="checkbox"
                                         checked={checkedMaterialIds.has(m.id)}
                                         onChange={() => toggleCheckMaterial(m.id)}
-                                        className="w-4 h-4 rounded border-gray-300 text-[#3b82f6]"
+                                        className="w-4 h-4 rounded border-gray-300 text-blue-500"
                                       />
                                       <span className="font-medium text-gray-900">{m.name}</span>
                                     </div>
@@ -1579,7 +1579,7 @@ export default function InventoryList() {
                 <div className="w-[300px] p-6 bg-gray-50 flex flex-col">
                   <div className="flex items-center justify-between mb-4">
                     <span className="text-sm font-semibold text-gray-900">已选物料</span>
-                    <span className="text-xs bg-[#3b82f6] text-white px-2 py-0.5 rounded-full">{selectedMaterials.length} 项</span>
+                    <span className="text-xs bg-blue-500 text-white px-2 py-0.5 rounded-full">{selectedMaterials.length} 项</span>
                   </div>
                   <div className="flex-1 overflow-auto space-y-2 min-h-0">
                     {selectedMaterials.length === 0 ? (
@@ -1619,7 +1619,7 @@ export default function InventoryList() {
             </div>
 
             {/* 弹窗底部 */}
-            <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-end gap-3">
+            <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-end gap-3">
               <button
                 onClick={() => setMaterialSelectorOpen(false)}
                 className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md text-sm font-medium hover:bg-gray-50 transition-all duration-150 ease"
@@ -1629,7 +1629,7 @@ export default function InventoryList() {
               <button
                 onClick={confirmAddMaterials}
                 disabled={selectedMaterials.length === 0 && checkedMaterialIds.size === 0}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-[#3b82f6] text-white rounded-md text-sm font-medium hover:bg-[#2563eb] disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-150 ease shadow-[0_1px_2px_rgba(59,130,246,0.1)]"
+                className="inline-flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-md text-sm font-medium hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-150 ease shadow-sm"
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12"/></svg>
                 确认添加
@@ -1644,7 +1644,7 @@ export default function InventoryList() {
         <div className="fixed inset-0 z-50 flex items-start justify-center pt-20">
           <div className="absolute inset-0 bg-black/40" onClick={() => setDetailModalOpen(false)} />
           <div className="relative bg-white rounded-xl shadow-xl w-full max-w-2xl overflow-hidden">
-            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
               <h3 className="text-lg font-semibold text-gray-900">库存详情</h3>
               <button
                 onClick={() => setDetailModalOpen(false)}
@@ -1689,7 +1689,7 @@ export default function InventoryList() {
                 </div>
               </div>
             </div>
-            <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-end gap-3">
+            <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-end gap-3">
               <button
                 onClick={() => setDetailModalOpen(false)}
                 className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md text-sm font-medium hover:bg-gray-50 transition-all duration-150 ease"
@@ -1698,7 +1698,7 @@ export default function InventoryList() {
               </button>
               <button
                 onClick={() => { setDetailModalOpen(false); openOutboundModal(selectedItem) }}
-                className="px-4 py-2 bg-[#3b82f6] text-white rounded-md text-sm font-medium hover:bg-[#2563eb] transition-all duration-150 ease shadow-[0_1px_2px_rgba(59,130,246,0.1)]"
+                className="px-4 py-2 bg-blue-500 text-white rounded-md text-sm font-medium hover:bg-blue-600 transition-all duration-150 ease shadow-sm"
               >
                 出库
               </button>
@@ -1712,7 +1712,7 @@ export default function InventoryList() {
         <div className="fixed inset-0 z-50 flex items-start justify-center pt-20">
           <div className="absolute inset-0 bg-black/40" onClick={() => setBatchOutboundModalOpen(false)} />
           <div className="relative bg-white rounded-xl shadow-xl w-full max-w-2xl overflow-hidden">
-            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
               <h3 className="text-lg font-semibold text-gray-900">批量出库</h3>
               <button
                 onClick={() => setBatchOutboundModalOpen(false)}
@@ -1724,7 +1724,7 @@ export default function InventoryList() {
             <div className="p-6">
               <p className="text-sm text-gray-600">确认对选中的 <strong>{selectedIds.size}</strong> 项物料进行批量出库操作？</p>
             </div>
-            <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-end gap-3">
+            <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-end gap-3">
               <button
                 onClick={() => setBatchOutboundModalOpen(false)}
                 className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md text-sm font-medium hover:bg-gray-50 transition-all duration-150 ease"
@@ -1733,7 +1733,7 @@ export default function InventoryList() {
               </button>
               <button
                 onClick={confirmBatchOutboundOnly}
-                className="px-4 py-2 bg-[#3b82f6] text-white rounded-md text-sm font-medium hover:bg-[#2563eb] transition-all duration-150 ease shadow-[0_1px_2px_rgba(59,130,246,0.1)]"
+                className="px-4 py-2 bg-blue-500 text-white rounded-md text-sm font-medium hover:bg-blue-600 transition-all duration-150 ease shadow-sm"
               >
                 确认出库
               </button>
@@ -1747,7 +1747,7 @@ export default function InventoryList() {
         <div className="fixed inset-0 z-50 flex items-start justify-center pt-20">
           <div className="absolute inset-0 bg-black/40" onClick={() => setBatchScrapModalOpen(false)} />
           <div className="relative bg-white rounded-xl shadow-xl w-full max-w-2xl overflow-hidden max-h-[80vh] flex flex-col">
-            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
               <h3 className="text-lg font-semibold text-gray-900">批量报废</h3>
               <button
                 onClick={() => setBatchScrapModalOpen(false)}
@@ -1787,11 +1787,11 @@ export default function InventoryList() {
                 <select
                   value={scrapReason}
                   onChange={e => setScrapReason(e.target.value)}
-                  className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm bg-white focus:outline-none focus:border-[#3b82f6]"
+                  className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm bg-white focus:outline-none focus:border-blue-500"
                 >
                   <option value="expired">过期</option>
                   <option value="damaged">损坏</option>
-                  <option value="expired">变质</option>
+                  <option value="spoiled">变质</option>
                   <option value="other">其他</option>
                 </select>
               </div>
@@ -1802,11 +1802,11 @@ export default function InventoryList() {
                   onChange={e => setScrapRemark(e.target.value)}
                   rows={2}
                   placeholder="请输入备注信息"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:border-[#3b82f6] resize-none"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:border-blue-500 resize-none"
                 />
               </div>
             </div>
-            <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-end gap-3 flex-shrink-0">
+            <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-end gap-3 flex-shrink-0">
               <button
                 onClick={() => setBatchScrapModalOpen(false)}
                 className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md text-sm font-medium hover:bg-gray-50 transition-all duration-150 ease"
@@ -1815,7 +1815,7 @@ export default function InventoryList() {
               </button>
               <button
                 onClick={confirmBatchScrap}
-                className="px-4 py-2 bg-red-500 text-white rounded-md text-sm font-medium hover:bg-red-600 transition-all duration-150 ease shadow-[0_1px_2px_rgba(239,68,68,0.1)]"
+                className="px-4 py-2 bg-red-500 text-white rounded-md text-sm font-medium hover:bg-red-600 transition-all duration-150 ease shadow-sm"
               >
                 确认报废
               </button>
@@ -1829,7 +1829,7 @@ export default function InventoryList() {
         <div className="fixed inset-0 z-50 flex items-start justify-center pt-20">
           <div className="absolute inset-0 bg-black/40" onClick={() => setEditRemainModalOpen(false)} />
           <div className="relative bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden">
-            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
               <h3 className="text-lg font-semibold text-gray-900">修改预计剩余量</h3>
               <button onClick={() => setEditRemainModalOpen(false)} className="text-gray-400 hover:text-gray-600 transition-colors text-2xl leading-none">&times;</button>
             </div>
@@ -1842,7 +1842,7 @@ export default function InventoryList() {
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">调整后预计剩余 <span className="text-red-500">*</span></label>
                 <div className="flex gap-2">
-                  <input type="number" value={editRemainValue} onChange={e => setEditRemainValue(e.target.value)} className="flex-1 h-10 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:border-[#3b82f6] focus:shadow-[0_0_0_3px_rgba(59,130,246,0.1)] transition-all duration-150 ease" />
+                  <input type="number" value={editRemainValue} onChange={e => setEditRemainValue(e.target.value)} className="flex-1 h-10 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 transition-all duration-150 ease" />
                   <select className="w-24 h-10 px-2 border border-gray-300 rounded-md text-sm bg-white">
                     <option>ml</option><option>μl</option><option>g</option><option>mg</option>
                   </select>
@@ -1851,12 +1851,12 @@ export default function InventoryList() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">修改原因（可选）</label>
-                <textarea value={editRemainReason} onChange={e => setEditRemainReason(e.target.value)} rows={2} placeholder="如：复染次数增加、稀释比例调整等" className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:border-[#3b82f6] focus:shadow-[0_0_0_3px_rgba(59,130,246,0.1)] transition-all duration-150 ease resize-none" />
+                <textarea value={editRemainReason} onChange={e => setEditRemainReason(e.target.value)} rows={2} placeholder="如：复染次数增加、稀释比例调整等" className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 transition-all duration-150 ease resize-none" />
               </div>
             </div>
-            <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-end gap-3">
+            <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-end gap-3">
               <button onClick={() => setEditRemainModalOpen(false)} className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md text-sm font-medium hover:bg-gray-50 transition-all duration-150 ease">取消</button>
-              <button onClick={() => { alert('预计剩余量已更新！进度条已重新计算。'); setEditRemainModalOpen(false); }} className="px-4 py-2 bg-[#3b82f6] text-white rounded-md text-sm font-medium hover:bg-[#2563eb] transition-all duration-150 ease shadow-[0_1px_2px_rgba(59,130,246,0.1)]">保存修改</button>
+              <button onClick={() => { toast.success('预计剩余量已更新'); setEditRemainModalOpen(false); }} className="px-4 py-2 bg-blue-500 text-white rounded-md text-sm font-medium hover:bg-blue-600 transition-all duration-150 ease shadow-sm">保存修改</button>
             </div>
           </div>
         </div>
@@ -1867,7 +1867,7 @@ export default function InventoryList() {
         <div className="fixed inset-0 z-50 flex items-start justify-center pt-16">
           <div className="absolute inset-0 bg-black/40" onClick={() => setConfirmDepleteModalOpen(false)} />
           <div className="relative bg-white rounded-xl shadow-xl w-full max-w-lg overflow-hidden">
-            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
               <h3 className="text-lg font-semibold text-gray-900">确认物料耗尽</h3>
               <button onClick={() => setConfirmDepleteModalOpen(false)} className="text-gray-400 hover:text-gray-600 transition-colors text-2xl leading-none">&times;</button>
             </div>
@@ -1880,11 +1880,11 @@ export default function InventoryList() {
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">耗尽类型 <span className="text-red-500">*</span></label>
                 <div className="flex gap-3">
-                  <label onClick={() => setDepleteType('normal')} className={`flex items-center gap-2 cursor-pointer px-4 py-2 rounded-lg border-2 transition-all ${depleteType === 'normal' ? 'border-[#3b82f6] bg-blue-50' : 'border-gray-200 hover:border-gray-300'}`}>
+                  <label onClick={() => setDepleteType('normal')} className={`flex items-center gap-2 cursor-pointer px-4 py-2 rounded-lg border-2 transition-all ${depleteType === 'normal' ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'}`}>
                     <input type="radio" checked={depleteType === 'normal'} onChange={() => setDepleteType('normal')} className="accent-[#3b82f6]" />
                     <span className="text-sm font-medium">正常用完</span>
                   </label>
-                  <label onClick={() => setDepleteType('expired')} className={`flex items-center gap-2 cursor-pointer px-4 py-2 rounded-lg border-2 transition-all ${depleteType === 'expired' ? 'border-[#3b82f6] bg-blue-50' : 'border-gray-200 hover:border-gray-300'}`}>
+                  <label onClick={() => setDepleteType('expired')} className={`flex items-center gap-2 cursor-pointer px-4 py-2 rounded-lg border-2 transition-all ${depleteType === 'expired' ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'}`}>
                     <input type="radio" checked={depleteType === 'expired'} onChange={() => setDepleteType('expired')} className="accent-[#3b82f6]" />
                     <span className="text-sm font-medium">过期废弃</span>
                   </label>
@@ -1893,7 +1893,7 @@ export default function InventoryList() {
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">实际剩余量 <span className="text-red-500">*</span></label>
                 <div className="flex gap-2">
-                  <input type="number" value={depleteRemainValue} onChange={e => setDepleteRemainValue(e.target.value)} className="flex-1 h-10 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:border-[#3b82f6] focus:shadow-[0_0_0_3px_rgba(59,130,246,0.1)] transition-all duration-150 ease" />
+                  <input type="number" value={depleteRemainValue} onChange={e => setDepleteRemainValue(e.target.value)} className="flex-1 h-10 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 transition-all duration-150 ease" />
                   <select className="w-24 h-10 px-2 border border-gray-300 rounded-md text-sm bg-white">
                     <option>ml</option><option>μl</option><option>g</option><option>mg</option>
                   </select>
@@ -1904,7 +1904,7 @@ export default function InventoryList() {
                 <>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1.5">过期原因 <span className="text-red-500">*</span></label>
-                    <select value={expiredReason} onChange={e => setExpiredReason(e.target.value)} className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm bg-white mb-2 focus:outline-none focus:border-[#3b82f6]">
+                    <select value={expiredReason} onChange={e => setExpiredReason(e.target.value)} className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm bg-white mb-2 focus:outline-none focus:border-blue-500">
                       <option value="">选择原因</option>
                       <option value="expired">物料已过有效期</option>
                       <option value="quality">物料变质/污染</option>
@@ -1912,7 +1912,7 @@ export default function InventoryList() {
                       <option value="project-cancel">关联项目取消/暂停</option>
                       <option value="other">其他</option>
                     </select>
-                    <textarea rows={2} placeholder="请补充说明具体情况" className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:border-[#3b82f6] focus:shadow-[0_0_0_3px_rgba(59,130,246,0.1)] transition-all duration-150 ease resize-none" />
+                    <textarea rows={2} placeholder="请补充说明具体情况" className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 transition-all duration-150 ease resize-none" />
                   </div>
                   <div className="bg-red-50 border border-red-200 rounded-lg p-3">
                     <div className="text-[13px] text-red-600"><strong>注意：</strong>标记为"过期废弃"后，该批次剩余量（<span>{depleteRemainValue}</span>）将计入损耗成本，不影响BOM对账的正常消耗统计。</div>
@@ -1921,12 +1921,12 @@ export default function InventoryList() {
               )}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">备注（可选）</label>
-                <textarea value={expiredRemark} onChange={e => setExpiredRemark(e.target.value)} rows={2} placeholder="如有特殊情况请备注" className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:border-[#3b82f6] focus:shadow-[0_0_0_3px_rgba(59,130,246,0.1)] transition-all duration-150 ease resize-none" />
+                <textarea value={expiredRemark} onChange={e => setExpiredRemark(e.target.value)} rows={2} placeholder="如有特殊情况请备注" className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 transition-all duration-150 ease resize-none" />
               </div>
             </div>
-            <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-end gap-3">
+            <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-end gap-3">
               <button onClick={() => setConfirmDepleteModalOpen(false)} className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md text-sm font-medium hover:bg-gray-50 transition-all duration-150 ease">取消</button>
-              <button onClick={() => { alert('物料已确认耗尽！'); setConfirmDepleteModalOpen(false); }} className="px-4 py-2 bg-[#3b82f6] text-white rounded-md text-sm font-medium hover:bg-[#2563eb] transition-all duration-150 ease shadow-[0_1px_2px_rgba(59,130,246,0.1)]">确认耗尽</button>
+              <button onClick={() => { toast.success('物料已确认耗尽'); setConfirmDepleteModalOpen(false); }} className="px-4 py-2 bg-blue-500 text-white rounded-md text-sm font-medium hover:bg-blue-600 transition-all duration-150 ease shadow-sm">确认耗尽</button>
             </div>
           </div>
         </div>
