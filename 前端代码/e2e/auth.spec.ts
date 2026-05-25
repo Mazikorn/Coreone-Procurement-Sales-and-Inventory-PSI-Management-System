@@ -22,6 +22,24 @@ async function loginAs(page: Page, role: RoleKey) {
   await page.fill('input[type="password"]', cred.password)
   await page.click('button[type="submit"]')
   await page.waitForURL(`${FE_BASE}/`, { timeout: 10000 })
+  // Verify role in localStorage to catch auth state issues
+  const actualRole = await page.evaluate(() => {
+    try {
+      const userStr = localStorage.getItem('user')
+      if (userStr) return JSON.parse(userStr).role || null
+      const token = localStorage.getItem('token')
+      if (token) {
+        const base64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
+        const pad = 4 - (base64.length % 4)
+        const padded = base64 + (pad < 4 ? '='.repeat(pad) : '')
+        return JSON.parse(atob(padded)).role || null
+      }
+    } catch {}
+    return null
+  })
+  if (actualRole !== role) {
+    console.warn(`[E2E Auth Warning] Expected role: ${role}, actual: ${actualRole} for user: ${cred.username}`)
+  }
 }
 
 async function apiLogin(role: RoleKey): Promise<string> {

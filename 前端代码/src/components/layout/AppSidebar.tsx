@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { cn } from '@/lib/utils'
-import { ROLE_MENU_MAP } from '@/lib/permissions'
+import { ROLE_MENU_MAP, getUserRole } from '@/lib/permissions'
 import {
   LayoutDashboard,
   Package,
@@ -62,28 +62,6 @@ const ALL_SYSTEM_MENU: MenuItem[] = [
   { label: '角色权限', path: '/roles', icon: Shield },
   { label: '操作日志', path: '/logs', icon: FileText },
 ]
-
-function decodeBase64Url(str: string): string {
-  const padding = '='.repeat((4 - (str.length % 4)) % 4)
-  const base64 = str.replace(/-/g, '+').replace(/_/g, '/') + padding
-  return atob(base64)
-}
-
-function getUserRole(): string | null {
-  try {
-    const token = localStorage.getItem('token')
-    if (token) {
-      const payload = JSON.parse(decodeBase64Url(token.split('.')[1]))
-      if (payload.role) return payload.role
-    }
-    const userStr = localStorage.getItem('user')
-    if (userStr) {
-      const user = JSON.parse(userStr)
-      return user.role || null
-    }
-  } catch { /* ignore */ }
-  return null
-}
 
 function getRoleLabel(role: string | null): string {
   const labels: Record<string, string> = {

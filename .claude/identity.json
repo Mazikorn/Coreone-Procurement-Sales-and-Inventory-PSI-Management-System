@@ -1,0 +1,23 @@
+{
+  "version": "1.0",
+  "projectName": "COREONE",
+  "projectType": "fullstack-web-app",
+  "technicalLevel": "intermediate",
+  "userRole": "product-manager",
+  "preferredStyle": {
+    "verbosity": "concise",
+    "codeComments": false,
+    "explanations": true
+  },
+  "domains": [
+    "react",
+    "typescript",
+    "nodejs",
+    "express",
+    "sqlite",
+    "playwright",
+    "tailwindcss"
+  ],
+  "suggestedBy": "ecc-setup-for-coreone",
+  "createdAt": "2026-05-22T00:00:00.000Z"
+}

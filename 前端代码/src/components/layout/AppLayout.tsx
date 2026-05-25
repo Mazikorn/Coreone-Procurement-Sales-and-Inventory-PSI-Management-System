@@ -2,29 +2,7 @@ import { Outlet, useLocation, Navigate } from 'react-router-dom'
 import { useMemo } from 'react'
 import AppSidebar from './AppSidebar'
 import TopBar from './TopBar'
-import { ROLE_MENU_MAP } from '@/lib/permissions'
-
-function decodeBase64Url(str: string): string {
-  const padding = '='.repeat((4 - (str.length % 4)) % 4)
-  const base64 = str.replace(/-/g, '+').replace(/_/g, '/') + padding
-  return atob(base64)
-}
-
-function getUserRole(): string | null {
-  try {
-    const token = localStorage.getItem('token')
-    if (token) {
-      const payload = JSON.parse(decodeBase64Url(token.split('.')[1]))
-      if (payload.role) return payload.role
-    }
-    const userStr = localStorage.getItem('user')
-    if (userStr) {
-      const user = JSON.parse(userStr)
-      return user.role || null
-    }
-  } catch { /* ignore */ }
-  return null
-}
+import { ROLE_MENU_MAP, getUserRole } from '@/lib/permissions'
 
 export default function AppLayout() {
   const location = useLocation()
