@@ -166,4 +166,61 @@
 
 ---
 
+---
+
+### 4. Reconciliation.tsx 拆分（P2 页面）
+
+**目标**：将 `Reconciliation.tsx` 从 892 行拆分到 <400 行。
+
+**最终结果**：
+- `Reconciliation.tsx`：214 行（原 892 行）✅
+- TypeScript 编译通过 ✅
+- 已 commit：`a056918d`
+
+**提取的子组件**（`前端代码/src/pages/reconciliation/components/`）：
+| 组件 | 功能 | 行数 |
+|---|---|---|
+| `ReconcileProjectTab.tsx` | 按项目对账（可展开项目行 + BOM差异表） | ~140 |
+| `MaterialSummaryTab.tsx` | 按物料汇总表格 | ~80 |
+| `CaseListTab.tsx` | 按病理号查看（筛选 + 表格 + 分页） | ~120 |
+| `LogListTab.tsx` | 修正日志时间线 | ~55 |
+| `ImportLisModal.tsx` | 导入LIS数据弹窗 | ~50 |
+| `FixBomModal.tsx` | 修正BOM用量弹窗 | ~90 |
+| `EditCaseModal.tsx` | 修改病例信息弹窗 | ~65 |
+
+**提取的自定义 Hook**：
+- `前端代码/src/pages/reconciliation/hooks/useReconciliationPage.ts` — 所有状态管理、数据获取、业务逻辑（~280 行）
+
+---
+
+## 待拆分文件清单（超 400 行）
+
+**全部完成！** 所有原本超过 400 行的页面文件已拆分完毕：
+
+| 文件 | 当前行数 | 状态 |
+|---|---|---|
+| Inbound.tsx | 198 | ✅ 已完成 |
+| Outbound.tsx | 384 | ✅ 已完成 |
+| InventoryList.tsx | 217 | ✅ 已完成 |
+| CostAnalysis.tsx | 153 | ✅ 已完成 |
+| Locations.tsx | 153 | ✅ 已完成 |
+| Categories.tsx | 157 | ✅ 已完成 |
+| Roles.tsx | 129 | ✅ 已完成 |
+| Dashboard.tsx | 167 | ✅ 已完成 |
+| Reconciliation.tsx | 214 | ✅ 已完成 |
+| BOM.tsx | 153 | ✅ 已完成 |
+| Alerts.tsx | 121 | ✅ 已完成 |
+| Projects.tsx | 147 | ✅ 已完成 |
+| Suppliers.tsx | 113 | ✅ 已完成 |
+| Materials.tsx | 126 | ✅ 已完成 |
+| Stocktaking.tsx | 105 | ✅ 已完成 |
+| Users.tsx | 107 | ✅ 已完成 |
+| Logs.tsx | 92 | ✅ 已完成 |
+
+## 下一步建议
+
+Phase 1（交互规范逐页复核）和 Phase 2（DESIGN.md 一致性清理）中的**组件拆分工作已全部完成**。接下来可按 plan 推进：
+1. **交互规范逐页复核** — 对照《交互规范总纲》检查各页面加载/筛选/分页/删除/表单等交互
+2. **缺失页面评估** — 退库记录、报废记录、调拨记录等 12 个 ❌ 缺失场景
+
 *更新时间：2026-05-25*
