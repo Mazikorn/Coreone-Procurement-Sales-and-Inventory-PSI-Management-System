@@ -49,8 +49,11 @@ export const purchaseOrderApi = {
 }
 
 export const outboundApi = {
-  getList: (params?: PageParams & { projectId?: string; status?: string }) =>
+  getList: (params?: PageParams & { projectId?: string; status?: string; keyword?: string; materialId?: string; type?: string; startDate?: string; endDate?: string }) =>
     request.get<PaginationData<OutboundRecord>>('/outbound', { params }),
+
+  getStats: () =>
+    request.get<{ total: number; completed: number; pending: number; cancelled: number; totalCost: number }>('/outbound/stats'),
 
   create: (data: OutboundFormData) =>
     request.post<OutboundRecord>('/outbound', data),

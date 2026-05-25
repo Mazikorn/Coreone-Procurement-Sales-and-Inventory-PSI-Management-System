@@ -34,6 +34,21 @@ export default function Outbound() {
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
 
+  // 快速筛选映射为日期范围
+  const quickFilterDates = useMemo(() => {
+    const now = new Date()
+    const today = now.toISOString().split('T')[0]
+    const weekStart = new Date(now.getTime() - now.getDay() * 86400000).toISOString().split('T')[0]
+    const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
+
+    switch (quickFilter) {
+      case 'today': return { startDate: today, endDate: today }
+      case 'week': return { startDate: weekStart, endDate: today }
+      case 'month': return { startDate: monthStart, endDate: today }
+      default: return { startDate, endDate }
+    }
+  }, [quickFilter, startDate, endDate])
+
   const {
     data,
     loading,
@@ -49,12 +64,17 @@ export default function Outbound() {
         page,
         pageSize,
         status: statusFilter || undefined,
+        keyword: searchText || undefined,
+        materialId: materialFilter || undefined,
+        type: typeFilter || undefined,
+        startDate: quickFilterDates.startDate || undefined,
+        endDate: quickFilterDates.endDate || undefined,
       })
       return { list: res.list || [], pagination: res.pagination }
     },
     initialPage: urlPage,
     initialPageSize: urlPageSize,
-    deps: [statusFilter],
+    deps: [statusFilter, searchText, materialFilter, typeFilter, quickFilterDates.startDate, quickFilterDates.endDate],
   })
 
   useEffect(() => {
@@ -62,8 +82,14 @@ export default function Outbound() {
       page: page > 1 ? page : null,
       pageSize: pageSize !== 10 ? pageSize : null,
       status: statusFilter || null,
+      keyword: searchText || null,
+      materialId: materialFilter || null,
+      type: typeFilter || null,
+      startDate: startDate || null,
+      endDate: endDate || null,
+      quickFilter: quickFilter !== 'all' ? quickFilter : null,
     })
-  }, [page, pageSize, statusFilter, setMultiple])
+  }, [page, pageSize, statusFilter, searchText, materialFilter, typeFilter, startDate, endDate, quickFilter, setMultiple])
 
   const [materials, setMaterials] = useState<Material[]>([])
   const [projects, setProjects] = useState<Project[]>([])
@@ -118,43 +144,21 @@ export default function Outbound() {
   }
   const clearSelection = () => setSelectedIds(new Set())
 
-  const stats = useMemo(() => {
-    const completed = data.filter(d => d.status === 'completed').length
-    const pending = data.filter(d => d.status === 'pending').length
-    const cancelled = data.filter(d => d.status === 'cancelled').length
-    return {
-      monthTotal: total || data.length,
-      completed,
-      pending,
-      cancelled,
-    }
-  }, [data, total])
+  // 统计数据（从后端获取）
+  const [stats, setStats] = useState({
+    monthTotal: 0, completed: 0, pending: 0, cancelled: 0,
+  })
 
-  const filteredData = useMemo(() => {
-    let result = [...data]
-    if (searchText.trim()) {
-      const kw = searchText.trim().toLowerCase()
-      result = result.filter(
-        r =>
-          r.outboundNo.toLowerCase().includes(kw) ||
-          r.items?.some(i => i.materialName?.toLowerCase().includes(kw)) ||
-          false
-      )
-    }
-    if (materialFilter) {
-      result = result.filter(r => r.items?.some(i => i.materialId === materialFilter))
-    }
-    if (typeFilter) {
-      result = result.filter(r => r.type === typeFilter)
-    }
-    if (startDate) {
-      result = result.filter(r => r.createdAt >= startDate)
-    }
-    if (endDate) {
-      result = result.filter(r => r.createdAt <= endDate + 'T23:59:59')
-    }
-    return result
-  }, [data, searchText, materialFilter, typeFilter, startDate, endDate])
+  const fetchStats = async () => {
+    try {
+      const res: any = await outboundApi.getStats()
+      setStats(res.data || res)
+    } catch (e) { console.error(e) }
+  }
+
+  useEffect(() => {
+    fetchStats()
+  }, [])
 
   const quickFilterCounts = useMemo(() => {
     const today = new Date().toISOString().slice(0, 10)
@@ -225,7 +229,7 @@ export default function Outbound() {
       }
       setCreateModalOpen(false)
       setEditRecordId(null)
-      refresh()
+      refreshWithStats()
     } catch (e) {
       toast.error(editRecordId ? '出库更新失败' : '出库登记失败')
     }
@@ -238,7 +242,7 @@ export default function Outbound() {
       toast.success('删除成功')
       setDeleteConfirmOpen(false)
       setDeleteRecord(null)
-      refresh()
+      refreshWithStats()
     } catch (e) {
       toast.error('删除失败')
     }
@@ -254,15 +258,82 @@ export default function Outbound() {
       await outboundApi.delete(cancelRecord.id)
       toast.success('出库已取消')
       setCancelModalOpen(false)
-      refresh()
+      refreshWithStats()
     } catch (e) {
       toast.error('取消失败')
     }
   }
 
-  const batchExport = () => selectedIds.size > 0 && toast.success(`正在导出 ${selectedIds.size} 条出库记录...`)
-  const batchPrint = () => selectedIds.size > 0 && toast.success('正在生成打印预览...')
-  const handlePrintRecord = (_record: OutboundRecord) => toast.success('正在生成打印预览...')
+  const refreshWithStats = () => { refresh(); fetchStats() }
+
+  const batchExport = async () => {
+    const exportData = selectedIds.size > 0 ? data.filter(d => selectedIds.has(d.id)) : data
+    if (exportData.length === 0) {
+      toast.error('没有可导出的数据')
+      return
+    }
+    try {
+      const XLSX = await import('xlsx')
+      const { formatDateTime } = await import('@/lib/utils')
+      const rows = exportData.map(row => ({
+        出库单号: row.outboundNo,
+        类型: row.type === 'project' ? '项目出库' : row.type === 'transfer' ? '调拨出库' : '报废出库',
+        项目: row.projectName || '-',
+        物料明细: row.items?.map(i => `${i.materialName}×${i.quantity}`).join(', ') || '-',
+        总金额: row.totalCost || 0,
+        操作人: row.operator || '-',
+        出库时间: formatDateTime(row.createdAt),
+        状态: row.status === 'completed' ? '已完成' : row.status === 'pending' ? '待出库' : '已取消',
+        备注: row.remark || '-',
+      }))
+      const ws = XLSX.utils.json_to_sheet(rows)
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, '出库记录')
+      const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+      XLSX.writeFile(wb, `出库记录_${dateStr}.xlsx`)
+      toast.success('导出成功', { description: `已导出 ${rows.length} 条记录` })
+    } catch (e) {
+      toast.error('导出失败')
+    }
+  }
+
+  const handlePrintRecord = (record: OutboundRecord) => {
+    const w = window.open('', '_blank')
+    if (!w) return
+    const items = record.items?.map(i => `<tr><td>${i.materialName}</td><td>${i.batchNo || '-'}</td><td>${i.quantity} ${i.unit || ''}</td><td>${i.unitCost || 0}</td><td>${i.totalCost || 0}</td></tr>`).join('') || ''
+    w.document.write(`
+      <html><head><title>出库单 ${record.outboundNo}</title><style>
+        body { font-family: sans-serif; padding: 40px; }
+        h2 { text-align: center; margin-bottom: 8px; }
+        .meta { text-align: center; color: #666; font-size: 12px; margin-bottom: 24px; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+        th { background: #f5f5f5; }
+        .footer { margin-top: 24px; font-size: 12px; color: #999; text-align: center; }
+      </style></head><body>
+        <h2>出库单</h2>
+        <div class="meta">单号：${record.outboundNo} | 项目：${record.projectName || '-'} | 时间：${new Date(record.createdAt).toLocaleString()}</div>
+        <table><thead><tr><th>物料</th><th>批号</th><th>数量</th><th>单价</th><th>金额</th></tr></thead>
+        <tbody>${items}</tbody>
+        </table>
+        <div class="footer">操作人：${record.operator || '-'} | 备注：${record.remark || '无'}</div>
+        <div class="footer">本单据由 COREONE 系统自动生成</div>
+      </body></html>
+    `)
+    w.document.close()
+    w.print()
+  }
+
+  const batchPrint = () => {
+    if (selectedIds.size === 0) {
+      toast.error('请先选择要打印的记录')
+      return
+    }
+    const records = data.filter(d => selectedIds.has(d.id))
+    records.forEach((r, i) => {
+      setTimeout(() => handlePrintRecord(r), i * 500)
+    })
+  }
 
   return (
     <div className="space-y-6">
@@ -323,7 +394,7 @@ export default function Outbound() {
 
         <OutboundTable
           loading={loading}
-          filteredData={filteredData}
+          data={data}
           selectedIds={selectedIds}
           selectAll={selectAll}
           total={total}

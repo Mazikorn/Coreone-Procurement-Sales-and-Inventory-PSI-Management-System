@@ -14,7 +14,7 @@ function generateOutboundNo(): string {
 
 router.get('/', (req, res) => {
   try {
-    let { page = 1, pageSize = 20, projectId, status } = req.query
+    let { page = 1, pageSize = 20, projectId, status, keyword, materialId, type, startDate, endDate } = req.query
     page = Math.max(1, Number(page) || 1)
     pageSize = Math.max(1, Math.min(100, Number(pageSize) || 20))
     const db = getDatabase()
@@ -22,6 +22,22 @@ router.get('/', (req, res) => {
     const params: any[] = []
     if (projectId) { where += ' AND r.project_id = ?'; params.push(projectId) }
     if (status) { where += ' AND r.status = ?'; params.push(status) }
+    if (type) { where += ' AND r.type = ?'; params.push(type) }
+    if (startDate) { where += ' AND r.created_at >= ?'; params.push(startDate) }
+    if (endDate) { where += ' AND r.created_at <= ?'; params.push(`${endDate}T23:59:59`) }
+    if (keyword) {
+      where += ` AND (r.outbound_no LIKE ? OR EXISTS (
+        SELECT 1 FROM outbound_items oi JOIN materials m ON oi.material_id = m.id
+        WHERE oi.outbound_id = r.id AND m.is_deleted = 0 AND m.name LIKE ?
+      ))`
+      params.push(`%${keyword}%`, `%${keyword}%`)
+    }
+    if (materialId) {
+      where += ` AND EXISTS (
+        SELECT 1 FROM outbound_items oi WHERE oi.outbound_id = r.id AND oi.material_id = ?
+      )`
+      params.push(materialId)
+    }
 
     const count = (db.prepare(`SELECT COUNT(*) as total FROM outbound_records r WHERE ${where}`).get(...params) as any)?.total || 0
     const offset = (Number(page) - 1) * Number(pageSize)
@@ -51,6 +67,18 @@ router.get('/', (req, res) => {
     })
 
     successList(res, result, Number(page), Number(pageSize), count)
+  } catch (err: any) { error(res, err.message) }
+})
+
+router.get('/stats', (req, res) => {
+  try {
+    const db = getDatabase()
+    const total = (db.prepare("SELECT COUNT(*) as c FROM outbound_records WHERE is_deleted = 0").get() as any)?.c || 0
+    const completed = (db.prepare("SELECT COUNT(*) as c FROM outbound_records WHERE is_deleted = 0 AND status = 'completed'").get() as any)?.c || 0
+    const pending = (db.prepare("SELECT COUNT(*) as c FROM outbound_records WHERE is_deleted = 0 AND status = 'pending'").get() as any)?.c || 0
+    const cancelled = (db.prepare("SELECT COUNT(*) as c FROM outbound_records WHERE is_deleted = 0 AND status = 'cancelled'").get() as any)?.c || 0
+    const totalCost = (db.prepare("SELECT COALESCE(SUM(total_cost),0) as c FROM outbound_records WHERE is_deleted = 0 AND status = 'completed'").get() as any)?.c || 0
+    success(res, { total, completed, pending, cancelled, totalCost })
   } catch (err: any) { error(res, err.message) }
 })
 

@@ -17,7 +17,7 @@ const typeConfig: Record<string, string> = {
 
 interface OutboundTableProps {
   loading: boolean
-  filteredData: OutboundRecord[]
+  data: OutboundRecord[]
   selectedIds: Set<string>
   selectAll: boolean
   total: number
@@ -39,7 +39,7 @@ interface OutboundTableProps {
 
 export default function OutboundTable({
   loading,
-  filteredData,
+  data,
   selectedIds,
   selectAll,
   total,
