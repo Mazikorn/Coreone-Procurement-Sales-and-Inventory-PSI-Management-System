@@ -23,6 +23,7 @@ export default function PurchaseOrders() {
 
   const [modalOpen, setModalOpen] = useState(false)
   const [receiveModalOpen, setReceiveModalOpen] = useState(false)
+  const [detailModalOpen, setDetailModalOpen] = useState(false)
   const [selectedOrder, setSelectedOrder] = useState<PurchaseOrder | null>(null)
   const [receiveQty, setReceiveQty] = useState(0)
 
@@ -208,6 +209,12 @@ export default function PurchaseOrders() {
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap">
                         <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => { setSelectedOrder(row); setDetailModalOpen(true) }}
+                            className="px-2 py-1 text-xs text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors duration-150"
+                          >
+                            详情
+                          </button>
                           {(row.status === 'pending' || row.status === 'partial') && (
                             <>
                               <button
@@ -333,6 +340,82 @@ export default function PurchaseOrders() {
             <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200">
               <button onClick={() => setModalOpen(false)} className="px-4 py-2 text-sm text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors duration-150">取消</button>
               <button onClick={handleCreate} className="px-4 py-2 text-sm text-white bg-blue-500 rounded-md hover:bg-blue-600 transition-colors duration-150">确认创建</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Detail Modal */}
+      {detailModalOpen && selectedOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-900">采购订单详情</h3>
+              <button onClick={() => setDetailModalOpen(false)} className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-md transition-colors duration-150">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-gray-500">订单号</span>
+                <span className="font-mono text-sm font-medium">{selectedOrder.orderNo}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-gray-500">物料</span>
+                <span className="text-sm font-medium">{selectedOrder.materialName}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-gray-500">供应商</span>
+                <span className="text-sm font-medium">{suppliers.find(s => s.id === selectedOrder.supplierId)?.name || '-'}</span>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-gray-50 rounded-md p-3">
+                  <div className="text-xs text-gray-500">采购数量</div>
+                  <div className="text-lg font-semibold">{selectedOrder.orderedQty} {selectedOrder.unit}</div>
+                </div>
+                <div className="bg-gray-50 rounded-md p-3">
+                  <div className="text-xs text-gray-500">已收货</div>
+                  <div className="text-lg font-semibold">{selectedOrder.receivedQty} {selectedOrder.unit}</div>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-gray-50 rounded-md p-3">
+                  <div className="text-xs text-gray-500">剩余待收</div>
+                  <div className="text-lg font-semibold">{selectedOrder.remainingQty} {selectedOrder.unit}</div>
+                </div>
+                <div className="bg-gray-50 rounded-md p-3">
+                  <div className="text-xs text-gray-500">总金额</div>
+                  <div className="text-lg font-semibold">{formatCurrency(selectedOrder.totalAmount)}</div>
+                </div>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-gray-500">单价</span>
+                <span className="text-sm">{formatCurrency(selectedOrder.unitPrice)}</span>
+              </div>
+              {selectedOrder.expectedDate && (
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-gray-500">预计到货</span>
+                  <span className="text-sm">{selectedOrder.expectedDate}</span>
+                </div>
+              )}
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-gray-500">状态</span>
+                <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${statusConfig[selectedOrder.status]?.bg} ${statusConfig[selectedOrder.status]?.text}`}>
+                  {statusConfig[selectedOrder.status]?.label}
+                </span>
+              </div>
+              {selectedOrder.remark && (
+                <div className="bg-gray-50 rounded-md p-3">
+                  <div className="text-xs text-gray-500 mb-1">备注</div>
+                  <div className="text-sm">{selectedOrder.remark}</div>
+                </div>
+              )}
+              <div className="flex justify-between items-center text-xs text-gray-400">
+                <span>创建时间: {selectedOrder.createdAt}</span>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200">
+              <button onClick={() => setDetailModalOpen(false)} className="px-4 py-2 text-sm text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors duration-150">关闭</button>
             </div>
           </div>
         </div>

@@ -68,7 +68,6 @@ export default function InboundFilterBar({
         >
           <option value="">全部状态</option>
           <option value="completed">已完成</option>
-          <option value="pending">部分到货</option>
           <option value="cancelled">已取消</option>
         </select>
         <select

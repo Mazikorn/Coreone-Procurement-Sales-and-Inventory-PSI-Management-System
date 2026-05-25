@@ -19,7 +19,6 @@ function getStatusLabel(status: string): string {
   const map: Record<string, string> = {
     completed: '已完成',
     cancelled: '已取消',
-    pending: '部分到货',
   }
   return map[status] || status
 }
@@ -28,8 +27,6 @@ function getStatusColor(status: string): string {
   switch (status) {
     case 'completed':
       return 'bg-green-50 text-green-700 border-green-200'
-    case 'pending':
-      return 'bg-amber-50 text-amber-700 border-amber-200'
     case 'cancelled':
       return 'bg-gray-100 text-gray-600 border-gray-200'
     default:

@@ -18,7 +18,6 @@ function getStatusLabel(status: string): string {
   const map: Record<string, string> = {
     completed: '已完成',
     cancelled: '已取消',
-    pending: '部分到货',
   }
   return map[status] || status
 }

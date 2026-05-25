@@ -1,3 +1,4 @@
+import { useNavigate } from 'react-router-dom'
 import { QrCode, Plus, Upload, Printer } from 'lucide-react'
 import ImportInboundModal from './components/ImportInboundModal'
 import InboundFormModal from './components/InboundFormModal'
@@ -14,7 +15,16 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useInboundPage } from './hooks/useInboundPage'
 
 export default function Inbound() {
+  const navigate = useNavigate()
   const page = useInboundPage()
+
+  const handleFilterStatus = (status: string) => {
+    if (status === 'pending') {
+      navigate('/purchase-orders')
+      return
+    }
+    page.setFilterStatus(status)
+  }
 
   return (
     <div className="space-y-5">
@@ -60,7 +70,7 @@ export default function Inbound() {
         amount={page.stats.amount}
         pendingOrders={page.stats.pendingOrders}
         supplierCount={page.stats.supplierCount}
-        onFilterStatus={page.setFilterStatus}
+        onFilterStatus={handleFilterStatus}
       />
 
       {/* 快速筛选 */}
