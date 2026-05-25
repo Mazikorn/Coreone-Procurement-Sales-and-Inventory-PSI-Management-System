@@ -4,6 +4,10 @@ import {
   CircleCheck, RotateCcw, AlertTriangle,
 } from 'lucide-react'
 import ImportInboundModal from './components/ImportInboundModal'
+import InboundDetailModal from './components/InboundDetailModal'
+import InboundRestoreModal from './components/InboundRestoreModal'
+import InboundScanModal from './components/InboundScanModal'
+import InboundPrintModal from './components/InboundPrintModal'
 import { inboundApi, purchaseOrderApi } from '@/api/inventory'
 import { materialApi, supplierApi, locationApi } from '@/api/master'
 import type { InboundRecord, Material, Supplier, Location } from '@/types'
@@ -1131,209 +1135,31 @@ export default function Inbound() {
         </Modal>
       )}
 
-      {/* 入库详情弹窗 */}
-      {modalType === 'detail' && selectedRecord && (
-        <Modal onClose={closeModal} title="入库详情" size="lg">
-          <div>
-            <div className="flex items-center gap-3 mb-2">
-              <div className="text-lg font-semibold text-gray-900">{selectedRecord.inboundNo}</div>
-              <span className={cn('inline-flex items-center px-3 py-1 rounded-full text-xs font-medium border', getStatusColor(getRecordStatus(selectedRecord)))}>
-                {getStatusLabel(getRecordStatus(selectedRecord))}
-              </span>
-            </div>
-            <div className="text-sm text-gray-500 mb-5">入库时间: {formatDateTime(selectedRecord.createdAt)}</div>
+      <InboundDetailModal
+        open={modalType === 'detail'}
+        record={selectedRecord}
+        materials={materials}
+        onClose={closeModal}
+        onPrint={() => setModalType('print')}
+      />
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="bg-gray-50 rounded-lg p-3">
-                <div className="text-xs text-gray-500 mb-1">物料名称</div>
-                <div className="text-sm font-medium text-gray-900">{selectedRecord.materialName}</div>
-              </div>
-              <div className="bg-gray-50 rounded-lg p-3">
-                <div className="text-xs text-gray-500 mb-1">物料编码</div>
-                <div className="text-sm font-mono text-gray-900">{selectedRecord.materialId}</div>
-              </div>
-              <div className="bg-gray-50 rounded-lg p-3">
-                <div className="text-xs text-gray-500 mb-1">批次号</div>
-                <div className="text-sm font-mono text-gray-900">{selectedRecord.batchNo || '-'}</div>
-              </div>
-              <div className="bg-gray-50 rounded-lg p-3">
-                <div className="text-xs text-gray-500 mb-1">入库来源</div>
-                <div className="text-sm">
-                  <span className={cn('inline-flex items-center px-2 py-0.5 rounded-full text-xs border', getSourceBadgeColor(selectedRecord.type))}>
-                    {getTypeLabel(selectedRecord.type)}
-                  </span>
-                </div>
-              </div>
-              <div className="bg-gray-50 rounded-lg p-3">
-                <div className="text-xs text-gray-500 mb-1">入库数量</div>
-                <div className="text-sm font-medium text-gray-900">{selectedRecord.quantity} {selectedRecord.unit || materials.find(m => m.id === selectedRecord.materialId)?.unit || ''}</div>
-              </div>
-              <div className="bg-gray-50 rounded-lg p-3">
-                <div className="text-xs text-gray-500 mb-1">入库单价</div>
-                <div className="text-sm font-medium text-gray-900">{formatCurrency(selectedRecord.price)}</div>
-              </div>
-              <div className="bg-gray-50 rounded-lg p-3">
-                <div className="text-xs text-gray-500 mb-1">入库金额</div>
-                <div className="text-sm font-medium text-gray-900">{formatCurrency(selectedRecord.amount || selectedRecord.price * selectedRecord.quantity)}</div>
-              </div>
-              <div className="bg-gray-50 rounded-lg p-3">
-                <div className="text-xs text-gray-500 mb-1">供应商</div>
-                <div className="text-sm text-gray-900">{selectedRecord.supplierName || '-'}</div>
-              </div>
-              <div className="bg-gray-50 rounded-lg p-3">
-                <div className="text-xs text-gray-500 mb-1">生产日期</div>
-                <div className="text-sm text-gray-900">{selectedRecord.productionDate || '-'}</div>
-              </div>
-              <div className="bg-gray-50 rounded-lg p-3">
-                <div className="text-xs text-gray-500 mb-1">有效期至</div>
-                <div className="text-sm text-gray-900">{selectedRecord.expiryDate || '-'}</div>
-              </div>
-            </div>
+      <InboundRestoreModal
+        open={modalType === 'restore'}
+        record={selectedRecord}
+        onClose={closeModal}
+        onConfirm={handleRestoreInbound}
+      />
 
-            {selectedRecord.remark && (
-              <div className="mt-4 bg-gray-50 rounded-lg p-3">
-                <div className="text-xs text-gray-500 mb-1">备注</div>
-                <div className="text-sm text-gray-900">{selectedRecord.remark}</div>
-              </div>
-            )}
-
-            <div className="mt-4 bg-gray-50 rounded-lg p-3">
-              <div className="flex justify-between text-xs">
-                <div><span className="text-gray-500">操作人:</span> <span className="ml-1 text-gray-900">{selectedRecord.operator}</span></div>
-                <div><span className="text-gray-500">入库时间:</span> <span className="ml-1 text-gray-900">{formatDateTime(selectedRecord.createdAt)}</span></div>
-              </div>
-            </div>
-          </div>
-          <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-gray-200">
-            <button
-              onClick={closeModal}
-              className="px-4 py-2 text-sm text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
-            >
-              关闭
-            </button>
-            <button
-              onClick={() => setModalType('print')}
-              className="px-4 py-2 text-sm text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
-            >
-              打印入库单
-            </button>
-          </div>
-        </Modal>
-      )}
-
-      {/* 恢复入库弹窗 */}
-      {modalType === 'restore' && selectedRecord && (
-        <Modal onClose={closeModal} title="恢复入库">
-          <div className="text-center py-5">
-            <RotateCcw className="mx-auto text-blue-500 mb-4" />
-            <h4 className="text-base font-semibold text-gray-900 mb-2">恢复此入库记录？</h4>
-            <p className="text-sm text-gray-500 mb-5">
-              入库单号: <span className="font-mono">{selectedRecord.inboundNo}</span>
-            </p>
-            <div className="bg-gray-50 rounded-lg p-4 text-left mb-4">
-              <div className="flex justify-between mb-2 text-sm">
-                <span className="text-gray-500">耗材名称</span>
-                <span className="font-medium">{selectedRecord.materialName}</span>
-              </div>
-              <div className="flex justify-between mb-2 text-sm">
-                <span className="text-gray-500">入库数量</span>
-                <span className="font-medium">{selectedRecord.quantity}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-500">当前库存</span>
-                <span className="font-medium text-green-600">恢复后将重新计入</span>
-              </div>
-            </div>
-          </div>
-          <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-gray-200">
-            <button
-              onClick={closeModal}
-              className="px-4 py-2 text-sm text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
-            >
-              取消
-            </button>
-            <button
-              onClick={handleRestoreInbound}
-              className="px-4 py-2 text-sm text-white bg-blue-500 rounded-md hover:bg-blue-600 transition-colors"
-            >
-              确认恢复
-            </button>
-          </div>
-        </Modal>
-      )}
-
-      {/* 扫码入库弹窗 */}
-      {modalType === 'scan' && (
-        <Modal onClose={closeModal} title="扫码入库">
-          <div className="text-center py-6">
-            <QrCode className="w-16 h-16 mx-auto text-gray-400 mb-3" />
-            <div className="text-sm text-gray-600 mb-1">请使用扫码枪扫描或手动输入条码</div>
-            <div className="text-xs text-gray-400 mb-4">系统将自动匹配物料信息</div>
-            <div className="max-w-sm mx-auto">
-              <input
-                type="text"
-                autoFocus
-                placeholder="请扫描或输入条码..."
-                className="w-full px-4 py-2.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                onKeyDown={async (e) => {
-                  if (e.key === 'Enter') {
-                    const code = (e.target as HTMLInputElement).value.trim()
-                    if (!code) return
-                    // 查询物料
-                    try {
-                      const res: any = await materialApi.getList({ keyword: code, pageSize: 10 })
-                      const matched = res?.list?.find((m: Material) =>
-                        m.code?.toLowerCase() === code.toLowerCase() ||
-                        m.name?.toLowerCase().includes(code.toLowerCase())
-                      )
-                      if (matched) {
-                        toast.success('扫码成功', { description: `已识别耗材：${matched.name}` })
-                        setTimeout(() => {
-                          closeModal()
-                          openCreate()
-                          setForm(prev => ({
-                            ...prev,
-                            materialId: matched.id,
-                            type: 'direct',
-                          }))
-                        }, 400)
-                      } else {
-                        toast.error('未找到匹配物料', { description: `条码 "${code}" 未匹配到任何物料` })
-                      }
-                    } catch {
-                      toast.error('查询失败')
-                    }
-                  }
-                }}
-              />
-            </div>
-            <div className="mt-4 p-3 bg-gray-50 rounded-lg">
-              <div className="text-xs text-gray-500 mb-2">支持以下条码类型：</div>
-              <div className="flex flex-wrap justify-center gap-2">
-                {['Code 128', 'Code 39', 'EAN-13', 'QR Code'].map(code => (
-                  <span key={code} className="px-2 py-1 bg-white rounded text-xs text-gray-500 border border-gray-200">
-                    {code}
-                  </span>
-                ))}
-              </div>
-            </div>
-          </div>
-          <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-gray-200">
-            <button
-              onClick={closeModal}
-              className="px-4 py-2 text-sm text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
-            >
-              取消
-            </button>
-            <button
-              onClick={() => { closeModal(); openCreate() }}
-              className="px-4 py-2 text-sm text-white bg-blue-500 rounded-md hover:bg-blue-600 transition-colors"
-            >
-              手动输入
-            </button>
-          </div>
-        </Modal>
-      )}
+      <InboundScanModal
+        open={modalType === 'scan'}
+        onClose={closeModal}
+        onManualInput={() => { closeModal(); openCreate() }}
+        onScanSuccess={(materialId) => {
+          closeModal()
+          openCreate()
+          setForm(prev => ({ ...prev, materialId, type: 'direct' }))
+        }}
+      />
 
       {/* 批量导入弹窗 */}
       {modalType === 'import' && (
@@ -1347,68 +1173,12 @@ export default function Inbound() {
         </Modal>
       )}
 
-      {/* 打印预览弹窗 */}
-      {modalType === 'print' && (
-        <Modal onClose={closeModal} title="打印预览" size="lg">
-          <div className="border border-gray-200 rounded-lg p-6 bg-white">
-            <div className="text-center mb-6">
-              <div className="text-xl font-bold text-gray-900">入库记录报表</div>
-              <div className="flex justify-center gap-6 mt-2 text-xs text-gray-500">
-                <div>生成时间: {formatDateTime(new Date())}</div>
-                <div>操作人: {JSON.parse(localStorage.getItem('user') || '{}')?.name || 'system'}</div>
-              </div>
-            </div>
-            <table className="w-full text-xs border-collapse">
-              <thead>
-                <tr className="bg-gray-50">
-                  <th className="border border-gray-200 px-2 py-2 text-left">入库单号</th>
-                  <th className="border border-gray-200 px-2 py-2 text-left">耗材名称</th>
-                  <th className="border border-gray-200 px-2 py-2 text-left">批号</th>
-                  <th className="border border-gray-200 px-2 py-2 text-left">数量</th>
-                  <th className="border border-gray-200 px-2 py-2 text-left">单价</th>
-                  <th className="border border-gray-200 px-2 py-2 text-left">金额</th>
-                  <th className="border border-gray-200 px-2 py-2 text-left">供应商</th>
-                  <th className="border border-gray-200 px-2 py-2 text-left">入库时间</th>
-                  <th className="border border-gray-200 px-2 py-2 text-left">状态</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(selectedRecord ? [selectedRecord] : data.slice(0, 5)).map(row => (
-                  <tr key={row.id}>
-                    <td className="border border-gray-200 px-2 py-2 font-mono">{row.inboundNo}</td>
-                    <td className="border border-gray-200 px-2 py-2">{row.materialName}</td>
-                    <td className="border border-gray-200 px-2 py-2 font-mono">{row.batchNo || '-'}</td>
-                    <td className="border border-gray-200 px-2 py-2">{row.quantity}</td>
-                    <td className="border border-gray-200 px-2 py-2">{formatCurrency(row.price)}</td>
-                    <td className="border border-gray-200 px-2 py-2">{formatCurrency(row.amount || row.price * row.quantity)}</td>
-                    <td className="border border-gray-200 px-2 py-2">{row.supplierName || '-'}</td>
-                    <td className="border border-gray-200 px-2 py-2">{formatDateTime(row.createdAt)}</td>
-                    <td className="border border-gray-200 px-2 py-2">{getStatusLabel(getRecordStatus(row))}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <div className="text-center mt-4 text-xs text-gray-400">
-              <div>本报表由 COREONE 系统自动生成</div>
-              <div>第 1 页 / 共 1 页</div>
-            </div>
-          </div>
-          <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-gray-200">
-            <button
-              onClick={closeModal}
-              className="px-4 py-2 text-sm text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
-            >
-              取消
-            </button>
-            <button
-              onClick={() => { window.print(); closeModal() }}
-              className="inline-flex items-center gap-1.5 px-4 py-2 text-sm text-white bg-blue-500 rounded-md hover:bg-blue-600 transition-colors"
-            >
-              <Printer className="w-3.5 h-3.5" /> 打印
-            </button>
-          </div>
-        </Modal>
-      )}
+      <InboundPrintModal
+        open={modalType === 'print'}
+        data={data}
+        selectedRecord={selectedRecord}
+        onClose={closeModal}
+      />
 
       <ConfirmDialog
         open={confirmModal.open}
