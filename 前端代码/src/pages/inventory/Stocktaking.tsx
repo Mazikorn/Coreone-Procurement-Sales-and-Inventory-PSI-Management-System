@@ -218,7 +218,7 @@ export default function Stocktaking() {
 
       {/* Card */}
       <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-100 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        <div className="px-5 py-4 border-b border-gray-200 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <span className="text-base font-semibold text-gray-900">盘点记录</span>
           <div className="flex flex-wrap items-center gap-3">
             <div className="relative">
@@ -316,12 +316,12 @@ export default function Stocktaking() {
       {modalType === 'create' && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={e => { if (e.target === e.currentTarget) setModalType(null) }}>
           <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl mx-4 overflow-hidden flex flex-col max-h-[90vh]">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
               <h3 className="text-lg font-semibold text-gray-900">新建盘点</h3>
               <button onClick={() => setModalType(null)} className="p-1 hover:bg-gray-100 rounded-lg transition-colors"><X className="w-5 h-5 text-gray-500" /></button>
             </div>
             {/* Step indicator */}
-            <div className="px-6 py-4 border-b border-gray-100 shrink-0">
+            <div className="px-6 py-4 border-b border-gray-200 shrink-0">
               <div className="flex items-center justify-center gap-2">
                 {[1, 2, 3].map((s, i) => (
                   <div key={s} className="flex items-center gap-2">
@@ -435,7 +435,7 @@ export default function Stocktaking() {
               )}
             </div>
             {createStep < 3 && (
-              <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-100 shrink-0">
+              <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 shrink-0">
                 <button onClick={() => setModalType(null)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-md border border-gray-300">取消</button>
                 {createStep > 1 && <button onClick={() => setCreateStep(s => s - 1)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-md border border-gray-300 flex items-center gap-1"><ArrowLeft className="w-4 h-4" />上一步</button>}
                 <button onClick={() => {
@@ -458,7 +458,7 @@ export default function Stocktaking() {
       {modalType === 'detail' && detailRow && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={e => { if (e.target === e.currentTarget) setModalType(null) }}>
           <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl mx-4 overflow-hidden flex flex-col max-h-[90vh]">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
               <h3 className="text-lg font-semibold text-gray-900">盘点详情 - {detailRow.stocktakingNo}</h3>
               <button onClick={() => setModalType(null)} className="p-1 hover:bg-gray-100 rounded-lg transition-colors"><X className="w-5 h-5 text-gray-500" /></button>
             </div>
@@ -523,7 +523,7 @@ export default function Stocktaking() {
                 </div>
               </div>
             </div>
-            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-100 shrink-0">
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 shrink-0">
               <button onClick={() => setModalType(null)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-md border border-gray-300">关闭</button>
               {detailRow.difference !== 0 && (
                 <button onClick={() => openAdjust(detailRow)} className="px-4 py-2 bg-blue-500 text-white text-sm rounded-md hover:bg-blue-600">处理差异</button>
@@ -561,7 +561,7 @@ export default function Stocktaking() {
       {modalType === 'adjust' && detailRow && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={e => { if (e.target === e.currentTarget) setModalType(null) }}>
           <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl mx-4 overflow-hidden flex flex-col max-h-[90vh]">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
               <h3 className="text-lg font-semibold text-gray-900">处理盘点差异</h3>
               <button onClick={() => setModalType(null)} className="p-1 hover:bg-gray-100 rounded-lg transition-colors"><X className="w-5 h-5 text-gray-500" /></button>
             </div>
@@ -608,7 +608,7 @@ export default function Stocktaking() {
                 <textarea rows={2} placeholder="请输入处理说明（选填）" className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
               </div>
             </div>
-            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-100 shrink-0">
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 shrink-0">
               <button onClick={() => setModalType(null)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-md border border-gray-300">取消</button>
               <button className="px-4 py-2 bg-blue-500 text-white text-sm rounded-md hover:bg-blue-600 flex items-center gap-1"><CheckCircle className="w-4 h-4" />确认调整</button>
             </div>

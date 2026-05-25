@@ -341,7 +341,7 @@ export default function Materials() {
           <h1 className="text-[28px] font-semibold text-gray-900">物料管理</h1>
           <p className="text-sm text-gray-500 mt-1">管理耗材的基础配置信息、规格参数和供应商信息</p>
         </div>
-        <button onClick={openCreate} className="inline-flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-[6px] hover:bg-blue-600 text-sm font-medium">
+        <button onClick={openCreate} className="inline-flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 text-sm font-medium">
           <Plus className="w-4 h-4" />
           新建物料
         </button>
@@ -373,7 +373,7 @@ export default function Materials() {
           <button
             key={tab.key}
             onClick={() => { setQuickFilter(tab.key); setPage(1); setSelectedIds(new Set()) }}
-            className={`px-4 py-1.5 text-sm font-medium rounded-[6px] transition-colors ${
+            className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${
               quickFilter === tab.key ? 'bg-blue-500 text-white' : 'text-gray-600 hover:bg-gray-50'
             }`}
           >
@@ -392,13 +392,13 @@ export default function Materials() {
             value={keyword}
             onChange={e => setKeyword(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') handleSearch() }}
-            className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-[6px] text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
         <select
           value={categoryId}
           onChange={e => setCategoryId(e.target.value)}
-          className="px-3 py-2 border border-gray-200 rounded-[6px] text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white min-w-[140px]"
+          className="px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white min-w-[140px]"
         >
           <option value="">全部分类</option>
           {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -406,16 +406,16 @@ export default function Materials() {
         <select
           value={supplierId}
           onChange={e => setSupplierId(e.target.value)}
-          className="px-3 py-2 border border-gray-200 rounded-[6px] text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white min-w-[140px]"
+          className="px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white min-w-[140px]"
         >
           <option value="">全部供应商</option>
           {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
-        <button onClick={handleSearch} className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-[6px] hover:bg-gray-50 text-sm font-medium">
+        <button onClick={handleSearch} className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-md hover:bg-gray-50 text-sm font-medium">
           <Search className="w-4 h-4" />
           查询
         </button>
-        <button onClick={handleReset} className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-[6px] hover:bg-gray-50 text-sm font-medium">
+        <button onClick={handleReset} className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-md hover:bg-gray-50 text-sm font-medium">
           <RotateCcw className="w-4 h-4" />
           重置
         </button>
@@ -434,15 +434,15 @@ export default function Materials() {
             <span>已选择 <strong>{selectedIds.size}</strong> 项</span>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={() => batchToggleStatus('active')} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-700 hover:bg-white rounded-[6px] border border-transparent hover:border-gray-200 transition-colors">
+            <button onClick={() => batchToggleStatus('active')} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-700 hover:bg-white rounded-md border border-transparent hover:border-gray-200 transition-colors">
               <CheckCircle2 className="w-3.5 h-3.5" />
               批量启用
             </button>
-            <button onClick={() => batchToggleStatus('inactive')} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-700 hover:bg-white rounded-[6px] border border-transparent hover:border-gray-200 transition-colors">
+            <button onClick={() => batchToggleStatus('inactive')} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-700 hover:bg-white rounded-md border border-transparent hover:border-gray-200 transition-colors">
               <XCircle className="w-3.5 h-3.5" />
               批量停用
             </button>
-            <button onClick={batchDelete} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-red-600 hover:bg-white rounded-[6px] border border-transparent hover:border-red-200 transition-colors">
+            <button onClick={batchDelete} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-red-600 hover:bg-white rounded-md border border-transparent hover:border-red-200 transition-colors">
               <Trash2 className="w-3.5 h-3.5" />
               批量删除
             </button>
@@ -560,7 +560,7 @@ export default function Materials() {
       {modalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
               <h3 className="text-base font-semibold text-gray-900">{editingId ? '编辑物料' : '新建物料'}</h3>
               <button onClick={() => setModalOpen(false)} className="p-1.5 hover:bg-gray-100 rounded-md text-gray-400 hover:text-gray-600 transition-colors">
                 <X className="w-4 h-4" />
@@ -573,11 +573,11 @@ export default function Materials() {
                     物料编码
                     <span className="text-xs text-gray-400 font-normal ml-1">（自动生成）</span>
                   </label>
-                  <input value={form.code} disabled readOnly placeholder="选择分类后自动生成" className="w-full px-3 py-2 border border-gray-200 rounded-[6px] text-sm bg-gray-50 text-gray-500 cursor-not-allowed" />
+                  <input value={form.code} disabled readOnly placeholder="选择分类后自动生成" className="w-full px-3 py-2 border border-gray-200 rounded-md text-sm bg-gray-50 text-gray-500 cursor-not-allowed" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1.5">物料名称 <span className="text-red-500">*</span></label>
-                  <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="请输入物料名称" className="w-full px-3 py-2 border border-gray-200 rounded-[6px] text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="请输入物料名称" className="w-full px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 </div>
               </div>
               <div>
@@ -591,7 +591,7 @@ export default function Materials() {
                       setForm(prev => ({ ...prev, spec: `${next.amount}/${next.unit}` }))
                     }}
                     placeholder="数量，如 50、100"
-                    className="flex-1 px-3 py-2 border border-gray-200 rounded-[6px] text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="flex-1 px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                   <span className="text-gray-400 text-sm">/</span>
                   <input
@@ -602,7 +602,7 @@ export default function Materials() {
                       setForm(prev => ({ ...prev, spec: `${next.amount}/${next.unit}` }))
                     }}
                     placeholder="单位，如 ml、盒、瓶"
-                    className="flex-1 px-3 py-2 border border-gray-200 rounded-[6px] text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="flex-1 px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
               </div>
@@ -611,14 +611,14 @@ export default function Materials() {
                   <label className="block text-sm font-medium text-gray-700 mb-1.5">
                     计量单位 <span className="text-red-500">*</span>
                   </label>
-                  <input value={form.unit} onChange={e => setForm({ ...form, unit: e.target.value })} placeholder="如：个、盒、瓶" className="w-full px-3 py-2 border border-gray-200 rounded-[6px] text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  <input value={form.unit} onChange={e => setForm({ ...form, unit: e.target.value })} placeholder="如：个、盒、瓶" className="w-full px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1.5">
                     参考单价 (¥)
                     <span className="text-xs text-gray-400 font-normal ml-1" title="用于采购预算和成本预估，实际成本以入库价为准">[预算用]</span>
                   </label>
-                  <input type="number" step="0.01" value={form.price} onChange={e => setForm({ ...form, price: Number(e.target.value) })} placeholder="用于采购预算和成本预估" className="w-full px-3 py-2 border border-gray-200 rounded-[6px] text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  <input type="number" step="0.01" value={form.price} onChange={e => setForm({ ...form, price: Number(e.target.value) })} placeholder="用于采购预算和成本预估" className="w-full px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -628,14 +628,14 @@ export default function Materials() {
                     const val = e.target.value
                     setForm({ ...form, categoryId: val })
                     if (!editingId && val) autoFillCode(val)
-                  }} className="w-full px-3 py-2 border border-gray-200 rounded-[6px] text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                  }} className="w-full px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
                     <option value="">请选择</option>
                     {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1.5">供应商</label>
-                  <select value={form.supplierId} onChange={e => setForm({ ...form, supplierId: e.target.value })} className="w-full px-3 py-2 border border-gray-200 rounded-[6px] text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                  <select value={form.supplierId} onChange={e => setForm({ ...form, supplierId: e.target.value })} className="w-full px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
                     <option value="">请选择</option>
                     {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </select>
@@ -647,21 +647,21 @@ export default function Materials() {
                     安全库存
                     <span className="text-xs text-gray-400 font-normal ml-1">({form.unit || '个'})</span>
                   </label>
-                  <input type="number" value={form.minStock} onChange={e => setForm({ ...form, minStock: Number(e.target.value) })} placeholder={`输入数量，单位：${form.unit || '个'}`} className="w-full px-3 py-2 border border-gray-200 rounded-[6px] text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  <input type="number" value={form.minStock} onChange={e => setForm({ ...form, minStock: Number(e.target.value) })} placeholder={`输入数量，单位：${form.unit || '个'}`} className="w-full px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1.5">
                     最大库存
                     <span className="text-xs text-gray-400 font-normal ml-1">({form.unit || '个'})</span>
                   </label>
-                  <input type="number" value={form.maxStock} onChange={e => setForm({ ...form, maxStock: Number(e.target.value) })} placeholder={`输入数量，单位：${form.unit || '个'}`} className="w-full px-3 py-2 border border-gray-200 rounded-[6px] text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  <input type="number" value={form.maxStock} onChange={e => setForm({ ...form, maxStock: Number(e.target.value) })} placeholder={`输入数量，单位：${form.unit || '个'}`} className="w-full px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1.5">
                     保险库存
                     <span className="text-xs text-gray-400 font-normal ml-1">({form.unit || '个'})</span>
                   </label>
-                  <input type="number" value={form.safetyStock} onChange={e => setForm({ ...form, safetyStock: Number(e.target.value) })} placeholder={`输入数量，单位：${form.unit || '个'}`} className="w-full px-3 py-2 border border-gray-200 rounded-[6px] text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  <input type="number" value={form.safetyStock} onChange={e => setForm({ ...form, safetyStock: Number(e.target.value) })} placeholder={`输入数量，单位：${form.unit || '个'}`} className="w-full px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 </div>
               </div>
               <div>
@@ -679,12 +679,12 @@ export default function Materials() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">备注</label>
-                <textarea value={form.remark} onChange={e => setForm({ ...form, remark: e.target.value })} rows={2} placeholder="请输入备注信息" className="w-full px-3 py-2 border border-gray-200 rounded-[6px] text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                <textarea value={form.remark} onChange={e => setForm({ ...form, remark: e.target.value })} rows={2} placeholder="请输入备注信息" className="w-full px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
               </div>
             </div>
-            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-100">
-              <button onClick={() => setModalOpen(false)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-[6px] transition-colors">取消</button>
-              <button onClick={handleSubmit} className="px-4 py-2 bg-blue-500 text-white text-sm rounded-[6px] hover:bg-blue-600 transition-colors">保存</button>
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200">
+              <button onClick={() => setModalOpen(false)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-md transition-colors">取消</button>
+              <button onClick={handleSubmit} className="px-4 py-2 bg-blue-500 text-white text-sm rounded-md hover:bg-blue-600 transition-colors">保存</button>
             </div>
           </div>
         </div>
@@ -694,7 +694,7 @@ export default function Materials() {
       {detailModalOpen && detailMaterial && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
               <h3 className="text-base font-semibold text-gray-900">物料详情</h3>
               <button onClick={() => setDetailModalOpen(false)} className="p-1.5 hover:bg-gray-100 rounded-md text-gray-400 hover:text-gray-600 transition-colors">
                 <X className="w-4 h-4" />
@@ -730,9 +730,9 @@ export default function Materials() {
                 </div>
               )}
             </div>
-            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-100">
-              <button onClick={() => setDetailModalOpen(false)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-[6px] transition-colors">关闭</button>
-              <button onClick={() => { setDetailModalOpen(false); openEdit(detailMaterial) }} className="px-4 py-2 bg-blue-500 text-white text-sm rounded-[6px] hover:bg-blue-600 transition-colors">编辑</button>
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200">
+              <button onClick={() => setDetailModalOpen(false)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-md transition-colors">关闭</button>
+              <button onClick={() => { setDetailModalOpen(false); openEdit(detailMaterial) }} className="px-4 py-2 bg-blue-500 text-white text-sm rounded-md hover:bg-blue-600 transition-colors">编辑</button>
             </div>
           </div>
         </div>

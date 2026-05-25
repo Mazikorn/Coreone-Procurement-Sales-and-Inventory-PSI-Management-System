@@ -267,7 +267,7 @@ export default function Suppliers() {
         </div>
         <button
           onClick={openCreate}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-[#3b82f6] text-white rounded-[6px] hover:bg-blue-700 text-sm font-medium transition-colors"
+          className="inline-flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-700 text-sm font-medium transition-colors"
         >
           <Plus className="w-4 h-4" />
           新增供应商
@@ -297,7 +297,7 @@ export default function Suppliers() {
       {/* 表格卡片 */}
       <div className="bg-white rounded-[8px] border border-gray-200 overflow-hidden">
         {/* 筛选栏 */}
-        <div className="flex flex-wrap items-center gap-3 px-5 py-4 border-b border-gray-100">
+        <div className="flex flex-wrap items-center gap-3 px-5 py-4 border-b border-gray-200">
           <span className="text-sm font-medium text-gray-900">供应商列表</span>
           <div className="flex-1" />
           <div className="flex flex-wrap items-center gap-3">
@@ -309,13 +309,13 @@ export default function Suppliers() {
                 value={searchKeyword}
                 onChange={(e) => setSearchKeyword(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                className="w-56 h-10 pl-9 pr-3 border border-gray-200 rounded-[6px] text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-56 h-10 pl-9 pr-3 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
             <select
               value={searchStatus}
               onChange={(e) => setSearchStatus(e.target.value)}
-              className="h-10 px-3 border border-gray-200 rounded-[6px] text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="h-10 px-3 border border-gray-200 rounded-md text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="all">全部状态</option>
               <option value="active">合作中</option>
@@ -323,13 +323,13 @@ export default function Suppliers() {
             </select>
             <button
               onClick={handleSearch}
-              className="h-10 px-4 text-sm text-gray-700 hover:bg-gray-50 rounded-[6px] border border-gray-200 transition-colors"
+              className="h-10 px-4 text-sm text-gray-700 hover:bg-gray-50 rounded-md border border-gray-200 transition-colors"
             >
               查询
             </button>
             <button
               onClick={handleReset}
-              className="h-10 px-4 text-sm text-gray-600 hover:bg-gray-50 rounded-[6px] border border-gray-200 transition-colors"
+              className="h-10 px-4 text-sm text-gray-600 hover:bg-gray-50 rounded-md border border-gray-200 transition-colors"
             >
               重置
             </button>
@@ -474,7 +474,7 @@ export default function Suppliers() {
         </div>
 
         {/* 分页 */}
-        <div className="flex items-center justify-between px-5 py-3 border-t border-gray-100">
+        <div className="flex items-center justify-between px-5 py-3 border-t border-gray-200">
           <span className="text-sm text-gray-500">共 {total} 条记录</span>
           <Pagination
             page={page}
@@ -506,7 +506,7 @@ export default function Suppliers() {
       {(modalType === 'create' || modalType === 'edit') && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
               <h3 className="text-lg font-semibold">
                 {modalType === 'create' ? '新增供应商' : '编辑供应商'}
               </h3>
@@ -529,7 +529,7 @@ export default function Suppliers() {
                       setForm({ ...form, name: e.target.value })
                     }
                     placeholder="请输入供应商名称"
-                    className="w-full h-10 px-3 border border-gray-200 rounded-[6px] text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full h-10 px-3 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
                 <div>
@@ -542,7 +542,7 @@ export default function Suppliers() {
                     disabled
                     readOnly
                     placeholder="保存后自动生成"
-                    className="w-full h-10 px-3 border border-gray-200 rounded-[6px] text-sm bg-gray-50 text-gray-500 cursor-not-allowed"
+                    className="w-full h-10 px-3 border border-gray-200 rounded-md text-sm bg-gray-50 text-gray-500 cursor-not-allowed"
                   />
                 </div>
               </div>
@@ -557,7 +557,7 @@ export default function Suppliers() {
                       setForm({ ...form, contact: e.target.value })
                     }
                     placeholder="请输入联系人姓名"
-                    className="w-full h-10 px-3 border border-gray-200 rounded-[6px] text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full h-10 px-3 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
                 <div>
@@ -570,7 +570,7 @@ export default function Suppliers() {
                       setForm({ ...form, phone: e.target.value })
                     }
                     placeholder="请输入联系电话"
-                    className="w-full h-10 px-3 border border-gray-200 rounded-[6px] text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full h-10 px-3 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
               </div>
@@ -585,7 +585,7 @@ export default function Suppliers() {
                       setForm({ ...form, email: e.target.value })
                     }
                     placeholder="请输入电子邮箱"
-                    className="w-full h-10 px-3 border border-gray-200 rounded-[6px] text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full h-10 px-3 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
                 <div>
@@ -600,7 +600,7 @@ export default function Suppliers() {
                         status: e.target.value as 'active' | 'inactive',
                       })
                     }
-                    className="w-full h-10 px-3 border border-gray-200 rounded-[6px] text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full h-10 px-3 border border-gray-200 rounded-md text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="active">合作中</option>
                     <option value="inactive">已终止</option>
@@ -617,7 +617,7 @@ export default function Suppliers() {
                     setForm({ ...form, address: e.target.value })
                   }
                   placeholder="请输入公司地址"
-                  className="w-full h-10 px-3 border border-gray-200 rounded-[6px] text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full h-10 px-3 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -631,7 +631,7 @@ export default function Suppliers() {
                       setForm({ ...form, bankName: e.target.value })
                     }
                     placeholder="请输入开户银行"
-                    className="w-full h-10 px-3 border border-gray-200 rounded-[6px] text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full h-10 px-3 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
                 <div>
@@ -644,7 +644,7 @@ export default function Suppliers() {
                       setForm({ ...form, bankAccount: e.target.value })
                     }
                     placeholder="请输入银行账号"
-                    className="w-full h-10 px-3 border border-gray-200 rounded-[6px] text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full h-10 px-3 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
               </div>
@@ -658,20 +658,20 @@ export default function Suppliers() {
                     setForm({ ...form, taxNo: e.target.value })
                   }
                   placeholder="请输入纳税人识别号"
-                  className="w-full h-10 px-3 border border-gray-200 rounded-[6px] text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full h-10 px-3 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
             </div>
-            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-100">
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200">
               <button
                 onClick={() => setModalType(null)}
-                className="h-10 px-4 text-sm text-gray-600 hover:bg-gray-50 rounded-[6px] border border-gray-200 transition-colors"
+                className="h-10 px-4 text-sm text-gray-600 hover:bg-gray-50 rounded-md border border-gray-200 transition-colors"
               >
                 取消
               </button>
               <button
                 onClick={handleSubmit}
-                className="h-10 px-4 bg-[#3b82f6] text-white text-sm rounded-[6px] hover:bg-blue-700 transition-colors"
+                className="h-10 px-4 bg-blue-500 text-white text-sm rounded-md hover:bg-blue-700 transition-colors"
               >
                 保存
               </button>
@@ -684,7 +684,7 @@ export default function Suppliers() {
       {modalType === 'detail' && detailRow && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
               <h3 className="text-lg font-semibold">供应商详情</h3>
               <button
                 onClick={() => setModalType(null)}
@@ -795,10 +795,10 @@ export default function Suppliers() {
                 </div>
               </div>
             </div>
-            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-100">
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200">
               <button
                 onClick={() => setModalType(null)}
-                className="h-10 px-4 text-sm text-gray-600 hover:bg-gray-50 rounded-[6px] border border-gray-200 transition-colors"
+                className="h-10 px-4 text-sm text-gray-600 hover:bg-gray-50 rounded-md border border-gray-200 transition-colors"
               >
                 关闭
               </button>
@@ -807,7 +807,7 @@ export default function Suppliers() {
                   setModalType(null)
                   openEdit(detailRow)
                 }}
-                className="h-10 px-4 bg-[#3b82f6] text-white text-sm rounded-[6px] hover:bg-blue-700 transition-colors"
+                className="h-10 px-4 bg-blue-500 text-white text-sm rounded-md hover:bg-blue-700 transition-colors"
               >
                 编辑
               </button>

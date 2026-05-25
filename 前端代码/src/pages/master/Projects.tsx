@@ -294,7 +294,7 @@ export default function Projects() {
           <div className="text-3xl font-semibold text-green-600">{stats.active}</div>
           <div className="mt-1 text-sm text-gray-500">已启用</div>
         </div>
-        <div className="bg-white rounded-lg border border-gray-100 p-5 shadow-sm">
+        <div className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm">
           <div className="text-3xl font-semibold text-gray-600">{stats.inactive}</div>
           <div className="mt-1 text-sm text-gray-500">已停用</div>
         </div>
@@ -306,7 +306,7 @@ export default function Projects() {
 
       {/* Card */}
       <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-100 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        <div className="px-5 py-4 border-b border-gray-200 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <span className="text-base font-semibold text-gray-900">服务列表</span>
           <div className="flex flex-wrap items-center gap-3">
             <div className="relative">
@@ -509,7 +509,7 @@ export default function Projects() {
         </div>
 
         {/* Pagination */}
-        <div className="px-5 py-3 border-t border-gray-100">
+        <div className="px-5 py-3 border-t border-gray-200">
           <Pagination
             page={page}
             pageSize={pageSize}
@@ -529,7 +529,7 @@ export default function Projects() {
           onClick={e => { if (e.target === e.currentTarget) setModalType(null) }}
         >
           <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl mx-4 overflow-hidden flex flex-col max-h-[90vh]">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
               <h3 className="text-lg font-semibold text-gray-900">新建检测服务</h3>
               <button
                 onClick={() => setModalType(null)}
@@ -539,7 +539,7 @@ export default function Projects() {
               </button>
             </div>
             {/* Step indicator */}
-            <div className="px-6 py-4 border-b border-gray-100 shrink-0">
+            <div className="px-6 py-4 border-b border-gray-200 shrink-0">
               <div className="flex items-center justify-center gap-2">
                 {[1, 2, 3].map((s, i) => (
                   <div key={s} className="flex items-center gap-2">
@@ -775,7 +775,7 @@ export default function Projects() {
               )}
             </div>
             {createStep < 3 && (
-              <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-100 shrink-0">
+              <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 shrink-0">
                 <button
                   onClick={() => setModalType(null)}
                   className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-md border border-gray-300"
@@ -829,7 +829,7 @@ export default function Projects() {
           onClick={e => { if (e.target === e.currentTarget) setModalType(null) }}
         >
           <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl mx-4 overflow-hidden flex flex-col max-h-[90vh]">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
               <h3 className="text-lg font-semibold text-gray-900">编辑检测服务</h3>
               <button
                 onClick={() => setModalType(null)}
@@ -838,7 +838,7 @@ export default function Projects() {
                 <X className="w-5 h-5 text-gray-500" />
               </button>
             </div>
-            <div className="px-6 pt-4 border-b border-gray-100 shrink-0">
+            <div className="px-6 pt-4 border-b border-gray-200 shrink-0">
               <div className="flex gap-1">
                 <button
                   onClick={() => setEditTab('basic')}
@@ -1017,7 +1017,7 @@ export default function Projects() {
                 </div>
               )}
             </div>
-            <div className="flex items-center justify-between px-6 py-4 border-t border-gray-100 shrink-0">
+            <div className="flex items-center justify-between px-6 py-4 border-t border-gray-200 shrink-0">
               <button
                 onClick={() => openDelete(editingRow)}
                 className="px-4 py-2 text-sm text-red-600 hover:bg-red-50 rounded-md border border-red-200"
@@ -1051,7 +1051,7 @@ export default function Projects() {
           onClick={e => { if (e.target === e.currentTarget) setModalType(null) }}
         >
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
               <h3 className="text-lg font-semibold text-gray-900">复制检测服务</h3>
               <button
                 onClick={() => setModalType(null)}
@@ -1092,7 +1092,7 @@ export default function Projects() {
                 </div>
               </div>
             </div>
-            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-100">
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200">
               <button
                 onClick={() => setModalType(null)}
                 className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-md border border-gray-300"
@@ -1118,7 +1118,7 @@ export default function Projects() {
           onClick={e => { if (e.target === e.currentTarget) setModalType(null) }}
         >
           <div className="bg-white rounded-xl shadow-xl w-full max-w-sm mx-4">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
               <h3 className="text-lg font-semibold text-gray-900">确认删除</h3>
               <button
                 onClick={() => setModalType(null)}
@@ -1140,7 +1140,7 @@ export default function Projects() {
                 <div className="font-semibold text-sm">{editingRow.code} {editingRow.name}</div>
               </div>
             </div>
-            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-100">
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200">
               <button
                 onClick={() => setModalType(null)}
                 className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-md border border-gray-300"
@@ -1165,7 +1165,7 @@ export default function Projects() {
           onClick={e => { if (e.target === e.currentTarget) setModalType(null) }}
         >
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
               <h3 className="text-lg font-semibold text-gray-900">导入检测服务</h3>
               <button
                 onClick={() => setModalType(null)}
@@ -1190,7 +1190,7 @@ export default function Projects() {
                 <button className="text-xs text-blue-600 hover:text-blue-700">下载导入模板</button>
               </div>
             </div>
-            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-100">
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200">
               <button
                 onClick={() => setModalType(null)}
                 className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-md border border-gray-300"
