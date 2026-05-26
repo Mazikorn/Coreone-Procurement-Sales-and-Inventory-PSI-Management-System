@@ -143,10 +143,11 @@ router.post('/', (req, res) => {
     db.exec('BEGIN IMMEDIATE')
     try {
       const id = uuidv4()
+      const returnNo = generateNo()
       db.prepare(`
         INSERT INTO supplier_returns (id, return_no, material_id, batch_id, batch_no, quantity, supplier_id, purchase_order_id, inbound_record_id, reason, refund_amount, tracking_no, status, operator, remark)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-      `).run(id, generateNo(), materialId, null, null, quantity, supplierId || null, purchaseOrderId || null, inboundRecordId || null, reason, refundAmount || 0, trackingNo || null, operator || 'system', remark || null)
+      `).run(id, returnNo, materialId, null, null, quantity, supplierId || null, purchaseOrderId || null, inboundRecordId || null, reason, refundAmount || 0, trackingNo || null, operator || 'system', remark || null)
 
       // 扣减库存
       const beforeStock = Number(inv.stock)
@@ -169,7 +170,7 @@ router.post('/', (req, res) => {
       `).run(logId, materialId, -quantity, beforeStock, afterStock, id, operator || 'system', '退货给供应商')
 
       db.exec('COMMIT')
-      success(res, { id }, '退货记录创建成功')
+      success(res, { id, returnNo }, '退货记录创建成功')
     } catch (e: any) {
       db.exec('ROLLBACK')
       throw e

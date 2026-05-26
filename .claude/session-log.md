@@ -457,4 +457,47 @@ CI E2E 测试持续失败，auth.spec.ts 中 15 个权限相关测试失败（pr
 **修改的文件**：
 - `前端代码/src/pages/supplier-returns/SupplierReturns.tsx` — 新增采购订单/入库记录下拉框及详情展示
 
+---
+
+## 本次会话完成的工作（后端单元测试 + Plan 待办清理）
+
+### 后端单元测试
+
+**测试文件**：`后端代码/server/tests/supplier-returns.test.ts`
+
+**测试结果**：31 passed / 0 failed ✅
+
+**覆盖场景**：
+- 列表查询（admin/whm/procurement 可访问，technician 403，无Token 401）
+- 列表筛选（关键词、状态）
+- 创建退货（admin/whm/procurement 成功，6 项表单校验，库存不足 422，物料不存在 404，technician 403）
+- 详情查询（成功、不存在 404）
+- 状态流转（pending→shipped→received→refunded，非法流转 400，无效状态 400，不存在 404）
+- 删除退货（admin 删除 pending 成功，删除 refunded 返回 400，不存在 404，whm 无权限）
+
+**后端修复**：
+- `supplier-returns-v1.1.ts` POST 接口返回增加 `returnNo` 字段（原仅返回 `id`）
+
+### Plan 待办项状态
+
+**角色场景交互清单**（`V1.1设计稿/v1.1/角色场景交互清单.md`）：
+- ⚠️ 有缺陷：0 个
+- ❌ 缺失：0 个
+- ✅ 可用：419 个（100%）
+
+**Plan `federated-plotting-milner.md` 全部完成**：
+| 阶段 | 内容 | 状态 |
+|:---|:---|:---:|
+| Phase 1 | 数据库 + 后端 API | ✅ |
+| Phase 2 | 前端页面 + 类型 + API | ✅ |
+| Phase 3 | 路由 + 导航 + 权限 | ✅ |
+| Phase 4 | Seed 数据 | ✅ |
+| Phase 5 | E2E 测试（80 用例） | ✅ |
+| Phase 6 | 关联下拉框（采购订单/入库记录） | ✅ |
+| Phase 7 | 后端单元测试（31 用例） | ✅ |
+
+**修改的文件**：
+- `后端代码/server/src/routes/supplier-returns-v1.1.ts` — 返回增加 returnNo
+- `后端代码/server/tests/supplier-returns.test.ts` — 新建（NEW）
+
 *更新时间：2026-05-26*
