@@ -32,7 +32,7 @@ export default function InboundPrintModal({ open, data, selectedRecord, onClose 
           <div className="text-xl font-bold text-gray-900">入库记录报表</div>
           <div className="flex justify-center gap-6 mt-2 text-xs text-gray-500">
             <div>生成时间: {formatDateTime(new Date())}</div>
-            <div>操作人: {JSON.parse(localStorage.getItem('user') || '{}')?.name || 'system'}</div>
+            <div>操作人: {selectedRecord ? selectedRecord.operator : (JSON.parse(localStorage.getItem('user') || '{}')?.name || 'system')}</div>
           </div>
         </div>
         <table className="w-full text-xs border-collapse">
@@ -50,7 +50,7 @@ export default function InboundPrintModal({ open, data, selectedRecord, onClose 
             </tr>
           </thead>
           <tbody>
-            {(selectedRecord ? [selectedRecord] : data.slice(0, 5)).map(row => (
+            {(selectedRecord ? [selectedRecord] : data).map(row => (
               <tr key={row.id}>
                 <td className="border border-gray-200 px-2 py-2 font-mono">{row.inboundNo}</td>
                 <td className="border border-gray-200 px-2 py-2">{row.materialName}</td>

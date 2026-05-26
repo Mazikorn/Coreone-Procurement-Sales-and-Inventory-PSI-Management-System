@@ -168,7 +168,31 @@
 
 ---
 
-### 4. Reconciliation.tsx 拆分（P2 页面）
+### 4. 修复剩余 ⚠️ 缺陷（本次会话）
+
+**目标**：修复《角色场景交互清单》中剩余的 8 个 ⚠️ 缺陷。
+
+**已修复的缺陷**：
+| 编号 | 问题 | 修复方式 |
+|---|---|---|
+| IN-04/27/66/68/69 | 打印modal操作人固定显示当前登录用户 | InboundPrintModal.tsx: 单条打印时显示 `record.operator`，批量打印时显示当前用户 |
+| IN-29 | 批量打印仅打印前5条 | 移除 `data.slice(0, 5)` 限制，打印所有记录 |
+| IN-35 | 采购订单partial状态不显示 | seed-test-transactions.ts: 添加 partial 状态订单（PO-019/020），数据库中已存在 partial 订单 |
+| IN-37 | 入库数量无remainingQty校验 | 确认已有校验：input max属性 + 提交时toast错误提示 |
+
+**角色场景交互清单更新**：
+- 8 个 ⚠️ → ✅，0 个 ⚠️ 剩余
+- 统计：419 场景 = 417 ✅ + 0 ⚠️ + 2 ❌（MISS-11/12 退货给供应商功能，计划单独立项）
+- 清单文件：`V1.1设计稿/v1.1/角色场景交互清单.md`
+
+**修改的文件**：
+- `前端代码/src/pages/inbound/components/InboundPrintModal.tsx`
+- `后端代码/server/scripts/seed-test-transactions.ts`
+- `V1.1设计稿/v1.1/角色场景交互清单.md`
+
+---
+
+### 5. Reconciliation.tsx 拆分（P2 页面）
 
 **目标**：将 `Reconciliation.tsx` 从 892 行拆分到 <400 行。
 

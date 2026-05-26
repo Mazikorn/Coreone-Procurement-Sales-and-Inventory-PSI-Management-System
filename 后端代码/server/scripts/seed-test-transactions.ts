@@ -41,10 +41,7 @@ function generatePurchaseOrderNo(seq: number): string {
 function seedPurchaseOrders(db: any) {
   log('开始创建采购订单...')
   const check = db.prepare('SELECT COUNT(*) as count FROM purchase_orders').get() as any
-  if (check.count > 0) {
-    log('采购订单已存在，跳过')
-    return
-  }
+  const partialCheck = db.prepare("SELECT COUNT(*) as count FROM purchase_orders WHERE status = 'partial'").get() as any
 
   const orders = [
     { id: 'PO-001', material_id: 'MAT-HE-001', material_name: '苏木素染液', supplier_id: 'SUP-003', ordered_qty: 10, unit_price: 180, total_amount: 1800, expected_date: '2026-05-15', status: 'completed' },
@@ -66,17 +63,35 @@ function seedPurchaseOrders(db: any) {
     { id: 'PO-016', material_id: 'MAT-IHC-056', material_name: 'ER抗体', supplier_id: 'SUP-001', ordered_qty: 3, unit_price: 1200, total_amount: 3600, expected_date: '2026-05-30', status: 'pending' },
     { id: 'PO-017', material_id: 'MAT-IHC-057', material_name: 'PR抗体', supplier_id: 'SUP-001', ordered_qty: 3, unit_price: 1200, total_amount: 3600, expected_date: '2026-05-30', status: 'pending' },
     { id: 'PO-018', material_id: 'MAT-MP-006', material_name: 'NGS文库制备试剂盒', supplier_id: 'SUP-006', ordered_qty: 2, unit_price: 12800, total_amount: 25600, expected_date: '2026-06-01', status: 'pending' },
+    // 部分收货的订单（用于测试入库时的partial状态）
+    { id: 'PO-019', material_id: 'MAT-IHC-058', material_name: 'AR抗体', supplier_id: 'SUP-001', ordered_qty: 5, unit_price: 950, total_amount: 4750, expected_date: '2026-06-05', status: 'partial' },
+    { id: 'PO-020', material_id: 'MAT-MP-007', material_name: 'FFPE RNA提取试剂盒', supplier_id: 'SUP-004', ordered_qty: 4, unit_price: 2200, total_amount: 8800, expected_date: '2026-06-10', status: 'partial' },
   ]
 
   const insert = db.prepare(
     'INSERT INTO purchase_orders (id, order_no, material_id, material_name, supplier_id, ordered_qty, received_qty, unit, unit_price, total_amount, expected_date, status, remark, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   )
-  for (const o of orders) {
-    const unit = db.prepare('SELECT unit FROM materials WHERE id = ?').get(o.material_id) as any
-    const receivedQty = o.status === 'completed' ? o.ordered_qty : 0
-    insert.run(o.id, generatePurchaseOrderNo(Number(o.id.split('-')[1])), o.material_id, o.material_name, o.supplier_id, o.ordered_qty, receivedQty, unit?.unit || '瓶', o.unit_price, o.total_amount, o.expected_date, o.status, '', now, now)
+
+  if (check.count === 0) {
+    // 全新数据库：插入所有订单
+    for (const o of orders) {
+      const unit = db.prepare('SELECT unit FROM materials WHERE id = ?').get(o.material_id) as any
+      const receivedQty = o.status === 'completed' ? o.ordered_qty : (o.status === 'partial' ? Math.floor(o.ordered_qty / 2) : 0)
+      insert.run(o.id, generatePurchaseOrderNo(Number(o.id.split('-')[1])), o.material_id, o.material_name, o.supplier_id, o.ordered_qty, receivedQty, unit?.unit || '瓶', o.unit_price, o.total_amount, o.expected_date, o.status, '', now, now)
+    }
+    log(`采购订单创建完成: ${orders.length} 笔`)
+  } else if (partialCheck.count === 0) {
+    // 已有数据但缺少partial订单：只插入partial订单
+    const partialOrders = orders.filter(o => o.status === 'partial')
+    for (const o of partialOrders) {
+      const unit = db.prepare('SELECT unit FROM materials WHERE id = ?').get(o.material_id) as any
+      const receivedQty = Math.floor(o.ordered_qty / 2)
+      insert.run(o.id, generatePurchaseOrderNo(Number(o.id.split('-')[1])), o.material_id, o.material_name, o.supplier_id, o.ordered_qty, receivedQty, unit?.unit || '瓶', o.unit_price, o.total_amount, o.expected_date, o.status, '', now, now)
+    }
+    log(`补充partial采购订单: ${partialOrders.length} 笔`)
+  } else {
+    log('采购订单已存在，跳过')
   }
-  log(`采购订单创建完成: ${orders.length} 笔`)
 }
 
 // ============================================

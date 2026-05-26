@@ -130,21 +130,21 @@ export default function ImportInboundModal({
     }
   }
 
-  const downloadTemplate = () => {
-    const XLSX = (window as any).XLSX
-    if (!XLSX) {
-      toast.error('请刷新页面后重试')
-      return
+  const downloadTemplate = async () => {
+    try {
+      const XLSX = await import('xlsx')
+      const rows = [
+        ['耗材编码', '耗材名称', '批号', '入库数量', '生产日期', '有效期至', '库位', '备注'],
+        ['M001', 'DNA提取试剂盒', 'B20240501', 10, '2024-05-01', '2025-05-01', 'A1-01', '首次入库'],
+        ['M002', 'PCR引物', 'B20240601', 5, '2024-06-01', '2025-06-01', 'A1-02', ''],
+      ]
+      const ws = XLSX.utils.aoa_to_sheet(rows)
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, '入库导入模板')
+      XLSX.writeFile(wb, '入库导入模板.xlsx')
+    } catch {
+      toast.error('模板下载失败，请重试')
     }
-    const rows = [
-      ['耗材编码', '耗材名称', '批号', '入库数量', '生产日期', '有效期至', '库位', '备注'],
-      ['M001', 'DNA提取试剂盒', 'B20240501', 10, '2024-05-01', '2025-05-01', 'A1-01', '首次入库'],
-      ['M002', 'PCR引物', 'B20240601', 5, '2024-06-01', '2025-06-01', 'A1-02', ''],
-    ]
-    const ws = XLSX.utils.aoa_to_sheet(rows)
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, '入库导入模板')
-    XLSX.writeFile(wb, '入库导入模板.xlsx')
   }
 
   return (
