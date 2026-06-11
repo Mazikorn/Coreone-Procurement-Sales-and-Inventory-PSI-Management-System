@@ -252,17 +252,14 @@ docker compose -f docker-compose.test.yml up -d
 ### 6.1 核心 E2E（`.github/workflows/e2e.yml`）
 
 - **触发**：push/PR to main/master
-- **内容**：`auth.spec.ts` + `supplier-returns.spec.ts`
+- **内容**：以 workflow 文件为准；当前文档只确认 `.github/workflows/e2e.yml` 存在
 - **超时**：4 小时
 - **Node**：22
 - **Worker**：1
 
-### 6.2 完整 E2E 回归（`.github/workflows/e2e-full.yml`）
+### 6.2 完整 E2E 回归
 
-- **触发**：手动 + 每日 UTC 02:00
-- **内容**：全部 73 个 spec
-- **超时**：6 小时
-- **产出**：上传 `e2e-report` artifact
+2026-06-11 当前工作树未见 `.github/workflows/e2e-full.yml`。旧文档提到的“完整 E2E 回归、全部 73 个 spec、每日定时”不能作为当前 CI 门禁，需确认是已删除、未合入，还是需要重新建立。
 
 ### 6.3 CI 环境变量
 
@@ -308,7 +305,7 @@ docker compose -f docker-compose.test.yml up -d
 | 用途 | 路径 |
 |------|------|
 | 后端入口 | `后端代码/server/src/app.ts` |
-| 后端路由 | `后端代码/server/src/routes/` (29 文件) |
+| 后端路由 | `后端代码/server/src/routes/`（以目标分支 `app.ts` imports 与实际 routes 文件为准） |
 | 后端数据库 | `后端代码/server/src/database/DatabaseManager.ts` |
 | 后端中间件 | `后端代码/server/src/middleware/` |
 | 后端数据文件 | `后端代码/server/data/coreone.db` |
@@ -320,9 +317,9 @@ docker compose -f docker-compose.test.yml up -d
 | 前端类型定义 | `前端代码/src/types/index.ts` |
 | 前端配置 | `前端代码/vite.config.ts` |
 | E2E 配置 | `前端代码/playwright.config.ts` |
-| E2E 测试 | `前端代码/e2e/` (73 spec) |
+| E2E 测试 | `前端代码/e2e/`（以目标分支文件树和 `npx playwright test --list` 为准） |
 | CI 核心 | `.github/workflows/e2e.yml` |
-| CI 完整 | `.github/workflows/e2e-full.yml` |
+| CI 完整 | 当前工作树未见，需确认是否恢复 |
 | Docker 生产 | `docker-compose.yml` |
 | Docker 开发 | `docker-compose.dev.yml` |
 | Docker 测试 | `docker-compose.test.yml` |

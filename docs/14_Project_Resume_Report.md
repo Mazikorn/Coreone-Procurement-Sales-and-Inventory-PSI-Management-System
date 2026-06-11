@@ -9,7 +9,7 @@
 
 ## 0. 一句话总结
 
-COREONE 是一个已进入中后期开发阶段的病理免疫组化特染进销存与单张切片成本控制系统（PSI）。前端 React 18 + TypeScript + Vite，后端 Node.js + Express + TypeScript + SQLite（`node:sqlite`/`DatabaseSync`），E2E 测试 Playwright 73 个 spec 约 3540 用例，刚完成 Phase 3 稳定化。ABC 作业成本法是当前开发重点，完成度约 91-94%。
+COREONE 是一个已进入中后期开发阶段的病理免疫组化特染进销存与单张切片成本控制系统（PSI）。前端 React 18 + TypeScript + Vite，后端 Node.js + Express + TypeScript + SQLite（`node:sqlite`/`DatabaseSync`）。本报告不再沿用“73 个 spec / 3540 用例 / 全部完成”等旧口径；测试规模、CI 覆盖和模块完成度必须以 GitHub 当前分支文件树、实际测试运行结果和 PM 验收记录为准。
 
 ---
 
@@ -21,8 +21,8 @@ COREONE 是一个已进入中后期开发阶段的病理免疫组化特染进销
 | 系统定位 | B 端实验室耗材管理平台 |
 | 当前版本 | 前端 1.0.0 / 后端 1.1.0 |
 | 项目阶段 | 中后期治理阶段（非从零开始） |
-| 最近重点 | E2E Phase 3 稳定化（2026-06-11 完成，19/19 失败全部修复） |
-| 开发重点 | ABC 作业成本法（Phase 1-4，完成度 91-94%） |
+| 最近重点 | 治理文档归一与当前代码事实核对 |
+| 开发重点 | 先修复代码/文档事实不一致，再推进 ABC、退库/供应商退货等模块验收 |
 
 ---
 
@@ -81,8 +81,8 @@ COREONE 是一个已进入中后期开发阶段的病理免疫组化特染进销
 
 | 指标 | 数量 |
 |------|------|
-| 路由文件 | 29 个（`后端代码/server/src/routes/`） |
-| API 端点 | 约 200+ 个（最大文件 abc-v1.1.ts 含 35 个端点） |
+| 路由文件 | `app.ts` 引用 29 个；`routes/` 当前可见 20 个，需恢复或修正缺失导入 |
+| API 端点 | 待重新统计；旧文档中的 200+ 个端点和 ABC 35 个端点需在路由文件恢复后复核 |
 | 数据库表 | 42 张（`DatabaseManager.ts`） |
 | 中间件 | 5 个（cors、helmet、JSON、认证、错误处理） |
 | 种子脚本 | 10+ 个（`scripts/` 目录） |
@@ -102,9 +102,9 @@ COREONE 是一个已进入中后期开发阶段的病理免疫组化特染进销
 
 | 指标 | 数量 |
 |------|------|
-| E2E spec 文件 | 73 个（`前端代码/e2e/`） |
-| E2E 用例数 | 约 3540 个（test + test.describe） |
-| 场景化测试 | 39 个文件（`e2e/scenarios/`，含 5 角色套件 + 7 业务流程 + 4 日常模拟） |
+| E2E spec 文件 | 26 个（`前端代码/e2e/` 当前可见） |
+| E2E 用例数 | 待通过 Playwright list 或实际运行重新统计 |
+| 场景化测试 | 当前 `前端代码/e2e/scenarios/` 未在工作树中确认，旧报告仅作历史参考 |
 | 单元测试 | Vitest（前后端各一套） |
 
 ### 3.4 文档规模
@@ -113,7 +113,7 @@ COREONE 是一个已进入中后期开发阶段的病理免疫组化特染进销
 |------|------|------|
 | 根目录 .md | 约 30 个 | PRD、技术规格、功能矩阵、验收等 |
 | V1.1设计稿/v1.1/ | 约 50+ 文件 | 设计稿、交互规范、HTML 原型 |
-| docs/ | 5 个 | 治理框架、执行规划、运维手册、FRS(17份)、TestScenarios(17份) |
+| docs/ | 16 个顶层治理文档 + FRS/TestScenarios 子目录 + archive | 治理、规格、测试、运维和归档材料 |
 | .claude/ | 约 70+ 文件 | session-log、plans、inspection、qa-reports、research |
 
 ---
@@ -162,13 +162,26 @@ COREONE 是一个已进入中后期开发阶段的病理免疫组化特染进销
 | 文件 | 触发条件 | 内容 |
 |------|----------|------|
 | `.github/workflows/e2e.yml` | push/PR to main/master | 核心 E2E（auth + supplier-returns），Node 22，单 worker |
-| `.github/workflows/e2e-full.yml` | 手动 + 每日 UTC 02:00 | 全量 E2E 回归，6h 超时，上传 artifact |
+| `.github/workflows/e2e-full.yml` | 当前工作树未见 | 旧文档提到的全量 E2E workflow 需确认是否被删除或尚未合入 |
 
 ---
 
 ## 5. 业务模块与路由清单
 
-### 5.1 后端路由文件清单（29 个，全部前缀 `/api/v1`）
+### 5.1 后端路由清单（以当前工作树为准）
+
+以下清单必须按目标分支的 `app.ts` 与 `routes/` 目录同步核对。若本地工作树、远端 `master` 与治理分支不一致，以准备合并的远端分支为准，并在发布前用后端构建/启动验证确认。
+
+#### 5.1.1 路由完整性核对要求
+
+| 检查项 | 要求 |
+|---|---|
+| `app.ts` imports | 每个导入的路由文件都必须在目标分支存在 |
+| `app.use()` 挂载 | 每个业务模块的路径前缀、认证中间件和角色白名单需与权限矩阵一致 |
+| 后端构建/启动 | 发布前必须通过 `npm run build` 或后端启动验证，不能只看文档 |
+| 测试证据 | E2E/单测状态必须引用实际运行结果，不沿用历史“已完成”结论 |
+
+#### 5.1.2 路由文件清单（全部前缀 `/api/v1`）
 
 #### 公开路由（无需认证）
 
@@ -180,7 +193,7 @@ COREONE 是一个已进入中后期开发阶段的病理免疫组化特染进销
 
 | 路由文件 | 路径前缀 | 功能 |
 |----------|----------|------|
-| `users-v1.1.ts` | `/api/v1/users` | 用户管理 CRUD |
+| `users-v1.1.ts` | `/api/v1/users` | ⚠️ app.ts 已挂载，但当前路由文件缺失 |
 | `roles-v1.1.ts` | `/api/v1/roles` | 角色管理 CRUD |
 | `logs-v1.1.ts` | `/api/v1/logs` | 操作日志查询 |
 
@@ -189,28 +202,28 @@ COREONE 是一个已进入中后期开发阶段的病理免疫组化特染进销
 | 路由文件 | 路径前缀 | 功能 |
 |----------|----------|------|
 | `categories-v1.1.ts` | `/api/v1/categories` | 物料分类（树形） |
-| `materials.ts` | `/api/v1/materials` | 物料主数据 |
+| `materials.ts` | `/api/v1/materials` | ⚠️ app.ts 已挂载，但当前路由文件缺失 |
 | `suppliers-v1.1.ts` | `/api/v1/suppliers` | 供应商 CRUD + 评级 |
-| `locations-v1.1.ts` | `/api/v1/locations` | 库位管理（树形） |
+| `locations-v1.1.ts` | `/api/v1/locations` | ⚠️ app.ts 已挂载，但当前路由文件缺失 |
 
 #### 入库与采购
 
 | 路由文件 | 路径前缀 | 功能 |
 |----------|----------|------|
 | `inbound-v1.1.ts` | `/api/v1/inbound` | 入库管理（含作废、删除前检查） |
-| `purchase-orders-v1.1.ts` | `/api/v1/purchase-orders` | 采购订单（下采、收货、取消） |
+| `purchase-orders-v1.1.ts` | `/api/v1/purchase-orders` | ⚠️ app.ts 已挂载，但当前路由文件缺失 |
 
 #### 库存与仓库操作
 
 | 路由文件 | 路径前缀 | 功能 |
 |----------|----------|------|
-| `inventory-v1.1.ts` | `/api/v1/inventory` | 库存查询与统计 |
+| `inventory-v1.1.ts` | `/api/v1/inventory` | ⚠️ app.ts 已挂载，但当前路由文件缺失 |
 | `outbound-v1.1.ts` | `/api/v1/outbound` | 出库管理（含 BOM 出库） |
 | `stocktaking-v1.1.ts` | `/api/v1/stocktaking` | 库存盘点 |
-| `returns-v1.1.ts` | `/api/v1/returns` | 退库管理 |
+| `returns-v1.1.ts` | `/api/v1/returns` | ⚠️ app.ts 已挂载，但当前路由文件缺失 |
 | `scraps-v1.1.ts` | `/api/v1/scraps` | 报废管理 |
 | `transfers-v1.1.ts` | `/api/v1/transfers` | 库存调拨 |
-| `supplier-returns-v1.1.ts` | `/api/v1/supplier-returns` | 供应商退货 |
+| `supplier-returns-v1.1.ts` | `/api/v1/supplier-returns` | ⚠️ app.ts 已挂载，但当前路由文件缺失 |
 
 #### 项目与 BOM
 
@@ -233,9 +246,9 @@ COREONE 是一个已进入中后期开发阶段的病理免疫组化特染进销
 |----------|----------|------|
 | `reports-v1.1.ts` | `/api/v1/reports` | 多维度成本报表（9 个端点） |
 | `indirect-cost-v1.1.ts` | `/api/v1/indirect-costs` | 间接成本中心 + 分摊 |
-| `abc-v1.1.ts` | `/api/v1/abc` | ABC 作业成本法（35 个端点） |
+| `abc-v1.1.ts` | `/api/v1/abc` | ⚠️ app.ts 已挂载，但当前路由文件缺失 |
 | `cost-adjustment-v1.1.ts` | `/api/v1/cost-adjustments` | 季度成本调整 |
-| `depletion-v1.1.ts` | `/api/v1/depletion` | 批次消耗追踪 |
+| `depletion-v1.1.ts` | `/api/v1/depletion` | ⚠️ app.ts 已挂载，但当前路由文件缺失 |
 | `reconciliation-v1.1.ts` | `/api/v1/reconciliation` | 成本对账 + LIS 病例 |
 
 #### 预警

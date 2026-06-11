@@ -377,25 +377,27 @@
 
 ## 18. E2E 测试覆盖对照
 
+> **核对口径**：2026-06-11 不再把“spec 文件存在”写成“测试已通过”。状态列只记录文件映射和待运行事项，最终结论以 Playwright 实际运行结果为准。
+
 | PM 测试用例 | 对应 E2E spec | E2E 状态 |
 |-------------|--------------|----------|
-| TC-AUTH-001~004 | `e2e/auth.spec.ts` | ✅ |
-| TC-CAT-001~003 | `e2e/categories.spec.ts` | ✅ |
-| TC-MAT-001~002 | `e2e/materials.spec.ts` | ✅ |
-| TC-IN-001~002 | `e2e/inbound.spec.ts` | ✅ |
-| TC-OB-001~002 | `e2e/outbound.spec.ts` | ✅ |
-| TC-INV-001~002 | `e2e/inventory-list.spec.ts` | ✅ |
-| TC-ST-001~002 | `e2e/stocktaking.spec.ts` | ✅ |
-| TC-RT-001 | `e2e/returns.spec.ts` | ✅ |
-| TC-SC-001 | `e2e/scraps.spec.ts` | ✅ |
-| TC-TF-001 | `e2e/transfers.spec.ts` | ✅ |
-| TC-PO-001~002 | `e2e/purchase-orders.spec.ts` | ✅ |
-| TC-SR-001 | `e2e/supplier-returns.spec.ts` | ✅ |
-| TC-ALT-001~002 | `e2e/alerts.spec.ts` | ✅ |
-| TC-COST-001 | `e2e/cost-analysis.spec.ts` | ✅ |
-| TC-BOM-001~002 | `e2e/bom.spec.ts` | ✅ |
-| TC-SYS-001~002 | `e2e/users.spec.ts` + `e2e/roles.spec.ts` | ✅ |
-| TC-LOG-001 | `e2e/logs.spec.ts` | ✅ |
+| TC-AUTH-001~004 | `e2e/auth.spec.ts` | 文件存在，待运行 |
+| TC-CAT-001~003 | `e2e/categories.spec.ts` | 文件存在，待运行 |
+| TC-MAT-001~002 | `e2e/materials.spec.ts` | 文件存在，待运行 |
+| TC-IN-001~002 | `e2e/inbound.spec.ts` | 文件存在，待运行 |
+| TC-OB-001~002 | `e2e/outbound.spec.ts` | 文件存在，待运行 |
+| TC-INV-001~002 | `e2e/flows/inventory-lifecycle.spec.ts` 或待补库存列表 spec | 文件存在但映射需拆分 |
+| TC-ST-001~002 | `e2e/stocktaking.spec.ts` | 文件存在，待运行 |
+| TC-RT-001 | `e2e/returns.spec.ts` | 文件存在，待运行 |
+| TC-SC-001 | `e2e/scraps.spec.ts` | 文件存在，待运行 |
+| TC-TF-001 | `e2e/transfers.spec.ts` | 文件存在，待运行 |
+| TC-PO-001~002 | `e2e/purchase-orders.spec.ts` | 文件存在，待运行 |
+| TC-SR-001 | `e2e/supplier-returns.spec.ts` | 文件存在，待运行 |
+| TC-ALT-001~002 | `e2e/alerts.spec.ts` | 文件存在，待运行 |
+| TC-COST-001 | `e2e/abc-cost.spec.ts`、`e2e/abc-budget.spec.ts`、`e2e/abc-fee-comparison.spec.ts`、`e2e/abc-quality-cost.spec.ts` | 文件存在，待运行 |
+| TC-BOM-001~002 | `e2e/bom.spec.ts` | 文件存在，待运行 |
+| TC-SYS-001~002 | `e2e/users.spec.ts` + `e2e/roles.spec.ts` | 文件存在，待运行 |
+| TC-LOG-001 | `e2e/logs.spec.ts` | 文件存在，待运行 |
 
 ---
 

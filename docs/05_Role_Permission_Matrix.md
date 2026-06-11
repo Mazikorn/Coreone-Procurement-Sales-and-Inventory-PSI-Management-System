@@ -2,12 +2,16 @@
 
 > **版本**: 1.0.0
 > **创建日期**: 2026-06-11
-> **依据来源**: `后端代码/server/src/app.ts`、`后端代码/server/src/middleware/auth.ts`、`后端代码/server/src/routes/` 全部 29 个路由文件、`前端代码/src/lib/permissions.ts`、`前端代码/src/components/layout/AppSidebar.tsx`、`前端代码/src/components/layout/AppLayout.tsx`、`前端代码/e2e/roles.spec.ts`
+> **依据来源**: `后端代码/server/src/app.ts`、`后端代码/server/src/middleware/auth.ts`、`后端代码/server/src/routes/` 当前可见路由文件、`前端代码/src/lib/permissions.ts`、`前端代码/src/components/layout/AppSidebar.tsx`、`前端代码/src/components/layout/AppLayout.tsx`、`前端代码/e2e/roles.spec.ts`
 > **维护者**: Codex（从代码反推，PM 审核确认）
 
 ---
 
-## 0. 权限控制架构
+## 0. 当前核对结论
+
+2026-06-11 核对结论：权限矩阵只能作为“设计与代码核对表”，不能单独证明权限已闭环。目标分支合并前必须同时核对 `app.ts`、`routes/` 实际文件、前端 `ROLE_MENU_MAP`、页面路由守卫和角色 E2E 结果。
+
+## 0.1 权限控制架构
 
 COREONE 采用 **后端双层 + 前端三层** 的权限控制架构：
 
@@ -40,7 +44,7 @@ COREONE 采用 **后端双层 + 前端三层** 的权限控制架构：
 
 以下为 `前端代码/src/lib/permissions.ts` 中 `ROLE_MENU_MAP` 的完整映射。Y = 可访问，- = 不可访问。
 
-### 2.1 侧边栏可见菜单（24 项）
+### 2.1 ROLE_MENU_MAP 路径映射
 
 | 功能模块 | 路径 | admin | warehouse_manager | technician | procurement | finance | pathologist |
 |----------|------|:-----:|:-----------------:|:----------:|:-----------:|:-------:|:-----------:|
@@ -110,7 +114,7 @@ COREONE 采用 **后端双层 + 前端三层** 的权限控制架构：
 
 | 路由文件 | 路径前缀 | 端点 | 权限 |
 |----------|----------|------|------|
-| `users-v1.1.ts` | `/api/v1/users` | GET /, POST /, PUT /:id, DELETE /:id | admin |
+| `users-v1.1.ts` | `/api/v1/users` | 待目标分支核对 | admin |
 | `roles-v1.1.ts` | `/api/v1/roles` | GET /, POST /, PUT /:id, DELETE /:id | admin |
 | `logs-v1.1.ts` | `/api/v1/logs` | GET /, GET /operation | admin |
 
@@ -121,28 +125,28 @@ COREONE 采用 **后端双层 + 前端三层** 的权限控制架构：
 | 路由文件 | 路径前缀 | 读权限 | 写权限 |
 |----------|----------|--------|--------|
 | `categories-v1.1.ts` | `/api/v1/categories` | 所有已认证用户 | admin |
-| `materials.ts` | `/api/v1/materials` | admin, warehouse_manager, technician, pathologist, procurement | admin |
+| `materials.ts` | `/api/v1/materials` | 待目标分支核对 | 待目标分支核对 |
 | `suppliers-v1.1.ts` | `/api/v1/suppliers` | admin, warehouse_manager, procurement | admin, procurement |
-| `locations-v1.1.ts` | `/api/v1/locations` | admin, warehouse_manager | admin |
+| `locations-v1.1.ts` | `/api/v1/locations` | 待目标分支核对 | 待目标分支核对 |
 
 #### 入库与采购
 
 | 路由文件 | 路径前缀 | 读权限 | 写权限 |
 |----------|----------|--------|--------|
 | `inbound-v1.1.ts` | `/api/v1/inbound` | admin, warehouse_manager, procurement | admin, warehouse_manager |
-| `purchase-orders-v1.1.ts` | `/api/v1/purchase-orders` | admin, procurement | admin, procurement |
+| `purchase-orders-v1.1.ts` | `/api/v1/purchase-orders` | 待目标分支核对 | 待目标分支核对 |
 
 #### 库存与仓库操作
 
 | 路由文件 | 路径前缀 | 权限 |
 |----------|----------|------|
-| `inventory-v1.1.ts` | `/api/v1/inventory` | admin, warehouse_manager, technician, pathologist, procurement |
+| `inventory-v1.1.ts` | `/api/v1/inventory` | 待目标分支核对 |
 | `outbound-v1.1.ts` | `/api/v1/outbound` | 读: admin, warehouse_manager, technician, pathologist; 写: admin, warehouse_manager |
 | `stocktaking-v1.1.ts` | `/api/v1/stocktaking` | admin, warehouse_manager |
-| `returns-v1.1.ts` | `/api/v1/returns` | admin, warehouse_manager |
+| `returns-v1.1.ts` | `/api/v1/returns` | 待目标分支核对 |
 | `scraps-v1.1.ts` | `/api/v1/scraps` | admin, warehouse_manager |
 | `transfers-v1.1.ts` | `/api/v1/transfers` | admin, warehouse_manager |
-| `supplier-returns-v1.1.ts` | `/api/v1/supplier-returns` | admin, warehouse_manager, procurement |
+| `supplier-returns-v1.1.ts` | `/api/v1/supplier-returns` | 待目标分支核对 |
 
 #### 项目与 BOM
 
@@ -164,11 +168,11 @@ COREONE 采用 **后端双层 + 前端三层** 的权限控制架构：
 | 路由文件 | 路径前缀 | 权限 |
 |----------|----------|------|
 | `reports-v1.1.ts` | `/api/v1/reports` | admin, pathologist, finance |
-| `depletion-v1.1.ts` | `/api/v1/depletion` | admin, pathologist, finance |
+| `depletion-v1.1.ts` | `/api/v1/depletion` | 待目标分支核对 |
 | `reconciliation-v1.1.ts` | `/api/v1/reconciliation` | admin, pathologist, finance |
 | `indirect-cost-v1.1.ts` | `/api/v1/indirect-costs` | admin, finance |
 | `cost-adjustment-v1.1.ts` | `/api/v1/cost-adjustments` | admin, finance |
-| `abc-v1.1.ts` | `/api/v1/abc` | 读: admin, finance, pathologist; 写: admin; 导出: admin, finance |
+| `abc-v1.1.ts` | `/api/v1/abc` | 待目标分支核对 |
 
 #### 预警
 
@@ -178,7 +182,7 @@ COREONE 采用 **后端双层 + 前端三层** 的权限控制架构：
 
 ### 3.4 ABC 端点级权限详情
 
-`abc-v1.1.ts` 包含 35 个端点，权限分化最复杂：
+旧文档记录 ABC 端点权限分化最复杂；以下内容作为目标分支复核清单，需以实际 `abc-v1.1.ts` 和测试结果确认：
 
 | 端点类型 | 权限 | 端点列表 |
 |----------|------|----------|
