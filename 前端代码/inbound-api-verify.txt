@@ -1,0 +1,11 @@
+
+Running 5 tests using 1 worker
+
+  ok 1 [chromium] › e2e\inbound.spec.ts:1552:5 › 入库管理 -> 角色权限矩阵补充 › TC-PERM-061. technician POST /inbound 返回403 (540ms)
+  ok 2 [chromium] › e2e\inbound.spec.ts:1552:5 › 入库管理 -> 角色权限矩阵补充 › TC-PERM-062. pathologist POST /inbound 返回403 (504ms)
+  ok 3 [chromium] › e2e\inbound.spec.ts:1552:5 › 入库管理 -> 角色权限矩阵补充 › TC-PERM-063. procurement POST /inbound 返回403 (522ms)
+  ok 4 [chromium] › e2e\inbound.spec.ts:1552:5 › 入库管理 -> 角色权限矩阵补充 › TC-PERM-064. finance POST /inbound 返回403 (495ms)
+  -  5 [chromium] › e2e\inbound.spec.ts:1581:3 › 入库管理 -> 角色权限矩阵补充 › TC-PERM-IN-EXTRA-04. admin POST /inbound 返回201
+
+  1 skipped
+  4 passed (6.3s)

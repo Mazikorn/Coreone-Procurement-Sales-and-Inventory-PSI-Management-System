@@ -1,0 +1,15 @@
+import { defineConfig } from 'vitest/config'
+
+export default defineConfig({
+  test: {
+    include: ['tests/**/*.test.ts', 'src/**/*.test.ts'],
+    globals: true,
+    environment: 'node',
+    pool: 'forks',
+    poolOptions: {
+      forks: {
+        execArgv: ['--experimental-sqlite'],
+      },
+    },
+  },
+})

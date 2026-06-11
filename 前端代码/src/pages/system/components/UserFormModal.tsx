@@ -1,0 +1,134 @@
+import { X } from 'lucide-react'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
+import type { User } from '@/types'
+import type { FormData } from '../hooks/useUsersPage'
+
+interface Props {
+  open: boolean
+  type: 'create' | 'edit'
+  form: FormData
+  onClose: () => void
+  onChange: (form: FormData) => void
+  onSubmit: () => void
+  onResetPassword: () => void
+}
+
+export function UserFormModal({ open, type, form, onClose, onChange, onSubmit, onResetPassword }: Props) {
+  if (!open) return null
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+      onClick={e => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-hidden flex flex-col">
+        <div className="flex items-center justify-between px-6 py-5 border-b border-gray-200">
+          <h3 className="text-lg font-semibold text-gray-900">{type === 'create' ? '新建用户' : '编辑用户'}</h3>
+          <button onClick={onClose} className="w-9 h-9 flex items-center justify-center text-gray-500 hover:bg-gray-100 hover:text-gray-900 rounded-md transition-all">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="p-6 overflow-y-auto">
+          <div className="flex gap-5 mb-5">
+            <div className="flex-1">
+              <label className="block text-[13px] font-medium text-gray-700 mb-1.5">用户名 {type === 'create' && <span className="text-red-500">*</span>}</label>
+              <input
+                value={form.username}
+                onChange={e => onChange({ ...form, username: e.target.value })}
+                readOnly={type === 'edit'}
+                className={`w-full h-10 px-3 text-sm text-gray-900 border border-gray-300 rounded-md outline-none transition-all focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 ${type === 'edit' ? 'bg-gray-50 text-gray-400' : 'bg-white'}`}
+              />
+            </div>
+            <div className="flex-1">
+              <label className="block text-[13px] font-medium text-gray-700 mb-1.5">姓名 <span className="text-red-500">*</span></label>
+              <input
+                value={form.realName}
+                onChange={e => onChange({ ...form, realName: e.target.value })}
+                className="w-full h-10 px-3 text-sm text-gray-900 bg-white border border-gray-300 rounded-md outline-none transition-all focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10"
+              />
+            </div>
+          </div>
+          <div className="flex gap-5 mb-5">
+            <div className="flex-1">
+              <label className="block text-[13px] font-medium text-gray-700 mb-1.5">角色 <span className="text-red-500">*</span></label>
+              <SearchableSelect
+                value={form.role}
+                onChange={val => onChange({ ...form, role: val })}
+                options={[
+                  { value: 'admin', label: '系统管理员' },
+                  { value: 'operator', label: '操作员' },
+                  { value: 'viewer', label: '查看者' },
+                ]}
+                placeholder="请选择"
+              />
+            </div>
+            <div className="flex-1">
+              <label className="block text-[13px] font-medium text-gray-700 mb-1.5">部门 <span className="text-red-500">*</span></label>
+              <SearchableSelect
+                value={form.department}
+                onChange={val => onChange({ ...form, department: val })}
+                options={[
+                  { value: '', label: '请选择部门' },
+                  { value: '病理科', label: '病理科' },
+                  { value: '检验科', label: '检验科' },
+                  { value: '信息科', label: '信息科' },
+                ]}
+                placeholder="请选择部门"
+              />
+            </div>
+          </div>
+          <div className="flex gap-5 mb-5">
+            <div className="flex-1">
+              <label className="block text-[13px] font-medium text-gray-700 mb-1.5">联系电话</label>
+              <input
+                value={form.phone}
+                onChange={e => onChange({ ...form, phone: e.target.value })}
+                className="w-full h-10 px-3 text-sm text-gray-900 bg-white border border-gray-300 rounded-md outline-none transition-all focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10"
+              />
+            </div>
+            <div className="flex-1">
+              <label className="block text-[13px] font-medium text-gray-700 mb-1.5">电子邮箱</label>
+              <input
+                value={form.email}
+                onChange={e => onChange({ ...form, email: e.target.value })}
+                className="w-full h-10 px-3 text-sm text-gray-900 bg-white border border-gray-300 rounded-md outline-none transition-all focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10"
+              />
+            </div>
+          </div>
+          {type === 'edit' && (
+            <div className="mb-5">
+              <label className="block text-[13px] font-medium text-gray-700 mb-1.5">状态</label>
+              <SearchableSelect
+                value={form.status}
+                onChange={val => onChange({ ...form, status: val as 'active' | 'inactive' })}
+                options={[
+                  { value: 'active', label: '正常' },
+                  { value: 'inactive', label: '禁用' },
+                ]}
+                placeholder="请选择"
+              />
+            </div>
+          )}
+          {type === 'create' && (
+            <div>
+              <label className="block text-[13px] font-medium text-gray-700 mb-1.5">初始密码 <span className="text-red-500">*</span></label>
+              <div className="flex gap-2">
+                <input value="Abc@123456" readOnly className="flex-1 h-10 px-3 text-sm text-gray-900 bg-gray-50 border border-gray-300 rounded-md outline-none" />
+                <button className="h-10 px-4 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 shadow-sm transition-all">随机生成</button>
+              </div>
+              <div className="text-xs text-gray-500 mt-1">初始密码将在用户首次登录时要求修改</div>
+            </div>
+          )}
+        </div>
+        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50">
+          <button onClick={onClose} className="h-10 px-4 text-sm text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 shadow-sm transition-all">取消</button>
+          {type === 'edit' && (
+            <button onClick={onResetPassword} className="h-10 px-4 text-sm text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 shadow-sm transition-all">重置密码</button>
+          )}
+          <button onClick={onSubmit} className="h-10 px-4 text-sm font-medium text-white bg-blue-500 rounded-md hover:bg-blue-600 shadow-sm transition-all">
+            {type === 'create' ? '创建用户' : '保存'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}

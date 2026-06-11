@@ -1,0 +1,12 @@
+
+Running 6 tests using 1 worker
+
+  -  1 [chromium] › e2e\stocktaking.spec.ts:133:3 › 库存盘点 -> 新建盘点单 › ST-CREATE-01. 正常用例：admin新建盘点单
+  ok 2 [chromium] › e2e\stocktaking.spec.ts:523:5 › 库存盘点 -> 角色权限矩阵补充 › TC-PERM-077. technician POST /stocktaking 返回403 (958ms)
+  ok 3 [chromium] › e2e\stocktaking.spec.ts:523:5 › 库存盘点 -> 角色权限矩阵补充 › TC-PERM-078. pathologist POST /stocktaking 返回403 (855ms)
+  ok 4 [chromium] › e2e\stocktaking.spec.ts:523:5 › 库存盘点 -> 角色权限矩阵补充 › TC-PERM-079. procurement POST /stocktaking 返回403 (832ms)
+  ok 5 [chromium] › e2e\stocktaking.spec.ts:523:5 › 库存盘点 -> 角色权限矩阵补充 › TC-PERM-080. finance POST /stocktaking 返回403 (817ms)
+  -  6 [chromium] › e2e\stocktaking.spec.ts:545:3 › 库存盘点 -> 角色权限矩阵补充 › TC-PERM-ST-EXTRA-03. admin POST /stocktaking 返回201
+
+  2 skipped
+  4 passed (8.6s)

@@ -1,0 +1,62 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # 消除 Node.js 20 弃用警告，强制 action 使用 Node.js 24 运行时
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # 1. 安装后端依赖
+      # 后端 app.ts 启动时会自动调用 initializeDatabase() 创建表结构，无需额外 seed
+      - name: Install backend dependencies
+        working-directory: 后端代码/server
+        run: npm ci
+
+      # 2. 安装前端依赖
+      - name: Install frontend dependencies
+        working-directory: 前端代码
+        run: npm ci
+
+      # 3. 安装 Playwright 浏览器
+      - name: Install Playwright browsers
+        working-directory: 前端代码
+        run: npx playwright install --with-deps chromium
+
+      # 4. 运行 E2E 测试（分阶段：先跑核心测试，缩短 CI 时间）
+      # 已稳定的测试（alerts/locations/bom/categories 等）在本地验证，CI 仅跑核心 + 新功能
+      - name: Run E2E tests (core)
+        working-directory: 前端代码
+        run: npx playwright test e2e/auth.spec.ts e2e/supplier-returns.spec.ts --reporter=list --workers=1
+        env:
+          CI: true
+
+      # 5. 上传测试报告（失败时也会上传）
+      - name: Upload E2E report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-report
+          path: 前端代码/e2e-report/
+          retention-days: 7

@@ -1,0 +1,10 @@
+
+Running 5 tests using 1 worker
+
+  ok 1 [chromium] › e2e\alerts.spec.ts:455:3 › 预警中心 -> 角色权限矩阵补充 › TC-PERM-116. warehouse_manager PUT /alerts/rules 返回403 (548ms)
+  ok 2 [chromium] › e2e\alerts.spec.ts:463:3 › 预警中心 -> 角色权限矩阵补充 › TC-PERM-117. technician PUT /alerts/rules 返回403 (544ms)
+  ok 3 [chromium] › e2e\alerts.spec.ts:471:3 › 预警中心 -> 角色权限矩阵补充 › TC-PERM-118. pathologist PUT /alerts/rules 返回403 (506ms)
+  ok 4 [chromium] › e2e\alerts.spec.ts:479:3 › 预警中心 -> 角色权限矩阵补充 › TC-PERM-119. procurement PUT /alerts/rules 返回403 (505ms)
+  ok 5 [chromium] › e2e\alerts.spec.ts:487:3 › 预警中心 -> 角色权限矩阵补充 › TC-PERM-120. finance PUT /alerts/rules 返回403 (513ms)
+
+  5 passed (6.3s)

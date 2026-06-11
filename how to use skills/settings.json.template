@@ -1,0 +1,25 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"const p=process.env.FILE_PATH; if(p&&/\\.(ts|tsx|js|jsx|css|scss)$/.test(p)) console.log('[Hint] Consider /simplify to clean up, /verification-before-completion to validate.')\""
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"const fs=require('fs');const p='task_plan.md';if(fs.existsSync(p)){const c=fs.readFileSync(p,'utf8');const done=(c.match(/\\[x\\]/gi)||[]).length;const total=(c.match(/\\[ \\]/gi)||[]).length+done;console.log('[Session End] task_plan.md: '+done+'/'+total+' tasks done');if(done<total)console.log('[Session End] '+ (total-done) +' tasks remaining for next session.')}\""
+          }
+        ]
+      }
+    ]
+  }
+}

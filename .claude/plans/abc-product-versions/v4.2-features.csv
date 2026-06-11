@@ -1,0 +1,23 @@
+name,reach,impact,confidence,effort,description
+设备类型管理,100,high,high,s,新增equipment_types表，设备台账增加type_id字段
+设备折旧统计（按类型）,100,high,high,s,按设备类型聚合折旧金额
+参考值来源标签,80,medium,high,s,新增reference_source字段，标记数据来源
+BOM设备模板改为按类型,100,high,high,m,bom_equipment_templates新增equipment_type_id字段
+季度调整（自动计算+手动触发+审核）,60,high,high,m,季度末自动生成调整建议，财务审核确认
+成本差异分析增强,90,high,high,m,增加实际vs标准成本对比
+成本月度环比分析,90,medium,high,s,增加本月vs上月对比
+成本趋势按季度聚合,80,medium,high,s,新增dimension=quarterly参数
+成本结构分析饼图,70,medium,medium,s,按成本类型展示占比
+成本下钻增强,50,high,medium,l,项目→BOM→物料→批次多级穿透
+PDF导出,40,medium,medium,m,引入jsPDF库
+成本预览API,80,high,high,m,新增GET /api/v1/boms/:id/cost-preview端点
+成本预览缓存策略,80,medium,medium,m,混合缓存（自动标记+手动刷新）
+运营效率指标API,60,medium,medium,m,新增GET /api/v1/operation/metrics端点
+切片产出率计算,60,medium,medium,s,实际切片数/理论切片数
+设备利用率API,50,medium,medium,s,新增GET /api/v1/operation/equipment-utilization端点
+人工效率API,50,medium,medium,s,新增GET /api/v1/operation/labor-efficiency端点
+运营效率仪表盘,40,medium,medium,m,新增综合运营效率页面
+设备折旧统计（按时间）,40,low,medium,s,按月/季度/年查看折旧趋势
+一键采纳参考值,30,low,high,s,前端功能，将参考值覆盖到用户配置
+调整记录查看,50,low,high,s,查看历史调整记录
+成本占比饼图,60,low,medium,s,前端可视化成本结构

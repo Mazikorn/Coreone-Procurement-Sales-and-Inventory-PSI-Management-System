@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "node",
+      "args": [
+        "C:/Users/86185/AppData/Local/npm-cache/_npx/9833c18b2d85bc59/node_modules/@playwright/mcp/cli.js"
+      ]
+    },
+    "context7": {
+      "command": "node",
+      "args": [
+        "C:/Users/86185/AppData/Local/npm-cache/_npx/c35ab75beed40a3c/node_modules/@upstash/context7-mcp/dist/index.js"
+      ]
+    }
+  }
+}

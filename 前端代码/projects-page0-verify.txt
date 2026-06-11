@@ -1,0 +1,6 @@
+
+Running 1 test using 1 worker
+
+  ok 1 [chromium] › e2e\projects.spec.ts:586:3 › 检测项目 -> 分页切换 › PROJ-PAGE-03. 表单校验：page=0修正为1 (727ms)
+
+  1 passed (3.8s)

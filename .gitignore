@@ -1,0 +1,111 @@
+# Dependencies
+前端代码/node_modules/
+后端代码/server/node_modules/
+
+# Build output
+前端代码/dist/
+后端代码/server/dist/
+
+# Database files
+后端代码/server/data/*.db
+后端代码/server/data/*.db-journal
+后端代码/server/data/*.db-shm
+后端代码/server/data/*.db-wal
+
+# Logs
+*.log
+后端代码/server/*.log
+后端代码/server/logs/
+
+# Environment files
+**/.env
+.env.local
+.env.*.local
+前端代码/.env
+后端代码/server/.env
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/settings.json
+.idea/
+
+# Claude Code / AI tools
+.claude/skills/
+.claude/worktrees/
+.claude/rules/skills-auto-trigger.md
+.codex/
+.playwright-mcp/
+
+# Other IDE/AI plugins
+.adal/
+.agents/
+.augment/
+.bob/
+.codebuddy/
+.commandcode/
+.continue/
+.cortex/
+.crush/
+.factory/
+.goose/
+.iflow/
+.junie/
+.kilocode/
+.kiro/
+.kode/
+.mcpjam/
+.mux/
+.neovate/
+.openhands/
+.pi/
+.pochi/
+.qoder/
+.qwen/
+.roo/
+.trae/
+.vibe/
+.windsurf/
+.zencoder/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+.venv/
+node_modules/
+dist/
+后端代码/server/token*.json
+
+# Test artifacts
+前端代码/coverage/
+前端代码/test-results/
+e2e-report-tmp/
+test-results/
+
+# Misc
+backend.pid
+skills-lock.json
+
+# Docker Desktop Installer (large binary, don't commit)
+DockerDesktopInstaller.exe
+
+# Syncthing
+.stfolder
+.stversions
+.syncthing.*
+.stignore
+
+# Mac system files
+.localized
+
+# Codex CLI workspace (created on Mac, don't sync)
+Codex/
+
+# External tools and references (large files, not part of project source)
+.tools/
+
+# Global Claude Code config backup (copied from C:\Users\86185\.claude)
+.claude-global/

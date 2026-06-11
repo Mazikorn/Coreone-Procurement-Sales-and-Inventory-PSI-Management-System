@@ -1,0 +1,8 @@
+
+Running 3 tests using 1 worker
+
+  ok 1 [chromium] › e2e\inventory-list.spec.ts:394:3 › 库存列表 -> 分页 › INV-PAGE-03. 表单校验：page=0后端修正为1 (789ms)
+  ok 2 [chromium] › e2e\locations.spec.ts:549:3 › 库位管理 -> 分页切换 › LOC-PAGE-03. 表单校验：page=0后端修正为1 (612ms)
+  ok 3 [chromium] › e2e\suppliers.spec.ts:514:3 › 供应商管理 -> 分页切换 › SUP-PAGE-03. 表单校验：page=0后端修正为1 (553ms)
+
+  3 passed (6.9s)

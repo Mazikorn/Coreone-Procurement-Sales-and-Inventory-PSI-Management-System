@@ -1,0 +1,52 @@
+# 测试环境专用 docker-compose
+# 用法: docker compose -f docker-compose.test.yml up -d
+name: coreone-test
+
+services:
+  backend:
+    build:
+      context: ./后端代码/server
+      dockerfile: Dockerfile
+    container_name: coreone-test-backend
+    restart: "no"
+    environment:
+      - NODE_ENV=test
+      - PORT=3001
+      - JWT_SECRET=test-jwt-secret-for-coreone-testing-2026
+      - JWT_EXPIRES_IN=8h
+      - REFRESH_TOKEN_EXPIRES_IN=7d
+      - ADMIN_PASSWORD=admin123
+      - TEST_PASSWORD=CoreOne2026!
+      - DATABASE_PATH=/app/data/coreone-test.db
+    volumes:
+      - coreone-test-data:/app/data
+    networks:
+      - coreone-test-network
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  frontend:
+    build:
+      context: ./前端代码
+      dockerfile: Dockerfile
+    container_name: coreone-test-frontend
+    restart: "no"
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - coreone-test-network
+
+networks:
+  coreone-test-network:
+    driver: bridge
+
+volumes:
+  coreone-test-data:
+    driver: local
