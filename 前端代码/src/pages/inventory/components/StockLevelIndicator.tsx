@@ -1,5 +1,3 @@
-import type { InventoryItem } from '@/types'
-
 interface StockLevelIndicatorProps {
   stock: number
   minStock: number

@@ -1,5 +1,4 @@
-import { useState } from 'react'
-import { X, Trash2, Upload, Plus } from 'lucide-react'
+import { X, Trash2, Plus } from 'lucide-react'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { Project } from '@/types'
 

@@ -72,13 +72,14 @@ export function useStocktakingPage() {
 
   const fetchFn = useCallback(
     async (params: { page: number; pageSize: number }) => {
-      const res = await stocktakingApi.getList({
+      const res: any = await stocktakingApi.getList({
         ...params,
         keyword: keyword || undefined,
       })
+      const payload = res?.data ?? res
       return {
-        list: res?.list || [],
-        pagination: res?.pagination,
+        list: payload?.list || [],
+        pagination: payload?.pagination,
       }
     },
     [keyword]
