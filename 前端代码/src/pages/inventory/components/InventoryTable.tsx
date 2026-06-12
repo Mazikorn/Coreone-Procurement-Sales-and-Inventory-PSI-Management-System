@@ -355,6 +355,13 @@ export function InventoryTable({
                   const first = batches[0]
                   const totalStock = batches.reduce((sum, b) => sum + (b.stock || 0), 0)
                   const minStock = first?.minStock || 0
+                  const isGroupSelected = batches.every(row => selectedIds.has(row.id))
+                  const toggleGroupSelection = () => {
+                    const shouldSelect = !isGroupSelected
+                    batches.forEach(row => {
+                      if (selectedIds.has(row.id) !== shouldSelect) onToggleSelectOne(row.id)
+                    })
+                  }
                   return (
                     <Fragment key={groupName}>
                       <tr
@@ -364,8 +371,10 @@ export function InventoryTable({
                         <td className="px-4 py-3">
                           <input
                             type="checkbox"
+                            checked={isGroupSelected}
                             className="w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-500"
-                            onChange={(e) => e.stopPropagation()}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={toggleGroupSelection}
                           />
                         </td>
                         <td className="px-4 py-3">
