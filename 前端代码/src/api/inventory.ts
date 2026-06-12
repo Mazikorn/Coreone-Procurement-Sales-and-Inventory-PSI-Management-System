@@ -1,5 +1,5 @@
 import request from './request'
-import type { ApiResponse, PaginationData, InventoryItem, InventoryStats, InboundRecord, InboundFormData, OutboundRecord, OutboundFormData, PageParams, SupplierReturnRecord, SupplierReturnFormData } from '@/types'
+import type { PaginationData, InventoryItem, InventoryStats, InboundRecord, InboundFormData, OutboundRecord, OutboundFormData, PageParams, SupplierReturnRecord, SupplierReturnFormData } from '@/types'
 
 export const inventoryApi = {
   getList: (params?: PageParams & { status?: string; categoryId?: string; locationId?: string }) =>
@@ -10,7 +10,7 @@ export const inventoryApi = {
 }
 
 export const inboundApi = {
-  getList: (params?: PageParams & { status?: string; startDate?: string; endDate?: string }) =>
+  getList: (params?: PageParams & { status?: string; type?: string; materialId?: string; startDate?: string; endDate?: string }) =>
     request.get<PaginationData<InboundRecord>>('/inbound', { params }),
 
   create: (data: InboundFormData) =>

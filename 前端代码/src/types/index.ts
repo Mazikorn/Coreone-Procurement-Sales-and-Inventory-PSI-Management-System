@@ -181,7 +181,7 @@ export interface InventoryStats {
 }
 
 // ===== 入库 =====
-export type InboundType = 'direct' | 'purchase' | 'return'
+export type InboundType = 'direct' | 'purchase' | 'return' | 'transfer' | 'surplus' | 'other'
 
 export interface InboundRecord {
   id: string
@@ -217,9 +217,13 @@ export interface InboundFormData {
   price?: number
   supplierId?: string
   locationId: string
+  fromLocationId?: string
+  fromLocationName?: string
   productionDate?: string
   expiryDate?: string
   remark?: string
+  purchaseOrderId?: string
+  status?: 'completed' | 'cancelled'
 }
 
 // ===== 出库 =====

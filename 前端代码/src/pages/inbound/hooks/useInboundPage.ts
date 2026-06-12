@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { inboundApi, purchaseOrderApi } from '@/api/inventory'
 import { materialApi, supplierApi, locationApi } from '@/api/master'
-import type { InboundRecord, Material, Supplier, Location } from '@/types'
+import type { InboundRecord, Material, Supplier, Location, PaginationData } from '@/types'
 import { usePagination } from '@/hooks/usePagination'
 import { useUrlParams } from '@/hooks/useUrlParams'
 import { toast } from 'sonner'
@@ -9,6 +9,14 @@ import { formatDateTime } from '@/lib/utils'
 import type { FormData } from '../components/InboundFormModal'
 
 type ModalType = 'create' | 'edit' | 'detail' | 'restore' | 'scan' | 'import' | 'print' | null
+
+interface PurchaseOrderOption {
+  id: string
+  orderNo?: string
+  purchaseOrderNo?: string
+  materialName?: string
+  remainingQty?: number
+}
 
 function getTypeLabel(type: string): string {
   const map: Record<string, string> = {
@@ -60,7 +68,7 @@ export function useInboundPage() {
   }>({ open: false, title: '', message: '', onConfirm: null })
 
   // 表单状态
-  const [purchaseOrders, setPurchaseOrders] = useState<Record<string, unknown>[]>([])
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderOption[]>([])
   const [selectedOrderId, setSelectedOrderId] = useState<string>('')
   const [submitting, setSubmitting] = useState(false)
 
@@ -102,7 +110,7 @@ export function useInboundPage() {
         keyword: effectiveKeyword,
         startDate: effectiveStartDate,
         endDate: effectiveEndDate,
-      })
+      }) as unknown as PaginationData<InboundRecord>
       return {
         list: res?.list || [],
         pagination: res?.pagination,
@@ -203,9 +211,12 @@ export function useInboundPage() {
         supplierApi.getList({ page: 1, pageSize: 999, status: 'active' }),
         locationApi.getList({ page: 1, pageSize: 999, status: 'active' }),
       ])
-      setMaterials(mRes?.list || [])
-      setSuppliers(sRes?.list || [])
-      setLocations(lRes?.list || [])
+      const materialRes = mRes as unknown as PaginationData<Material>
+      const supplierRes = sRes as unknown as PaginationData<Supplier>
+      const locationRes = lRes as unknown as PaginationData<Location>
+      setMaterials(materialRes?.list || [])
+      setSuppliers(supplierRes?.list || [])
+      setLocations(locationRes?.list || [])
     } catch (e) {
       console.error(e)
     }
@@ -213,8 +224,8 @@ export function useInboundPage() {
 
   const fetchPurchaseOrders = async () => {
     try {
-      const res = await purchaseOrderApi.getList({ status: 'pending,partial', pageSize: 100 })
-      setPurchaseOrders(res.data?.list || [])
+      const res = await purchaseOrderApi.getList({ status: 'pending,partial', pageSize: 100 }) as unknown as PaginationData<PurchaseOrderOption>
+      setPurchaseOrders(res?.list || [])
     } catch (e) {
       setPurchaseOrders([])
     }
@@ -341,7 +352,11 @@ export function useInboundPage() {
       toast.error('请选择耗材并输入数量')
       return
     }
-    if (selectedOrderId && selectedOrder && form.quantity > selectedOrder.remainingQty) {
+    if (
+      selectedOrderId &&
+      selectedOrder?.remainingQty !== undefined &&
+      form.quantity > selectedOrder.remainingQty
+    ) {
       toast.error(`入库数量不能超过待入库数量 ${selectedOrder.remainingQty}`)
       return
     }

@@ -3,7 +3,6 @@ import { renderHook, waitFor, act } from '@testing-library/react'
 import { useInboundPage } from './useInboundPage'
 import { inboundApi, purchaseOrderApi } from '@/api/inventory'
 import { materialApi, supplierApi, locationApi } from '@/api/master'
-import { toast } from 'sonner'
 import type { InboundRecord, Material, Supplier, Location } from '@/types'
 
 vi.mock('@/api/inventory')
@@ -58,7 +57,7 @@ describe('useInboundPage', () => {
     vi.mocked(materialApi.getList).mockResolvedValue({ list: mockMaterials, pagination: { total: 1 } } as any)
     vi.mocked(supplierApi.getList).mockResolvedValue({ list: mockSuppliers, pagination: { total: 1 } } as any)
     vi.mocked(locationApi.getList).mockResolvedValue({ list: mockLocations, pagination: { total: 1 } } as any)
-    vi.mocked(purchaseOrderApi.getList).mockResolvedValue({ data: { list: [] } } as any)
+    vi.mocked(purchaseOrderApi.getList).mockResolvedValue({ list: [], pagination: { total: 0 } } as any)
     vi.mocked(purchaseOrderApi.receive).mockResolvedValue({} as any)
   })
 
