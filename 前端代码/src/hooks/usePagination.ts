@@ -1,13 +1,25 @@
 import { useState, useEffect, useCallback } from 'react'
+import type { DependencyList } from 'react'
 
-interface UsePaginationOptions<T> {
+export interface UsePaginationOptions<T> {
   fetchFn: (params: { page: number; pageSize: number }) => Promise<{
     list: T[]
     pagination?: { total: number; page: number; pageSize: number }
   }>
   initialPage?: number
   initialPageSize?: number
-  deps?: React.DependencyList
+  deps?: DependencyList
+}
+
+export interface UsePaginationReturn<T> {
+  data: T[]
+  loading: boolean
+  page: number
+  pageSize: number
+  total: number
+  setPage: (page: number) => void
+  setPageSize: (pageSize: number) => void
+  refresh: () => void
 }
 
 export function usePagination<T>({
@@ -15,7 +27,7 @@ export function usePagination<T>({
   initialPage = 1,
   initialPageSize = 20,
   deps = [],
-}: UsePaginationOptions<T>) {
+}: UsePaginationOptions<T>): UsePaginationReturn<T> {
   const [data, setData] = useState<T[]>([])
   const [loading, setLoading] = useState(false)
   const [page, setPage] = useState(initialPage)
@@ -53,13 +65,10 @@ export function usePagination<T>({
     [fetchData]
   )
 
-  const changePageSize = useCallback(
-    (size: number) => {
-      setPageSize(size)
-      setPage(1)
-    },
-    []
-  )
+  const changePageSize = useCallback((size: number) => {
+    setPageSize(size)
+    setPage(1)
+  }, [])
 
   return {
     data,
