@@ -96,6 +96,7 @@ export default function BOMPage() {
         type={page.modalType === 'edit' ? 'edit' : 'create'}
         form={page.form}
         detailBom={page.detailBom}
+        allMaterials={page.allMaterials}
         onClose={() => page.setModalType(null)}
         onChange={page.setForm}
         onSubmit={page.handleSubmit}

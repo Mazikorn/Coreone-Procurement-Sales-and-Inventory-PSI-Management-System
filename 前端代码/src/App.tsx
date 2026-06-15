@@ -10,11 +10,15 @@ import Inbound from '@/pages/inbound/Inbound'
 import InventoryList from '@/pages/inventory/InventoryList'
 import Stocktaking from '@/pages/inventory/Stocktaking'
 import Outbound from '@/pages/outbound/Outbound'
+import Returns from '@/pages/returns/Returns'
 import PurchaseOrders from '@/pages/purchase/PurchaseOrders'
 import Suppliers from '@/pages/master/Suppliers'
 import Materials from '@/pages/master/Materials'
+import Categories from '@/pages/master/Categories'
 import Locations from '@/pages/master/Locations'
 import Projects from '@/pages/master/Projects'
+import BOM from '@/pages/bom/BOM'
+import Reconciliation from '@/pages/reconciliation/Reconciliation'
 import Users from '@/pages/system/Users'
 import Roles from '@/pages/system/Roles'
 import Logs from '@/pages/system/Logs'
@@ -33,6 +37,7 @@ import FeeComparison from '@/pages/cost/FeeComparison'
 import CostTrend from '@/pages/cost/CostTrend'
 import { ActivityCenterList } from '@/pages/cost/ActivityCenterList'
 import { CostDriverList } from '@/pages/cost/CostDriverList'
+import { CostPoolList } from '@/pages/cost/CostPoolList'
 import BudgetManagement from '@/pages/cost/BudgetManagement'
 import QualityCostAnalysis from '@/pages/cost/QualityCostAnalysis'
 import CostVarianceAnalysis from '@/pages/cost/CostVarianceAnalysis'
@@ -41,6 +46,9 @@ import AuditTrail from '@/pages/cost/AuditTrail'
 import QuarterlyAdjustment from '@/pages/cost/QuarterlyAdjustment'
 import PersonnelEfficiency from '@/pages/cost/PersonnelEfficiency'
 import CostModelValidation from '@/pages/cost/CostModelValidation'
+import CostForecast from '@/pages/cost/CostForecast'
+import SupplierCostAnalysis from '@/pages/cost/SupplierCostAnalysis'
+import EquipmentEfficiency from '@/pages/cost/EquipmentEfficiency'
 import IndirectCostCenterList from '@/pages/cost-center/IndirectCostCenterList'
 
 function ProtectedLayout() {
@@ -62,12 +70,16 @@ function ProtectedLayout() {
             <Route path="/inbound" element={<Inbound />} />
             <Route path="/inventory" element={<InventoryList />} />
             <Route path="/outbound" element={<Outbound />} />
+            <Route path="/returns" element={<Returns />} />
             <Route path="/stocktaking" element={<Stocktaking />} />
             <Route path="/purchase-orders" element={<PurchaseOrders />} />
             <Route path="/suppliers" element={<Suppliers />} />
             <Route path="/materials" element={<Materials />} />
+            <Route path="/categories" element={<Categories />} />
             <Route path="/locations" element={<Locations />} />
             <Route path="/projects" element={<Projects />} />
+            <Route path="/bom" element={<BOM />} />
+            <Route path="/reconciliation" element={<Reconciliation />} />
             <Route path="/users" element={<Users />} />
             <Route path="/roles" element={<Roles />} />
             <Route path="/logs" element={<Logs />} />
@@ -86,12 +98,16 @@ function ProtectedLayout() {
             <Route path="/abc/trend" element={<CostTrend />} />
             <Route path="/abc/activity-centers" element={<ActivityCenterList />} />
             <Route path="/abc/cost-drivers" element={<CostDriverList />} />
+            <Route path="/abc/cost-pools" element={<CostPoolList />} />
             <Route path="/abc/budgets" element={<BudgetManagement />} />
             <Route path="/abc/quality-costs" element={<QualityCostAnalysis />} />
             <Route path="/abc/variance" element={<CostVarianceAnalysis />} />
             <Route path="/abc/alerts" element={<CostAlerts />} />
             <Route path="/abc/audit" element={<AuditTrail />} />
             <Route path="/abc/quarterly-adjustment" element={<QuarterlyAdjustment />} />
+            <Route path="/abc/forecast" element={<CostForecast />} />
+            <Route path="/abc/supplier-cost" element={<SupplierCostAnalysis />} />
+            <Route path="/abc/equipment-efficiency" element={<EquipmentEfficiency />} />
             <Route path="/abc/personnel-efficiency" element={<PersonnelEfficiency />} />
             <Route path="/abc/model-validation" element={<CostModelValidation />} />
             <Route path="/indirect-costs" element={<IndirectCostCenterList />} />
