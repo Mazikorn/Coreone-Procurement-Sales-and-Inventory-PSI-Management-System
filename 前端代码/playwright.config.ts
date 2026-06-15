@@ -43,7 +43,7 @@ export default defineConfig({
   // 同时启动后端 API 和前端 dev server，解决 E2E 测试因后端未启动导致的超时
   webServer: [
     {
-      command: 'cd ../后端代码/server && npx tsx src/app.ts',
+      command: 'cd ../后端代码/server && JWT_SECRET=coreone-e2e-jwt-secret JWT_REFRESH_SECRET=coreone-e2e-refresh-secret npx tsx src/app.ts',
       url: 'http://localhost:3001/api/health',
       reuseExistingServer: !process.env.CI,
       timeout: 60000,
