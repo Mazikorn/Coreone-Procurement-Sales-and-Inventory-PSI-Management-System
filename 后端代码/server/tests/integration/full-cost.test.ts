@@ -212,6 +212,18 @@ describe('集成测试：全成本计算端到端', () => {
     expect(materialCostRes.status).toBe(200)
     expect(materialCostRes.body.success).toBe(true)
 
+    const inboundStatsRes = await request(app)
+      .get('/api/v1/inbound/stats')
+      .set('Authorization', `Bearer ${token}`)
+    expect(inboundStatsRes.status).toBe(200)
+    expect(inboundStatsRes.body.success).toBe(true)
+
+    const purchaseOrdersRes = await request(app)
+      .get('/api/v1/purchase-orders')
+      .set('Authorization', `Bearer ${token}`)
+    expect(purchaseOrdersRes.status).toBe(200)
+    expect(purchaseOrdersRes.body.success).toBe(true)
+
     const summary = reportRes.body.data.summary
     const projects = reportRes.body.data.projects
 

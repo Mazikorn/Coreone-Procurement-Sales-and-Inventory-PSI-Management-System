@@ -224,7 +224,8 @@ export function initializeDatabase(): void {
       status TEXT NOT NULL DEFAULT 'pending',
       remark TEXT,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      is_deleted INTEGER NOT NULL DEFAULT 0
     )
   `)
   database.exec(`
@@ -482,6 +483,8 @@ export function initializeDatabase(): void {
   `)
 
   // ABC 成本相关表
+  ensureColumn('inbound_records', 'is_deleted', 'INTEGER NOT NULL DEFAULT 0')
+  ensureColumn('purchase_orders', 'is_deleted', 'INTEGER NOT NULL DEFAULT 0')
   ensureColumn('stocktaking_records', 'is_deleted', 'INTEGER NOT NULL DEFAULT 0')
   ensureColumn('return_records', 'is_deleted', 'INTEGER NOT NULL DEFAULT 0')
   ensureColumn('return_records', 'unit_cost', 'DECIMAL(18, 4) DEFAULT 0')
