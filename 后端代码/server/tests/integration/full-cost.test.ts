@@ -206,6 +206,12 @@ describe('集成测试：全成本计算端到端', () => {
     expect(reportRes.status).toBe(200)
     expect(reportRes.body.success).toBe(true)
 
+    const materialCostRes = await request(app)
+      .get('/api/v1/reports/cost-by-material')
+      .set('Authorization', `Bearer ${token}`)
+    expect(materialCostRes.status).toBe(200)
+    expect(materialCostRes.body.success).toBe(true)
+
     const summary = reportRes.body.data.summary
     const projects = reportRes.body.data.projects
 
