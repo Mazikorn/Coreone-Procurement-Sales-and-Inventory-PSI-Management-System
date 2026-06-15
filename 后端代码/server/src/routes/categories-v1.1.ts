@@ -211,7 +211,7 @@ router.delete('/:id', requireCategoryWrite, (req, res) => {
         return
       }
       // 验证目标分类存在且不是自身
-      const target = db.prepare('SELECT * FROM material_categories WHERE id = ? AND is_deleted = 0').get(targetCategoryId)
+      const target = db.prepare('SELECT * FROM material_categories WHERE id = ? AND is_deleted = 0').get(targetCategoryId) as any
       if (!target) {
         error(res, 'Target category not found', 'NOT_FOUND', 404)
         return

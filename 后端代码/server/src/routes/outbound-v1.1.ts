@@ -9,6 +9,7 @@ const router = Router()
 import { checkStockAlerts } from '../utils/alertChecker.js'
 import { generateNo } from '../utils/generateNo.js'
 import { calculateSlideCostWithFee } from '../utils/cost-calculator.js'
+import { errorMessage, recordCostException } from '../utils/cost-exceptions.js'
 
 function generateOutboundNo(): string {
   return generateNo('OB')
@@ -416,14 +417,34 @@ router.post('/bom', (req, res) => {
         }
       }
 
+      const costMonth = new Date().toISOString().slice(0, 7)
+      if (skippedItems.length > 0) {
+        recordCostException(db, {
+          sourceModule: 'outbound',
+          sourceType: 'bom_outbound',
+          sourceId: id,
+          projectId: projectId || null,
+          bomId,
+          outboundId: id,
+          yearMonth: costMonth,
+          exceptionType: 'bom_material_skipped',
+          severity: 'warning',
+          message: 'BOM出库跳过了扩展物料，出库成本可能低估',
+          details: {
+            outboundNo,
+            sampleCount: sc,
+            skippedItems,
+          },
+        })
+      }
+
       // ===== ABC 成本计算（失败不阻断出库）=====
       try {
-        const month = new Date().toISOString().slice(0, 7)
         const slideCostResult = calculateSlideCostWithFee(db, {
           bomId,
           slideCount: sc,
           blockCount: 1,
-          month,
+          month: costMonth,
           materialCost: totalCost,
         })
 
@@ -444,7 +465,7 @@ router.post('/bom', (req, res) => {
           slideCostResult.feeCategory, slideCostResult.feeStandardId,
           slideCostResult.feeAmount, slideCostResult.profit, slideCostResult.profitRate,
           JSON.stringify(slideCostResult.activityCosts),
-          month
+          costMonth
         )
 
         // 更新 outbound_records 的 ABC 字段
@@ -454,8 +475,26 @@ router.post('/bom', (req, res) => {
           WHERE id = ?
         `).run(slideCostResult.totalCost, slideCostResult.totalActivityCost, slideCostResult.feeAmount, slideCostResult.profit, id)
       } catch (abcErr) {
+        const message = errorMessage(abcErr)
         console.error('ABC calculation failed, outbound continues:', abcErr)
-        // 不抛出异常，出库继续
+        recordCostException(db, {
+          sourceModule: 'abc',
+          sourceType: 'bom_outbound',
+          sourceId: id,
+          projectId: projectId || null,
+          bomId,
+          outboundId: id,
+          yearMonth: costMonth,
+          exceptionType: 'abc_calculation_failed',
+          severity: 'error',
+          message: 'BOM出库已完成，但ABC成本计算失败',
+          details: {
+            outboundNo,
+            sampleCount: sc,
+            materialCost: totalCost,
+            error: message,
+          },
+        })
       }
 
       db.exec('COMMIT')
