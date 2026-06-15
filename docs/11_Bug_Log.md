@@ -21,6 +21,23 @@
 
 ---
 
+## 2026-06-15 Draft PR #1 复核摘要
+
+> 目标分支：`codex/master-aligned-integration-2026-06-15`
+> 当前 head：`afb8c71`
+> 复核口径：只关闭有代码线索和验证证据支撑的事项；需要 PM 决策或专项测试的事项不强行关闭。
+
+| Bug | 当前复核状态 | 证据/说明 |
+|-----|--------------|-----------|
+| BUG-001 / BUG-002 / BUG-003 | 待回归，可从 P0 降级 | `bom-v1.1.ts` 创建/更新已使用 `BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK`，后端 BOM 集成测试通过 |
+| BUG-004 | 待回归，可从 P0 降级 | `outbound-v1.1.ts` 在更新库存前读取 `beforeStock`，后端出库集成测试通过 |
+| BUG-005 / BUG-006 / BUG-007 | 待回归，可从 P0 降级 | `inbound-v1.1.ts` 已重算 amount、删除/取消时调整库存并保存 cancel_reason，后端 build/test 通过 |
+| BUG-008 | 仍需确认 | 退库撤销批次方向需专项复核，暂不关闭 |
+| BUG-009 | 仍需处理或 PM 决策 | `transfers-v1.1.ts` 仍有注释说明当前调拨记录没有存储 `from_location_id` |
+| BUG-010~BUG-013 | 未在本轮专项复核 | 不作为本次 PR 已关闭项；需后续按模块复核 |
+
+---
+
 ## P0 — Critical/High Bug
 
 ### BUG-001 BOM PUT 更新无事务包裹
