@@ -123,7 +123,7 @@ export default function Login() {
               </p>
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-5">
+            <form onSubmit={handleSubmit} className="space-y-6">
               {/* 用户名 */}
               <div>
                 <label className="block text-sm font-medium text-[#374151] mb-1.5">

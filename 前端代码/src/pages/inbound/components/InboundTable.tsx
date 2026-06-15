@@ -1,59 +1,7 @@
-import type { InboundRecord } from '@/types'
-import { formatDateTime, formatCurrency, cn } from '@/lib/utils'
-import { Download, Printer } from 'lucide-react'
+import { Eye, Edit, Trash2, RotateCcw, Printer } from 'lucide-react'
 import { Pagination } from '@/components/ui/Pagination'
-
-function getTypeLabel(type: string): string {
-  const map: Record<string, string> = {
-    direct: '直接入库',
-    purchase: '采购入库',
-    return: '退库入库',
-    transfer: '调拨入库',
-    surplus: '盘盈入库',
-    other: '其他入库',
-  }
-  return map[type] || type
-}
-
-function getStatusLabel(status: string): string {
-  const map: Record<string, string> = {
-    completed: '已完成',
-    cancelled: '已取消',
-  }
-  return map[status] || status
-}
-
-function getStatusColor(status: string): string {
-  switch (status) {
-    case 'completed':
-      return 'bg-green-50 text-green-700 border-green-200'
-    case 'cancelled':
-      return 'bg-gray-100 text-gray-600 border-gray-200'
-    default:
-      return 'bg-gray-100 text-gray-600 border-gray-200'
-  }
-}
-
-function getSourceBadgeColor(type: string): string {
-  switch (type) {
-    case 'purchase':
-      return 'bg-blue-50 text-blue-700 border-blue-200'
-    case 'return':
-      return 'bg-cyan-50 text-cyan-700 border-cyan-200'
-    case 'direct':
-      return 'bg-emerald-50 text-emerald-700 border-emerald-200'
-    case 'transfer':
-      return 'bg-amber-50 text-amber-700 border-amber-200'
-    case 'surplus':
-      return 'bg-slate-50 text-slate-700 border-slate-200'
-    default:
-      return 'bg-gray-50 text-gray-700 border-gray-200'
-  }
-}
-
-function getRecordStatus(row: InboundRecord) {
-  return row.status
-}
+import type { InboundRecord } from '@/types'
+import { formatDateTime, formatCurrency } from '@/lib/utils'
 
 interface InboundTableProps {
   data: InboundRecord[]
@@ -75,7 +23,16 @@ interface InboundTableProps {
   pageSize: number
   total: number
   onPageChange: (page: number) => void
-  onPageSizeChange: (size: number) => void
+  onPageSizeChange: (pageSize: number) => void
+}
+
+const TYPE_LABELS: Record<string, string> = {
+  direct: '直接入库',
+  purchase: '采购入库',
+  return: '退库入库',
+  transfer: '调拨入库',
+  surplus: '盘盈入库',
+  other: '其他入库',
 }
 
 export default function InboundTable({
@@ -100,174 +57,177 @@ export default function InboundTable({
   onPageChange,
   onPageSizeChange,
 }: InboundTableProps) {
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <div className="animate-spin rounded-full h-8 w-8 border-2 border-gray-200 border-t-blue-500" />
+      </div>
+    )
+  }
+
+  if (data.length === 0) {
+    return (
+      <div className="text-center py-20">
+        <p className="text-sm text-gray-500">暂无入库记录</p>
+      </div>
+    )
+  }
+
   return (
-    <>
+    <div>
       {/* 批量操作栏 */}
       {selectedIds.size > 0 && (
-        <div className="px-5 py-3 bg-blue-50 border-b border-blue-100 flex items-center justify-between">
-          <span className="text-sm text-blue-700">
-            已选择 <strong>{selectedIds.size}</strong> 项
-          </span>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={onBatchExport}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-600 hover:text-gray-900 hover:bg-white rounded-md border border-transparent hover:border-gray-200 transition-all"
-            >
-              <Download className="w-3.5 h-3.5" /> 导出
-            </button>
-            <button
-              onClick={onBatchPrint}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-600 hover:text-gray-900 hover:bg-white rounded-md border border-transparent hover:border-gray-200 transition-all"
-            >
-              <Printer className="w-3.5 h-3.5" /> 打印
-            </button>
-            <button
-              onClick={onClearSelection}
-              className="px-3 py-1.5 text-xs text-gray-500 hover:text-gray-700 transition-colors"
-            >
-              取消选择
-            </button>
-          </div>
+        <div className="flex items-center gap-3 px-4 py-2.5 bg-blue-50 border-b border-blue-100 text-sm">
+          <span className="text-blue-700">已选 {selectedIds.size} 项</span>
+          <button
+            onClick={onBatchExport}
+            className="text-blue-600 hover:text-blue-800 font-medium"
+          >
+            导出选中
+          </button>
+          <button
+            onClick={onBatchPrint}
+            className="text-blue-600 hover:text-blue-800 font-medium"
+          >
+            打印选中
+          </button>
+          <button
+            onClick={onClearSelection}
+            className="text-gray-500 hover:text-gray-700 ml-auto"
+          >
+            取消选择
+          </button>
         </div>
       )}
 
       {/* 表格 */}
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
-          <thead>
-            <tr className="bg-gray-50 border-b border-gray-200">
-              <th className="px-4 py-3 w-10 text-center">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-4 py-3 w-10">
                 <input
                   type="checkbox"
                   checked={isAllSelected}
                   ref={el => { if (el) el.indeterminate = isIndeterminate }}
                   onChange={onToggleSelectAll}
-                  className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                 />
               </th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">入库单号</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">耗材名称</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">批号</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">入库来源</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">数量</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">金额</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">供应商</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">入库时间</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状态</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-40">操作</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">入库单号</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">耗材</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">类型</th>
+              <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">数量</th>
+              <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">金额</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">供应商</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">状态</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">入库时间</th>
+              <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase w-32">操作</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {loading ? (
-              <tr>
-                <td colSpan={11} className="px-4 py-12 text-center text-gray-400">
-                  <div className="flex items-center justify-center gap-2">
-                    <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                    加载中...
-                  </div>
+            {data.map(row => (
+              <tr key={row.id} className="hover:bg-gray-50 transition-colors">
+                <td className="px-4 py-3">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(row.id)}
+                    onChange={() => onToggleSelectOne(row.id)}
+                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
                 </td>
-              </tr>
-            ) : data.length === 0 ? (
-              <tr>
-                <td colSpan={11} className="px-4 py-12 text-center text-gray-400">
-                  暂无数据
-                </td>
-              </tr>
-            ) : (
-              data.map(row => {
-                const status = getRecordStatus(row)
-                return (
-                  <tr
-                    key={row.id}
-                    className={cn(
-                      'hover:bg-gray-50 transition-colors',
-                      selectedIds.has(row.id) && 'bg-blue-50'
-                    )}
+                <td className="px-4 py-3">
+                  <button
+                    onClick={() => onDetail(row)}
+                    className="font-mono text-blue-600 hover:text-blue-800 hover:underline"
                   >
-                    <td className="px-4 py-3 text-center">
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.has(row.id)}
-                        onChange={() => onToggleSelectOne(row.id)}
-                        className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                      />
-                    </td>
-                    <td className="px-4 py-3 font-mono text-gray-600 text-xs">{row.inboundNo}</td>
-                    <td className="px-4 py-3">
-                      <strong className="text-gray-900 font-medium">{row.materialName}</strong>
-                    </td>
-                    <td className="px-4 py-3 font-mono text-gray-500 text-xs">{row.batchNo || '-'}</td>
-                    <td className="px-4 py-3">
-                      <span className={cn('inline-flex items-center px-2.5 py-0.5 rounded-full text-xs border', getSourceBadgeColor(row.type))}>
-                        {getTypeLabel(row.type)}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-gray-700">
-                      {row.quantity} {row.unit}
-                    </td>
-                    <td className="px-4 py-3 text-gray-700 font-medium">
-                      {formatCurrency(row.amount || row.price * row.quantity)}
-                    </td>
-                    <td className="px-4 py-3 text-gray-500">{row.supplierName || '-'}</td>
-                    <td className="px-4 py-3 text-gray-500 text-xs">{formatDateTime(row.createdAt)}</td>
-                    <td className="px-4 py-3">
-                      <span className={cn('inline-flex items-center px-3 py-1 rounded-full text-xs font-medium border', getStatusColor(status))}>
-                        {getStatusLabel(status)}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => onDetail(row)}
-                          className="px-2 py-1 text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded transition-colors"
-                        >
-                          详情
-                        </button>
+                    {row.inboundNo}
+                  </button>
+                </td>
+                <td className="px-4 py-3 text-gray-900">{row.materialName}</td>
+                <td className="px-4 py-3">
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
+                    {TYPE_LABELS[row.type] || row.type}
+                  </span>
+                </td>
+                <td className="px-4 py-3 text-right text-gray-900">
+                  {row.quantity} {row.unit || ''}
+                </td>
+                <td className="px-4 py-3 text-right text-gray-900">
+                  {formatCurrency(row.amount || row.price * row.quantity)}
+                </td>
+                <td className="px-4 py-3 text-gray-600">{row.supplierName || '-'}</td>
+                <td className="px-4 py-3">
+                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                    row.status === 'completed'
+                      ? 'bg-green-100 text-green-700'
+                      : 'bg-gray-100 text-gray-600'
+                  }`}>
+                    {row.status === 'completed' ? '已完成' : '已取消'}
+                  </span>
+                </td>
+                <td className="px-4 py-3 text-gray-600 text-xs">{formatDateTime(row.createdAt)}</td>
+                <td className="px-4 py-3">
+                  <div className="flex items-center justify-center gap-1">
+                    <button
+                      onClick={() => onDetail(row)}
+                      className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+                      title="查看详情"
+                    >
+                      <Eye className="w-4 h-4" />
+                    </button>
+                    {row.status === 'completed' && (
+                      <>
                         <button
                           onClick={() => onEdit(row)}
-                          className="px-2 py-1 text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded transition-colors"
+                          className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+                          title="编辑"
                         >
-                          编辑
+                          <Edit className="w-4 h-4" />
                         </button>
                         <button
                           onClick={() => onDelete(row)}
-                          className="px-2 py-1 text-xs text-red-600 hover:text-red-900 hover:bg-red-50 rounded transition-colors"
+                          className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                          title="删除"
                         >
-                          删除
+                          <Trash2 className="w-4 h-4" />
                         </button>
-                        {status === 'cancelled' ? (
-                          <button
-                            onClick={() => onRestore(row)}
-                            className="px-2 py-1 text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded transition-colors"
-                          >
-                            恢复
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => onPrint(row)}
-                            className="px-2 py-1 text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded transition-colors"
-                          >
-                            打印
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                )
-              })
-            )}
+                      </>
+                    )}
+                    {row.status === 'cancelled' && (
+                      <button
+                        onClick={() => onRestore(row)}
+                        className="p-1.5 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded-md transition-colors"
+                        title="恢复"
+                      >
+                        <RotateCcw className="w-4 h-4" />
+                      </button>
+                    )}
+                    <button
+                      onClick={() => onPrint(row)}
+                      className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors"
+                      title="打印"
+                    >
+                      <Printer className="w-4 h-4" />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
 
       {/* 分页 */}
-      <Pagination
-        page={page}
-        pageSize={pageSize}
-        total={total}
-        onChange={onPageChange}
-        onPageSizeChange={onPageSizeChange}
-      />
-    </>
+      <div className="px-4 py-3 border-t border-gray-100">
+        <Pagination
+          page={page}
+          pageSize={pageSize}
+          total={total}
+          onChangePage={onPageChange}
+          onChangePageSize={onPageSizeChange}
+        />
+      </div>
+    </div>
   )
 }

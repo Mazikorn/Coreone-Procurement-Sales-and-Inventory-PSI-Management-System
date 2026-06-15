@@ -1,4 +1,5 @@
 import { X } from 'lucide-react'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { OutboundRecord } from '@/types'
 
 interface OutboundCancelModalProps {
@@ -42,17 +43,18 @@ export default function OutboundCancelModal({
             <label className="block text-sm font-medium text-gray-700 mb-1">
               取消原因 <span className="text-red-500">*</span>
             </label>
-            <select
+            <SearchableSelect
               value={cancelReason}
-              onChange={e => onReasonChange(e.target.value)}
-              className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="">请选择原因</option>
-              <option value="request">申请人取消需求</option>
-              <option value="stock">库存不足</option>
-              <option value="error">录入错误</option>
-              <option value="other">其他原因</option>
-            </select>
+              onChange={val => onReasonChange(val)}
+              options={[
+                { value: '', label: '请选择原因' },
+                { value: 'request', label: '申请人取消需求' },
+                { value: 'stock', label: '库存不足' },
+                { value: 'error', label: '录入错误' },
+                { value: 'other', label: '其他原因' },
+              ]}
+              placeholder="请选择原因"
+            />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">备注</label>

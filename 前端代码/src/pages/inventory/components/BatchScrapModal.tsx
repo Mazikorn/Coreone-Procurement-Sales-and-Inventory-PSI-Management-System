@@ -1,4 +1,5 @@
 import { Trash2 } from 'lucide-react'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
 
 interface ScrapItem {
   id: string
@@ -64,16 +65,17 @@ export function BatchScrapModal({ open, items, scrapReason, scrapRemark, onClose
             <label className="block text-sm font-medium text-gray-700 mb-1.5">
               报废原因 <span className="text-red-500">*</span>
             </label>
-            <select
+            <SearchableSelect
               value={scrapReason}
-              onChange={e => onChangeReason(e.target.value)}
-              className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm bg-white focus:outline-none focus:border-blue-500"
-            >
-              <option value="expired">过期</option>
-              <option value="damaged">损坏</option>
-              <option value="spoiled">变质</option>
-              <option value="other">其他</option>
-            </select>
+              onChange={val => onChangeReason(val)}
+              options={[
+                { value: 'expired', label: '过期' },
+                { value: 'damaged', label: '损坏' },
+                { value: 'spoiled', label: '变质' },
+                { value: 'other', label: '其他' },
+              ]}
+              placeholder="请选择"
+            />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1.5">备注（可选）</label>

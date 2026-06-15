@@ -25,7 +25,7 @@ export function MaterialDetailModal({ open, row, getCategoryName, getSupplierNam
             <X className="w-5 h-5 text-gray-500" />
           </button>
         </div>
-        <div className="p-6 space-y-5 overflow-y-auto">
+        <div className="p-6 space-y-6 overflow-y-auto">
           <div>
             <h4 className="text-sm font-semibold text-gray-900 mb-3">基本信息</h4>
             <div className="grid grid-cols-2 gap-4 bg-gray-50 rounded-lg p-4">

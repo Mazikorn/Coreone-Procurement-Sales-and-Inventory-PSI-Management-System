@@ -1,8 +1,16 @@
-import axios from 'axios'
+import axios, { type AxiosRequestConfig } from 'axios'
 import { toast } from 'sonner'
 
+type RequestClient = {
+  get<T = any>(url: string, config?: AxiosRequestConfig): Promise<T>
+  post<T = any, D = any>(url: string, data?: D, config?: AxiosRequestConfig): Promise<T>
+  put<T = any, D = any>(url: string, data?: D, config?: AxiosRequestConfig): Promise<T>
+  patch<T = any, D = any>(url: string, data?: D, config?: AxiosRequestConfig): Promise<T>
+  delete<T = any>(url: string, config?: AxiosRequestConfig): Promise<T>
+}
+
 const request = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api/v1',
+  baseURL: '/api/v1',
   timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
@@ -40,4 +48,4 @@ request.interceptors.response.use(
   }
 )
 
-export default request
+export default request as RequestClient

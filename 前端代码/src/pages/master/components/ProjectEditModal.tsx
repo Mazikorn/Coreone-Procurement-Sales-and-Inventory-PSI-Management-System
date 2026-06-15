@@ -1,6 +1,15 @@
 import { X, Loader2 } from 'lucide-react'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { Project, BOM } from '@/types'
 import type { FormData } from '../hooks/useProjectsPage'
+
+const serviceTypeOptions = [
+  { value: 'he', label: '病理技术-HE制片' },
+  { value: 'ihc', label: '病理技术-免疫组化' },
+  { value: 'ss', label: '病理技术-特殊染色' },
+  { value: 'mp', label: '分子诊断' },
+  { value: 'cyto', label: '病理诊断-细胞学检测' },
+]
 
 interface Props {
   open: boolean
@@ -59,17 +68,12 @@ export function ProjectEditModal({
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">服务类型</label>
-                  <select
+                  <SearchableSelect
                     value={form.type}
-                    onChange={e => onChange({ ...form, type: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                  >
-                    <option value="he">病理技术-HE制片</option>
-                    <option value="ihc">病理技术-免疫组化</option>
-                    <option value="ss">病理技术-特殊染色</option>
-                    <option value="mp">分子诊断</option>
-                    <option value="cyto">病理诊断-细胞学检测</option>
-                  </select>
+                    onChange={val => onChange({ ...form, type: val })}
+                    options={serviceTypeOptions}
+                    placeholder="请选择"
+                  />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">服务编号</label>
@@ -145,17 +149,22 @@ export function ProjectEditModal({
             </div>
           ) : (
             <div className="space-y-4">
-              <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium">
-                    当前BOM: {editingRow.bomId ? (editingRow.bomName || '已配置') : '未配置'}
-                  </span>
-                  <button className="text-sm text-blue-600 hover:text-blue-700">
-                    前往BOM管理
-                  </button>
-                </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">BOM清单</label>
+                <SearchableSelect
+                  value={form.bomId}
+                  onChange={val => onChange({ ...form, bomId: val })}
+                  options={[
+                    { value: '', label: '不关联BOM' },
+                    ...boms.map(b => ({
+                      value: b.id,
+                      label: `${b.code} - ${b.name} (${b.version})`,
+                    })),
+                  ]}
+                  placeholder="请选择BOM清单"
+                />
               </div>
-              {editingRow.bomId && (
+              {form.bomId && (
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm border border-gray-200 rounded-lg">
                     <thead className="bg-gray-50">
@@ -170,7 +179,7 @@ export function ProjectEditModal({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                      {boms.find(b => b.id === editingRow.bomId)?.materials?.map((m, i) => (
+                      {boms.find(b => b.id === form.bomId)?.materials?.map((m, i) => (
                         <tr key={m.id} className="hover:bg-gray-50">
                           <td className="px-3 py-2 text-gray-500">{i + 1}</td>
                           <td className="px-3 py-2 font-medium">{m.name}</td>
@@ -197,14 +206,6 @@ export function ProjectEditModal({
                   </table>
                 </div>
               )}
-              <div className="flex gap-3">
-                <button className="px-3 py-1.5 bg-white text-gray-700 border border-gray-300 rounded-md text-sm hover:bg-gray-50">
-                  更换BOM
-                </button>
-                <button className="px-3 py-1.5 text-gray-500 hover:text-gray-700 text-sm">
-                  编辑BOM详情
-                </button>
-              </div>
             </div>
           )}
         </div>

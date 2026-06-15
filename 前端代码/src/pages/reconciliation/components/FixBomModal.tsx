@@ -1,3 +1,4 @@
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { MaterialDiff } from '../hooks/useReconciliationPage'
 
 interface Props {
@@ -56,9 +57,21 @@ export function FixBomModal({
             <label className="block text-sm font-medium text-gray-700 mb-1">修正为 <span className="text-red-500">*</span></label>
             <div className="flex gap-2">
               <input type="number" step="0.01" value={fixNewUsage} onChange={e => setFixNewUsage(Number(e.target.value))} className="flex-1 px-3 py-2 text-sm border rounded-md focus:outline-none focus:border-blue-500" />
-              <select value={fixNewUnit} onChange={e => setFixNewUnit(e.target.value)} className="w-24 px-3 py-2 text-sm border rounded-md">
-                <option>ml</option><option>μl</option><option>L</option><option>g</option><option>mg</option><option>片</option><option>支</option>
-              </select>
+              <SearchableSelect
+                value={fixNewUnit}
+                onChange={val => setFixNewUnit(val)}
+                options={[
+                  { value: 'ml', label: 'ml' },
+                  { value: 'μl', label: 'μl' },
+                  { value: 'L', label: 'L' },
+                  { value: 'g', label: 'g' },
+                  { value: 'mg', label: 'mg' },
+                  { value: '片', label: '片' },
+                  { value: '支', label: '支' },
+                ]}
+                placeholder="单位"
+                className="w-24"
+              />
             </div>
           </div>
           <div>

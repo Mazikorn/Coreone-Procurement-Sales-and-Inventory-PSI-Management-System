@@ -7,9 +7,10 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 
 export default function Materials() {
   const page = useMaterialsPage()
+  const confirmProps = page.confirmOpen ? page.confirmProps : null
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       {/* Page Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -107,16 +108,16 @@ export default function Materials() {
       />
 
       {/* ConfirmDialog */}
-      {page.confirmOpen && page.confirmProps && (
+      {confirmProps && (
         <ConfirmDialog
           open={page.confirmOpen}
-          title={page.confirmProps.title}
-          description={page.confirmProps.description}
-          confirmText={page.confirmProps.confirmText}
-          confirmVariant={page.confirmProps.confirmVariant}
+          title={confirmProps.title}
+          description={confirmProps.description}
+          confirmText={confirmProps.confirmText}
+          confirmVariant={confirmProps.confirmVariant}
           onConfirm={() => {
             page.setConfirmOpen(false)
-            page.confirmProps.onConfirm()
+            confirmProps.onConfirm()
           }}
           onCancel={() => page.setConfirmOpen(false)}
         />

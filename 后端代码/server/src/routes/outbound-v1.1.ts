@@ -2,14 +2,16 @@ import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
+import { allocateBatches, allocateGroupBatches, BatchAllocation, GroupBatchAllocation } from '../utils/allocation.js'
 
 const router = Router()
 
+import { checkStockAlerts } from '../utils/alertChecker.js'
+import { generateNo } from '../utils/generateNo.js'
+import { calculateSlideCostWithFee } from '../utils/cost-calculator.js'
+
 function generateOutboundNo(): string {
-  const date = new Date().toISOString().slice(0, 10).replace(/-/g, '')
-  const timestamp = Date.now().toString().slice(-6)
-  const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0')
-  return `OB-${date}-${timestamp}-${random}`
+  return generateNo('OB')
 }
 
 router.get('/', (req, res) => {
@@ -51,18 +53,36 @@ router.get('/', (req, res) => {
       LIMIT ? OFFSET ?
     `).all(...params, Number(pageSize), offset) as any[]
 
+    // 批量查询 items，避免 N+1
+    const recordIds = records.map((r: any) => r.id)
+    const itemsMap = new Map<string, any[]>()
+    if (recordIds.length > 0) {
+      const placeholders = recordIds.map(() => '?').join(',')
+      const allItems = db.prepare(
+        `SELECT oi.*, m.name as material_name FROM outbound_items oi
+         LEFT JOIN materials m ON oi.material_id = m.id AND m.is_deleted = 0
+         WHERE oi.outbound_id IN (${placeholders})`
+      ).all(...recordIds) as any[]
+      for (const item of allItems) {
+        if (!itemsMap.has(item.outbound_id)) itemsMap.set(item.outbound_id, [])
+        itemsMap.get(item.outbound_id)!.push(item)
+      }
+    }
+
     const result = records.map((r: any) => {
-      const items = db.prepare('SELECT oi.*, m.name as material_name FROM outbound_items oi LEFT JOIN materials m ON oi.material_id = m.id AND m.is_deleted = 0 WHERE oi.outbound_id = ?').all(r.id) as any[]
+      const items = itemsMap.get(r.id) || []
       return {
         id: r.id, outboundNo: r.outbound_no, type: r.type, projectId: r.project_id,
-        projectName: r.project_name,
+        projectName: r.project_name, sampleCount: r.sample_count,
         items: items.map((i: any) => ({
           id: i.id, materialId: i.material_id, materialName: i.material_name,
-          batchNo: i.batch_no, quantity: i.quantity, unit: i.unit,
+          batchId: i.batch_id, batchNo: i.batch_no, quantity: i.quantity, unit: i.unit,
           unitCost: i.unit_cost, totalCost: i.total_cost,
         })),
         totalCost: r.total_cost, operator: r.operator, status: r.status,
         remark: r.remark, createdAt: r.created_at,
+        abcTotalCost: r.abc_total_cost || 0, abcActivityCost: r.abc_activity_cost || 0,
+        feeAmount: r.fee_amount || 0, profit: r.profit || 0,
       }
     })
 
@@ -82,107 +102,114 @@ router.get('/stats', (req, res) => {
   } catch (err: any) { error(res, err.message) }
 })
 
-router.post('/', (req, res) => {
+router.post('/', requireWriteAccess, (req, res) => {
   try {
     const { type, projectId, items, remark } = req.body
     if (!type || !Array.isArray(items) || items.length === 0) {
-      error(res, 'Missing required fields', 'INVALID_PARAMETER', 400); return
+      error(res, '缺少必填字段', 'INVALID_PARAMETER', 400); return
     }
 
     const db = getDatabase()
     const outboundNo = generateOutboundNo()
     const id = uuidv4()
-    const operator = req.body.operator || 'system'
-
-    let totalCost = 0
-    const outboundItems: any[] = []
-
-    for (const item of items) {
-      const { materialId, quantity } = item
-      if (!materialId || quantity === undefined || quantity === null || isNaN(Number(quantity)) || Number(quantity) <= 0) {
-        error(res, 'Invalid quantity', 'INVALID_PARAMETER', 400); return
-      }
-      const inv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
-      if (!inv || inv.stock < quantity) {
-        error(res, 'Insufficient stock', 'STOCK_INSUFFICIENT', 422); return
-      }
-
-      const batch = db.prepare(`
-        SELECT b.* FROM batches b
-        JOIN materials m ON b.material_id = m.id
-        WHERE b.material_id = ? AND b.remaining > 0 AND b.status = 1 AND m.is_deleted = 0
-        ORDER BY b.expiry_date ASC
-      `).get(materialId) as any
-      const unitCost = batch?.inbound_price || 0
-      const itemCost = unitCost * quantity
-      totalCost += itemCost
-
-      outboundItems.push({ materialId, batchId: batch?.id || null, batchNo: batch?.batch_no || null, quantity, unitCost, itemCost, usage: item.usage || 'self', receiver: item.receiver || null })
-    }
+    const operator = (req as any).user?.username || 'system'
+    const sc = Number(req.body.sampleCount) || 1
 
     const materialUnits = db.prepare('SELECT id, unit FROM materials WHERE id IN (' + items.map(() => '?').join(',') + ')').all(...items.map((i: any) => i.materialId)) as any[]
     const unitMap = new Map(materialUnits.map((m: any) => [m.id, m.unit]))
 
-    // 事务保护：出库涉及 records + items + inventory + batches + stock_logs 多表操作
+    let totalCost = 0
+
     db.exec('BEGIN IMMEDIATE')
     try {
-      // 事务内重新校验库存，防止并发窗口
+      const itemAllocations: Array<{
+        materialId: string
+        quantity: number
+        usage: string
+        receiver: string | null
+        allocations: BatchAllocation[]
+        itemTotalCost: number
+      }> = []
+
       for (const item of items) {
         const { materialId, quantity } = item
-        const invCheck = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
-        if (!invCheck || invCheck.stock < quantity) {
+        if (!materialId || quantity === undefined || quantity === null || isNaN(Number(quantity)) || Number(quantity) <= 0) {
           db.exec('ROLLBACK')
-          error(res, 'Insufficient stock', 'STOCK_INSUFFICIENT', 422)
-          return
+          error(res, 'Invalid quantity', 'INVALID_PARAMETER', 400); return
         }
+        const qty = Number(quantity)
+        const allocations = allocateBatches(db, materialId, qty)
+        const itemTotalCost = allocations.reduce((sum, a) => sum + a.quantity * a.unitCost, 0)
+        totalCost += itemTotalCost
+
+        itemAllocations.push({
+          materialId,
+          quantity: qty,
+          usage: item.usage || 'self',
+          receiver: item.receiver || null,
+          allocations,
+          itemTotalCost,
+        })
       }
 
       db.prepare(`
-        INSERT INTO outbound_records (id, outbound_no, type, project_id, total_cost, operator, status, remark)
-        VALUES (?, ?, ?, ?, ?, ?, 'completed', ?)
-      `).run(id, outboundNo, type, projectId || null, totalCost, operator, remark || null)
+        INSERT INTO outbound_records (id, outbound_no, type, project_id, total_cost, sample_count, operator, status, remark)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'completed', ?)
+      `).run(id, outboundNo, type, projectId || null, totalCost, sc, operator, remark || null)
 
-      for (const oi of outboundItems) {
-        const itemId = uuidv4()
-        db.prepare(`
-          INSERT INTO outbound_items (id, outbound_id, material_id, batch_id, batch_no, quantity, unit, unit_cost, total_cost, usage, receiver)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(itemId, id, oi.materialId, oi.batchId, oi.batchNo, oi.quantity, unitMap.get(oi.materialId) || 'pcs', oi.unitCost, oi.itemCost, oi.usage || 'self', oi.receiver || null)
+      for (const ia of itemAllocations) {
+        for (const alloc of ia.allocations) {
+          const itemId = uuidv4()
+          const subtotal = alloc.quantity * alloc.unitCost
 
-        db.prepare('UPDATE inventory SET stock = stock - ? WHERE material_id = ?').run(oi.quantity, oi.materialId)
+          // 保存 beforeStock（在 UPDATE 之前）
+          const beforeStock = (db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(ia.materialId) as any)?.stock || 0
 
-        if (oi.batchId) {
-          db.prepare('UPDATE batches SET remaining = remaining - ? WHERE id = ?').run(oi.quantity, oi.batchId)
-          const batchRemaining = (db.prepare('SELECT remaining FROM batches WHERE id = ?').get(oi.batchId) as any)?.remaining
-          if (batchRemaining <= 0) {
-            db.prepare('UPDATE batches SET status = 0 WHERE id = ?').run(oi.batchId)
-          }
-        }
-
-        // 自用物料创建使用中跟踪记录
-        if ((oi.usage || 'self') === 'self' && oi.batchId) {
-          const mat = db.prepare('SELECT name, spec FROM materials WHERE id = ? AND is_deleted = 0').get(oi.materialId) as any
-          const trkId = `TRK-${Date.now()}-${Math.floor(Math.random() * 1000)}`
-          const today = new Date().toISOString().split('T')[0]
           db.prepare(`
-            INSERT INTO batch_usage_tracking
-            (id, material_id, material_name, batch, spec, total_qty, remaining, unit, start_date, days_used, expected_days, progress, usage, receiver, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, ?, ?, 'in-use', datetime('now'), datetime('now'))
-          `).run(trkId, oi.materialId, mat?.name || '', oi.batchNo || '', mat?.spec || '', oi.quantity, oi.quantity, unitMap.get(oi.materialId) || 'pcs', today, 30, 'self', null)
-        }
+            INSERT INTO outbound_items (id, outbound_id, material_id, batch_id, batch_no, quantity, unit, unit_cost, total_cost, usage, receiver)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(itemId, id, ia.materialId, alloc.batchId, alloc.batchNo, alloc.quantity, unitMap.get(ia.materialId) || 'pcs', alloc.unitCost, subtotal, ia.usage, ia.receiver)
 
-        const logId = uuidv4()
-        const beforeStock = (db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(oi.materialId) as any)?.stock || 0
-        const afterStock = beforeStock - oi.quantity
-        db.prepare(`
-          INSERT INTO stock_logs (id, type, material_id, quantity, before_stock, after_stock, related_id, related_type, operator)
-          VALUES (?, 'outbound', ?, ?, ?, ?, ?, 'outbound', ?)
-        `).run(logId, oi.materialId, -oi.quantity, beforeStock, afterStock, id, operator)
+          db.prepare('UPDATE inventory SET stock = stock - ? WHERE material_id = ?').run(alloc.quantity, ia.materialId)
+
+          if (alloc.batchId) {
+            db.prepare('UPDATE batches SET remaining = remaining - ? WHERE id = ?').run(alloc.quantity, alloc.batchId)
+            const batchRemaining = (db.prepare('SELECT remaining FROM batches WHERE id = ?').get(alloc.batchId) as any)?.remaining
+            if (batchRemaining <= 0) {
+              db.prepare('UPDATE batches SET status = 0 WHERE id = ?').run(alloc.batchId)
+            }
+          }
+
+          if (ia.usage === 'self' && alloc.batchId) {
+            const mat = db.prepare('SELECT name, spec FROM materials WHERE id = ? AND is_deleted = 0').get(ia.materialId) as any
+            const trkId = `TRK-${Date.now()}-${Math.floor(Math.random() * 1000)}`
+            const today = new Date().toISOString().split('T')[0]
+            db.prepare(`
+              INSERT INTO batch_usage_tracking
+              (id, material_id, material_name, batch, spec, total_qty, remaining, unit, start_date, days_used, expected_days, progress, usage, receiver, status, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, ?, ?, 'in-use', datetime('now'), datetime('now'))
+            `).run(trkId, ia.materialId, mat?.name || '', alloc.batchNo || '', mat?.spec || '', alloc.quantity, alloc.quantity, unitMap.get(ia.materialId) || 'pcs', today, 30, 'self', null)
+          }
+
+          const logId = uuidv4()
+          const afterStock = beforeStock - alloc.quantity
+          db.prepare(`
+            INSERT INTO stock_logs (id, type, material_id, quantity, before_stock, after_stock, related_id, related_type, operator)
+            VALUES (?, 'outbound', ?, ?, ?, ?, ?, 'outbound', ?)
+          `).run(logId, ia.materialId, -alloc.quantity, beforeStock, afterStock, id, operator)
+        }
       }
 
       db.exec('COMMIT')
-    } catch (err) {
+
+      // 自动检查库存预警（出库后库存可能不足）
+      const outboundMaterialIds = itemAllocations.map((ia: any) => ia.materialId)
+      checkStockAlerts(db, [...new Set(outboundMaterialIds)])
+    } catch (err: any) {
       db.exec('ROLLBACK')
+      if (err.message && err.message.includes('批次库存不足')) {
+        error(res, err.message, 'STOCK_INSUFFICIENT', 422); return
+      }
       throw err
     }
 
@@ -194,7 +221,7 @@ router.post('/bom', (req, res) => {
   try {
     const { projectId, bomId, sampleCount, remark } = req.body
     if (!bomId || sampleCount === undefined || sampleCount === null) {
-      error(res, 'Missing required fields', 'INVALID_PARAMETER', 400); return
+      error(res, '缺少必填字段', 'INVALID_PARAMETER', 400); return
     }
     const sc = Number(sampleCount)
     if (isNaN(sc) || sc <= 0) {
@@ -204,7 +231,7 @@ router.post('/bom', (req, res) => {
     const db = getDatabase()
     const outboundNo = generateOutboundNo()
     const id = uuidv4()
-    const operator = req.body.operator || 'system'
+    const operator = (req as any).user?.username || 'system'
 
     const project = db.prepare('SELECT * FROM projects WHERE id = ? AND is_deleted = 0').get(projectId) as any
     if (!project) { error(res, 'Project not found', 'NOT_FOUND', 404); return }
@@ -218,73 +245,233 @@ router.post('/bom', (req, res) => {
       error(res, 'BOM is empty', 'INVALID_PARAMETER', 400); return
     }
 
-    let totalCost = 0
-    const outboundItems: any[] = []
-
+    // 按 group_name 分组（无 group_name 的按 material_id 单独成组）
+    const groupMap = new Map<string, any[]>()
     for (const item of bomItems) {
-      const quantity = item.usage_per_sample * sc
-      if (quantity <= 0) continue
-      const inv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(item.material_id) as any
-      if (!inv || inv.stock < quantity) {
-        error(res, 'Insufficient stock', 'STOCK_INSUFFICIENT', 422); return
-      }
-      const batch = db.prepare(`
-        SELECT b.* FROM batches b
-        JOIN materials m ON b.material_id = m.id
-        WHERE b.material_id = ? AND b.remaining > 0 AND b.status = 1 AND m.is_deleted = 0
-        ORDER BY b.expiry_date ASC
-      `).get(item.material_id) as any
-      const unitCost = batch?.inbound_price || 0
-      const itemCost = unitCost * quantity
-      totalCost += itemCost
-      outboundItems.push({ materialId: item.material_id, batchId: batch?.id || null, batchNo: batch?.batch_no || null, quantity, unitCost, itemCost })
+      const groupKey = item.group_name || `_single_${item.material_id}`
+      if (!groupMap.has(groupKey)) groupMap.set(groupKey, [])
+      groupMap.get(groupKey)!.push(item)
     }
 
     const materialUnits = db.prepare('SELECT id, unit FROM materials WHERE id IN (' + bomItems.map(() => '?').join(',') + ')').all(...bomItems.map((i: any) => i.material_id)) as any[]
     const unitMap = new Map(materialUnits.map((m: any) => [m.id, m.unit]))
 
+    let totalCost = 0
+    const skippedItems: Array<{ materialId: string; materialName: string; reason: string }> = []
+
     db.exec('BEGIN IMMEDIATE')
     try {
-      for (const item of bomItems) {
-        const quantity = item.usage_per_sample * sc
-        const invCheck = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(item.material_id) as any
-        if (!invCheck || invCheck.stock < quantity) {
-          db.exec('ROLLBACK')
-          error(res, 'Insufficient stock', 'STOCK_INSUFFICIENT', 422); return
+      const itemAllocations: Array<{
+        materialId: string
+        quantity: number
+        allocations: GroupBatchAllocation[]
+        itemTotalCost: number
+      }> = []
+
+      for (const [, groupItems] of groupMap) {
+        const firstItem = groupItems[0]
+        const quantity = firstItem.usage_per_sample * sc
+        if (quantity <= 0) continue
+
+        let allocations: GroupBatchAllocation[]
+        if (groupItems.length === 1) {
+          // 单物料（无品牌池），使用原有逻辑
+          allocations = allocateBatches(db, firstItem.material_id, quantity).map(a => ({
+            ...a,
+            materialId: firstItem.material_id,
+          }))
+        } else {
+          // 品牌池：在组内多物料间按 FEFO 分配
+          allocations = allocateGroupBatches(db, groupItems, quantity)
+        }
+
+        const itemTotalCost = allocations.reduce((sum, a) => sum + a.quantity * a.unitCost, 0)
+        totalCost += itemTotalCost
+
+        itemAllocations.push({
+          materialId: firstItem.material_id,
+          quantity,
+          allocations,
+          itemTotalCost,
+        })
+      }
+
+      // 处理扩展配额：通用试剂
+      const generalReagents = db.prepare(`
+        SELECT gr.*, m.name, m.spec FROM bom_general_reagents gr
+        JOIN materials m ON gr.material_id = m.id AND m.is_deleted = 0
+        WHERE gr.bom_id = ?
+      `).all(bomId) as any[]
+      for (const gr of generalReagents) {
+        const quantity = (gr.usage_per_sample || 0) * sc
+        if (quantity <= 0) continue
+        try {
+          const allocations = allocateBatches(db, gr.material_id, quantity).map(a => ({
+            ...a,
+            materialId: gr.material_id,
+          }))
+          const itemTotalCost = allocations.reduce((sum, a) => sum + a.quantity * a.unitCost, 0)
+          totalCost += itemTotalCost
+          itemAllocations.push({ materialId: gr.material_id, quantity, allocations, itemTotalCost })
+        } catch (e: any) {
+          console.warn(`[BOM出库] 通用试剂 ${gr.material_id} 库存不足，跳过: ${e.message}`)
+          skippedItems.push({ materialId: gr.material_id, materialName: gr.name || gr.material_id, reason: e.message })
         }
       }
+
+      // 处理扩展配额：通用耗材
+      const generalConsumables = db.prepare(`
+        SELECT gc.*, m.name, m.spec FROM bom_general_consumables gc
+        JOIN materials m ON gc.material_id = m.id AND m.is_deleted = 0
+        WHERE gc.bom_id = ?
+      `).all(bomId) as any[]
+      for (const gc of generalConsumables) {
+        const quantity = (gc.usage_per_sample || 0) * sc
+        if (quantity <= 0) continue
+        try {
+          const allocations = allocateBatches(db, gc.material_id, quantity).map(a => ({
+            ...a,
+            materialId: gc.material_id,
+          }))
+          const itemTotalCost = allocations.reduce((sum, a) => sum + a.quantity * a.unitCost, 0)
+          totalCost += itemTotalCost
+          itemAllocations.push({ materialId: gc.material_id, quantity, allocations, itemTotalCost })
+        } catch (e: any) {
+          console.warn(`[BOM出库] 通用耗材 ${gc.material_id} 库存不足，跳过: ${e.message}`)
+          skippedItems.push({ materialId: gc.material_id, materialName: gc.name || gc.material_id, reason: e.message })
+        }
+      }
+
+      // 处理扩展配额：质控品（按批次覆盖样本数计算）
+      const qualityControls = db.prepare(`
+        SELECT qc.*, m.name, m.spec FROM bom_quality_controls qc
+        JOIN materials m ON qc.material_id = m.id AND m.is_deleted = 0
+        WHERE qc.bom_id = ?
+      `).all(bomId) as any[]
+      for (const qc of qualityControls) {
+        const coverage = qc.covers_samples || 1
+        const usagePerBatch = qc.usage_per_batch || 1
+        const batchesNeeded = Math.ceil(sc / coverage)
+        const quantity = batchesNeeded * usagePerBatch
+        if (quantity <= 0) continue
+        try {
+          const allocations = allocateBatches(db, qc.material_id, quantity).map(a => ({
+            ...a,
+            materialId: qc.material_id,
+          }))
+          const itemTotalCost = allocations.reduce((sum, a) => sum + a.quantity * a.unitCost, 0)
+          totalCost += itemTotalCost
+          itemAllocations.push({ materialId: qc.material_id, quantity, allocations, itemTotalCost })
+        } catch (e: any) {
+          console.warn(`[BOM出库] 质控品 ${qc.material_id} 库存不足，跳过: ${e.message}`)
+          skippedItems.push({ materialId: qc.material_id, materialName: qc.name || qc.material_id, reason: e.message })
+        }
+      }
+
       db.prepare(`
-        INSERT INTO outbound_records (id, outbound_no, type, project_id, total_cost, operator, status, remark)
-        VALUES (?, ?, ?, ?, ?, ?, 'completed', ?)
-      `).run(id, outboundNo, 'bom', projectId || null, totalCost, operator, remark || null)
-      for (const oi of outboundItems) {
-        const itemId = uuidv4()
-        db.prepare(`
-          INSERT INTO outbound_items (id, outbound_id, material_id, batch_id, batch_no, quantity, unit, unit_cost, total_cost, usage, receiver)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(itemId, id, oi.materialId, oi.batchId, oi.batchNo, oi.quantity, unitMap.get(oi.materialId) || 'pcs', oi.unitCost, oi.itemCost, 'self', null)
-        db.prepare('UPDATE inventory SET stock = stock - ? WHERE material_id = ?').run(oi.quantity, oi.materialId)
-        if (oi.batchId) {
-          db.prepare('UPDATE batches SET remaining = remaining - ? WHERE id = ?').run(oi.quantity, oi.batchId)
-          const batchRemaining = (db.prepare('SELECT remaining FROM batches WHERE id = ?').get(oi.batchId) as any)?.remaining
-          if (batchRemaining <= 0) {
-            db.prepare('UPDATE batches SET status = 0 WHERE id = ?').run(oi.batchId)
+        INSERT INTO outbound_records (id, outbound_no, type, project_id, total_cost, sample_count, operator, status, remark)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'completed', ?)
+      `).run(id, outboundNo, 'bom', projectId || null, totalCost, sc, operator, remark || null)
+
+      for (const ia of itemAllocations) {
+        for (const alloc of ia.allocations) {
+          const itemId = uuidv4()
+          const subtotal = alloc.quantity * alloc.unitCost
+
+          // 保存 beforeStock（在 UPDATE 之前）
+          const beforeStock = (db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(alloc.materialId) as any)?.stock || 0
+
+          db.prepare(`
+            INSERT INTO outbound_items (id, outbound_id, material_id, batch_id, batch_no, quantity, unit, unit_cost, total_cost, usage, receiver)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(itemId, id, alloc.materialId, alloc.batchId, alloc.batchNo, alloc.quantity, unitMap.get(alloc.materialId) || 'pcs', alloc.unitCost, subtotal, 'self', null)
+
+          db.prepare('UPDATE inventory SET stock = stock - ? WHERE material_id = ?').run(alloc.quantity, alloc.materialId)
+
+          if (alloc.batchId) {
+            db.prepare('UPDATE batches SET remaining = remaining - ? WHERE id = ?').run(alloc.quantity, alloc.batchId)
+            const batchRemaining = (db.prepare('SELECT remaining FROM batches WHERE id = ?').get(alloc.batchId) as any)?.remaining
+            if (batchRemaining <= 0) {
+              db.prepare('UPDATE batches SET status = 0 WHERE id = ?').run(alloc.batchId)
+            }
           }
+
+          if (alloc.batchId) {
+            const mat = db.prepare('SELECT name, spec FROM materials WHERE id = ? AND is_deleted = 0').get(alloc.materialId) as any
+            const trkId = `TRK-${Date.now()}-${Math.floor(Math.random() * 1000)}`
+            const today = new Date().toISOString().split('T')[0]
+            db.prepare(`
+              INSERT INTO batch_usage_tracking
+              (id, material_id, material_name, batch, spec, total_qty, remaining, unit, start_date, days_used, expected_days, progress, usage, receiver, status, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, ?, ?, 'in-use', datetime('now'), datetime('now'))
+            `).run(trkId, alloc.materialId, mat?.name || '', alloc.batchNo || '', mat?.spec || '', alloc.quantity, alloc.quantity, unitMap.get(alloc.materialId) || 'pcs', today, 30, 'self', null)
+          }
+
+          const logId = uuidv4()
+          const afterStock = beforeStock - alloc.quantity
+          db.prepare(`
+            INSERT INTO stock_logs (id, type, material_id, quantity, before_stock, after_stock, related_id, related_type, operator)
+            VALUES (?, 'outbound', ?, ?, ?, ?, ?, 'outbound', ?)
+          `).run(logId, alloc.materialId, -alloc.quantity, beforeStock, afterStock, id, operator)
         }
-        const logId = uuidv4()
-        const beforeStock = (db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(oi.materialId) as any)?.stock || 0
-        const afterStock = beforeStock - oi.quantity
-        db.prepare(`
-          INSERT INTO stock_logs (id, type, material_id, quantity, before_stock, after_stock, related_id, related_type, operator)
-          VALUES (?, 'outbound', ?, ?, ?, ?, ?, 'outbound', ?)
-        `).run(logId, oi.materialId, -oi.quantity, beforeStock, afterStock, id, operator)
       }
+
+      // ===== ABC 成本计算（失败不阻断出库）=====
+      try {
+        const month = new Date().toISOString().slice(0, 7)
+        const slideCostResult = calculateSlideCostWithFee(db, {
+          bomId,
+          slideCount: sc,
+          blockCount: 1,
+          month,
+          materialCost: totalCost,
+        })
+
+        // 写入 outbound_abc_details
+        const abcDetailId = uuidv4()
+        db.prepare(`
+          INSERT INTO outbound_abc_details
+          (id, outbound_id, bom_id, project_id, sample_count, slide_count, block_count,
+           material_cost, activity_cost, total_cost, cost_per_slide,
+           fee_category, fee_standard_id, fee_amount, profit, profit_rate,
+           activity_details, cost_month)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          abcDetailId, id, bomId, projectId || null,
+          sc, sc, 1,
+          slideCostResult.materialCost, slideCostResult.totalActivityCost, slideCostResult.totalCost,
+          sc > 0 ? slideCostResult.totalCost / sc : 0,
+          slideCostResult.feeCategory, slideCostResult.feeStandardId,
+          slideCostResult.feeAmount, slideCostResult.profit, slideCostResult.profitRate,
+          JSON.stringify(slideCostResult.activityCosts),
+          month
+        )
+
+        // 更新 outbound_records 的 ABC 字段
+        db.prepare(`
+          UPDATE outbound_records SET
+            abc_total_cost = ?, abc_activity_cost = ?, fee_amount = ?, profit = ?
+          WHERE id = ?
+        `).run(slideCostResult.totalCost, slideCostResult.totalActivityCost, slideCostResult.feeAmount, slideCostResult.profit, id)
+      } catch (abcErr) {
+        console.error('ABC calculation failed, outbound continues:', abcErr)
+        // 不抛出异常，出库继续
+      }
+
       db.exec('COMMIT')
-    } catch (err) {
+
+      // 自动检查库存预警（BOM出库后库存可能不足）
+      const bomMaterialIds = itemAllocations.map((ia: any) => ia.materialId)
+      checkStockAlerts(db, [...new Set(bomMaterialIds)])
+    } catch (err: any) {
       db.exec('ROLLBACK')
+      if (err.message && err.message.includes('批次库存不足')) {
+        error(res, err.message, 'STOCK_INSUFFICIENT', 422); return
+      }
       throw err
     }
-    success(res, { id, outboundNo, type: 'bom', projectId, totalCost, status: 'completed', createdAt: new Date().toISOString() }, 'BOM outbound created', 201)
+
+    success(res, { id, outboundNo, type: 'bom', projectId, totalCost, skippedItems, status: 'completed', createdAt: new Date().toISOString() }, 'BOM outbound created', 201)
   } catch (err: any) { error(res, err.message) }
 })
 
@@ -303,40 +490,18 @@ router.put('/:id', requireWriteAccess, (req, res) => {
     const { id } = req.params
     const { type, projectId, items: newItems, remark } = req.body
     if (!Array.isArray(newItems) || newItems.length === 0) {
-      error(res, 'Missing required fields', 'INVALID_PARAMETER', 400); return
+      error(res, '缺少必填字段', 'INVALID_PARAMETER', 400); return
     }
 
     const db = getDatabase()
     const record = db.prepare('SELECT * FROM outbound_records WHERE id = ? AND is_deleted = 0').get(id) as any
-    if (!record) { error(res, 'Not found', 'NOT_FOUND', 404); return }
+    if (!record) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
 
     const oldItems = db.prepare('SELECT * FROM outbound_items WHERE outbound_id = ?').all(id) as any[]
-
-    let newTotalCost = 0
-    const processedItems: any[] = []
-    for (const item of newItems) {
-      const { materialId, quantity } = item
-      if (!materialId || quantity === undefined || quantity === null || isNaN(Number(quantity)) || Number(quantity) <= 0) {
-        error(res, 'Invalid quantity', 'INVALID_PARAMETER', 400); return
-      }
-      const inv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
-      if (!inv || inv.stock < quantity) {
-        error(res, 'Insufficient stock', 'STOCK_INSUFFICIENT', 422); return
-      }
-      const batch = db.prepare(`
-        SELECT b.* FROM batches b
-        JOIN materials m ON b.material_id = m.id
-        WHERE b.material_id = ? AND b.remaining > 0 AND b.status = 1 AND m.is_deleted = 0
-        ORDER BY b.expiry_date ASC
-      `).get(materialId) as any
-      const unitCost = batch?.inbound_price || 0
-      const itemCost = unitCost * quantity
-      newTotalCost += itemCost
-      processedItems.push({ materialId, batchId: batch?.id || null, batchNo: batch?.batch_no || null, quantity, unitCost, itemCost, usage: item.usage || 'self', receiver: item.receiver || null })
-    }
-
     const materialUnits = db.prepare('SELECT id, unit FROM materials WHERE id IN (' + newItems.map(() => '?').join(',') + ')').all(...newItems.map((i: any) => i.materialId)) as any[]
     const unitMap = new Map(materialUnits.map((m: any) => [m.id, m.unit]))
+
+    let newTotalCost = 0
 
     db.exec('BEGIN IMMEDIATE')
     try {
@@ -354,14 +519,33 @@ router.put('/:id', requireWriteAccess, (req, res) => {
       // 2. 删除旧 items
       db.prepare('DELETE FROM outbound_items WHERE outbound_id = ?').run(id)
 
-      // 3. 重新校验库存（防止并发）
-      for (const pi of processedItems) {
-        const invCheck = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(pi.materialId) as any
-        if (!invCheck || invCheck.stock < pi.quantity) {
+      // 3. 重新分配批次并扣减
+      const processedItems: Array<{
+        materialId: string
+        quantity: number
+        usage: string
+        receiver: string | null
+        allocations: BatchAllocation[]
+      }> = []
+
+      for (const item of newItems) {
+        const { materialId, quantity } = item
+        if (!materialId || quantity === undefined || quantity === null || isNaN(Number(quantity)) || Number(quantity) <= 0) {
           db.exec('ROLLBACK')
-          error(res, 'Insufficient stock', 'STOCK_INSUFFICIENT', 422)
-          return
+          error(res, 'Invalid quantity', 'INVALID_PARAMETER', 400); return
         }
+        const qty = Number(quantity)
+        const allocations = allocateBatches(db, materialId, qty)
+        const itemCost = allocations.reduce((sum, a) => sum + a.quantity * a.unitCost, 0)
+        newTotalCost += itemCost
+
+        processedItems.push({
+          materialId,
+          quantity: qty,
+          usage: item.usage || 'self',
+          receiver: item.receiver || null,
+          allocations,
+        })
       }
 
       // 4. 更新记录
@@ -370,44 +554,53 @@ router.put('/:id', requireWriteAccess, (req, res) => {
 
       // 5. 创建新 items 并扣减库存
       for (const pi of processedItems) {
-        const itemId = uuidv4()
-        db.prepare(`
-          INSERT INTO outbound_items (id, outbound_id, material_id, batch_id, batch_no, quantity, unit, unit_cost, total_cost, usage, receiver)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(itemId, id, pi.materialId, pi.batchId, pi.batchNo, pi.quantity, unitMap.get(pi.materialId) || 'pcs', pi.unitCost, pi.itemCost, pi.usage || 'self', pi.receiver || null)
+        for (const alloc of pi.allocations) {
+          const itemId = uuidv4()
+          const subtotal = alloc.quantity * alloc.unitCost
 
-        db.prepare('UPDATE inventory SET stock = stock - ? WHERE material_id = ?').run(pi.quantity, pi.materialId)
-        if (pi.batchId) {
-          db.prepare('UPDATE batches SET remaining = remaining - ? WHERE id = ?').run(pi.quantity, pi.batchId)
-          const remaining = (db.prepare('SELECT remaining FROM batches WHERE id = ?').get(pi.batchId) as any)?.remaining
-          if (remaining <= 0) {
-            db.prepare('UPDATE batches SET status = 0 WHERE id = ?').run(pi.batchId)
-          }
-        }
+          // 保存 beforeStock（在 UPDATE 之前）
+          const beforeStock = (db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(pi.materialId) as any)?.stock || 0
 
-        if ((pi.usage || 'self') === 'self' && pi.batchId) {
-          const mat = db.prepare('SELECT name, spec FROM materials WHERE id = ? AND is_deleted = 0').get(pi.materialId) as any
-          const trkId = `TRK-${Date.now()}-${Math.floor(Math.random() * 1000)}`
-          const today = new Date().toISOString().split('T')[0]
           db.prepare(`
-            INSERT INTO batch_usage_tracking
-            (id, material_id, material_name, batch, spec, total_qty, remaining, unit, start_date, days_used, expected_days, progress, usage, receiver, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, ?, ?, 'in-use', datetime('now'), datetime('now'))
-          `).run(trkId, pi.materialId, mat?.name || '', pi.batchNo || '', mat?.spec || '', pi.quantity, pi.quantity, unitMap.get(pi.materialId) || 'pcs', today, 30, 'self', null)
-        }
+            INSERT INTO outbound_items (id, outbound_id, material_id, batch_id, batch_no, quantity, unit, unit_cost, total_cost, usage, receiver)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(itemId, id, pi.materialId, alloc.batchId, alloc.batchNo, alloc.quantity, unitMap.get(pi.materialId) || 'pcs', alloc.unitCost, subtotal, pi.usage, pi.receiver)
 
-        const logId = uuidv4()
-        const beforeStock = (db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(pi.materialId) as any)?.stock || 0
-        const afterStock = beforeStock - pi.quantity
-        db.prepare(`
-          INSERT INTO stock_logs (id, type, material_id, quantity, before_stock, after_stock, related_id, related_type, operator)
-          VALUES (?, 'outbound', ?, ?, ?, ?, ?, 'outbound', ?)
-        `).run(logId, pi.materialId, -pi.quantity, beforeStock, afterStock, id, req.body.operator || 'system')
+          db.prepare('UPDATE inventory SET stock = stock - ? WHERE material_id = ?').run(alloc.quantity, pi.materialId)
+          if (alloc.batchId) {
+            db.prepare('UPDATE batches SET remaining = remaining - ? WHERE id = ?').run(alloc.quantity, alloc.batchId)
+            const remaining = (db.prepare('SELECT remaining FROM batches WHERE id = ?').get(alloc.batchId) as any)?.remaining
+            if (remaining <= 0) {
+              db.prepare('UPDATE batches SET status = 0 WHERE id = ?').run(alloc.batchId)
+            }
+          }
+
+          if (pi.usage === 'self' && alloc.batchId) {
+            const mat = db.prepare('SELECT name, spec FROM materials WHERE id = ? AND is_deleted = 0').get(pi.materialId) as any
+            const trkId = `TRK-${Date.now()}-${Math.floor(Math.random() * 1000)}`
+            const today = new Date().toISOString().split('T')[0]
+            db.prepare(`
+              INSERT INTO batch_usage_tracking
+              (id, material_id, material_name, batch, spec, total_qty, remaining, unit, start_date, days_used, expected_days, progress, usage, receiver, status, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, ?, ?, 'in-use', datetime('now'), datetime('now'))
+            `).run(trkId, pi.materialId, mat?.name || '', alloc.batchNo || '', mat?.spec || '', alloc.quantity, alloc.quantity, unitMap.get(pi.materialId) || 'pcs', today, 30, 'self', null)
+          }
+
+          const logId = uuidv4()
+          const afterStock = beforeStock - alloc.quantity
+          db.prepare(`
+            INSERT INTO stock_logs (id, type, material_id, quantity, before_stock, after_stock, related_id, related_type, operator)
+            VALUES (?, 'outbound', ?, ?, ?, ?, ?, 'outbound', ?)
+          `).run(logId, pi.materialId, -alloc.quantity, beforeStock, afterStock, id, (req as any).user?.username || 'system')
+        }
       }
 
       db.exec('COMMIT')
-    } catch (err) {
+    } catch (err: any) {
       db.exec('ROLLBACK')
+      if (err.message && err.message.includes('批次库存不足')) {
+        error(res, err.message, 'STOCK_INSUFFICIENT', 422); return
+      }
       throw err
     }
 
@@ -418,6 +611,7 @@ router.put('/:id', requireWriteAccess, (req, res) => {
 router.delete('/:id', requireWriteAccess, (req, res) => {
   try {
     const { id } = req.params
+    const { reason, remark } = req.body
     const db = getDatabase()
     const record = db.prepare('SELECT * FROM outbound_records WHERE id = ? AND is_deleted = 0').get(id) as any
     if (!record) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
@@ -426,6 +620,12 @@ router.delete('/:id', requireWriteAccess, (req, res) => {
 
     db.exec('BEGIN IMMEDIATE')
     try {
+      // 先读取 before_stock，再更新库存（修复 stock_logs 时序）
+      const beforeStocks: Record<string, number> = {}
+      for (const item of items) {
+        beforeStocks[item.material_id] = (db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(item.material_id) as any)?.stock || 0
+      }
+
       for (const item of items) {
         db.prepare('UPDATE inventory SET stock = stock + ? WHERE material_id = ?').run(item.quantity, item.material_id)
         if (item.batch_id) {
@@ -436,17 +636,22 @@ router.delete('/:id', requireWriteAccess, (req, res) => {
         }
       }
 
-      db.prepare('UPDATE outbound_records SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(id)
+      // 保存取消原因和备注
+      db.prepare('UPDATE outbound_records SET is_deleted = 1, cancel_reason = ?, cancel_remark = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+        .run(reason || null, remark || null, id)
 
       for (const item of items) {
-        const before = (db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(item.material_id) as any)?.stock || 0
+        const before = beforeStocks[item.material_id] || 0
         const after = before + item.quantity
         const logId = uuidv4()
         db.prepare(`
           INSERT INTO stock_logs (id, type, material_id, quantity, before_stock, after_stock, related_id, related_type, operator, remark)
-          VALUES (?, 'delete', ?, ?, ?, ?, ?, 'outbound_delete', ?, '删除出库记录')
-        `).run(logId, item.material_id, item.quantity, before, after, id, req.body.operator || 'system')
+          VALUES (?, 'delete', ?, ?, ?, ?, ?, 'outbound_delete', ?, ?)
+        `).run(logId, item.material_id, item.quantity, before, after, id, (req as any).user?.username || 'system', reason || '删除出库记录')
       }
+
+      // 同步清理 ABC 记录
+      db.prepare('DELETE FROM outbound_abc_details WHERE outbound_id = ?').run(id)
 
       db.exec('COMMIT')
       success(res, null, '删除成功，库存已同步回退')

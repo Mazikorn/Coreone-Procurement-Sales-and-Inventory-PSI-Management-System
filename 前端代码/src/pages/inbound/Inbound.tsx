@@ -27,7 +27,7 @@ export default function Inbound() {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       {/* 页面头部 */}
       <div className="flex items-start justify-between">
         <div>

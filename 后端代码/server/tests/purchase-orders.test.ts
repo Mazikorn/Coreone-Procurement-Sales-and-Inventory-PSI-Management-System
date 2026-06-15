@@ -17,8 +17,8 @@ async function run() {
   }
 
   const adminToken = await login('admin', 'admin123')
-  const proToken = await login('caigou', 'CoreOne2026!')
-  const whmToken = await login('cangguan', 'CoreOne2026!')
+  const proToken = await login('zhaohp', 'CoreOne2026!')
+  const whmToken = await login('wangkq', 'CoreOne2026!')
 
   await test('PO-01 admin创建采购单', async () => {
     const res = await postJSON('/purchase-orders', {

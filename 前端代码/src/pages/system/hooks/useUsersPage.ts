@@ -1,5 +1,6 @@
-import { useState, useEffect, useMemo } from 'react'
-import request from '@/api/request'
+import { useState, useEffect, useMemo, useCallback } from 'react'
+import { usersApi } from '@/api/users'
+import { rolesApi } from '@/api/roles'
 import type { User } from '@/types'
 import { toast } from 'sonner'
 import { usePagination } from '@/hooks/usePagination'
@@ -26,7 +27,7 @@ export interface RoleItem {
 }
 
 export function useUsersPage() {
-  const { get, getNumber, setMultiple } = useUrlParams()
+  const { getNumber, setMultiple } = useUrlParams()
 
   const [keyword, setKeyword] = useState('')
   const [roleFilter, setRoleFilter] = useState('')
@@ -38,19 +39,25 @@ export function useUsersPage() {
     ? getNumber('pageSize', 20)
     : 20
 
+  const fetchFn = useCallback(
+    async ({ page, pageSize }: { page: number; pageSize: number }) => {
+      const res = await usersApi.getList({
+        page, pageSize,
+        ...(keyword && { keyword }),
+        ...(roleFilter && { role: roleFilter }),
+        ...(statusFilter && { status: statusFilter }),
+        ...(selectedRoleId && { roleId: selectedRoleId }),
+      })
+      return { list: res?.list || [], pagination: res?.pagination }
+    },
+    [keyword, roleFilter, statusFilter, selectedRoleId]
+  )
+
   const {
     data, loading, page, pageSize, total,
     setPage, setPageSize, refresh,
   } = usePagination<User>({
-    fetchFn: async ({ page, pageSize }) => {
-      const params: any = { page, pageSize }
-      if (keyword) params.keyword = keyword
-      if (roleFilter) params.role = roleFilter
-      if (statusFilter) params.status = statusFilter
-      if (selectedRoleId) params.roleId = selectedRoleId
-      const res: any = await request.get('/users', { params })
-      return { list: res?.list || [], pagination: res?.pagination }
-    },
+    fetchFn,
     initialPage: urlPage,
     initialPageSize: urlPageSize,
     deps: [keyword, roleFilter, statusFilter, selectedRoleId],
@@ -98,7 +105,7 @@ export function useUsersPage() {
 
   const fetchRoles = async () => {
     try {
-      const res: any = await request.get('/roles', { params: { page: 1, pageSize: 100 } })
+      const res = await rolesApi.getList({ page: 1, pageSize: 100 })
       const list = res?.list || []
       setRoles(list.map((r: any) => ({
         id: r.id, name: r.name, code: r.code, userCount: 0,
@@ -146,9 +153,9 @@ export function useUsersPage() {
     }
     try {
       if (editingId) {
-        await request.put(`/users/${editingId}`, form)
+        await usersApi.update(editingId, form)
       } else {
-        await request.post('/users', form)
+        await usersApi.create(form)
       }
       toast.success(editingId ? '保存成功' : '创建成功')
       setModalType(null)
@@ -166,7 +173,7 @@ export function useUsersPage() {
       confirmVariant: 'danger',
       onConfirm: async () => {
         try {
-          await request.delete(`/users/${id}`)
+          await usersApi.delete(id)
           toast.success('删除成功')
           refresh()
         } catch (e) { toast.error('删除失败') }
@@ -177,7 +184,7 @@ export function useUsersPage() {
   const handleToggleStatus = async (row: User) => {
     const newStatus = row.status === 'active' ? 'inactive' : 'active'
     try {
-      await request.put(`/users/${row.id}`, { status: newStatus })
+      await usersApi.update(row.id, { status: newStatus })
       toast.success(newStatus === 'active' ? '已启用' : '已停用')
       refresh()
     } catch (e) { toast.error('操作失败') }
@@ -191,7 +198,7 @@ export function useUsersPage() {
       confirmVariant: 'primary',
       onConfirm: async () => {
         try {
-          await request.post(`/users/${id}/reset-password`, {})
+          await usersApi.resetPassword(id)
           toast.success('密码重置成功')
         } catch (e) { toast.error('密码重置失败') }
       },

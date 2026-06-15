@@ -101,31 +101,31 @@ async function runTests() {
   })
 
   await recordTest('AUTH', 'WHM-登录成功', async () => {
-    tokens.whm = await login('cangguan', 'CoreOne2026!')
+    tokens.whm = await login('wangkq', 'CoreOne2026!')
   })
 
   await recordTest('AUTH', 'TECH1-登录成功', async () => {
-    tokens.tech1 = await login('jishuyuan1', 'CoreOne2026!')
+    tokens.tech1 = await login('zhangwei', 'CoreOne2026!')
   })
 
   await recordTest('AUTH', 'TECH2-登录成功', async () => {
-    tokens.tech2 = await login('jishuyuan2', 'CoreOne2026!')
+    tokens.tech2 = await login('lina', 'CoreOne2026!')
   })
 
   await recordTest('AUTH', 'DOC1-登录成功', async () => {
-    tokens.doc1 = await login('yishi1', 'CoreOne2026!')
+    tokens.doc1 = await login('liuyf', 'CoreOne2026!')
   })
 
   await recordTest('AUTH', 'DOC2-登录成功', async () => {
-    tokens.doc2 = await login('yishi2', 'CoreOne2026!')
+    tokens.doc2 = await login('chenbo', 'CoreOne2026!')
   })
 
   await recordTest('AUTH', 'PRO-登录成功', async () => {
-    tokens.pro = await login('caigou', 'CoreOne2026!')
+    tokens.pro = await login('zhaohp', 'CoreOne2026!')
   })
 
   await recordTest('AUTH', 'FIN-登录成功', async () => {
-    tokens.fin = await login('caiwu', 'CoreOne2026!')
+    tokens.fin = await login('sunli', 'CoreOne2026!')
   })
 
   await recordTest('AUTH', '错误密码-登录失败', async () => {
@@ -188,7 +188,7 @@ async function runTests() {
   })
 
   await recordTest('USER', 'ADMIN-搜索用户', async () => {
-    const data = await getJSON('/users?keyword=张技术', tokens.admin)
+    const data = await getJSON('/users?keyword=张伟', tokens.admin)
     if (!data.success) throw new Error('Failed')
     if (data.data?.list?.length !== 1) throw new Error('Search failed')
   })
@@ -628,7 +628,7 @@ async function runTests() {
   })
 
   await recordTest('OUTBOUND', 'ADMIN-创建出库单', async () => {
-    const res = await postJSON('/outbound', { type: 'project', projectId: 'PRJ-HE-001', operator: '张技术', remark: '测试出库', items: [{ materialId: 'MAT-HE-001', quantity: 1 }] }, tokens.admin)
+    const res = await postJSON('/outbound', { type: 'project', projectId: 'PRJ-HE-001', operator: '张伟', remark: '测试出库', items: [{ materialId: 'MAT-HE-001', quantity: 1 }] }, tokens.admin)
     if (!res.success) throw new Error('Create failed')
   })
 
@@ -643,7 +643,7 @@ async function runTests() {
   })
 
   await recordTest('OUTBOUND', 'TECH-创建出库单', async () => {
-    const res = await postJSON('/outbound', { type: 'project', projectId: 'PRJ-IHC-001', operator: '张技术', items: [{ materialId: 'MAT-HE-001', quantity: 1 }] }, tokens.tech1)
+    const res = await postJSON('/outbound', { type: 'project', projectId: 'PRJ-IHC-001', operator: '张伟', items: [{ materialId: 'MAT-HE-001', quantity: 1 }] }, tokens.tech1)
     if (!res.success) throw new Error('Create failed')
   })
 

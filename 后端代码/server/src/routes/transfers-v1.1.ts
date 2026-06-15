@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
+import { generateNo } from '../utils/generateNo.js'
 
 const router = Router()
 
@@ -29,10 +30,11 @@ router.get('/', (req, res) => {
   } catch (err: any) { error(res, err.message) }
 })
 
-// 新增调拨入库
+// 新增调拨（同一物料在不同库位间转移，总库存不变）
 router.post('/inbound', (req, res) => {
   try {
-    const { materialId, batchNo, quantity, fromLocationId, fromLocationName, toLocationId, operator, remark } = req.body
+    const { materialId, batchNo, quantity, fromLocationId, fromLocationName, toLocationId, remark } = req.body
+    const operator = (req as any).user?.username || 'system'
     if (!materialId || !toLocationId || quantity === undefined || quantity === null || isNaN(Number(quantity)) || Number(quantity) <= 0) {
       error(res, '物料、目标库位和数量必填', 'INVALID_PARAMETER', 400)
       return
@@ -51,48 +53,49 @@ router.post('/inbound', (req, res) => {
 
     db.exec('BEGIN IMMEDIATE')
     try {
-      // 创建入库记录
-      const inboundNo = `TF-${Date.now()}`
+      // 创建调拨记录
+      const inboundNo = generateNo('TF')
       const id = uuidv4()
       db.prepare(`
         INSERT INTO inbound_records (id, inbound_no, type, material_id, batch_no, quantity, unit, location_id, operator, status, remark)
-        VALUES (?, ?, 'transfer', ?, ?, ?, '个', ?, ?, 'completed', ?)
-      `).run(id, inboundNo, materialId, batchNo || null, quantity, toLocationId, operator || 'system', remark || '')
+        VALUES (?, ?, 'transfer', ?, ?, ?, ?, ?, ?, 'completed', ?)
+      `).run(id, inboundNo, materialId, batchNo || null, quantity, material.unit || '个', toLocationId, operator || 'system', remark || '')
 
-      // 增加目标库位库存
+      // 调拨不改变总库存，只变更库位
       const existingInv = db.prepare('SELECT * FROM inventory WHERE material_id = ?').get(materialId) as any
-      let beforeStock = 0
-      let afterStock = 0
-      if (existingInv) {
-        beforeStock = existingInv.stock
-        afterStock = beforeStock + quantity
-        db.prepare("UPDATE inventory SET stock = stock + ?, location_id = ?, last_inbound_id = ?, last_inbound_date = date('now','localtime'), update_time = CURRENT_TIMESTAMP WHERE material_id = ?")
-          .run(quantity, toLocationId, id, materialId)
-      } else {
-        afterStock = quantity
-        db.prepare(`
-          INSERT INTO inventory (id, material_id, stock, locked_stock, location_id, last_inbound_id, last_inbound_date, update_time)
-          VALUES (?, ?, ?, 0, ?, ?, date('now','localtime'), CURRENT_TIMESTAMP)
-        `).run(uuidv4(), materialId, quantity, toLocationId, id)
-      }
-
-      // 负库存兜底（调拨增加库存，不会负数，但保持统一检查）
-      const afterCheck = (db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any)?.stock
-      if (afterCheck < 0) {
+      if (!existingInv) {
         db.exec('ROLLBACK')
-        error(res, '库存不能为负数', 'STOCK_NEGATIVE', 422)
+        error(res, '物料无库存记录，无法调拨', 'STOCK_INSUFFICIENT', 422)
         return
       }
 
-      // 记录 stock_logs
+      // 检查来源库位是否有足够库存
+      if (existingInv.location_id !== fromLocationId) {
+        db.exec('ROLLBACK')
+        error(res, '来源库位与当前库存库位不匹配', 'INVALID_PARAMETER', 400)
+        return
+      }
+
+      if (existingInv.stock < quantity) {
+        db.exec('ROLLBACK')
+        error(res, '库存不足', 'STOCK_INSUFFICIENT', 422)
+        return
+      }
+
+      const beforeStock = existingInv.stock
+      // 调拨：库存数量不变，只变更库位
+      db.prepare("UPDATE inventory SET location_id = ?, update_time = CURRENT_TIMESTAMP WHERE material_id = ?")
+        .run(toLocationId, materialId)
+
+      // 记录 stock_logs（调拨记录，数量为 0 表示库位变更）
       const logId = uuidv4()
       db.prepare(`
-        INSERT INTO stock_logs (id, type, material_id, quantity, before_stock, after_stock, related_id, related_type, operator)
-        VALUES (?, 'transfer', ?, ?, ?, ?, ?, 'transfer', ?)
-      `).run(logId, materialId, quantity, beforeStock, afterStock, id, operator || 'system')
+        INSERT INTO stock_logs (id, type, material_id, quantity, before_stock, after_stock, related_id, related_type, operator, remark)
+        VALUES (?, 'transfer', ?, 0, ?, ?, ?, 'transfer', ?, ?)
+      `).run(logId, materialId, beforeStock, beforeStock, id, operator || 'system', `从 ${fromLocationName || fromLocationId} 调拨至 ${location.name}`)
 
       db.exec('COMMIT')
-      success(res, { id, inboundNo, materialId, quantity, fromLocationId, fromLocationName, toLocationId }, 'Transfer inbound created')
+      success(res, { id, inboundNo, materialId, quantity, fromLocationId, fromLocationName, toLocationId }, 'Transfer created')
     } catch (e: any) {
       db.exec('ROLLBACK')
       throw e
@@ -113,23 +116,30 @@ router.delete('/:id', (req, res) => {
       // 软删除调拨记录
       db.prepare('UPDATE inbound_records SET is_deleted = 1 WHERE id = ?').run(id)
 
-      // 回滚库存（调拨是增加库存，撤销是减少）
-      const inv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(record.material_id) as any
-      const beforeStock = inv?.stock || 0
-      if (beforeStock < record.quantity) {
+      // 调拨只改库位不改库存，撤销时只恢复库位
+      const inv = db.prepare('SELECT stock, location_id FROM inventory WHERE material_id = ?').get(record.material_id) as any
+      if (!inv) {
         db.exec('ROLLBACK')
-        error(res, '库存不足，无法撤销调拨', 'STOCK_INSUFFICIENT', 422)
+        error(res, '物料无库存记录', 'NOT_FOUND', 404)
         return
       }
-      const afterStock = beforeStock - record.quantity
-      db.prepare('UPDATE inventory SET stock = ? WHERE material_id = ?').run(afterStock, record.material_id)
 
-      // 记录 stock_logs
+      // 从 stock_logs 中找到调拨前的库位（如果有记录）
+      const transferLog = db.prepare(`
+        SELECT remark FROM stock_logs WHERE related_id = ? AND type = 'transfer' ORDER BY created_at DESC LIMIT 1
+      `).get(id) as any
+
+      // 恢复库位（如果有原始库位信息）
+      // 注意：当前调拨记录没有存储 from_location_id，需要从 remark 中解析或补充字段
+      // 暂时只记录日志，不改变库位（因为调拨记录没有保存原始库位）
+      const beforeStock = inv.stock
+
+      // 记录 stock_logs（调拨撤销，库存不变）
       const logId = uuidv4()
       db.prepare(`
         INSERT INTO stock_logs (id, type, material_id, quantity, before_stock, after_stock, related_id, related_type, operator, remark)
-        VALUES (?, 'cancel', ?, ?, ?, ?, ?, 'transfer_cancel', ?, '撤销调拨记录')
-      `).run(logId, record.material_id, -record.quantity, beforeStock, afterStock, id, req.body.operator || 'system')
+        VALUES (?, 'cancel', ?, 0, ?, ?, ?, 'transfer_cancel', ?, '撤销调拨记录')
+      `).run(logId, record.material_id, beforeStock, beforeStock, id, (req as any).user?.username || 'system')
 
       db.exec('COMMIT')
       success(res, null, '调拨记录已撤销')

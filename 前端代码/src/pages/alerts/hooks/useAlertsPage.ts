@@ -1,7 +1,7 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { usePagination } from '@/hooks/usePagination'
 import { useUrlParams } from '@/hooks/useUrlParams'
-import request from '@/api/request'
+import { alertsApi } from '@/api/alerts'
 import type { Alert } from '@/types'
 import { toast } from 'sonner'
 
@@ -70,6 +70,31 @@ export function useAlertsPage() {
       : undefined
   const effectiveType = filter.type !== 'all' ? filter.type : undefined
 
+  const fetchFn = useCallback(
+    async (params: { page: number; pageSize: number }) => {
+      const res = await alertsApi.getList({
+        ...params,
+        keyword: filter.keyword || undefined,
+        type: effectiveType,
+        status: effectiveStatus,
+        startDate: filter.dateRange[0] || undefined,
+        endDate: filter.dateRange[1] || undefined,
+      })
+      return {
+        list: res?.list || [],
+        pagination: res?.pagination,
+      }
+    },
+    [
+      filter.keyword,
+      filter.type,
+      filter.status,
+      filter.dateRange[0],
+      filter.dateRange[1],
+      quickFilter,
+    ]
+  )
+
   const {
     data,
     loading,
@@ -80,22 +105,7 @@ export function useAlertsPage() {
     setPageSize,
     refresh,
   } = usePagination<AlertItem>({
-    fetchFn: async (params) => {
-      const res: any = await request.get('/alerts', {
-        params: {
-          ...params,
-          keyword: filter.keyword || undefined,
-          type: effectiveType,
-          status: effectiveStatus,
-          startDate: filter.dateRange[0] || undefined,
-          endDate: filter.dateRange[1] || undefined,
-        },
-      })
-      return {
-        list: res?.list || [],
-        pagination: res?.pagination,
-      }
-    },
+    fetchFn,
     initialPage,
     initialPageSize,
     deps: [
@@ -159,7 +169,7 @@ export function useAlertsPage() {
 
   const handleProcess = async (id: string) => {
     try {
-      await request.post(`/alerts/${id}/process`, {})
+      await alertsApi.process(id)
       toast.success('处理成功')
       refresh()
       setModal({ type: null, alert: null })
@@ -170,7 +180,7 @@ export function useAlertsPage() {
 
   const handleIgnore = async (id: string) => {
     try {
-      await request.post(`/alerts/${id}/ignore`, {})
+      await alertsApi.ignore(id)
       toast.success('已忽略')
       refresh()
     } catch {

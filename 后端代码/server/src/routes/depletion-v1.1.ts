@@ -10,8 +10,8 @@ router.get('/tracking', (req, res) => {
     const db = getDatabase()
     const { status = 'in-use' } = req.query
     const list = db.prepare(`
-      SELECT * FROM batch_usage_tracking 
-      WHERE status = ? 
+      SELECT * FROM batch_usage_tracking
+      WHERE status = ?
       ORDER BY material_name, created_at DESC
     `).all(status) as any[]
 
@@ -97,7 +97,7 @@ router.post('/tracking/:id/deplete', (req, res) => {
     // 创建耗尽记录
     const depletionId = `DPL-${Date.now()}`
     db.prepare(`
-      INSERT INTO batch_depletion 
+      INSERT INTO batch_depletion
       (id, tracking_id, material_id, material_name, batch, spec, total_qty, remain_qty, unit, start_date, end_date, days_used, actual_days, deplete_type, deplete_reason, operator, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
     `).run(depletionId, id, tracking.material_id, tracking.material_name, tracking.batch, tracking.spec,
@@ -106,7 +106,7 @@ router.post('/tracking/:id/deplete', (req, res) => {
 
     // 更新跟踪记录状态为耗尽
     db.prepare(`
-      UPDATE batch_usage_tracking 
+      UPDATE batch_usage_tracking
       SET status = 'depleted', updated_at = datetime('now')
       WHERE id = ?
     `).run(id)
@@ -129,7 +129,7 @@ router.get('/depletion', (req, res) => {
   try {
     const db = getDatabase()
     const list = db.prepare(`
-      SELECT * FROM batch_depletion 
+      SELECT * FROM batch_depletion
       ORDER BY created_at DESC
     `).all() as any[]
 

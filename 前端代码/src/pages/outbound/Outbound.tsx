@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { Printer, Package } from 'lucide-react'
 import { usePagination } from '@/hooks/usePagination'
 import { useUrlParams } from '@/hooks/useUrlParams'
@@ -20,7 +20,7 @@ type QuickFilter = 'all' | 'today' | 'week' | 'month'
 type StatusFilter = '' | 'completed' | 'pending' | 'cancelled'
 
 export default function Outbound() {
-  const { get, getNumber, setMultiple } = useUrlParams()
+  const { getNumber, setMultiple } = useUrlParams()
 
   const urlPage = Math.max(1, getNumber('page', 1))
   const urlPageSize = [10, 20, 50, 100].includes(getNumber('pageSize', 10))
@@ -50,17 +50,8 @@ export default function Outbound() {
     }
   }, [quickFilter, startDate, endDate])
 
-  const {
-    data,
-    loading,
-    page,
-    pageSize,
-    total,
-    setPage,
-    setPageSize,
-    refresh,
-  } = usePagination<OutboundRecord>({
-    fetchFn: async ({ page, pageSize }) => {
+  const fetchFn = useCallback(
+    async ({ page, pageSize }: { page: number; pageSize: number }) => {
       const res: any = await outboundApi.getList({
         page,
         pageSize,
@@ -73,9 +64,23 @@ export default function Outbound() {
       })
       return { list: res.list || [], pagination: res.pagination }
     },
+    [statusFilter, searchText, materialFilter, typeFilter, quickFilterDates]
+  )
+
+  const {
+    data,
+    loading,
+    page,
+    pageSize,
+    total,
+    setPage,
+    setPageSize,
+    refresh,
+  } = usePagination<OutboundRecord>({
+    fetchFn,
     initialPage: urlPage,
     initialPageSize: urlPageSize,
-    deps: [statusFilter, searchText, materialFilter, typeFilter, quickFilterDates.startDate, quickFilterDates.endDate],
+    deps: [statusFilter, searchText, materialFilter, typeFilter, quickFilterDates],
   })
 
   useEffect(() => {
@@ -114,6 +119,8 @@ export default function Outbound() {
     projectId: '',
     items: [{ materialId: '', quantity: 0 }],
     remark: '',
+    bomId: undefined,
+    sampleCount: undefined,
   })
 
   const fetchRefs = async () => {
@@ -180,6 +187,8 @@ export default function Outbound() {
       projectId: '',
       items: [{ materialId: materials[0]?.id || '', quantity: 1 }],
       remark: '',
+      bomId: undefined,
+      sampleCount: undefined,
     })
     fetchRefs()
     setCreateModalOpen(true)
@@ -192,6 +201,8 @@ export default function Outbound() {
       projectId: record.projectId || '',
       items: record.items?.map(i => ({ materialId: i.materialId, quantity: i.quantity })) || [{ materialId: materials[0]?.id || '', quantity: 1 }],
       remark: record.remark || '',
+      bomId: undefined,
+      sampleCount: undefined,
     })
     fetchRefs()
     setCreateModalOpen(true)
@@ -215,6 +226,26 @@ export default function Outbound() {
   }
 
   const handleSubmit = async () => {
+    // BOM 出库模式
+    if (form.bomId && form.sampleCount && form.sampleCount > 0) {
+      try {
+        await outboundApi.createBom({
+          bomId: form.bomId,
+          projectId: form.projectId || undefined,
+          sampleCount: form.sampleCount,
+          remark: form.remark || undefined,
+        })
+        toast.success('BOM出库登记成功')
+        setCreateModalOpen(false)
+        setEditRecordId(null)
+        refreshWithStats()
+      } catch (e: any) {
+        const msg = e?.response?.data?.error?.message || e?.message || 'BOM出库登记失败'
+        toast.error(msg)
+      }
+      return
+    }
+
     const validItems = form.items.filter(i => i.materialId && i.quantity > 0)
     if (validItems.length === 0) {
       toast.error('请添加至少一个有效物料')
@@ -231,8 +262,9 @@ export default function Outbound() {
       setCreateModalOpen(false)
       setEditRecordId(null)
       refreshWithStats()
-    } catch (e) {
-      toast.error(editRecordId ? '出库更新失败' : '出库登记失败')
+    } catch (e: any) {
+      const msg = e?.response?.data?.error?.message || e?.message || (editRecordId ? '出库更新失败' : '出库登记失败')
+      toast.error(msg)
     }
   }
 
@@ -256,7 +288,7 @@ export default function Outbound() {
       return
     }
     try {
-      await outboundApi.delete(cancelRecord.id)
+      await outboundApi.delete(cancelRecord.id, { reason: cancelReason, remark: cancelRemark || undefined })
       toast.success('出库已取消')
       setCancelModalOpen(false)
       refreshWithStats()
@@ -281,6 +313,9 @@ export default function Outbound() {
         项目: row.projectName || '-',
         物料明细: row.items?.map(i => `${i.materialName}×${i.quantity}`).join(', ') || '-',
         总金额: row.totalCost || 0,
+        ABC总成本: row.abcTotalCost || 0,
+        收费金额: row.feeAmount || 0,
+        利润: row.profit || 0,
         操作人: row.operator || '-',
         出库时间: formatDateTime(row.createdAt),
         状态: row.status === 'completed' ? '已完成' : row.status === 'pending' ? '待出库' : '已取消',
@@ -297,12 +332,19 @@ export default function Outbound() {
     }
   }
 
+  const escapeHtml = (str: string) => str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
+
   const handlePrintRecord = (record: OutboundRecord) => {
     const w = window.open('', '_blank')
     if (!w) return
-    const items = record.items?.map(i => `<tr><td>${i.materialName}</td><td>${i.batchNo || '-'}</td><td>${i.quantity} ${i.unit || ''}</td><td>${i.unitCost || 0}</td><td>${i.totalCost || 0}</td></tr>`).join('') || ''
+    const items = record.items?.map(i => `<tr><td>${escapeHtml(i.materialName || '')}</td><td>${escapeHtml(i.batchNo || '-')}</td><td>${i.quantity} ${escapeHtml(i.unit || '')}</td><td>${i.unitCost || 0}</td><td>${i.totalCost || 0}</td></tr>`).join('') || ''
     w.document.write(`
-      <html><head><title>出库单 ${record.outboundNo}</title><style>
+      <html><head><title>出库单 ${escapeHtml(record.outboundNo)}</title><style>
         body { font-family: sans-serif; padding: 40px; }
         h2 { text-align: center; margin-bottom: 8px; }
         .meta { text-align: center; color: #666; font-size: 12px; margin-bottom: 24px; }
@@ -312,11 +354,11 @@ export default function Outbound() {
         .footer { margin-top: 24px; font-size: 12px; color: #999; text-align: center; }
       </style></head><body>
         <h2>出库单</h2>
-        <div class="meta">单号：${record.outboundNo} | 项目：${record.projectName || '-'} | 时间：${new Date(record.createdAt).toLocaleString()}</div>
+        <div class="meta">单号：${escapeHtml(record.outboundNo)} | 项目：${escapeHtml(record.projectName || '-')} | 时间：${new Date(record.createdAt).toLocaleString()}</div>
         <table><thead><tr><th>物料</th><th>批号</th><th>数量</th><th>单价</th><th>金额</th></tr></thead>
         <tbody>${items}</tbody>
         </table>
-        <div class="footer">操作人：${record.operator || '-'} | 备注：${record.remark || '无'}</div>
+        <div class="footer">操作人：${escapeHtml(record.operator || '-')} | 备注：${escapeHtml(record.remark || '无')}</div>
         <div class="footer">本单据由 COREONE 系统自动生成</div>
       </body></html>
     `)

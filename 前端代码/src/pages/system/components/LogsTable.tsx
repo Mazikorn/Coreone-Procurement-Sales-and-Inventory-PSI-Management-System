@@ -1,4 +1,4 @@
-import { Search } from 'lucide-react'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { OperationLog } from '@/types'
 import { Pagination } from '@/components/ui/Pagination'
 
@@ -47,31 +47,30 @@ export function LogsTable({
       <div className="px-5 py-4 border-b border-gray-200 bg-gray-50 flex items-center justify-between flex-wrap gap-3">
         <span className="text-base font-semibold text-gray-900">操作记录</span>
         <div className="flex items-center gap-3 flex-wrap">
-          <select
+          <SearchableSelect
             value={typeFilter}
-            onChange={e => onTypeFilterChange(e.target.value)}
-            className="h-10 px-3 pr-8 text-sm text-gray-900 bg-white border border-gray-200 rounded-md outline-none transition-all focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 appearance-none cursor-pointer"
-            style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 10px center' }}
-          >
-            <option value="">全部操作类型</option>
-            {logTypes.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-          </select>
-          <select
+            onChange={val => onTypeFilterChange(val)}
+            options={[
+              { value: '', label: '全部操作类型' },
+              ...logTypes.map(t => ({ value: t.value, label: t.label })),
+            ]}
+            placeholder="全部操作类型"
+            className="w-32"
+          />
+          <SearchableSelect
             value={moduleFilter}
-            onChange={e => onModuleFilterChange(e.target.value)}
-            className="h-10 px-3 pr-8 text-sm text-gray-900 bg-white border border-gray-200 rounded-md outline-none transition-all focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 appearance-none cursor-pointer"
-            style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 10px center' }}
-          >
-            {modules.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-          </select>
-          <select
+            onChange={val => onModuleFilterChange(val)}
+            options={modules.map(m => ({ value: m.value, label: m.label }))}
+            placeholder="全部模块"
+            className="w-32"
+          />
+          <SearchableSelect
             value={userFilter}
-            onChange={e => onUserFilterChange(e.target.value)}
-            className="h-10 px-3 pr-8 text-sm text-gray-900 bg-white border border-gray-200 rounded-md outline-none transition-all focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 appearance-none cursor-pointer"
-            style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 10px center' }}
-          >
-            {users.map(u => <option key={u.value} value={u.value}>{u.label}</option>)}
-          </select>
+            onChange={val => onUserFilterChange(val)}
+            options={users.map(u => ({ value: u.value, label: u.label }))}
+            placeholder="全部用户"
+            className="w-36"
+          />
           <input
             type="date"
             value={startDate}

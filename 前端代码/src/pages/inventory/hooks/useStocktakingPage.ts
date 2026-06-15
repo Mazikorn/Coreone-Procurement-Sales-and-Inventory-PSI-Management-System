@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from 'react'
-import request from '@/api/request'
+import { useState, useEffect, useMemo, useCallback } from 'react'
+import { stocktakingApi } from '@/api/stocktaking'
 import { materialApi } from '@/api/master'
 import type { Material } from '@/types'
 import { toast } from 'sonner'
@@ -70,19 +70,26 @@ export function useStocktakingPage() {
     name: '', type: 'full', scope: 'all', manager: ''
   })
 
+  const fetchFn = useCallback(
+    async (params: { page: number; pageSize: number }) => {
+      const res: any = await stocktakingApi.getList({
+        ...params,
+        keyword: keyword || undefined,
+      })
+      const payload = res?.data ?? res
+      return {
+        list: payload?.list || [],
+        pagination: payload?.pagination,
+      }
+    },
+    [keyword]
+  )
+
   const {
     data, loading, page, pageSize, total,
     setPage, setPageSize, refresh,
   } = usePagination<StocktakingRecord>({
-    fetchFn: async (params) => {
-      const res: any = await request.get('/stocktaking', {
-        params: { ...params, keyword: keyword || undefined },
-      })
-      return {
-        list: res?.list || [],
-        pagination: res?.pagination,
-      }
-    },
+    fetchFn,
     initialPage,
     initialPageSize,
     deps: [keyword],
@@ -125,7 +132,7 @@ export function useStocktakingPage() {
     }
     setIsSubmitting(true)
     try {
-      await request.post('/stocktaking', {
+      await stocktakingApi.create({
         materialId: form.materialId,
         systemStock: form.systemStock,
         actualStock: form.actualStock,
@@ -135,6 +142,30 @@ export function useStocktakingPage() {
       setModalType(null)
       refresh()
     } catch (e) { toast.error('操作失败') } finally { setIsSubmitting(false) }
+  }
+
+  const handleCreateSubmit = async () => {
+    if (!form.materialId) { toast.error('请选择物料'); return }
+    if (form.actualStock === undefined || form.actualStock === null) {
+      toast.error('请输入实盘数量')
+      return
+    }
+    setIsSubmitting(true)
+    try {
+      await stocktakingApi.create({
+        materialId: form.materialId,
+        systemStock: form.systemStock,
+        actualStock: form.actualStock,
+        remark: form.remark,
+      })
+      toast.success('盘点任务已创建')
+      setCreateStep(3)
+      refresh()
+    } catch (e) {
+      toast.error('创建失败，请重试')
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   const openDetail = (row: StocktakingRecord) => {
@@ -155,7 +186,7 @@ export function useStocktakingPage() {
   const handleDelete = async () => {
     if (!recordToDelete) return
     try {
-      await request.delete(`/stocktaking/${recordToDelete.id}`)
+      await stocktakingApi.delete(recordToDelete.id)
       toast.success('盘点记录已撤销')
       setDeleteConfirmOpen(false)
       setRecordToDelete(null)
@@ -184,7 +215,7 @@ export function useStocktakingPage() {
     stats,
     handleQuery, handleReset,
     openCreate, openDetail, openAdjust, openDelete,
-    handleSubmit, handleDelete,
+    handleSubmit, handleCreateSubmit, handleDelete,
     selectedMaterial,
   }
 }

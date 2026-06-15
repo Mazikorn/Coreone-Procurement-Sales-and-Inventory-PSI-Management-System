@@ -5,8 +5,8 @@ export default defineConfig({
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
-  workers: 1,
-  timeout: 60000,
+  workers: 1, // 限制并发为1，避免SQLite写锁导致ECONNRESET
+  timeout: 90000,
   reporter: [
     ['html', { outputFolder: 'e2e-report' }],
     ['list'],
@@ -15,7 +15,7 @@ export default defineConfig({
     baseURL: 'http://localhost:8080',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
-    video: 'retain-on-failure',
+    video: 'off',
   },
 
   projects: [
@@ -23,11 +23,19 @@ export default defineConfig({
       name: 'chromium',
       use: {
         ...devices['Desktop Chrome'],
-        launchOptions: process.env.PLAYWRIGHT_CHROMIUM_PATH
-          ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH }
-          : process.env.CI
-            ? undefined
-            : { executablePath: 'C:\\Users\\86185\\AppData\\Local\\ms-playwright\\chromium-1217\\chrome-win64\\chrome.exe' },
+        launchOptions: {
+          args: [
+            '--disable-gpu',
+            '--disable-dev-shm-usage',
+            '--no-sandbox',
+            '--disable-extensions',
+          ],
+          ...(process.env.PLAYWRIGHT_CHROMIUM_PATH
+            ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH }
+            : process.env.CI
+              ? undefined
+              : { executablePath: 'C:\\Users\\86185\\AppData\\Local\\ms-playwright\\chromium-1217\\chrome-win64\\chrome.exe' }),
+        },
       },
     },
   ],

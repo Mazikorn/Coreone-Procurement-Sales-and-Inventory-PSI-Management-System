@@ -3,7 +3,7 @@ import { FileText } from 'lucide-react'
 export function PublicCostPanel() {
   return (
     <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
-      <div className="p-5 space-y-5">
+      <div className="p-5 space-y-6">
         <div className="flex items-start gap-3 p-4 bg-blue-50 border border-blue-100 rounded-lg">
           <div className="p-1 bg-blue-100 rounded-full mt-0.5">
             <FileText className="w-4 h-4 text-blue-600" />

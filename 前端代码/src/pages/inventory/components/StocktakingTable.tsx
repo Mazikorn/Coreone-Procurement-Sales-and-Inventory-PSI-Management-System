@@ -1,5 +1,6 @@
 import { Search, FolderOpen, Loader2, Trash2 } from 'lucide-react'
 import { Pagination } from '@/components/ui/Pagination'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { StocktakingRecord } from '../hooks/useStocktakingPage'
 
 interface Props {
@@ -43,12 +44,20 @@ export function StocktakingTable({
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
             <input type="text" placeholder="搜索盘点编号/盘点名称..." value={keyword} onChange={e => onKeywordChange(e.target.value)} className="w-56 pl-9 pr-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500" />
           </div>
-          <select value={statusFilter} onChange={e => onStatusFilterChange(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-md text-sm bg-white focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500">
-            {statusOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
-          <select value={scopeFilter} onChange={e => onScopeFilterChange(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-md text-sm bg-white focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500">
-            {scopeOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
+          <SearchableSelect
+            value={statusFilter}
+            onChange={val => onStatusFilterChange(val)}
+            options={statusOptions}
+            placeholder="全部状态"
+            className="w-32"
+          />
+          <SearchableSelect
+            value={scopeFilter}
+            onChange={val => onScopeFilterChange(val)}
+            options={scopeOptions}
+            placeholder="全部范围"
+            className="w-32"
+          />
           <button onClick={onQuery} className="px-4 py-2 bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 text-sm font-medium transition-colors">查询</button>
           <button onClick={onReset} className="px-4 py-2 text-gray-500 hover:text-gray-700 text-sm font-medium transition-colors">重置</button>
         </div>

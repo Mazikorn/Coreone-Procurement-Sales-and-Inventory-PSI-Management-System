@@ -1,8 +1,15 @@
+import { Upload } from 'lucide-react'
+import { Modal } from '@/components/ui/Modal'
 import type { InventoryItem } from '@/types'
+
+type InventoryRow = InventoryItem & {
+  batch?: string
+  expiry?: string
+}
 
 interface Props {
   open: boolean
-  item: InventoryItem | null
+  item: InventoryRow | null
   onClose: () => void
   onOutbound: () => void
 }
@@ -10,70 +17,43 @@ interface Props {
 export function InventoryDetailModal({ open, item, onClose, onOutbound }: Props) {
   if (!open || !item) return null
 
+  const rows = [
+    ['物料编码', item.code],
+    ['物料名称', item.name],
+    ['规格型号', item.spec || '-'],
+    ['批次号', item.batch || '-'],
+    ['当前库存', `${item.stock} ${item.unit}`],
+    ['可用库存', `${item.availableStock ?? item.stock} ${item.unit}`],
+    ['最低库存', `${item.minStock} ${item.unit}`],
+    ['最高库存', `${item.maxStock} ${item.unit}`],
+    ['库位', item.locationName || item.locationId || '-'],
+    ['供应商', item.supplierName || item.supplierId || '-'],
+    ['有效期', item.expiry || '-'],
+    ['最近入库', item.lastInbound || '-'],
+    ['最近出库', item.lastOutbound || '-'],
+  ]
+
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center pt-20">
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative bg-white rounded-xl shadow-xl w-full max-w-2xl overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-          <h3 className="text-lg font-semibold text-gray-900">库存详情</h3>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 transition-colors text-2xl leading-none"
-          >
-            ×
-          </button>
+    <Modal title="库存详情" onClose={onClose} size="lg">
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-x-6 gap-y-3">
+          {rows.map(([label, value]) => (
+            <div key={label} className="border-b border-gray-100 pb-2">
+              <div className="text-xs text-gray-500">{label}</div>
+              <div className="mt-1 text-sm font-medium text-gray-900">{value}</div>
+            </div>
+          ))}
         </div>
-        <div className="p-6">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-xs text-gray-500">物料名称</label>
-              <div className="text-sm font-medium text-gray-900 mt-0.5">{item.name}</div>
-            </div>
-            <div>
-              <label className="text-xs text-gray-500">物料编码</label>
-              <div className="text-sm font-mono text-gray-900 mt-0.5">{item.code}</div>
-            </div>
-            <div>
-              <label className="text-xs text-gray-500">规格</label>
-              <div className="text-sm text-gray-900 mt-0.5">{item.spec || '-'}</div>
-            </div>
-            <div>
-              <label className="text-xs text-gray-500">单位</label>
-              <div className="text-sm text-gray-900 mt-0.5">{item.unit}</div>
-            </div>
-            <div>
-              <label className="text-xs text-gray-500">库存数量</label>
-              <div className="text-sm font-medium text-gray-900 mt-0.5">{item.stock}</div>
-            </div>
-            <div>
-              <label className="text-xs text-gray-500">安全库存</label>
-              <div className="text-sm text-gray-900 mt-0.5">{item.minStock}</div>
-            </div>
-            <div>
-              <label className="text-xs text-gray-500">库位</label>
-              <div className="text-sm text-gray-900 mt-0.5">{item.locationName || '-'}</div>
-            </div>
-            <div>
-              <label className="text-xs text-gray-500">供应商</label>
-              <div className="text-sm text-gray-900 mt-0.5">{item.supplierName || '-'}</div>
-            </div>
-          </div>
-        </div>
-        <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-end gap-3">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md text-sm font-medium hover:bg-gray-50 transition-all duration-150 ease"
-          >
+        <div className="flex justify-end gap-3 border-t border-gray-200 pt-4">
+          <button type="button" onClick={onClose} className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
             关闭
           </button>
-          <button
-            onClick={() => { onClose(); onOutbound() }}
-            className="px-4 py-2 bg-blue-500 text-white rounded-md text-sm font-medium hover:bg-blue-600 transition-all duration-150 ease shadow-sm"
-          >
+          <button type="button" onClick={onOutbound} className="inline-flex items-center gap-1.5 rounded-md bg-blue-500 px-4 py-2 text-sm font-medium text-white hover:bg-blue-600">
+            <Upload className="h-4 w-4" />
             出库
           </button>
         </div>
       </div>
-    </div>
+    </Modal>
   )
 }

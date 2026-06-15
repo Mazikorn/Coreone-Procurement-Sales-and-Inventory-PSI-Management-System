@@ -1,43 +1,100 @@
-import { useState, useEffect, useMemo } from 'react'
-import { projectApi, bomApi } from '@/api/master'
-import type { Project, BOM } from '@/types'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
+import { bomApi, projectApi } from '@/api/master'
 import { usePagination } from '@/hooks/usePagination'
 import { useUrlParams } from '@/hooks/useUrlParams'
-
-export type ModalType = 'create' | 'edit' | 'copy' | 'delete' | 'import' | null
+import type { BOM, PaginationData, Project } from '@/types'
 
 export interface FormData {
+  type: string
   code: string
   name: string
-  type: string
   cycle: string
   manager: string
-  description: string
-  supportableSamples: number
   status: 'active' | 'inactive'
+  description: string
+  bomId: string
+}
+
+export type ProjectModalType = 'create' | 'edit' | 'copy' | 'delete' | 'import' | null
+
+const defaultForm: FormData = {
+  type: 'he',
+  code: '',
+  name: '',
+  cycle: '',
+  manager: '',
+  status: 'active',
+  description: '',
+  bomId: '',
+}
+
+const getValidStatus = (value: string | null) =>
+  value === 'active' || value === 'inactive' ? value : ''
+
+const getValidBomFilter = (value: string | null) =>
+  value === 'configured' || value === 'unconfigured' ? value : ''
+
+const normalizePaginationData = <T,>(
+  res: PaginationData<T> | { data?: PaginationData<T> } | undefined
+): { list: T[]; pagination?: PaginationData<T>['pagination'] } => {
+  const payload = (res as { data?: PaginationData<T> } | undefined)?.data
+    || (res as PaginationData<T> | undefined)
+  return {
+    list: payload?.list || [],
+    pagination: payload?.pagination,
+  }
 }
 
 export function useProjectsPage() {
+  const { get, getNumber, setMultiple } = useUrlParams()
+
+  const [keyword, setKeyword] = useState(get('keyword') || '')
+  const [typeFilter, setTypeFilter] = useState(get('type') || '')
+  const [statusFilter, setStatusFilter] = useState(getValidStatus(get('status')))
+  const [bomFilter, setBomFilter] = useState(getValidBomFilter(get('bom')))
   const [boms, setBoms] = useState<BOM[]>([])
-  const [keyword, setKeyword] = useState('')
-  const [typeFilter, setTypeFilter] = useState('')
-  const [statusFilter, setStatusFilter] = useState('')
-  const [bomFilter, setBomFilter] = useState('')
-  const [modalType, setModalType] = useState<ModalType>(null)
-  const [editingRow, setEditingRow] = useState<Project | null>(null)
-  const [form, setForm] = useState<FormData>({
-    code: '', name: '', type: 'he', cycle: '', manager: '',
-    description: '', supportableSamples: 0, status: 'active'
-  })
+  const [allProjects, setAllProjects] = useState<Project[]>([])
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [editTab, setEditTab] = useState<'basic' | 'bom'>('basic')
+  const [modalType, setModalType] = useState<ProjectModalType>(null)
+  const [editingRow, setEditingRow] = useState<Project | null>(null)
+  const [form, setForm] = useState<FormData>(defaultForm)
   const [createStep, setCreateStep] = useState(1)
+  const [editTab, setEditTab] = useState<'basic' | 'bom'>('basic')
   const [bomOption, setBomOption] = useState<'select' | 'create' | 'skip'>('select')
-  const [selectedBomId, setSelectedBomId] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
 
-  const { get, getNumber, setMultiple } = useUrlParams()
+  const urlPage = Math.max(1, getNumber('page', 1))
+  const rawPageSize = getNumber('pageSize', 20)
+  const urlPageSize = [10, 20, 50, 100].includes(rawPageSize) ? rawPageSize : 20
+
+  const fetchFn = useCallback(
+    async ({ page, pageSize }: { page: number; pageSize: number }) => {
+      const params: Record<string, string | number> = { page, pageSize }
+      if (keyword.trim()) params.keyword = keyword.trim()
+      if (typeFilter) params.type = typeFilter
+      if (statusFilter) params.status = statusFilter
+
+      const res = await projectApi.getList(params)
+      let { list, pagination } = normalizePaginationData<Project>(res)
+      if (bomFilter === 'configured') {
+        list = list.filter(project => Boolean(project.bomId))
+      }
+      if (bomFilter === 'unconfigured') {
+        list = list.filter(project => !project.bomId)
+      }
+
+      return {
+        list,
+        pagination: {
+          page,
+          pageSize,
+          total: bomFilter ? list.length : pagination?.total || list.length,
+        },
+      }
+    },
+    [keyword, typeFilter, statusFilter, bomFilter]
+  )
 
   const {
     data,
@@ -49,99 +106,86 @@ export function useProjectsPage() {
     setPageSize,
     refresh,
   } = usePagination<Project>({
-    fetchFn: ({ page, pageSize }) =>
-      projectApi.getList({
-        page,
-        pageSize,
-        keyword: keyword || undefined,
-        type: typeFilter || undefined,
-        status: statusFilter || undefined,
-        bomFilter: bomFilter || undefined,
-      }),
+    fetchFn,
+    initialPage: urlPage,
+    initialPageSize: urlPageSize,
     deps: [keyword, typeFilter, statusFilter, bomFilter],
   })
 
   useEffect(() => {
-    const k = get('keyword') || ''
-    const t = get('type') || ''
-    const s = get('status') || ''
-    const b = get('bom') || ''
-    setKeyword(k)
-    setTypeFilter(t)
-    setStatusFilter(s)
-    setBomFilter(b)
-    const p = getNumber('page', 1)
-    const ps = getNumber('pageSize', 20)
-    setPage(Math.max(1, p || 1))
-    setPageSize(Math.max(1, Math.min(100, ps || 20)))
+    setMultiple({
+      page: page > 1 ? page : null,
+      pageSize: pageSize !== 20 ? pageSize : null,
+      keyword: keyword || null,
+      type: typeFilter || null,
+      status: statusFilter || null,
+      bom: bomFilter || null,
+    })
+  }, [page, pageSize, keyword, typeFilter, statusFilter, bomFilter, setMultiple])
+
+  const fetchRefs = useCallback(async () => {
+    try {
+      const [projectRes, bomRes] = await Promise.all([
+        projectApi.getList({ page: 1, pageSize: 1000 }),
+        bomApi.getList({ page: 1, pageSize: 1000 }),
+      ])
+      setAllProjects(normalizePaginationData<Project>(projectRes).list)
+      setBoms(normalizePaginationData<BOM>(bomRes).list)
+    } catch (e) {
+      console.error(e)
+    }
   }, [])
 
   useEffect(() => {
-    const params: Record<string, string> = {}
-    if (keyword) params.keyword = keyword
-    if (typeFilter) params.type = typeFilter
-    if (statusFilter) params.status = statusFilter
-    if (bomFilter) params.bom = bomFilter
-    if (page !== 1) params.page = String(page)
-    if (pageSize !== 20) params.pageSize = String(pageSize)
-    setMultiple(params)
-  }, [page, pageSize, keyword, typeFilter, statusFilter, bomFilter])
+    fetchRefs()
+  }, [fetchRefs])
 
-  const fetchBoms = async () => {
-    try {
-      const res: any = await bomApi.getList({ page: 1, pageSize: 999 })
-      setBoms(res.list || [])
-    } catch (e) { console.error(e) }
+  const stats = useMemo(() => ({
+    total: allProjects.length,
+    active: allProjects.filter(project => project.status === 'active').length,
+    inactive: allProjects.filter(project => project.status === 'inactive').length,
+    noBom: allProjects.filter(project => !project.bomId).length,
+  }), [allProjects])
+
+  const resetForm = () => {
+    setForm(defaultForm)
+    setBomOption('select')
+    setCreateStep(1)
+    setEditTab('basic')
   }
 
-  const stats = useMemo(() => {
-    const active = data.filter(s => s.status === 'active').length
-    const inactive = data.filter(s => s.status === 'inactive').length
-    const noBom = data.filter(s => !s.bomId).length
-    return { total, active, inactive, noBom }
-  }, [data, total])
+  const fillForm = (row: Project) => {
+    setForm({
+      type: row.type || 'he',
+      code: row.code || '',
+      name: row.name || '',
+      cycle: row.cycle || '',
+      manager: row.manager || '',
+      status: row.status || 'active',
+      description: row.description || '',
+      bomId: row.bomId || '',
+    })
+  }
 
   const openCreate = () => {
     setEditingRow(null)
-    setForm({
-      code: '', name: '', type: 'he', cycle: '', manager: '',
-      description: '', supportableSamples: 0, status: 'active'
-    })
-    setCreateStep(1)
-    setBomOption('select')
-    setSelectedBomId('')
+    resetForm()
     setModalType('create')
-    fetchBoms()
   }
 
   const openEdit = (row: Project) => {
     setEditingRow(row)
-    setForm({
-      code: row.code,
-      name: row.name,
-      type: row.type || 'he',
-      cycle: row.cycle || '',
-      manager: row.manager || '',
-      description: row.description || '',
-      supportableSamples: row.supportableSamples || 0,
-      status: row.status,
-    })
+    fillForm(row)
     setEditTab('basic')
     setModalType('edit')
-    fetchBoms()
   }
 
   const openCopy = (row: Project) => {
     setEditingRow(row)
-    setForm({
-      code: '',
-      name: row.name + '（副本）',
-      type: row.type || 'he',
-      cycle: row.cycle || '',
-      manager: row.manager || '',
-      description: row.description || '',
-      supportableSamples: row.supportableSamples || 0,
-      status: 'active',
+    fillForm({
+      ...row,
+      code: `${row.code}-COPY-${Date.now().toString().slice(-4)}`,
+      name: `${row.name} 副本`,
     })
     setModalType('copy')
   }
@@ -151,89 +195,156 @@ export function useProjectsPage() {
     setModalType('delete')
   }
 
+  const closeModal = () => {
+    setModalType(null)
+    setEditingRow(null)
+    resetForm()
+  }
+
+  const buildPayload = () => ({
+    type: form.type,
+    code: form.code.trim(),
+    name: form.name.trim(),
+    cycle: form.cycle.trim(),
+    manager: form.manager.trim(),
+    status: form.status,
+    description: form.description.trim(),
+    bomId: form.bomId || undefined,
+  })
+
   const handleSubmit = async () => {
-    if (!form.code.trim() || !form.name.trim()) {
+    if (!form.type || !form.code.trim() || !form.name.trim()) {
       toast.error('请填写必填字段')
       return
     }
+
     setIsSubmitting(true)
     try {
+      const payload = buildPayload()
       if (modalType === 'edit' && editingRow) {
-        await projectApi.update(editingRow.id, form)
-        toast.success('检测服务已更新')
-      } else if (modalType === 'create') {
-        await projectApi.create(form)
-        toast.success('检测服务已创建')
-      } else if (modalType === 'copy' && editingRow) {
-        await projectApi.create({ ...form })
-        toast.success('检测服务已复制')
+        await projectApi.update(editingRow.id, payload)
+        toast.success('检测服务更新成功')
+      } else {
+        await projectApi.create(payload)
+        toast.success(modalType === 'copy' ? '检测服务复制成功' : '检测服务创建成功')
       }
-      setModalType(null)
+      setSelectedIds(new Set())
+      closeModal()
       refresh()
-    } catch { toast.error('操作失败') } finally { setIsSubmitting(false) }
+      fetchRefs()
+    } catch (e) {
+      toast.error('操作失败')
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   const handleDeleteConfirm = async () => {
     if (!editingRow) return
+    setIsSubmitting(true)
     try {
       await projectApi.delete(editingRow.id)
-      toast.success('已删除')
-      setModalType(null)
+      toast.success('检测服务删除成功')
+      setSelectedIds(prev => {
+        const next = new Set(prev)
+        next.delete(editingRow.id)
+        return next
+      })
+      closeModal()
       refresh()
-    } catch { toast.error('删除失败') }
-  }
-
-  const handleQuery = () => { setPage(1) }
-  const handleReset = () => {
-    setKeyword(''); setTypeFilter(''); setStatusFilter(''); setBomFilter('')
-    setPage(1)
+      fetchRefs()
+    } catch (e) {
+      toast.error('删除失败')
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   const toggleSelectAll = (checked: boolean) => {
-    if (checked) setSelectedIds(new Set(data.map(r => r.id)))
-    else setSelectedIds(new Set())
+    setSelectedIds(checked ? new Set(data.map(project => project.id)) : new Set())
   }
 
   const toggleSelectOne = (id: string, checked: boolean) => {
-    const next = new Set(selectedIds)
-    if (checked) next.add(id)
-    else next.delete(id)
-    setSelectedIds(next)
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (checked) next.add(id)
+      else next.delete(id)
+      return next
+    })
   }
 
-  const batchEnable = async () => {
-    toast.success(`已启用 ${selectedIds.size} 个检测服务`)
+  const batchSetStatus = async (status: 'active' | 'inactive') => {
+    if (selectedIds.size === 0) return
+    try {
+      await Promise.all([...selectedIds].map(id => projectApi.update(id, { status })))
+      toast.success(status === 'active' ? '批量启用成功' : '批量停用成功')
+      setSelectedIds(new Set())
+      refresh()
+      fetchRefs()
+    } catch (e) {
+      toast.error('批量操作失败')
+    }
+  }
+
+  const handleQuery = () => {
+    setPage(1)
+    refresh()
+  }
+
+  const handleReset = () => {
+    setKeyword('')
+    setTypeFilter('')
+    setStatusFilter('')
+    setBomFilter('')
     setSelectedIds(new Set())
+    setPage(1)
   }
-
-  const batchDisable = async () => {
-    toast.success(`已停用 ${selectedIds.size} 个检测服务`)
-    setSelectedIds(new Set())
-  }
-
-  const selectedBom = boms.find(b => b.id === selectedBomId)
 
   return {
-    boms, setBoms,
-    keyword, setKeyword,
-    typeFilter, setTypeFilter,
-    statusFilter, setStatusFilter,
-    bomFilter, setBomFilter,
-    modalType, setModalType,
-    editingRow, setEditingRow,
-    form, setForm,
-    selectedIds, setSelectedIds,
-    editTab, setEditTab,
-    createStep, setCreateStep,
-    bomOption, setBomOption,
-    selectedBomId, setSelectedBomId,
-    isSubmitting, setIsSubmitting,
-    data, loading, page, pageSize, total, setPage, setPageSize, refresh,
+    data,
+    loading,
+    total,
+    page,
+    pageSize,
+    setPage,
+    setPageSize,
+    refresh,
+    keyword,
+    setKeyword,
+    typeFilter,
+    setTypeFilter,
+    statusFilter,
+    setStatusFilter,
+    bomFilter,
+    setBomFilter,
+    selectedIds,
+    setSelectedIds,
+    modalType,
+    setModalType,
+    editingRow,
+    setEditingRow,
+    form,
+    setForm,
+    createStep,
+    setCreateStep,
+    editTab,
+    setEditTab,
+    bomOption,
+    setBomOption,
+    boms,
+    isSubmitting,
     stats,
-    openCreate, openEdit, openCopy, openDelete,
-    handleSubmit, handleDeleteConfirm, handleQuery, handleReset,
-    toggleSelectAll, toggleSelectOne,
-    batchEnable, batchDisable,
-    selectedBom,
+    handleQuery,
+    handleReset,
+    openCreate,
+    openEdit,
+    openCopy,
+    openDelete,
+    handleSubmit,
+    handleDeleteConfirm,
+    toggleSelectAll,
+    toggleSelectOne,
+    batchEnable: () => batchSetStatus('active'),
+    batchDisable: () => batchSetStatus('inactive'),
   }
 }

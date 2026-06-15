@@ -1,5 +1,5 @@
 import { X } from 'lucide-react'
-import type { User } from '@/types'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { FormData } from '../hooks/useUsersPage'
 
 interface Props {
@@ -49,30 +49,30 @@ export function UserFormModal({ open, type, form, onClose, onChange, onSubmit, o
           <div className="flex gap-5 mb-5">
             <div className="flex-1">
               <label className="block text-[13px] font-medium text-gray-700 mb-1.5">角色 <span className="text-red-500">*</span></label>
-              <select
+              <SearchableSelect
                 value={form.role}
-                onChange={e => onChange({ ...form, role: e.target.value })}
-                className="w-full h-10 px-3 pr-8 text-sm text-gray-900 bg-white border border-gray-300 rounded-md outline-none transition-all focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 appearance-none cursor-pointer"
-                style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 10px center' }}
-              >
-                <option value="admin">系统管理员</option>
-                <option value="operator">操作员</option>
-                <option value="viewer">查看者</option>
-              </select>
+                onChange={val => onChange({ ...form, role: val })}
+                options={[
+                  { value: 'admin', label: '系统管理员' },
+                  { value: 'operator', label: '操作员' },
+                  { value: 'viewer', label: '查看者' },
+                ]}
+                placeholder="请选择"
+              />
             </div>
             <div className="flex-1">
               <label className="block text-[13px] font-medium text-gray-700 mb-1.5">部门 <span className="text-red-500">*</span></label>
-              <select
+              <SearchableSelect
                 value={form.department}
-                onChange={e => onChange({ ...form, department: e.target.value })}
-                className="w-full h-10 px-3 pr-8 text-sm text-gray-900 bg-white border border-gray-300 rounded-md outline-none transition-all focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 appearance-none cursor-pointer"
-                style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 10px center' }}
-              >
-                <option value="">请选择部门</option>
-                <option value="病理科">病理科</option>
-                <option value="检验科">检验科</option>
-                <option value="信息科">信息科</option>
-              </select>
+                onChange={val => onChange({ ...form, department: val })}
+                options={[
+                  { value: '', label: '请选择部门' },
+                  { value: '病理科', label: '病理科' },
+                  { value: '检验科', label: '检验科' },
+                  { value: '信息科', label: '信息科' },
+                ]}
+                placeholder="请选择部门"
+              />
             </div>
           </div>
           <div className="flex gap-5 mb-5">
@@ -96,15 +96,15 @@ export function UserFormModal({ open, type, form, onClose, onChange, onSubmit, o
           {type === 'edit' && (
             <div className="mb-5">
               <label className="block text-[13px] font-medium text-gray-700 mb-1.5">状态</label>
-              <select
+              <SearchableSelect
                 value={form.status}
-                onChange={e => onChange({ ...form, status: e.target.value as 'active' | 'inactive' })}
-                className="w-full h-10 px-3 pr-8 text-sm text-gray-900 bg-white border border-gray-300 rounded-md outline-none transition-all focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 appearance-none cursor-pointer"
-                style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 10px center' }}
-              >
-                <option value="active">正常</option>
-                <option value="inactive">禁用</option>
-              </select>
+                onChange={val => onChange({ ...form, status: val as 'active' | 'inactive' })}
+                options={[
+                  { value: 'active', label: '正常' },
+                  { value: 'inactive', label: '禁用' },
+                ]}
+                placeholder="请选择"
+              />
             </div>
           )}
           {type === 'create' && (

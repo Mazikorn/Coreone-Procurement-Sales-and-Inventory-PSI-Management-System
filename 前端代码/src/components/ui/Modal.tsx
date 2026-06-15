@@ -1,55 +1,47 @@
-import { useEffect } from 'react'
+import type { ReactNode } from 'react'
+import { X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface ModalProps {
-  children: React.ReactNode
-  onClose: () => void
   title: string
+  children: ReactNode
+  onClose: () => void
   size?: 'sm' | 'md' | 'lg' | 'xl'
 }
 
-const sizeClass: Record<string, string> = {
-  sm: 'max-w-sm',
-  md: 'max-w-md',
+const sizeClass: Record<NonNullable<ModalProps['size']>, string> = {
+  sm: 'max-w-md',
+  md: 'max-w-lg',
   lg: 'max-w-2xl',
-  xl: 'max-w-4xl',
+  xl: 'max-w-5xl',
 }
 
-export function Modal({ children, onClose, title, size = 'md' }: ModalProps) {
-  useEffect(() => {
-    const handleEsc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    document.addEventListener('keydown', handleEsc)
-    document.body.style.overflow = 'hidden'
-    return () => {
-      document.removeEventListener('keydown', handleEsc)
-      document.body.style.overflow = ''
-    }
-  }, [onClose])
-
+export function Modal({ title, children, onClose, size = 'md' }: ModalProps) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="modal-title"
         className={cn(
-          'relative bg-white rounded-xl shadow-lg w-full mx-4 flex flex-col max-h-[90vh]',
+          'w-full rounded-lg bg-white shadow-xl max-h-[90vh] overflow-hidden flex flex-col',
           sizeClass[size]
         )}
       >
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 flex-shrink-0">
-          <h3 className="text-base font-semibold text-gray-900">{title}</h3>
+        <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4">
+          <h2 id="modal-title" className="text-base font-semibold text-gray-900">
+            {title}
+          </h2>
           <button
+            type="button"
             onClick={onClose}
-            className="p-1 hover:bg-gray-50 rounded-md transition-colors"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+            aria-label="关闭弹窗"
           >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
+            <X className="h-4 w-4" />
           </button>
         </div>
-        <div className="p-6 overflow-y-auto">{children}</div>
+        <div className="overflow-y-auto px-5 py-4">{children}</div>
       </div>
     </div>
   )

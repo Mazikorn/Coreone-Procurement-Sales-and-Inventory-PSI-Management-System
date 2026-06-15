@@ -1,4 +1,5 @@
 import { Download } from 'lucide-react'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import { useCostAnalysisPage } from './hooks/useCostAnalysisPage'
 import { CostStatsCards } from './components/CostStatsCards'
 import { CostCharts } from './components/CostCharts'
@@ -6,15 +7,19 @@ import { ProjectCostTable } from './components/ProjectCostTable'
 import { MaterialCostTable } from './components/MaterialCostTable'
 import { PublicCostPanel } from './components/PublicCostPanel'
 import { SupplierCostTable } from './components/SupplierCostTable'
+import { ProjectGroupCostTable } from './components/ProjectGroupCostTable'
+import { FullCostTable } from './components/FullCostTable'
 import { CostExportModal } from './components/CostExportModal'
 import { CostDetailModal } from './components/CostDetailModal'
 import type { TabKey } from './hooks/useCostAnalysisPage'
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'project-cost', label: '检测项目成本' },
+  { key: 'project-group-cost', label: '项目分组成本' },
   { key: 'material-cost', label: '物料消耗分析' },
   { key: 'public-cost', label: '公共成本' },
   { key: 'supplier-cost', label: '供应商分析' },
+  { key: 'full-cost', label: '全成本分析' },
 ]
 
 export default function CostAnalysis() {
@@ -31,18 +36,27 @@ export default function CostAnalysis() {
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
             <span className="text-sm text-gray-500">统计周期</span>
-            <select
-              className="h-10 px-3 text-sm border border-gray-300 rounded-md bg-white outline-none transition-all focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 cursor-pointer"
+            <SearchableSelect
               value={page.timeRange}
-              onChange={e => page.handleTimeRangeChange(e.target.value)}
-            >
-              <option value="2024">2024年全年</option>
-              <option value="2024q4">2024年Q4</option>
-              <option value="2024q3">2024年Q3</option>
-              <option value="2024q2">2024年Q2</option>
-              <option value="2024q1">2024年Q1</option>
-              <option value="2023">2023年</option>
-            </select>
+              onChange={val => page.handleTimeRangeChange(val)}
+              options={(() => {
+                const now = new Date()
+                const currentYear = now.getFullYear()
+                const currentQuarter = Math.floor(now.getMonth() / 3) + 1
+                const options = []
+                // 当前年份
+                options.push({ value: `${currentYear}`, label: `${currentYear}年全年` })
+                // 当前年份的季度（从当前季度往前）
+                for (let q = currentQuarter; q >= 1; q--) {
+                  options.push({ value: `${currentYear}q${q}`, label: `${currentYear}年Q${q}` })
+                }
+                // 上一年
+                options.push({ value: `${currentYear - 1}`, label: `${currentYear - 1}年` })
+                return options
+              })()}
+              placeholder="请选择"
+              className="w-40"
+            />
             <div className="flex items-center gap-2">
               <input
                 type="date"
@@ -112,6 +126,13 @@ export default function CostAnalysis() {
         />
       )}
 
+      {page.activeTab === 'project-group-cost' && (
+        <ProjectGroupCostTable
+          loading={page.loading}
+          data={page.groupCostReport}
+        />
+      )}
+
       {page.activeTab === 'material-cost' && (
         <MaterialCostTable
           loading={page.loading}
@@ -132,6 +153,21 @@ export default function CostAnalysis() {
         <SupplierCostTable
           data={page.realSuppliers}
           totalAmount={page.totalSupplierAmount}
+        />
+      )}
+
+      {page.activeTab === 'full-cost' && (
+        <FullCostTable
+          loading={page.loading}
+          data={page.pagedFullCostProjects}
+          total={page.filteredFullCostProjects.length}
+          page={page.page}
+          pageSize={page.pageSize}
+          searchText={page.searchText}
+          onSearchTextChange={page.setSearchText}
+          onPageChange={page.setPage}
+          onPageSizeChange={page.setPageSize}
+          onRowClick={page.openDetailModal}
         />
       )}
 

@@ -2,6 +2,7 @@ import { Search, Settings } from 'lucide-react'
 import type { ProjectCostReport } from '@/types'
 import { formatCurrency } from '@/lib/utils'
 import { Pagination } from '@/components/ui/Pagination'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import { RankBadge } from './RankBadge'
 import { ChangeBadge } from './ChangeBadge'
 import { CategoryTag } from './CategoryTag'
@@ -84,17 +85,19 @@ export function ProjectCostTable({
             onChange={e => onSearchTextChange(e.target.value)}
           />
         </div>
-        <select
-          className="h-10 px-3 text-sm border border-gray-300 rounded-md bg-white outline-none transition-all focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 cursor-pointer"
+        <SearchableSelect
           value={projectFilter}
-          onChange={e => onProjectFilterChange(e.target.value)}
-        >
-          <option value="">全部分类</option>
-          <option value="molecular">分子诊断</option>
-          <option value="pathology">病理技术</option>
-          <option value="ihc">免疫组化</option>
-          <option value="cyto">细胞学</option>
-        </select>
+          onChange={val => onProjectFilterChange(val)}
+          options={[
+            { value: '', label: '全部分类' },
+            { value: 'molecular', label: '分子诊断' },
+            { value: 'pathology', label: '病理技术' },
+            { value: 'ihc', label: '免疫组化' },
+            { value: 'cyto', label: '细胞学' },
+          ]}
+          placeholder="全部分类"
+          className="w-36"
+        />
         <button
           onClick={handleReset}
           className="h-10 px-4 text-sm font-medium text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"

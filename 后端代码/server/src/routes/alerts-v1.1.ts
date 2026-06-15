@@ -23,13 +23,13 @@ router.put('/rules/:id', (req, res) => {
   try {
     const user = (req as any).user
     if (!user || user.role !== 'admin') {
-      return error(res, 'Forbidden', 'FORBIDDEN', 403)
+      return error(res, '权限不足', 'FORBIDDEN', 403)
     }
     const { id } = req.params
     const { threshold, thresholdDays, enabled } = req.body
     const db = getDatabase()
     const existing = db.prepare('SELECT * FROM alert_rules WHERE id = ?').get(id)
-    if (!existing) { error(res, 'Not found', 'NOT_FOUND', 404); return }
+    if (!existing) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
     const fields: string[] = []; const params: any[] = []
     if (threshold !== undefined) {
       if (isNaN(Number(threshold)) || Number(threshold) < 0) {
@@ -76,11 +76,18 @@ router.get('/', (req, res) => {
 
 router.post('/:id/handle', (req, res) => {
   try {
+    // 处理预警仅限 admin 和 warehouse_manager
+    const role = (req as any).user?.role
+    if (role !== 'admin' && role !== 'warehouse_manager') {
+      error(res, 'Forbidden: insufficient permissions', 'FORBIDDEN', 403)
+      return
+    }
+
     const { id } = req.params
     const { action, remark } = req.body
     const db = getDatabase()
     const existing = db.prepare('SELECT * FROM alerts WHERE id = ?').get(id) as any
-    if (!existing) { error(res, 'Not found', 'NOT_FOUND', 404); return }
+    if (!existing) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
     if (existing.status !== 'pending') { error(res, '预警已处理，不可重复操作', 'ALREADY_HANDLED', 400); return }
     db.prepare('UPDATE alerts SET status = ?, remark = ?, handled_at = CURRENT_TIMESTAMP WHERE id = ?')
       .run(action || 'processed', remark || '', id)
@@ -104,9 +111,9 @@ router.post('/generate', (_req, res) => {
       `).all() as any[]
 
       for (const item of lowItems) {
-        const exists = db.prepare('SELECT COUNT(*) as c FROM alerts WHERE material_id = ? AND type = ? AND status = "pending"').get(item.id, 'low-stock') as any
+        const exists = db.prepare("SELECT COUNT(*) as c FROM alerts WHERE material_id = ? AND type = ? AND status = 'pending'").get(item.id, 'low-stock') as any
         if (exists.c === 0) {
-          db.prepare('INSERT INTO alerts (id, type, level, material_id, material_name, current_stock, threshold, message, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, "pending")')
+          db.prepare("INSERT INTO alerts (id, type, level, material_id, material_name, current_stock, threshold, message, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')")
             .run(uuidv4(), 'low-stock', 'warning', item.id, item.name, item.stock, item.safety_stock, `Low stock: current ${item.stock}, safety ${item.safety_stock}`)
           count++
         }
@@ -128,9 +135,9 @@ router.post('/generate', (_req, res) => {
       `).all(thresholdStr) as any[]
 
       for (const item of expItems) {
-        const exists = db.prepare('SELECT COUNT(*) as c FROM alerts WHERE material_id = ? AND type = ? AND status = "pending"').get(item.id, 'expiry') as any
+        const exists = db.prepare("SELECT COUNT(*) as c FROM alerts WHERE material_id = ? AND type = ? AND status = 'pending'").get(item.id, 'expiry') as any
         if (exists.c === 0) {
-          db.prepare('INSERT INTO alerts (id, type, level, material_id, material_name, threshold, message, status) VALUES (?, ?, ?, ?, ?, ?, ?, "pending")')
+          db.prepare("INSERT INTO alerts (id, type, level, material_id, material_name, threshold, message, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')")
             .run(uuidv4(), 'expiry', 'danger', item.id, item.name, expiryRule.threshold_days, `Batch ${item.batch_no} expires at ${item.expiry_date}`)
           count++
         }

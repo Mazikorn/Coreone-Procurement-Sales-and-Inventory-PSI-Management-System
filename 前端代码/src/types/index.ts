@@ -57,7 +57,6 @@ export interface Category {
   parentId?: string | null
   level: number
   sortOrder: number
-  status: 'active' | 'inactive'
   children?: Category[]
   count?: number
   isLeaf?: boolean
@@ -182,7 +181,7 @@ export interface InventoryStats {
 }
 
 // ===== 入库 =====
-export type InboundType = 'direct' | 'purchase' | 'return'
+export type InboundType = 'direct' | 'purchase' | 'return' | 'transfer' | 'surplus' | 'other'
 
 export interface InboundRecord {
   id: string
@@ -221,6 +220,7 @@ export interface InboundFormData {
   productionDate?: string
   expiryDate?: string
   remark?: string
+  purchaseOrderId?: string
 }
 
 // ===== 出库 =====
@@ -247,6 +247,10 @@ export interface OutboundRecord {
   projectName?: string
   items: OutboundItem[]
   totalCost: number
+  abcTotalCost?: number
+  abcActivityCost?: number
+  feeAmount?: number
+  profit?: number
   operator: string
   approver?: string
   approvedAt?: string
@@ -297,12 +301,54 @@ export interface BOMMaterial {
   price: number
   stock: number
   costRatio: number
+  groupName?: string | null
 }
 
 export interface BOMVersion {
   version: string
   updatedAt: string
   changeLog: string
+}
+
+export interface BOMGeneralReagent {
+  id?: string
+  materialId: string
+  name?: string
+  spec?: string
+  usagePerSample: number
+  unit: string
+  allocationType?: string
+}
+
+export interface BOMGeneralConsumable {
+  id?: string
+  materialId: string
+  name?: string
+  spec?: string
+  usagePerSample: number
+  unit: string
+  allocationType?: string
+}
+
+export interface BOMQualityControl {
+  id?: string
+  materialId: string
+  name?: string
+  spec?: string
+  usagePerBatch: number
+  unit: string
+  coversSamples: number
+  allocationType?: string
+}
+
+export interface BOMEquipmentTemplate {
+  id?: string
+  equipmentId?: string
+  equipmentTypeId?: string
+  equipmentName?: string
+  equipmentTypeName?: string
+  model?: string
+  usageMinutes: number
 }
 
 export interface BOM {
@@ -317,8 +363,16 @@ export interface BOM {
   materialCount: number
   supportableSamples?: number
   unitCost: number
+  feeStandardId?: string
+  feeCategory?: string
+  standardSlideCost?: number
+  standardFeePerSlide?: number
   status: 'active' | 'inactive'
   materials: BOMMaterial[]
+  generalReagents?: BOMGeneralReagent[]
+  generalConsumables?: BOMGeneralConsumable[]
+  qualityControls?: BOMQualityControl[]
+  equipmentTemplates?: BOMEquipmentTemplate[]
   versionHistory: BOMVersion[]
   createdAt: string
   updatedAt: string
@@ -412,6 +466,32 @@ export interface SupplierCostReport {
   }>
 }
 
+export interface FullCostReport {
+  summary: {
+    totalCost: number
+    totalSamples: number
+    avgUnitCost: number
+    materialCost: number
+    laborCost: number
+    equipmentCost: number
+    qcCost: number
+    indirectCost: number
+  }
+  projects: Array<{
+    id: string
+    name: string
+    type: string
+    sampleCount: number
+    materialCost: number
+    laborCost: number
+    equipmentCost: number
+    qcCost: number
+    indirectCost: number
+    totalCost: number
+    unitCost: number
+  }>
+}
+
 // ===== 系统管理 =====
 export interface Role {
   id: string
@@ -464,6 +544,7 @@ export interface SupplierReturnRecord {
 export interface SupplierReturnFormData {
   materialId: string
   quantity: number
+  batchId?: string
   supplierId?: string
   purchaseOrderId?: string
   inboundRecordId?: string
@@ -481,7 +562,11 @@ export interface ReturnRecord {
   materialId: string
   materialName?: string
   batchId?: string
+  batchNo?: string
   quantity: number
+  unitCost: number
+  totalCost: number
+  outboundItemId?: string
   reason: string
   operator: string
   status: string
@@ -519,6 +604,148 @@ export interface TransferRecord {
   operator: string
   status: string
   remark?: string
+  createdAt: string
+}
+
+// ===== 标准工时 =====
+export interface StandardLaborTime {
+  id: string
+  stepCode: string
+  stepName: string
+  projectType: string
+  standardMinutes: number
+  laborRatePerMinute: number
+  isEquipmentStep: boolean
+  description?: string
+  sortOrder: number
+  referenceSource?: 'supplier' | 'industry' | 'system'
+  referenceSourceLabel?: string
+  createdAt: string
+  updatedAt: string
+}
+
+// ===== 间接成本中心 =====
+export interface IndirectCostCenter {
+  id: string
+  code: string
+  name: string
+  costType: string
+  monthlyAmount: number
+  allocationBase: string
+  description?: string
+  status: 'active' | 'inactive'
+  createdAt: string
+  updatedAt: string
+}
+
+export interface IndirectCostAllocation {
+  id: string
+  costCenterId: string
+  yearMonth: string
+  totalAmount: number
+  allocationBaseValue: number
+  allocationRate: number
+  createdAt: string
+}
+
+// ===== 设备类型 =====
+export interface EquipmentType {
+  id: string
+  code: string
+  name: string
+  description?: string
+  defaultPurchasePrice?: number
+  defaultDepreciableLifeYears?: number
+  defaultValue?: number
+  defaultDepreciationMethod?: string
+  defaultTotalCapacity?: number
+  defaultCapacityUnit?: string
+  status: 'active' | 'inactive'
+  equipmentCount?: number
+  createdAt: string
+  updatedAt: string
+}
+
+// ===== 设备 =====
+export interface Equipment {
+  id: string
+  code: string
+  name: string
+  model?: string
+  manufacturer?: string
+  purchasePrice: number
+  purchaseDate?: string
+  depreciableLifeYears: number
+  residualValue: number
+  depreciationMethod: 'straight_line' | 'units_of_production'
+  totalCapacity?: number
+  capacityUnit?: string
+  status: 'active' | 'inactive' | 'scrapped'
+  locationId?: string
+  typeId?: string | null
+  typeName?: string | null
+  annualDepreciation?: number
+  accumulatedDepreciation?: number
+  netBookValue?: number
+  createdAt: string
+  updatedAt: string
+}
+
+// ===== 设备折旧统计 =====
+export interface DepreciationStat {
+  typeId: string
+  typeCode: string
+  typeName: string
+  equipmentCount: number
+  totalPurchasePrice: number
+  totalPurchaseValue?: number
+  totalDepreciation?: number
+  totalAnnualDepreciation: number
+  totalMonthlyDepreciation: number
+}
+
+// ===== 季度成本调整 =====
+export interface CostAdjustment {
+  id: string
+  costCenterId: string
+  costCenterName?: string
+  yearQuarter: string
+  preProvisionAmount: number
+  actualAmount: number
+  adjustmentAmount: number
+  adjustmentReason?: string
+  adjustedBy?: string
+  submittedByName?: string
+  adjustedAt?: string
+  reviewStatus: 'pending' | 'approved' | 'rejected'
+  reviewedBy?: string
+  reviewedAt?: string
+  reviewReason?: string
+}
+
+// ===== BOM 成本预览 =====
+export interface CostPreview {
+  bomId: string
+  bomName: string
+  totalCost: number
+  breakdown: {
+    materialCost: { amount: number; percentage: number }
+    laborCost: { amount: number; percentage: number }
+    equipmentCost: { amount: number; percentage: number }
+    indirectCost: { amount: number; percentage: number }
+  }
+}
+
+export interface EquipmentUsage {
+  id: string
+  equipmentId: string
+  projectId?: string
+  outboundId?: string
+  usageMinutes: number
+  usageCount: number
+  depreciationCost: number
+  operator?: string
+  usageDate?: string
   createdAt: string
 }
 

@@ -1,7 +1,7 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { usePagination } from '@/hooks/usePagination'
 import { useUrlParams } from '@/hooks/useUrlParams'
-import request from '@/api/request'
+import { rolesApi } from '@/api/roles'
 import type { Role } from '@/types'
 import { toast } from 'sonner'
 
@@ -49,13 +49,24 @@ export const DATA_SCOPE_OPTIONS = [
 export function useRolesPage() {
   const { get, getNumber, setMultiple } = useUrlParams()
 
-  const [keyword, setKeyword] = useState('')
-  const [tabType, setTabType] = useState<'all' | 'system' | 'custom'>('all')
+  const [keyword, setKeyword] = useState(() => get('keyword') || '')
+  const [tabType, setTabType] = useState<'all' | 'system' | 'custom'>(() => {
+    const tab = get('tab')
+    return tab === 'system' || tab === 'custom' ? tab : 'all'
+  })
 
   const urlPage = Math.max(1, getNumber('page', 1))
   const urlPageSize = [10, 20, 50, 100].includes(getNumber('pageSize', 20))
     ? getNumber('pageSize', 20)
     : 20
+
+  const fetchFn = useCallback(
+    async ({ page, pageSize }: { page: number; pageSize: number }) => {
+      const res = await rolesApi.getList({ page, pageSize })
+      return { list: res?.list || [], pagination: res?.pagination }
+    },
+    []
+  )
 
   const {
     data,
@@ -67,10 +78,7 @@ export function useRolesPage() {
     setPageSize,
     refresh,
   } = usePagination<Role>({
-    fetchFn: async ({ page, pageSize }) => {
-      const res: any = await request.get('/roles', { params: { page, pageSize } })
-      return { list: res?.list || [], pagination: res?.pagination }
-    },
+    fetchFn,
     initialPage: urlPage,
     initialPageSize: urlPageSize,
     deps: [],
@@ -98,7 +106,7 @@ export function useRolesPage() {
     const totalRoles = data.length
     const systemRoles = data.filter(r => r.code === 'admin').length
     const customRoles = totalRoles - systemRoles
-    const assignedUsers = data.reduce((sum, r) => sum + (r as any).userCount || 0, 0)
+    const assignedUsers = data.reduce((sum, r) => sum + ((r as any).userCount || 0), 0)
     return { totalRoles, systemRoles, customRoles, assignedUsers }
   }, [data])
 
@@ -159,9 +167,9 @@ export function useRolesPage() {
     }
     try {
       if (editingId) {
-        await request.put(`/roles/${editingId}`, form)
+        await rolesApi.update(editingId, form)
       } else {
-        await request.post('/roles', form)
+        await rolesApi.create(form)
       }
       toast.success(editingId ? '保存成功' : '创建成功')
       setModalType(null)
@@ -174,7 +182,7 @@ export function useRolesPage() {
   const handleDelete = async () => {
     if (!deleteRole) return
     try {
-      await request.delete(`/roles/${deleteRole.id}`)
+      await rolesApi.delete(deleteRole.id)
       toast.success('删除成功')
       setModalType(null)
       refresh()

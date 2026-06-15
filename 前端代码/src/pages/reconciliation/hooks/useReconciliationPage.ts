@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { toast } from 'sonner'
-import request from '@/api/request'
+import { reconciliationApi } from '@/api/reconciliation'
 import { usePagination } from '@/hooks/usePagination'
 import { useUrlParams } from '@/hooks/useUrlParams'
 
@@ -84,9 +84,58 @@ export type PeriodType = 'week' | 'month' | 'quarter' | 'year'
 export function useReconciliationPage() {
   const [activeTab, setActiveTab] = useState<TabType>('reconcile')
   const [period, setPeriod] = useState<PeriodType>('month')
-  const [startDate, setStartDate] = useState('2026-04-01')
-  const [endDate, setEndDate] = useState('2026-04-30')
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
   const [loading, setLoading] = useState(false)
+
+  // 根据 period 动态计算 startDate 和 endDate
+  useEffect(() => {
+    const now = new Date()
+    const year = now.getFullYear()
+    const month = now.getMonth()
+    const day = now.getDate()
+
+    let start: Date
+    let end: Date
+
+    switch (period) {
+      case 'week': {
+        // 本周（周一到周日）
+        const dayOfWeek = now.getDay()
+        start = new Date(now)
+        start.setDate(day - (dayOfWeek === 0 ? 6 : dayOfWeek - 1))
+        end = new Date(start)
+        end.setDate(start.getDate() + 6)
+        break
+      }
+      case 'month': {
+        // 本月
+        start = new Date(year, month, 1)
+        end = new Date(year, month + 1, 0)
+        break
+      }
+      case 'quarter': {
+        // 本季度
+        const quarter = Math.floor(month / 3)
+        start = new Date(year, quarter * 3, 1)
+        end = new Date(year, quarter * 3 + 3, 0)
+        break
+      }
+      case 'year': {
+        // 本年
+        start = new Date(year, 0, 1)
+        end = new Date(year, 11, 31)
+        break
+      }
+      default: {
+        start = new Date(year, month, 1)
+        end = new Date(year, month + 1, 0)
+      }
+    }
+
+    setStartDate(start.toISOString().split('T')[0])
+    setEndDate(end.toISOString().split('T')[0])
+  }, [period])
 
   const [summary, setSummary] = useState<SummaryData | null>(null)
   const [projects, setProjects] = useState<ProjectReconcile[]>([])
@@ -115,7 +164,7 @@ export function useReconciliationPage() {
 
   const fetchSummary = useCallback(async () => {
     try {
-      const res: any = await request.get('/reconciliation/summary', { params: dateParams })
+      const res = await reconciliationApi.getSummary(dateParams)
       setSummary(res)
     } catch (e) { console.error(e) }
   }, [dateParams])
@@ -123,7 +172,7 @@ export function useReconciliationPage() {
   const fetchProjects = useCallback(async () => {
     setLoading(true)
     try {
-      const res: any = await request.get('/reconciliation/projects', { params: dateParams })
+      const res = await reconciliationApi.getProjects(dateParams)
       setProjects(res?.list || [])
     } catch (e) { console.error(e) } finally { setLoading(false) }
   }, [dateParams])
@@ -131,38 +180,46 @@ export function useReconciliationPage() {
   const fetchMaterials = useCallback(async () => {
     setLoading(true)
     try {
-      const res: any = await request.get('/reconciliation/materials', { params: dateParams })
+      const res = await reconciliationApi.getMaterials(dateParams)
       setMaterials(res?.list || [])
     } catch (e) { console.error(e) } finally { setLoading(false) }
   }, [dateParams])
 
-  const { get, getNumber, setMultiple } = useUrlParams()
+  const { getNumber, setMultiple } = useUrlParams()
 
-  const casePagination = usePagination<LisCase>({
-    fetchFn: async ({ page, pageSize }) => {
+  const caseFetchFn = useCallback(
+    async ({ page, pageSize }: { page: number; pageSize: number }) => {
       if (activeTab !== 'case') return { list: [], pagination: { total: 0, page, pageSize } }
-      const res: any = await request.get('/reconciliation/cases', {
-        params: {
-          page,
-          pageSize,
-          search: caseSearch || undefined,
-          projectId: caseFilterProject || undefined,
-          status: caseFilterStatus || undefined,
-        },
+      const res = await reconciliationApi.getCases({
+        page,
+        pageSize,
+        ...(caseSearch && { search: caseSearch }),
+        ...(caseFilterProject && { projectId: caseFilterProject }),
+        ...(caseFilterStatus && { status: caseFilterStatus }),
       })
       return { list: res?.list || [], pagination: res?.pagination }
     },
+    [activeTab, caseSearch, caseFilterProject, caseFilterStatus]
+  )
+
+  const casePagination = usePagination<LisCase>({
+    fetchFn: caseFetchFn,
     initialPage: Math.max(1, getNumber('cpage', 1)),
     initialPageSize: Math.max(1, Math.min(100, getNumber('cpageSize', 20))),
     deps: [activeTab, caseSearch, caseFilterProject, caseFilterStatus],
   })
 
-  const logPagination = usePagination<ReconcileLog>({
-    fetchFn: async ({ page, pageSize }) => {
+  const logFetchFn = useCallback(
+    async ({ page, pageSize }: { page: number; pageSize: number }) => {
       if (activeTab !== 'log') return { list: [], pagination: { total: 0, page, pageSize } }
-      const res: any = await request.get('/reconciliation/logs', { params: { page, pageSize } })
+      const res = await reconciliationApi.getLogs({ page, pageSize })
       return { list: res?.list || [], pagination: res?.pagination }
     },
+    [activeTab]
+  )
+
+  const logPagination = usePagination<ReconcileLog>({
+    fetchFn: logFetchFn,
     initialPage: Math.max(1, getNumber('lpage', 1)),
     initialPageSize: Math.max(1, Math.min(100, getNumber('lpageSize', 20))),
     deps: [activeTab],
@@ -192,7 +249,7 @@ export function useReconciliationPage() {
       return
     }
     try {
-      const res: any = await request.get(`/reconciliation/projects/${projectId}/materials`, { params: dateParams })
+      const res = await reconciliationApi.getProjectMaterials(projectId, dateParams)
       setProjectMaterials(prev => ({ ...prev, [projectId]: res?.list || [] }))
       setExpandedProject(projectId)
     } catch (e) { toast.error('加载物料明细失败') }
@@ -206,7 +263,7 @@ export function useReconciliationPage() {
         return { caseNo: caseNo?.trim(), projectName: projectName?.trim(), operateTime: operateTime?.trim(), operator: operator?.trim() }
       }).filter(i => i.caseNo)
 
-      await request.post('/reconciliation/cases/import', { items })
+      await reconciliationApi.importCases({ items })
       toast.success(`成功导入 ${items.length} 条病例数据`)
       setImportModalOpen(false)
       setImportData('')
@@ -250,7 +307,7 @@ export function useReconciliationPage() {
       return
     }
     try {
-      await request.post('/reconciliation/logs', {
+      await reconciliationApi.createLog({
         type: 'bom_fix',
         targetId: fixTarget.materialId,
         targetName: fixTarget.materialName,
@@ -267,7 +324,7 @@ export function useReconciliationPage() {
       setFixTarget(null)
       setFixTargetProjectId(null)
       if (activeTab === 'reconcile') {
-        const res: any = await request.get(`/reconciliation/projects/${fixTargetProjectId}/materials`, { params: dateParams })
+        const res = await reconciliationApi.getProjectMaterials(fixTargetProjectId, dateParams)
         setProjectMaterials(prev => ({ ...prev, [fixTargetProjectId]: res?.list || [] }))
       }
       if (activeTab === 'material') fetchMaterials()
@@ -279,9 +336,9 @@ export function useReconciliationPage() {
   const handleEditCase = async () => {
     if (!editCaseTarget) return
     try {
-      await request.put(`/reconciliation/cases/${editCaseTarget.id}`, {
-        projectId: editCaseProjectId || undefined,
-        status: editCaseStatus || undefined,
+      await reconciliationApi.updateCase(editCaseTarget.id, {
+        ...(editCaseProjectId && { projectId: editCaseProjectId }),
+        ...(editCaseStatus && { status: editCaseStatus }),
       })
       toast.success('病例信息已更新')
       setEditCaseModalOpen(false)

@@ -40,6 +40,7 @@ describe('request', () => {
   })
 
   it('should create axios instance with correct config', () => {
+    expect(request).toBeDefined()
     expect(axios.create).toHaveBeenCalledWith(
       expect.objectContaining({
         timeout: 30000,

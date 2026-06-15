@@ -20,7 +20,7 @@ export function AlertDetailModal({ open, alert, onClose, onHandle, formatDate }:
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
       <div className="relative bg-white rounded-xl shadow-xl w-full max-w-lg overflow-hidden">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-          <h3 className="text-lg font-semibold text-gray-900">预警详情 - {alert.id}</h3>
+          <h3 className="text-lg font-semibold text-gray-900">预警详情 - {typeInfo.label}</h3>
           <button onClick={onClose} className="p-1 rounded-md hover:bg-gray-100 transition-colors">
             <X className="w-5 h-5 text-gray-500" />
           </button>

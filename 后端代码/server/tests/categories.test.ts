@@ -21,7 +21,7 @@ async function run() {
   }
 
   const adminToken = await login('admin', 'admin123')
-  const techToken = await login('jishuyuan1', 'CoreOne2026!')
+  const techToken = await login('zhangwei', 'CoreOne2026!')
 
   const catName = generateUnique('分类')
 

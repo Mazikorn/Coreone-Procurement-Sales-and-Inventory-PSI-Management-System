@@ -24,20 +24,20 @@ export default function Stocktaking() {
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white rounded-lg border border-blue-100 p-5 shadow-sm">
-          <div className="text-3xl font-semibold text-blue-600">{page.stats.inProgress}</div>
+        <div className="bg-white rounded-lg p-5 shadow-sm border border-gray-200 border-l-4 border-l-blue-500">
+          <div className="text-2xl font-semibold text-gray-900">{page.stats.inProgress}</div>
           <div className="mt-1 text-sm text-gray-500">进行中</div>
         </div>
-        <div className="bg-white rounded-lg border border-green-100 p-5 shadow-sm">
-          <div className="text-3xl font-semibold text-green-600">{page.stats.completed}</div>
+        <div className="bg-white rounded-lg p-5 shadow-sm border border-gray-200 border-l-4 border-l-green-500">
+          <div className="text-2xl font-semibold text-gray-900">{page.stats.completed}</div>
           <div className="mt-1 text-sm text-gray-500">已完成</div>
         </div>
-        <div className="bg-white rounded-lg border border-amber-100 p-5 shadow-sm">
-          <div className="text-3xl font-semibold text-amber-600">{page.stats.diffCount}</div>
+        <div className="bg-white rounded-lg p-5 shadow-sm border border-gray-200 border-l-4 border-l-amber-500">
+          <div className="text-2xl font-semibold text-gray-900">{page.stats.diffCount}</div>
           <div className="mt-1 text-sm text-gray-500">待处理差异</div>
         </div>
-        <div className="bg-white rounded-lg border border-blue-100 p-5 shadow-sm">
-          <div className="text-3xl font-semibold text-blue-600">{page.stats.accuracy}%</div>
+        <div className="bg-white rounded-lg p-5 shadow-sm border border-gray-200 border-l-4 border-l-blue-500">
+          <div className="text-2xl font-semibold text-gray-900">{page.stats.accuracy}%</div>
           <div className="mt-1 text-sm text-gray-500">账实相符率</div>
         </div>
       </div>
@@ -76,6 +76,7 @@ export default function Stocktaking() {
         onClose={() => page.setModalType(null)}
         onChange={page.setForm}
         onSetCreateStep={page.setCreateStep}
+        onSubmit={page.handleCreateSubmit}
       />
 
       {/* Detail Modal */}

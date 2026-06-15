@@ -1,10 +1,36 @@
 import { useState, useEffect, useMemo } from 'react'
-import request from '@/api/request'
-import type { ProjectCostReport, MaterialCostReport, SupplierCostReport } from '@/types'
+import { reportsApi } from '@/api/reports'
+import type { ProjectCostReport, MaterialCostReport, SupplierCostReport, FullCostReport } from '@/types'
 import { toast } from 'sonner'
 import { useUrlParams } from '@/hooks/useUrlParams'
 
-export type TabKey = 'project-cost' | 'material-cost' | 'public-cost' | 'supplier-cost'
+export type TabKey = 'project-cost' | 'project-group-cost' | 'material-cost' | 'public-cost' | 'supplier-cost' | 'full-cost'
+
+export interface GroupCostReport {
+  summary: {
+    totalCost: number
+    projectCount: number
+  }
+  projects: Array<{
+    projectId: string
+    projectName: string
+    totalCost: number
+    sampleCount: number
+    groups: Array<{
+      groupName: string
+      sampleCount: number
+      totalCost: number
+      ratio: string
+      materials: Array<{
+        materialId: string
+        materialName: string
+        quantity: number
+        totalCost: number
+        ratio: string
+      }>
+    }>
+  }>
+}
 
 const dateRanges: Record<string, [string, string]> = {
   '2024': ['2024-01-01', '2024-12-31'],
@@ -39,8 +65,10 @@ export interface PieDataItem {
 
 export function useCostAnalysisPage() {
   const [projectReport, setProjectReport] = useState<ProjectCostReport | null>(null)
+  const [groupCostReport, setGroupCostReport] = useState<GroupCostReport | null>(null)
   const [materialReport, setMaterialReport] = useState<MaterialCostReport | null>(null)
   const [supplierReport, setSupplierReport] = useState<SupplierCostReport | null>(null)
+  const [fullCostReport, setFullCostReport] = useState<FullCostReport | null>(null)
   const [trendReport, setTrendReport] = useState<TrendReport | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -57,21 +85,30 @@ export function useCostAnalysisPage() {
   const [pageSize, setPageSize] = useState(Math.max(1, Math.min(100, getNumber('pageSize', 10))))
   const [exportModalOpen, setExportModalOpen] = useState(false)
   const [detailModalOpen, setDetailModalOpen] = useState(false)
-  const [selectedProject, setSelectedProject] = useState<ProjectCostReport['projects'][number] | null>(null)
+  const [selectedProject, setSelectedProject] = useState<ProjectCostReport['projects'][number] | FullCostReport['projects'][number] | null>(null)
 
   const fetchData = async () => {
     setLoading(true)
     try {
-      const [pRes, mRes, sRes, tRes]: any = await Promise.all([
-        request.get('/reports/cost-by-project'),
-        request.get('/reports/cost-by-material'),
-        request.get('/reports/cost-by-supplier'),
-        request.get('/reports/cost-trend'),
+      const dateParams = {
+        ...(startDate && { startDate }),
+        ...(endDate && { endDate }),
+      }
+
+      const [pRes, gRes, mRes, sRes, tRes, fRes] = await Promise.all([
+        reportsApi.getCostByProject(dateParams),
+        reportsApi.getCostByProjectGroup(dateParams),
+        reportsApi.getCostByMaterial(dateParams),
+        reportsApi.getCostBySupplier(dateParams),
+        reportsApi.getCostTrend(dateParams),
+        reportsApi.getFullCostByProject(dateParams),
       ])
       setProjectReport(pRes)
+      setGroupCostReport(gRes)
       setMaterialReport(mRes)
       setSupplierReport(sRes)
       setTrendReport(tRes)
+      setFullCostReport(fRes)
     } catch (e) {
       console.error(e)
     } finally {
@@ -82,6 +119,10 @@ export function useCostAnalysisPage() {
   useEffect(() => {
     fetchData()
   }, [])
+
+  useEffect(() => {
+    fetchData()
+  }, [startDate, endDate])
 
   useEffect(() => {
     setPage(1)
@@ -114,7 +155,7 @@ export function useCostAnalysisPage() {
     }, 1000)
   }
 
-  const openDetailModal = (project: ProjectCostReport['projects'][number]) => {
+  const openDetailModal = (project: ProjectCostReport['projects'][number] | FullCostReport['projects'][number]) => {
     setSelectedProject(project)
     setDetailModalOpen(true)
   }
@@ -154,6 +195,33 @@ export function useCostAnalysisPage() {
     return filteredMaterials.slice(start, start + pageSize)
   }, [filteredMaterials, page, pageSize])
 
+  const filteredFullCostProjects = useMemo(() => {
+    let list = fullCostReport?.projects || []
+    if (searchText) {
+      list = list.filter(p => p.name.includes(searchText))
+    }
+    return list
+  }, [fullCostReport, searchText])
+
+  const pagedFullCostProjects = useMemo(() => {
+    const start = (page - 1) * pageSize
+    return filteredFullCostProjects.slice(start, start + pageSize)
+  }, [filteredFullCostProjects, page, pageSize])
+
+  const fullCostStats = useMemo(() => {
+    const s = fullCostReport?.summary
+    return {
+      totalCost: s?.totalCost || 0,
+      totalSamples: s?.totalSamples || 0,
+      avgUnitCost: s?.avgUnitCost || 0,
+      materialCost: s?.materialCost || 0,
+      laborCost: s?.laborCost || 0,
+      equipmentCost: s?.equipmentCost || 0,
+      qcCost: s?.qcCost || 0,
+      indirectCost: s?.indirectCost || 0,
+    }
+  }, [fullCostReport])
+
   const realSuppliers = supplierReport?.suppliers || []
   const totalSupplierAmount = realSuppliers.reduce((s: number, i: any) => s + (i.amount || 0), 0)
 
@@ -170,8 +238,10 @@ export function useCostAnalysisPage() {
 
   return {
     projectReport,
+    groupCostReport,
     materialReport,
     supplierReport,
+    fullCostReport,
     trendReport,
     loading,
     activeTab,
@@ -204,6 +274,9 @@ export function useCostAnalysisPage() {
     filteredMaterials,
     pagedProjects,
     pagedMaterials,
+    filteredFullCostProjects,
+    pagedFullCostProjects,
+    fullCostStats,
     pieData,
     realSuppliers,
     totalSupplierAmount,

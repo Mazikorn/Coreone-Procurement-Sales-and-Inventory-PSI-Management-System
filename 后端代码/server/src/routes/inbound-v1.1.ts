@@ -5,6 +5,8 @@ import { success, successList, error } from '../utils/response.js'
 
 const router = Router()
 
+import { checkStockAlerts } from '../utils/alertChecker.js'
+
 // 写入权限检查：仅 admin 和 warehouse_manager 可操作写入
 function requireWriteAccess(req: any, res: any, next: any) {
   const role = req.user?.role
@@ -15,11 +17,10 @@ function requireWriteAccess(req: any, res: any, next: any) {
   error(res, 'Forbidden: insufficient permissions', 'FORBIDDEN', 403)
 }
 
+import { generateNo } from '../utils/generateNo.js'
+
 function generateInboundNo(): string {
-  const date = new Date().toISOString().slice(0, 10).replace(/-/g, '')
-  const timestamp = Date.now().toString().slice(-6)
-  const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0')
-  return `IB-${date}-${timestamp}-${random}`
+  return generateNo('IB')
 }
 
 router.get('/', (req, res) => {
@@ -76,6 +77,46 @@ router.get('/stats', (req, res) => {
     const supplierCount = (db.prepare("SELECT COUNT(DISTINCT supplier_id) as c FROM inbound_records WHERE is_deleted = 0 AND status = 'completed' AND supplier_id IS NOT NULL").get() as any)?.c || 0
     const pendingOrders = (db.prepare("SELECT COUNT(*) as c FROM purchase_orders WHERE is_deleted = 0 AND status IN ('pending','partial')").get() as any)?.c || 0
     success(res, { total, completed, cancelled, amount, supplierCount, pendingOrders })
+  } catch (err: any) { error(res, err.message) }
+})
+
+// 获取入库记录详情
+router.get('/:id', (req, res) => {
+  try {
+    const db = getDatabase()
+    const record = db.prepare(`
+      SELECT r.*, m.name as material_name, s.name as supplier_name, l.name as location_name
+      FROM inbound_records r
+      LEFT JOIN materials m ON r.material_id = m.id AND m.is_deleted = 0
+      LEFT JOIN suppliers s ON r.supplier_id = s.id AND s.is_deleted = 0
+      LEFT JOIN locations l ON r.location_id = l.id AND l.is_deleted = 0
+      WHERE r.id = ? AND r.is_deleted = 0
+    `).get(req.params.id) as any
+    if (!record) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
+    success(res, {
+      id: record.id,
+      inboundNo: record.inbound_no,
+      type: record.type,
+      materialId: record.material_id,
+      materialName: record.material_name,
+      supplierId: record.supplier_id,
+      supplierName: record.supplier_name,
+      locationId: record.location_id,
+      locationName: record.location_name,
+      batchNo: record.batch_no,
+      quantity: record.quantity,
+      price: record.price,
+      amount: record.amount,
+      productionDate: record.production_date,
+      expiryDate: record.expiry_date,
+      status: record.status,
+      remark: record.remark,
+      purchaseOrderId: record.purchase_order_id,
+      purchaseOrderNo: record.purchase_order_no,
+      operator: record.operator,
+      createdAt: record.created_at,
+      updatedAt: record.updated_at,
+    })
   } catch (err: any) { error(res, err.message) }
 })
 
@@ -141,13 +182,13 @@ router.post('/', requireWriteAccess, (req, res) => {
   try {
     const { type, materialId, batchNo, quantity, price, supplierId, locationId, purchaseOrderId, productionDate, expiryDate, remark } = req.body
     if (!type || !materialId || !quantity || !locationId) {
-      error(res, 'Missing required fields', 'INVALID_PARAMETER', 400); return
+      error(res, '缺少必填字段', 'INVALID_PARAMETER', 400); return
     }
 
     const db = getDatabase()
     const inboundNo = generateInboundNo()
     const id = uuidv4()
-    const operator = req.body.operator || 'system'
+    const operator = (req as any).user?.username || 'system'
 
     const material = db.prepare('SELECT unit FROM materials WHERE id = ? AND is_deleted = 0').get(materialId) as any
     if (!material) { error(res, 'Material not found', 'NOT_FOUND', 404); return }
@@ -171,10 +212,18 @@ router.post('/', requireWriteAccess, (req, res) => {
       `).run(id, inboundNo, type, materialId, batchNo || null, quantity, unit, price || 0, amount, supplierId || null, locationId, productionDate || null, expiryDate || null, operator, remark || null, purchaseOrderId || null, purchaseOrderNo)
 
       if (batchNo) {
-        const existingBatch = db.prepare('SELECT * FROM batches WHERE material_id = ? AND batch_no = ? AND status = 1').get(materialId, batchNo) as any
+        // 先查询所有状态的批次（UNIQUE 约束是 (material_id, batch_no)，不区分 status）
+        const existingBatch = db.prepare('SELECT * FROM batches WHERE material_id = ? AND batch_no = ?').get(materialId, batchNo) as any
         if (existingBatch) {
-          db.prepare('UPDATE batches SET quantity = quantity + ?, remaining = remaining + ? WHERE id = ?')
-            .run(quantity, quantity, existingBatch.id)
+          if (existingBatch.status === 0) {
+            // 恢复已停用批次
+            db.prepare('UPDATE batches SET quantity = quantity + ?, remaining = remaining + ?, status = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+              .run(quantity, quantity, existingBatch.id)
+          } else {
+            // 更新已有批次
+            db.prepare('UPDATE batches SET quantity = quantity + ?, remaining = remaining + ? WHERE id = ?')
+              .run(quantity, quantity, existingBatch.id)
+          }
         } else {
           const batchId = uuidv4()
           db.prepare(`
@@ -219,7 +268,10 @@ router.post('/', requireWriteAccess, (req, res) => {
       throw err
     }
 
-    success(res, { id, inboundNo, type, materialId, quantity, status: 'completed', purchaseOrderId, purchaseOrderNo }, 'Inbound created', 201)
+    // 自动检查库存预警（入库后库存可能恢复）
+    checkStockAlerts(db, [materialId])
+
+    success(res, { id, inboundNo, type, materialId, quantity, status: 'completed', purchaseOrderId, purchaseOrderNo, createdAt: new Date().toISOString() }, 'Inbound created', 201)
   } catch (err: any) { error(res, err.message) }
 })
 
@@ -229,7 +281,7 @@ router.put('/:id', requireWriteAccess, (req, res) => {
     const { batchNo, quantity, price, supplierId, locationId, productionDate, expiryDate, remark, status } = req.body
     const db = getDatabase()
     const record = db.prepare('SELECT * FROM inbound_records WHERE id = ? AND is_deleted = 0').get(id) as any
-    if (!record) { error(res, 'Not found', 'NOT_FOUND', 404); return }
+    if (!record) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
 
     const fields: string[] = []; const params: any[] = []
     if (batchNo !== undefined) { fields.push('batch_no = ?'); params.push(batchNo || null) }
@@ -241,6 +293,14 @@ router.put('/:id', requireWriteAccess, (req, res) => {
     if (expiryDate !== undefined) { fields.push('expiry_date = ?'); params.push(expiryDate || null) }
     if (remark !== undefined) { fields.push('remark = ?'); params.push(remark || '') }
     if (status !== undefined) { fields.push('status = ?'); params.push(status) }
+
+    // 当 price 或 quantity 变更时，重新计算 amount
+    if (price !== undefined || quantity !== undefined) {
+      const newPrice = price !== undefined ? (Number(price) || 0) : Number(record.price)
+      const newAmount = quantity !== undefined ? (Number(quantity) || 0) : Number(record.quantity)
+      fields.push('amount = ?')
+      params.push(newPrice * newAmount)
+    }
 
     const oldQty = Number(record.quantity)
     const newQty = quantity !== undefined ? Number(quantity) : oldQty
@@ -336,6 +396,16 @@ router.put('/:id', requireWriteAccess, (req, res) => {
         const qtyDiff = newQty - oldQty
         const batchChanged = newBatch !== oldBatch
 
+        // 检查减少数量时库存是否会变负
+        if (qtyDiff < 0) {
+          const currentStock = (db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(record.material_id) as any)?.stock || 0
+          if (currentStock + qtyDiff < 0) {
+            db.exec('ROLLBACK')
+            error(res, `库存不足，当前库存 ${currentStock}，无法减少 ${Math.abs(qtyDiff)}`, 'STOCK_INSUFFICIENT', 422)
+            return
+          }
+        }
+
         if (batchChanged) {
           if (oldBatch) {
             db.prepare('UPDATE batches SET quantity = quantity - ?, remaining = remaining - ? WHERE material_id = ? AND batch_no = ?')
@@ -389,7 +459,7 @@ router.put('/:id', requireWriteAccess, (req, res) => {
       db.prepare(`
         INSERT INTO stock_logs (id, type, material_id, quantity, before_stock, after_stock, related_id, related_type, operator, remark)
         VALUES (?, ?, ?, ?, ?, ?, ?, 'inbound_update', ?, ?)
-      `).run(logId, logType, record.material_id, logQty, currentStock - logQty, currentStock, id, req.body.operator || 'system', logRemark)
+      `).run(logId, logType, record.material_id, logQty, currentStock - logQty, currentStock, id, (req as any).user?.username || 'system', logRemark)
 
       db.exec('COMMIT')
 
@@ -476,6 +546,10 @@ router.delete('/:id', requireWriteAccess, (req, res) => {
               .run(record.material_id, record.batch_no)
           }
         }
+
+        // 6. 扣减总库存
+        db.prepare('UPDATE inventory SET stock = stock - ?, update_time = CURRENT_TIMESTAMP WHERE material_id = ?')
+          .run(record.quantity, record.material_id)
       }
 
       // 6. 软删除入库记录
@@ -489,7 +563,7 @@ router.delete('/:id', requireWriteAccess, (req, res) => {
       db.prepare(`
         INSERT INTO stock_logs (id, type, material_id, quantity, before_stock, after_stock, related_id, related_type, operator, remark)
         VALUES (?, 'delete', ?, ?, ?, ?, ?, 'inbound_delete', ?, '删除入库记录')
-      `).run(logId, record.material_id, record.quantity, totalInboundAfter + record.quantity, totalInboundAfter, id, req.body.operator || 'system')
+      `).run(logId, record.material_id, record.quantity, totalInboundAfter + record.quantity, totalInboundAfter, id, (req as any).user?.username || 'system')
 
       db.exec('COMMIT')
     } catch (err) {
@@ -515,12 +589,12 @@ router.post('/:id/cancel', requireWriteAccess, (req, res) => {
 
     db.exec('BEGIN IMMEDIATE')
     try {
-      // 检查出库记录
+      // 检查出库记录（处理 batch_no 为 NULL 的情况）
       const outboundTotal = (db.prepare(`
         SELECT COALESCE(SUM(oi.quantity),0) as total FROM outbound_items oi
         JOIN outbound_records o ON oi.outbound_id = o.id
-        WHERE oi.material_id = ? AND oi.batch_no = ? AND o.is_deleted = 0
-      `).get(record.material_id, record.batch_no) as any)?.total || 0
+        WHERE oi.material_id = ? AND (oi.batch_no = ? OR (oi.batch_no IS NULL AND ? IS NULL)) AND o.is_deleted = 0
+      `).get(record.material_id, record.batch_no, record.batch_no) as any)?.total || 0
 
       if (outboundTotal > 0) {
         db.exec('ROLLBACK')
@@ -528,8 +602,8 @@ router.post('/:id/cancel', requireWriteAccess, (req, res) => {
         return
       }
 
-      const inUse = db.prepare("SELECT 1 FROM batch_usage_tracking WHERE material_id = ? AND batch = ? AND status = 'in-use' LIMIT 1")
-        .get(record.material_id, record.batch_no)
+      const inUse = db.prepare("SELECT 1 FROM batch_usage_tracking WHERE material_id = ? AND (batch = ? OR (batch IS NULL AND ? IS NULL)) AND status = 'in-use' LIMIT 1")
+        .get(record.material_id, record.batch_no, record.batch_no)
       if (inUse) {
         db.exec('ROLLBACK')
         error(res, '该批次库存正在使用中，不可取消', 'BUSINESS_RULE', 400)
@@ -538,8 +612,8 @@ router.post('/:id/cancel', requireWriteAccess, (req, res) => {
 
       const otherInbound = (db.prepare(`
         SELECT COALESCE(SUM(quantity),0) as total FROM inbound_records
-        WHERE material_id = ? AND batch_no = ? AND status = 'completed' AND is_deleted = 0 AND id != ?
-      `).get(record.material_id, record.batch_no, id) as any)?.total || 0
+        WHERE material_id = ? AND (batch_no = ? OR (batch_no IS NULL AND ? IS NULL)) AND status = 'completed' AND is_deleted = 0 AND id != ?
+      `).get(record.material_id, record.batch_no, record.batch_no, id) as any)?.total || 0
       if (otherInbound < outboundTotal) {
         db.exec('ROLLBACK')
         error(res, `取消后库存将变为负数，不可取消`, 'BUSINESS_RULE', 400)
@@ -578,7 +652,7 @@ router.post('/:id/cancel', requireWriteAccess, (req, res) => {
       db.prepare(`
         INSERT INTO stock_logs (id, type, material_id, quantity, before_stock, after_stock, related_id, related_type, operator, remark)
         VALUES (?, 'cancel', ?, ?, ?, ?, ?, 'inbound_cancel', ?, '取消入库记录')
-      `).run(logId, record.material_id, -record.quantity, currentStock + record.quantity, currentStock, id, req.body.operator || 'system')
+      `).run(logId, record.material_id, -record.quantity, currentStock + record.quantity, currentStock, id, (req as any).user?.username || 'system')
 
       db.exec('COMMIT')
       success(res, null, '取消成功，库存已同步扣减')
@@ -586,7 +660,15 @@ router.post('/:id/cancel', requireWriteAccess, (req, res) => {
       db.exec('ROLLBACK')
       throw err
     }
-  } catch (err: any) { error(res, err.message) }
+  } catch (err: any) {
+    if (err.code === 'SQLITE_CONSTRAINT') {
+      error(res, '数据约束冲突', 'RESOURCE_CONFLICT', 409)
+    } else if (err.code === 'SQLITE_BUSY') {
+      error(res, '数据库繁忙，请稍后重试', 'SERVICE_UNAVAILABLE', 503)
+    } else {
+      error(res, err.message)
+    }
+  }
 })
 
 export default router

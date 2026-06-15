@@ -2,6 +2,7 @@ import { X, Download, Printer } from 'lucide-react'
 import { Pagination } from '@/components/ui/Pagination'
 import type { OutboundRecord } from '@/types'
 import { formatDate } from '@/lib/utils'
+import { useNavigate } from 'react-router-dom'
 
 const statusConfig: Record<string, { label: string; bg: string; text: string }> = {
   completed: { label: '已完成', bg: 'bg-green-50', text: 'text-green-600' },
@@ -58,6 +59,7 @@ export default function OutboundTable({
   onBatchExport,
   onBatchPrint,
 }: OutboundTableProps) {
+  const navigate = useNavigate()
   return (
     <>
       {/* Batch Actions Bar */}
@@ -113,6 +115,9 @@ export default function OutboundTable({
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">领用项目</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">领用人</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">出库时间</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ABC总成本</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">收费金额</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">利润</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状态</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-[140px]">操作</th>
             </tr>
@@ -120,16 +125,17 @@ export default function OutboundTable({
           <tbody className="divide-y divide-gray-100">
             {loading ? (
               <tr>
-                <td colSpan={11} className="px-4 py-8 text-center text-gray-400">加载中...</td>
+                <td colSpan={14} className="px-4 py-8 text-center text-gray-400">加载中...</td>
               </tr>
             ) : data.length === 0 ? (
               <tr>
-                <td colSpan={11} className="px-4 py-8 text-center text-gray-400">暂无数据</td>
+                <td colSpan={14} className="px-4 py-8 text-center text-gray-400">暂无数据</td>
               </tr>
             ) : (
               data.map(row => {
                 const firstItem = row.items?.[0]
                 const cfg = statusConfig[row.status] || statusConfig.completed
+                const projectName = row.projectName || ''
                 return (
                   <tr
                     key={row.id}
@@ -147,7 +153,12 @@ export default function OutboundTable({
                     </td>
                     <td className="px-4 py-3 font-mono text-gray-600">{row.outboundNo}</td>
                     <td className="px-4 py-3">
-                      <strong className="text-gray-900">{firstItem?.materialName || '-'}</strong>
+                      <strong
+                        className="text-gray-900 hover:text-blue-600 cursor-pointer transition-colors"
+                        onClick={(e) => { e.stopPropagation(); navigate(`/materials?keyword=${encodeURIComponent(firstItem?.materialName || '')}`) }}
+                      >
+                        {firstItem?.materialName || '-'}
+                      </strong>
                       {(row.items?.length || 0) > 1 && (
                         <span className="text-xs text-gray-400 ml-1">等{row.items?.length}项</span>
                       )}
@@ -159,11 +170,35 @@ export default function OutboundTable({
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      {row.items?.reduce((sum, i) => sum + i.quantity, 0) || 0} {firstItem?.unit || '件'}
+                      {Number((row.items?.reduce((sum, i) => sum + i.quantity, 0) || 0).toFixed(2))} {firstItem?.unit || '件'}
                     </td>
-                    <td className="px-4 py-3 text-gray-700">{row.projectName || '-'}</td>
+                    <td className="px-4 py-3">
+                      {projectName ? (
+                        <span
+                          className="text-gray-700 hover:text-blue-600 cursor-pointer transition-colors"
+                          onClick={(e) => { e.stopPropagation(); navigate(`/projects?keyword=${encodeURIComponent(projectName)}`) }}
+                        >
+                          {projectName}
+                        </span>
+                      ) : (
+                        <span className="text-gray-400">-</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-gray-700">{row.operator}</td>
                     <td className="px-4 py-3 text-gray-500">{formatDate(row.createdAt)}</td>
+                    <td className="px-4 py-3 text-gray-900">
+                      {row.abcTotalCost ? `¥${row.abcTotalCost.toFixed(2)}` : '-'}
+                    </td>
+                    <td className="px-4 py-3 text-gray-900">
+                      {row.feeAmount ? `¥${row.feeAmount.toFixed(2)}` : '-'}
+                    </td>
+                    <td className="px-4 py-3">
+                      {row.profit !== undefined && row.profit !== 0 ? (
+                        <span className={row.profit > 0 ? 'text-green-600 font-medium' : 'text-red-600 font-medium'}>
+                          {row.profit > 0 ? '+' : ''}{row.profit.toFixed(2)}
+                        </span>
+                      ) : '-'}
+                    </td>
                     <td className="px-4 py-3">
                       <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${cfg.bg} ${cfg.text}`}>
                         {cfg.label}

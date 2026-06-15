@@ -1,30 +1,52 @@
-import { ChevronRight } from 'lucide-react'
+import {
+  ArrowDownToLine,
+  TrendingUp,
+  Package,
+  ShoppingCart,
+  BarChart3,
+  ClipboardCheck,
+  Bell,
+  FileText,
+  Settings,
+  type LucideIcon,
+} from 'lucide-react'
 
-interface Props {
+const iconMap: Record<string, LucideIcon> = {
+  ArrowDownToLine,
+  TrendingUp,
+  Package,
+  ShoppingCart,
+  BarChart3,
+  ClipboardCheck,
+  Bell,
+  FileText,
+  Settings,
+}
+
+interface QuickActionProps {
   label: string
-  desc: string
-  icon: React.ElementType
-  colorClass: string
-  bgClass: string
+  desc?: string
+  icon: string
+  colorClass?: string
+  bgClass?: string
   onClick?: () => void
 }
 
-export function QuickAction({ label, desc, icon: Icon, colorClass, bgClass, onClick }: Props) {
+export function QuickAction({ label, desc, icon, colorClass, bgClass, onClick }: QuickActionProps) {
+  const IconComponent = iconMap[icon] || Package
+
   return (
     <button
       onClick={onClick}
-      className="flex items-center gap-4 w-full text-left p-4 rounded-lg border border-gray-200 bg-white shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5 hover:border-blue-500 group"
+      className="flex items-center gap-4 p-4 bg-white rounded-lg border border-gray-200 shadow-sm hover:shadow-md hover:border-gray-300 transition-all text-left group"
     >
-      <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${bgClass}`}>
-        <Icon className={`w-5 h-5 ${colorClass}`} />
+      <div className={`flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center ${bgClass || 'bg-blue-50'} group-hover:scale-105 transition-transform`}>
+        <IconComponent className={`w-5 h-5 ${colorClass || 'text-blue-500'}`} />
       </div>
-      <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium text-gray-900 group-hover:text-blue-500 transition-colors">
-          {label}
-        </p>
-        <p className="text-xs text-gray-500 mt-0.5">{desc}</p>
+      <div className="min-w-0">
+        <p className="text-sm font-medium text-gray-900">{label}</p>
+        {desc && <p className="text-xs text-gray-500 mt-0.5 truncate">{desc}</p>}
       </div>
-      <ChevronRight className="w-4 h-4 text-gray-300 group-hover:text-blue-500 transition-colors flex-shrink-0" />
     </button>
   )
 }

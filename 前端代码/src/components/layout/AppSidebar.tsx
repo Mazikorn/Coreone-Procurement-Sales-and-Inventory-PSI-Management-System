@@ -11,10 +11,12 @@ import {
   FlaskConical,
   ClipboardList,
   BarChart3,
+  Clock,
   FolderTree,
   Boxes,
   Bell,
   Activity,
+  Wrench,
   Truck,
   MapPin,
   Users,
@@ -29,6 +31,12 @@ import {
   Trash2,
   ArrowRightLeft,
   CornerUpLeft,
+  TrendingUp,
+  Layers,
+  Settings,
+  Receipt,
+  PieChart,
+  LineChart,
 } from 'lucide-react'
 
 interface MenuItem {
@@ -37,32 +45,72 @@ interface MenuItem {
   icon: React.ElementType
 }
 
-const ALL_MAIN_MENU: MenuItem[] = [
-  { label: '仪表盘', path: '/', icon: LayoutDashboard },
-  { label: '库存列表', path: '/inventory', icon: Package },
-  { label: '入库记录', path: '/inbound', icon: ArrowDownToLine },
-  { label: '出库记录', path: '/outbound', icon: ArrowUpFromLine },
-  { label: '退库管理', path: '/returns', icon: Undo2 },
-  { label: '退货给供应商', path: '/supplier-returns', icon: CornerUpLeft },
-  { label: '报废管理', path: '/scraps', icon: Trash2 },
-  { label: '调拨管理', path: '/transfers', icon: ArrowRightLeft },
-  { label: '库存盘点', path: '/stocktaking', icon: ClipboardCheck },
-  { label: '检测项目', path: '/projects', icon: FlaskConical },
-  { label: 'BOM清单', path: '/bom', icon: ClipboardList },
-  { label: '消耗对账', path: '/reconciliation', icon: Activity },
-  { label: '物料成本分析', path: '/cost-analysis', icon: BarChart3 },
-  { label: '物料分类', path: '/categories', icon: FolderTree },
-  { label: '耗材管理', path: '/materials', icon: Boxes },
-  { label: '预警中心', path: '/alerts', icon: Bell },
-]
+interface MenuGroup {
+  title: string
+  items: MenuItem[]
+}
 
-const ALL_SYSTEM_MENU: MenuItem[] = [
-  { label: '采购订单', path: '/purchase-orders', icon: ShoppingCart },
-  { label: '供应商管理', path: '/suppliers', icon: Truck },
-  { label: '库位管理', path: '/locations', icon: MapPin },
-  { label: '用户管理', path: '/users', icon: Users },
-  { label: '角色权限', path: '/roles', icon: Shield },
-  { label: '操作日志', path: '/logs', icon: FileText },
+const ALL_MENU_GROUPS: MenuGroup[] = [
+  {
+    title: '概览',
+    items: [
+      { label: '仪表盘', path: '/', icon: LayoutDashboard },
+      { label: '预警中心', path: '/alerts', icon: Bell },
+    ],
+  },
+  {
+    title: '库存作业',
+    items: [
+      { label: '入库管理', path: '/inbound', icon: ArrowDownToLine },
+      { label: '库存列表', path: '/inventory', icon: Package },
+      { label: '出库管理', path: '/outbound', icon: ArrowUpFromLine },
+      { label: '退库管理', path: '/returns', icon: Undo2 },
+      { label: '退货给供应商', path: '/supplier-returns', icon: CornerUpLeft },
+      { label: '调拨管理', path: '/transfers', icon: ArrowRightLeft },
+      { label: '报废管理', path: '/scraps', icon: Trash2 },
+      { label: '库存盘点', path: '/stocktaking', icon: ClipboardCheck },
+    ],
+  },
+  {
+    title: '成本管理',
+    items: [
+      { label: '成本看板', path: '/abc/dashboard', icon: BarChart3 },
+      { label: '切片成本', path: '/abc/slide-cost', icon: Layers },
+      { label: '盈利分析', path: '/abc/profitability', icon: TrendingUp },
+      { label: '收费对照', path: '/abc/fee-comparison', icon: Receipt },
+      { label: '成本趋势', path: '/abc/trend', icon: LineChart },
+      { label: '消耗对账', path: '/reconciliation', icon: Activity },
+      { label: '物料成本分析', path: '/cost-analysis', icon: PieChart },
+      { label: 'ABC配置', path: '/abc/activity-centers', icon: Settings },
+    ],
+  },
+  {
+    title: '采购管理',
+    items: [
+      { label: '采购订单', path: '/purchase-orders', icon: ShoppingCart },
+      { label: '供应商管理', path: '/suppliers', icon: Truck },
+    ],
+  },
+  {
+    title: '基础数据',
+    items: [
+      { label: '物料管理', path: '/materials', icon: Boxes },
+      { label: '物料分类', path: '/categories', icon: FolderTree },
+      { label: '库位管理', path: '/locations', icon: MapPin },
+      { label: '检测项目', path: '/projects', icon: FlaskConical },
+      { label: 'BOM清单', path: '/bom', icon: ClipboardList },
+      { label: '设备管理', path: '/equipment', icon: Wrench },
+      { label: '标准工时库', path: '/labor-times', icon: Clock },
+    ],
+  },
+  {
+    title: '系统设置',
+    items: [
+      { label: '用户管理', path: '/users', icon: Users },
+      { label: '角色权限', path: '/roles', icon: Shield },
+      { label: '操作日志', path: '/logs', icon: FileText },
+    ],
+  },
 ]
 
 function getRoleLabel(role: string | null): string {
@@ -84,17 +132,18 @@ export default function AppSidebar() {
 
   const role = useMemo(() => getUserRole(), [location.pathname])
   const allowedPaths = useMemo(() => {
-    if (!role) return ALL_MAIN_MENU.map(m => m.path).concat(ALL_SYSTEM_MENU.map(m => m.path))
+    if (!role) return ALL_MENU_GROUPS.flatMap(g => g.items.map(m => m.path))
     return ROLE_MENU_MAP[role] || ROLE_MENU_MAP.technician
   }, [role])
 
-  const mainMenuItems = useMemo(() =>
-    ALL_MAIN_MENU.filter(item => allowedPaths.includes(item.path)),
-  [allowedPaths])
-
-  const systemMenuItems = useMemo(() =>
-    ALL_SYSTEM_MENU.filter(item => allowedPaths.includes(item.path)),
-  [allowedPaths])
+  const visibleGroups = useMemo(() => {
+    return ALL_MENU_GROUPS
+      .map(group => ({
+        ...group,
+        items: group.items.filter(item => allowedPaths.includes(item.path)),
+      }))
+      .filter(group => group.items.length > 0)
+  }, [allowedPaths])
 
   // Close mobile sidebar on route change
   useEffect(() => {
@@ -187,14 +236,18 @@ export default function AppSidebar() {
 
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto py-3 space-y-0.5">
-          {mainMenuItems.map(item => (
-            <NavItem key={item.path} item={item} />
-          ))}
-
-          {systemMenuItems.length > 0 && <NavDivider />}
-
-          {systemMenuItems.map(item => (
-            <NavItem key={item.path} item={item} />
+          {visibleGroups.map((group, groupIndex) => (
+            <div key={group.title}>
+              {!collapsed && (
+                <div className="px-4 pt-3 pb-1 text-xs font-medium text-gray-400 uppercase tracking-wider">
+                  {group.title}
+                </div>
+              )}
+              {group.items.map(item => (
+                <NavItem key={item.path} item={item} />
+              ))}
+              {groupIndex < visibleGroups.length - 1 && <NavDivider />}
+            </div>
           ))}
         </nav>
 

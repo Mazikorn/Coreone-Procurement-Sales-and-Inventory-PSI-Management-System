@@ -23,7 +23,7 @@ export interface FormData {
 export type QuickFilter = 'all' | 'active' | 'inactive' | 'low-stock'
 
 export function useMaterialsPage() {
-  const { get, getNumber, setMultiple } = useUrlParams()
+  const { getNumber, setMultiple } = useUrlParams()
 
   const [keyword, setKeyword] = useState('')
   const [categoryId, setCategoryId] = useState('')
@@ -35,11 +35,8 @@ export function useMaterialsPage() {
     ? getNumber('pageSize', 20)
     : 20
 
-  const {
-    data, loading, page, pageSize, total,
-    setPage, setPageSize, refresh,
-  } = usePagination<Material>({
-    fetchFn: async ({ page, pageSize }) => {
+  const fetchFn = useCallback(
+    async ({ page, pageSize }: { page: number; pageSize: number }) => {
       const params: any = { page, pageSize }
       if (keyword) params.keyword = keyword
       if (categoryId) params.categoryId = categoryId
@@ -54,6 +51,14 @@ export function useMaterialsPage() {
       }
       return { list, pagination: res.pagination }
     },
+    [keyword, categoryId, supplierId, quickFilter]
+  )
+
+  const {
+    data, loading, page, pageSize, total,
+    setPage, setPageSize, refresh,
+  } = usePagination<Material>({
+    fetchFn,
     initialPage: urlPage,
     initialPageSize: urlPageSize,
     deps: [keyword, categoryId, supplierId, quickFilter],
@@ -72,6 +77,7 @@ export function useMaterialsPage() {
 
   const [categories, setCategories] = useState<Category[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
+  const [allMaterials, setAllMaterials] = useState<Material[]>([])
 
   const [modalOpen, setModalOpen] = useState(false)
   const [detailModalOpen, setDetailModalOpen] = useState(false)
@@ -108,12 +114,14 @@ export function useMaterialsPage() {
 
   const fetchRefs = async () => {
     try {
-      const [catRes, supRes]: any = await Promise.all([
+      const [catRes, supRes, matRes]: any = await Promise.all([
         categoryApi.getList({ page: 1, pageSize: 999 }),
         supplierApi.getList({ page: 1, pageSize: 999 }),
+        materialApi.getList({ page: 1, pageSize: 99999 }),
       ])
       setCategories(catRes?.list || [])
       setSuppliers(supRes?.list || [])
+      setAllMaterials(matRes?.list || [])
     } catch (e) { console.error(e) }
   }
 
@@ -127,10 +135,10 @@ export function useMaterialsPage() {
   }, [categories, modalOpen])
 
   const stats = {
-    total,
-    active: data.filter(m => m.status === 'active').length,
-    inactive: data.filter(m => m.status === 'inactive').length,
-    lowStock: data.filter(m => m.stock <= m.minStock).length,
+    total: allMaterials.length,
+    active: allMaterials.filter(m => m.status === 'active').length,
+    inactive: allMaterials.filter(m => m.status === 'inactive').length,
+    lowStock: allMaterials.filter(m => m.stock <= m.minStock).length,
   }
 
   const autoFillCode = useCallback(async (categoryId: string) => {
@@ -190,6 +198,7 @@ export function useMaterialsPage() {
       }
       setModalOpen(false)
       refresh()
+      fetchRefs()
     } catch (e) {
       toast.error('操作失败')
     }
@@ -206,6 +215,7 @@ export function useMaterialsPage() {
           await materialApi.delete(id)
           toast.success('删除成功')
           refresh()
+          fetchRefs()
         } catch (e) { toast.error('删除失败') }
       },
     })
@@ -217,6 +227,7 @@ export function useMaterialsPage() {
       await materialApi.update(row.id, { status: newStatus })
       toast.success(newStatus === 'active' ? '物料已启用' : '物料已停用')
       refresh()
+      fetchRefs()
     } catch (e) { toast.error('操作失败') }
   }
 
@@ -253,6 +264,7 @@ export function useMaterialsPage() {
           toast.success('批量删除成功')
           clearSelection()
           refresh()
+          fetchRefs()
         } catch (e) { toast.error('批量删除失败') }
       },
     })
@@ -266,6 +278,7 @@ export function useMaterialsPage() {
       toast.success(status === 'active' ? '批量启用成功' : '批量停用成功')
       clearSelection()
       refresh()
+      fetchRefs()
     } catch (e) { toast.error('操作失败') }
   }
 

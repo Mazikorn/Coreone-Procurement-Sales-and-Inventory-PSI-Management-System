@@ -21,7 +21,7 @@ export default function Logs() {
       </div>
 
       {/* Stats Grid */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-white p-5 rounded-lg shadow-sm border border-gray-200">
           <div className="text-2xl font-semibold text-gray-900">{page.stats.todayOps}</div>
           <div className="text-sm text-gray-500 mt-1">今日操作</div>

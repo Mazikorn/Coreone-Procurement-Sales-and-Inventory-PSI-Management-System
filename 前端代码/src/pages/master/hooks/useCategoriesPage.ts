@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
-import { categoryApi } from '@/api/master'
-import type { Category } from '@/types'
+import { useState, useEffect, useCallback } from 'react'
+import { categoryApi, materialApi } from '@/api/master'
+import type { Category, Material } from '@/types'
 import { toast } from 'sonner'
 
 export interface FormData {
@@ -9,23 +9,21 @@ export interface FormData {
   parentId: string | null
   level: number
   sortOrder: number
-  status: 'active' | 'inactive'
   remark: string
 }
 
 export function countStats(nodes: Category[]) {
-  let total = 0, active = 0, inactive = 0, totalMaterials = 0
+  let total = 0, totalMaterials = 0, level3 = 0
   const walk = (items: Category[]) => {
     items.forEach(item => {
       total++
-      if (item.status === 'active') active++
-      else inactive++
       totalMaterials += item.count || 0
+      if (item.level === 3) level3++
       if (item.children) walk(item.children)
     })
   }
   walk(nodes)
-  return { total, active, inactive, totalMaterials }
+  return { total, totalMaterials, level3 }
 }
 
 export function useCategoriesPage() {
@@ -33,15 +31,47 @@ export function useCategoriesPage() {
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [form, setForm] = useState<FormData>({ code: '', name: '', parentId: null, level: 1, sortOrder: 0, status: 'active', remark: '' })
+  const [form, setForm] = useState<FormData>({ code: '', name: '', parentId: null, level: 1, sortOrder: 0, remark: '' })
   const [flatList, setFlatList] = useState<Category[]>([])
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [searchKeyword, setSearchKeyword] = useState('')
   const [deleteModalOpen, setDeleteModalOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<Category | null>(null)
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; node: Category } | null>(null)
-  const contextRef = useRef<HTMLDivElement>(null)
+  const [categoryMaterials, setCategoryMaterials] = useState<Material[]>([])
+  const [materialsLoading, setMaterialsLoading] = useState(false)
+  const [materialPage, setMaterialPage] = useState(1)
+  const [materialPageSize] = useState(20)
+  const [materialTotal, setMaterialTotal] = useState(0)
+  const [materialKeyword, setMaterialKeyword] = useState('')
+  const [migrateModalOpen, setMigrateModalOpen] = useState(false)
+  const [migrateTarget, setMigrateTarget] = useState<Material | null>(null)
+
+  const fetchCategoryMaterials = useCallback(async (page: number, keyword?: string) => {
+    if (!selectedId) return
+    setMaterialsLoading(true)
+    try {
+      const res: any = await materialApi.getList({
+        categoryId: selectedId,
+        page,
+        pageSize: materialPageSize,
+        keyword,
+      })
+      const list = res?.list || []
+      const total = res?.total || 0
+      if (page === 1) {
+        setCategoryMaterials(list)
+      } else {
+        setCategoryMaterials(prev => [...prev, ...list])
+      }
+      setMaterialTotal(total)
+      setMaterialPage(page)
+    } catch (e) {
+      if (page === 1) setCategoryMaterials([])
+    } finally {
+      setMaterialsLoading(false)
+    }
+  }, [selectedId, materialPageSize])
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -60,14 +90,15 @@ export function useCategoriesPage() {
   useEffect(() => { fetchData() }, [fetchData])
 
   useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (contextRef.current && !contextRef.current.contains(e.target as Node)) {
-        setContextMenu(null)
-      }
+    if (!selectedId) {
+      setCategoryMaterials([])
+      setMaterialTotal(0)
+      setMaterialPage(1)
+      setMaterialKeyword('')
+      return
     }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [])
+    fetchCategoryMaterials(1)
+  }, [selectedId, fetchCategoryMaterials])
 
   const stats = countStats(tree)
 
@@ -115,7 +146,7 @@ export function useCategoriesPage() {
 
   const openCreate = (parentId: string | null = null, level: number = 1) => {
     setEditingId(null)
-    setForm({ code: '', name: '', parentId, level, sortOrder: 0, status: 'active', remark: '' })
+    setForm({ code: '', name: '', parentId, level, sortOrder: 0, remark: '' })
     setModalOpen(true)
   }
 
@@ -127,7 +158,6 @@ export function useCategoriesPage() {
       parentId: node.parentId || null,
       level: node.level,
       sortOrder: node.sortOrder || 0,
-      status: node.status,
       remark: '',
     })
     setModalOpen(true)
@@ -158,10 +188,10 @@ export function useCategoriesPage() {
     setDeleteModalOpen(true)
   }
 
-  const confirmDelete = async () => {
+  const confirmDelete = async (targetCategoryId?: string) => {
     if (!deleteTarget) return
     try {
-      await categoryApi.delete(deleteTarget.id)
+      await categoryApi.delete(deleteTarget.id, targetCategoryId ? { targetCategoryId } : undefined)
       toast.success('分类删除成功')
       if (selectedId === deleteTarget.id) setSelectedId(null)
       setDeleteModalOpen(false)
@@ -172,9 +202,31 @@ export function useCategoriesPage() {
     }
   }
 
-  const handleContextMenu = (e: React.MouseEvent, node: Category) => {
-    e.preventDefault()
-    setContextMenu({ x: e.pageX, y: e.pageY, node })
+  const openMigrate = (material: Material) => {
+    setMigrateTarget(material)
+    setMigrateModalOpen(true)
+  }
+
+  const confirmMigrate = async (materialId: string, targetCategoryId: string) => {
+    try {
+      await materialApi.update(materialId, { categoryId: targetCategoryId })
+      toast.success('物料迁移成功')
+      setMigrateModalOpen(false)
+      setMigrateTarget(null)
+      fetchCategoryMaterials(materialPage, materialKeyword)
+      fetchData()
+    } catch (e) {
+      toast.error('迁移失败')
+    }
+  }
+
+  const handleMaterialSearch = (keyword: string) => {
+    setMaterialKeyword(keyword)
+    fetchCategoryMaterials(1, keyword)
+  }
+
+  const loadMoreMaterials = () => {
+    fetchCategoryMaterials(materialPage + 1, materialKeyword)
   }
 
   const filterMatch = (node: Category): boolean => {
@@ -228,9 +280,6 @@ export function useCategoriesPage() {
     setDeleteModalOpen,
     deleteTarget,
     setDeleteTarget,
-    contextMenu,
-    setContextMenu,
-    contextRef,
     fetchData,
     stats,
     toggleExpand,
@@ -238,12 +287,27 @@ export function useCategoriesPage() {
     collapseAll,
     findNodeById,
     selectedNode,
+    categoryMaterials,
+    materialsLoading,
+    materialTotal,
+    materialPage,
+    materialPageSize,
+    materialKeyword,
+    setMaterialKeyword,
+    fetchCategoryMaterials,
+    loadMoreMaterials,
+    handleMaterialSearch,
+    migrateModalOpen,
+    setMigrateModalOpen,
+    migrateTarget,
+    setMigrateTarget,
+    openMigrate,
+    confirmMigrate,
     openCreate,
     openEdit,
     handleSubmit,
     openDelete,
     confirmDelete,
-    handleContextMenu,
     filterMatch,
     getBreadcrumb,
   }

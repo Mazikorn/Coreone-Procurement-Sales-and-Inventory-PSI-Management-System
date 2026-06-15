@@ -7,6 +7,7 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 
 export default function Users() {
   const page = useUsersPage()
+  const confirmProps = page.confirmProps
 
   return (
     <div className="space-y-6">
@@ -88,16 +89,16 @@ export default function Users() {
       />
 
       {/* ConfirmDialog */}
-      {page.confirmOpen && page.confirmProps && (
+      {page.confirmOpen && confirmProps && (
         <ConfirmDialog
           open={page.confirmOpen}
-          title={page.confirmProps.title}
-          description={page.confirmProps.description}
-          confirmText={page.confirmProps.confirmText}
-          confirmVariant={page.confirmProps.confirmVariant}
+          title={confirmProps.title}
+          description={confirmProps.description}
+          confirmText={confirmProps.confirmText}
+          confirmVariant={confirmProps.confirmVariant}
           onConfirm={() => {
             page.setConfirmOpen(false)
-            page.confirmProps.onConfirm()
+            confirmProps.onConfirm()
           }}
           onCancel={() => page.setConfirmOpen(false)}
         />

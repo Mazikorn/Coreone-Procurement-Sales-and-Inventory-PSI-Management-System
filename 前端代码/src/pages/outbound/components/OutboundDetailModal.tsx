@@ -1,4 +1,5 @@
-import { X } from 'lucide-react'
+import { useState, useMemo, Fragment } from 'react'
+import { X, ChevronDown, ChevronRight } from 'lucide-react'
 import type { OutboundRecord, OutboundItem } from '@/types'
 import { formatDate, formatCurrency } from '@/lib/utils'
 
@@ -15,7 +16,59 @@ const statusConfig: Record<string, { label: string; bg: string; text: string }> 
   cancelled: { label: '已取消', bg: 'bg-red-50', text: 'text-red-600' },
 }
 
+interface MaterialGroup {
+  materialId: string
+  materialName: string
+  unit: string
+  totalQuantity: number
+  totalCost: number
+  avgUnitCost: number
+  items: OutboundItem[]
+}
+
 export default function OutboundDetailModal({ open, record, onClose, onPrint }: OutboundDetailModalProps) {
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+
+  const groupedItems = useMemo<MaterialGroup[]>(() => {
+    if (!record?.items) return []
+    const map = new Map<string, MaterialGroup>()
+    for (const item of record.items) {
+      const existing = map.get(item.materialId)
+      if (existing) {
+        existing.items.push(item)
+        existing.totalQuantity += item.quantity
+        existing.totalCost += item.totalCost
+      } else {
+        map.set(item.materialId, {
+          materialId: item.materialId,
+          materialName: item.materialName || '-',
+          unit: item.unit,
+          totalQuantity: item.quantity,
+          totalCost: item.totalCost,
+          avgUnitCost: 0,
+          items: [item],
+        })
+      }
+    }
+    const groups = Array.from(map.values())
+    for (const g of groups) {
+      g.avgUnitCost = g.totalQuantity > 0 ? g.totalCost / g.totalQuantity : 0
+    }
+    return groups
+  }, [record?.items])
+
+  const toggleExpand = (materialId: string) => {
+    setExpandedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(materialId)) {
+        next.delete(materialId)
+      } else {
+        next.add(materialId)
+      }
+      return next
+    })
+  }
+
   if (!open || !record) return null
 
   return (
@@ -70,16 +123,56 @@ export default function OutboundDetailModal({ open, record, onClose, onPrint }: 
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {record.items?.map((item: OutboundItem, i: number) => (
-                <tr key={i}>
-                  <td className="px-4 py-2 font-medium text-gray-900">{item.materialName || '-'}</td>
-                  <td className="px-4 py-2 font-mono text-gray-500">{item.batchNo || '-'}</td>
-                  <td className="px-4 py-2">{item.quantity}</td>
-                  <td className="px-4 py-2 text-gray-500">{item.unit}</td>
-                  <td className="px-4 py-2">{formatCurrency(item.unitCost)}</td>
-                  <td className="px-4 py-2 font-medium">{formatCurrency(item.totalCost)}</td>
-                </tr>
-              ))}
+              {groupedItems.map((group) => {
+                const isExpanded = expandedIds.has(group.materialId)
+                const hasMultiple = group.items.length > 1
+                return (
+                  <Fragment key={group.materialId}>
+                    <tr className={hasMultiple ? 'bg-gray-50/60' : ''}>
+                      <td className="px-4 py-2">
+                        <div className="flex items-center gap-1.5">
+                          {hasMultiple && (
+                            <button
+                              onClick={() => toggleExpand(group.materialId)}
+                              className="p-0.5 text-gray-400 hover:text-gray-600 hover:bg-gray-200 rounded transition-colors"
+                            >
+                              {isExpanded ? (
+                                <ChevronDown className="w-3.5 h-3.5" />
+                              ) : (
+                                <ChevronRight className="w-3.5 h-3.5" />
+                              )}
+                            </button>
+                          )}
+                          <span className="font-medium text-gray-900">{group.materialName}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-2 font-mono text-gray-500 text-xs">
+                        {hasMultiple ? `${group.items.length}个批次` : (group.items[0]?.batchNo || '-')}
+                      </td>
+                      <td className="px-4 py-2">{group.totalQuantity}</td>
+                      <td className="px-4 py-2 text-gray-500">{group.unit}</td>
+                      <td className="px-4 py-2">
+                        {hasMultiple ? (
+                          <span className="text-xs text-gray-400">均价 {formatCurrency(group.avgUnitCost)}</span>
+                        ) : (
+                          formatCurrency(group.avgUnitCost)
+                        )}
+                      </td>
+                      <td className="px-4 py-2 font-medium text-gray-900">{formatCurrency(group.totalCost)}</td>
+                    </tr>
+                    {hasMultiple && isExpanded && group.items.map((item, i) => (
+                      <tr key={`${group.materialId}-${i}`} className="bg-white">
+                        <td className="px-4 py-1.5 pl-10" />
+                        <td className="px-4 py-1.5 font-mono text-gray-500 text-xs">{item.batchNo || '-'}</td>
+                        <td className="px-4 py-1.5 text-sm text-gray-600">{item.quantity}</td>
+                        <td className="px-4 py-1.5 text-sm text-gray-400">{item.unit}</td>
+                        <td className="px-4 py-1.5 text-sm text-gray-600">{formatCurrency(item.unitCost)}</td>
+                        <td className="px-4 py-1.5 text-sm text-gray-600">{formatCurrency(item.totalCost)}</td>
+                      </tr>
+                    ))}
+                  </Fragment>
+                )
+              })}
             </tbody>
             <tfoot>
               <tr className="bg-gray-50 font-semibold">
@@ -88,6 +181,29 @@ export default function OutboundDetailModal({ open, record, onClose, onPrint }: 
               </tr>
             </tfoot>
           </table>
+
+          {record.projectName && (
+            <div className="p-3 bg-blue-50 rounded-md border border-blue-100">
+              <div className="text-xs text-blue-600 font-medium mb-1.5">成本计算说明</div>
+              <div className="text-xs text-blue-700 space-y-1">
+                <p>本项目为 BOM 关联出库，实际成本按批次加权计算：</p>
+                <ul className="list-disc list-inside space-y-0.5 ml-1">
+                  {groupedItems.slice(0, 3).map(g => (
+                    <li key={g.materialId}>
+                      {g.materialName}：{g.items.length > 1 ? (
+                        <span>{g.items.map(item => `${item.quantity}×${formatCurrency(item.unitCost)}`).join(' + ')} = {formatCurrency(g.totalCost)}</span>
+                      ) : (
+                        <span>{g.totalQuantity} × {formatCurrency(g.avgUnitCost)} = {formatCurrency(g.totalCost)}</span>
+                      )}
+                    </li>
+                  ))}
+                  {groupedItems.length > 3 && (
+                    <li className="text-blue-500">... 共 {groupedItems.length} 种物料</li>
+                  )}
+                </ul>
+              </div>
+            </div>
+          )}
 
           {record.remark && (
             <div className="p-3 bg-gray-50 rounded-md">

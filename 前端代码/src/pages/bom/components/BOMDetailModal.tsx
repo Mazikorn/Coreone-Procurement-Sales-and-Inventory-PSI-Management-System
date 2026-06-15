@@ -51,7 +51,7 @@ export function BOMDetailModal({ open, bom, tab, onClose, onChangeTab, onEdit }:
         </div>
         <div className="p-6 overflow-y-auto flex-1">
           {tab === 'info' && (
-            <div className="space-y-5">
+            <div className="space-y-6">
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                 <div>
                   <div className="text-xs text-gray-500 mb-1">BOM编号</div>
@@ -108,98 +108,227 @@ export function BOMDetailModal({ open, bom, tab, onClose, onChangeTab, onEdit }:
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   物料清单
                 </label>
-                <div className="border border-gray-200 rounded-md overflow-hidden">
-                  <table className="w-full text-sm">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-500">
-                          序号
-                        </th>
-                        <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-500">
-                          物料名称
-                        </th>
-                        <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-500">
-                          规格型号
-                        </th>
-                        <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-500">
-                          用量/样本
-                        </th>
-                        <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-500">
-                          单位
-                        </th>
-                        <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-500">
-                          库存状态
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {bom.materials && bom.materials.length > 0 ? (
-                        bom.materials.map((m: BOMMaterial, idx: number) => {
-                          let stockStatus = '充足'
-                          let stockClass =
-                            'bg-green-50 text-green-600 border-green-200'
-                          if (m.stock <= 0) {
-                            stockStatus = '不足'
-                            stockClass =
-                              'bg-red-50 text-red-600 border-red-200'
-                          } else if (m.stock < 10) {
-                            stockStatus = '偏低'
-                            stockClass =
-                              'bg-yellow-50 text-yellow-600 border-yellow-200'
-                          }
+                {(() => {
+                  // 按 groupName 分组
+                  const groupMap = new Map<string, BOMMaterial[]>()
+                  if (bom.materials?.length > 0) {
+                    for (const m of bom.materials) {
+                      const g = m.groupName || '未分组'
+                      if (!groupMap.has(g)) groupMap.set(g, [])
+                      groupMap.get(g)!.push(m)
+                    }
+                  }
+                  const groups = Array.from(groupMap.entries())
+                  const totalCost = bom.unitCost || 0
+                  return (
+                    <div className="space-y-3">
+                      {groups.length > 0 ? (
+                        groups.map(([groupName, materials]) => {
+                          const groupCost = materials.reduce((sum, m) => sum + (m.price || 0) * m.usagePerSample, 0)
+                          const groupRatio = totalCost > 0 ? ((groupCost / totalCost) * 100).toFixed(1) : '0'
+                          const isPool = materials.length > 1
                           return (
-                            <tr key={m.id || idx}>
-                              <td className="px-4 py-2.5 text-gray-500">
-                                {idx + 1}
-                              </td>
-                              <td className="px-4 py-2.5 font-medium text-gray-900">
-                                {m.name}
-                              </td>
-                              <td className="px-4 py-2.5 text-gray-500">
-                                {m.spec || '-'}
-                              </td>
-                              <td className="px-4 py-2.5 text-gray-700">
-                                {m.usagePerSample}
-                              </td>
-                              <td className="px-4 py-2.5 text-gray-500">
-                                {m.unit}
-                              </td>
-                              <td className="px-4 py-2.5">
-                                <span
-                                  className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${stockClass}`}
-                                >
-                                  {stockStatus}
+                            <div key={groupName} className="border border-gray-200 rounded-md overflow-hidden">
+                              <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-sm font-medium text-gray-700">{groupName}</span>
+                                  {isPool && (
+                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-600 border border-blue-200">
+                                      品牌池
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="text-xs text-gray-500">
+                                  {materials.length} 项 | ¥{groupCost.toFixed(2)} ({groupRatio}%)
                                 </span>
-                              </td>
-                            </tr>
+                              </div>
+                              <table className="w-full text-sm">
+                                <thead className="bg-gray-50">
+                                  <tr>
+                                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 w-10">序号</th>
+                                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">物料名称</th>
+                                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">规格型号</th>
+                                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">用量/样本</th>
+                                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">单位</th>
+                                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">库存状态</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-100">
+                                  {materials.map((m: BOMMaterial, idx: number) => {
+                                    let stockStatus = '充足'
+                                    let stockClass = 'bg-green-50 text-green-600 border-green-200'
+                                    if (m.stock <= 0) {
+                                      stockStatus = '不足'
+                                      stockClass = 'bg-red-50 text-red-600 border-red-200'
+                                    } else if (m.stock < 10) {
+                                      stockStatus = '偏低'
+                                      stockClass = 'bg-yellow-50 text-yellow-600 border-yellow-200'
+                                    }
+                                    return (
+                                      <tr key={m.id || idx}>
+                                        <td className="px-4 py-2 text-gray-500">{idx + 1}</td>
+                                        <td className="px-4 py-2 font-medium text-gray-900">{m.name}</td>
+                                        <td className="px-4 py-2 text-gray-500">{m.spec || '-'}</td>
+                                        <td className="px-4 py-2 text-gray-700">{m.usagePerSample}</td>
+                                        <td className="px-4 py-2 text-gray-500">{m.unit}</td>
+                                        <td className="px-4 py-2">
+                                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${stockClass}`}>
+                                            {stockStatus}
+                                          </span>
+                                        </td>
+                                      </tr>
+                                    )
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
                           )
                         })
                       ) : (
-                        <tr>
-                          <td
-                            colSpan={6}
-                            className="px-4 py-8 text-center text-gray-400"
-                          >
-                            暂无物料数据
-                          </td>
-                        </tr>
+                        <div className="border border-gray-200 rounded-md px-4 py-8 text-center text-gray-400">
+                          暂无物料数据
+                        </div>
                       )}
-                    </tbody>
-                    <tfoot className="bg-gray-50">
-                      <tr>
-                        <td
-                          colSpan={6}
-                          className="px-4 py-2.5 text-right text-sm text-gray-600"
-                        >
-                          共 {bom.materialCount ?? 0} 项物料
-                          {bom.unitCost > 0 &&
-                            ` | 单样本成本 ¥${bom.unitCost.toFixed(2)}`}
-                        </td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
+                      <div className="px-4 py-2 text-right text-sm text-gray-600 bg-gray-50 rounded-md border border-gray-200">
+                        共 {bom.materialCount ?? 0} 项物料
+                        {bom.unitCost > 0 && ` | 单样本成本 ¥${bom.unitCost.toFixed(2)}`}
+                      </div>
+                    </div>
+                  )
+                })()}
               </div>
+
+              {/* 通用试剂配额 */}
+              {bom.generalReagents && bom.generalReagents.length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    通用试剂配额
+                  </label>
+                  <div className="border border-gray-200 rounded-md overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 w-10">序号</th>
+                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">物料名称</th>
+                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">规格型号</th>
+                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">用量/样本</th>
+                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">单位</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {bom.generalReagents.map((r, idx) => (
+                          <tr key={r.id || idx}>
+                            <td className="px-4 py-2 text-gray-500">{idx + 1}</td>
+                            <td className="px-4 py-2 font-medium text-gray-900">{r.name || '-'}</td>
+                            <td className="px-4 py-2 text-gray-500">{r.spec || '-'}</td>
+                            <td className="px-4 py-2 text-gray-700">{r.usagePerSample}</td>
+                            <td className="px-4 py-2 text-gray-500">{r.unit}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* 通用耗材配额 */}
+              {bom.generalConsumables && bom.generalConsumables.length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    通用耗材配额
+                  </label>
+                  <div className="border border-gray-200 rounded-md overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 w-10">序号</th>
+                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">物料名称</th>
+                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">规格型号</th>
+                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">用量/样本</th>
+                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">单位</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {bom.generalConsumables.map((c, idx) => (
+                          <tr key={c.id || idx}>
+                            <td className="px-4 py-2 text-gray-500">{idx + 1}</td>
+                            <td className="px-4 py-2 font-medium text-gray-900">{c.name || '-'}</td>
+                            <td className="px-4 py-2 text-gray-500">{c.spec || '-'}</td>
+                            <td className="px-4 py-2 text-gray-700">{c.usagePerSample}</td>
+                            <td className="px-4 py-2 text-gray-500">{c.unit}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* 质控品配额 */}
+              {bom.qualityControls && bom.qualityControls.length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    质控品配额
+                  </label>
+                  <div className="border border-gray-200 rounded-md overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 w-10">序号</th>
+                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">物料名称</th>
+                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">规格型号</th>
+                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">用量/批次</th>
+                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">单位</th>
+                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">覆盖样本数</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {bom.qualityControls.map((q, idx) => (
+                          <tr key={q.id || idx}>
+                            <td className="px-4 py-2 text-gray-500">{idx + 1}</td>
+                            <td className="px-4 py-2 font-medium text-gray-900">{q.name || '-'}</td>
+                            <td className="px-4 py-2 text-gray-500">{q.spec || '-'}</td>
+                            <td className="px-4 py-2 text-gray-700">{q.usagePerBatch}</td>
+                            <td className="px-4 py-2 text-gray-500">{q.unit}</td>
+                            <td className="px-4 py-2 text-gray-700">{q.coversSamples}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* 设备模板 */}
+              {bom.equipmentTemplates && bom.equipmentTemplates.length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    设备模板
+                  </label>
+                  <div className="border border-gray-200 rounded-md overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 w-10">序号</th>
+                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">设备名称</th>
+                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">型号</th>
+                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">使用时长(分钟)</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {bom.equipmentTemplates.map((e, idx) => (
+                          <tr key={e.id || idx}>
+                            <td className="px-4 py-2 text-gray-500">{idx + 1}</td>
+                            <td className="px-4 py-2 font-medium text-gray-900">{e.equipmentName || '-'}</td>
+                            <td className="px-4 py-2 text-gray-500">{e.model || '-'}</td>
+                            <td className="px-4 py-2 text-gray-700">{e.usageMinutes}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
             </div>
           )}
           {tab === 'history' && (

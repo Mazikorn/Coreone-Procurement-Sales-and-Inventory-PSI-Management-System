@@ -1,4 +1,5 @@
 import { X } from 'lucide-react'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { Category } from '@/types'
 import type { FormData } from '../hooks/useCategoriesPage'
 
@@ -52,16 +53,18 @@ export function CategoryFormModal({ open, editingId, form, flatList, onClose, on
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1.5">上级分类</label>
-            <select
+            <SearchableSelect
               value={form.parentId || ''}
-              onChange={e => onChange({ ...form, parentId: e.target.value || null })}
-              className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm outline-none transition-all focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 bg-white cursor-pointer"
-            >
-              <option value="">无（作为一级分类）</option>
-              {flatList.filter(c => c.id !== editingId).map(c => (
-                <option key={c.id} value={c.id}>{c.name} ({c.code})</option>
-              ))}
-            </select>
+              onChange={val => onChange({ ...form, parentId: val || null })}
+              options={[
+                { value: '', label: '无（作为一级分类）' },
+                ...flatList.filter(c => c.id !== editingId).map(c => ({
+                  value: c.id,
+                  label: `${c.name} (${c.code})`,
+                })),
+              ]}
+              placeholder="无（作为一级分类）"
+            />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1.5">排序</label>
@@ -71,31 +74,6 @@ export function CategoryFormModal({ open, editingId, form, flatList, onClose, on
               onChange={e => onChange({ ...form, sortOrder: Number(e.target.value) })}
               className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm outline-none transition-all focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10"
             />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">状态</label>
-            <div className="flex items-center gap-4">
-              <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-                <input
-                  type="radio"
-                  name="status"
-                  checked={form.status === 'active'}
-                  onChange={() => onChange({ ...form, status: 'active' })}
-                  className="w-4 h-4 text-blue-500"
-                />
-                启用
-              </label>
-              <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-                <input
-                  type="radio"
-                  name="status"
-                  checked={form.status === 'inactive'}
-                  onChange={() => onChange({ ...form, status: 'inactive' })}
-                  className="w-4 h-4 text-blue-500"
-                />
-                停用
-              </label>
-            </div>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1.5">备注</label>

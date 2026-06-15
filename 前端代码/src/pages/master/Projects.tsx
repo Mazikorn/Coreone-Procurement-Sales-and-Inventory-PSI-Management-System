@@ -95,15 +95,15 @@ export default function Projects() {
         form={page.form}
         createStep={page.createStep}
         bomOption={page.bomOption}
-        selectedBomId={page.selectedBomId}
         boms={page.boms}
-        selectedBom={page.selectedBom}
         isSubmitting={page.isSubmitting}
         onClose={() => page.setModalType(null)}
         onChange={page.setForm}
         onSetCreateStep={page.setCreateStep}
-        onSetBomOption={page.setBomOption}
-        onSetSelectedBomId={page.setSelectedBomId}
+        onSetBomOption={(o) => {
+          page.setBomOption(o)
+          if (o === 'skip') page.setForm({ ...page.form, bomId: '' })
+        }}
         onSubmit={page.handleSubmit}
       />
 

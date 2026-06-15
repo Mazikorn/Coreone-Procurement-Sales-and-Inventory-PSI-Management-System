@@ -17,7 +17,7 @@ async function run() {
   }
 
   const adminToken = await login('admin', 'admin123')
-  const finToken = await login('caiwu', 'CoreOne2026!')
+  const finToken = await login('sunli', 'CoreOne2026!')
 
   await test('INV-01 admin获取库存列表', async () => {
     const res = await getJSON('/inventory?page=1&pageSize=20', adminToken)

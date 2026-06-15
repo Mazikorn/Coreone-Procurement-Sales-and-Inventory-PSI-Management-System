@@ -3,7 +3,6 @@ import { renderHook, waitFor, act } from '@testing-library/react'
 import { useInboundPage } from './useInboundPage'
 import { inboundApi, purchaseOrderApi } from '@/api/inventory'
 import { materialApi, supplierApi, locationApi } from '@/api/master'
-import { toast } from 'sonner'
 import type { InboundRecord, Material, Supplier, Location } from '@/types'
 
 vi.mock('@/api/inventory')

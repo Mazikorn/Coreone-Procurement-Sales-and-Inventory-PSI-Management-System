@@ -96,16 +96,52 @@ router.get('/projects', (req, res) => {
       ORDER BY case_count DESC
     `).all(...(hasDate ? [startDate, endDateTime, startDate, endDateTime] : [])) as any[]
 
-    const result = projects.map((p: any) => {
-      const boms = db.prepare(`
-        SELECT b.id, b.code, b.name FROM boms b
-        WHERE (b.id = ? OR b.service_id = ?) AND b.is_deleted = 0
-      `).all(p.bom_id || '', p.id || '') as any[]
+    // Batch BOM lookup: collect all bom_ids and project_ids, single query
+    const bomIds = projects.map((p: any) => p.bom_id).filter(Boolean)
+    const projectIds = projects.map((p: any) => p.id).filter(Boolean)
+    let allBoms: any[] = []
+    const bomConditions: string[] = []
+    const bomQueryParams: any[] = []
+    if (bomIds.length > 0) {
+      bomConditions.push(`id IN (${bomIds.map(() => '?').join(',')})`)
+      bomQueryParams.push(...bomIds)
+    }
+    if (projectIds.length > 0) {
+      bomConditions.push(`service_id IN (${projectIds.map(() => '?').join(',')})`)
+      bomQueryParams.push(...projectIds)
+    }
+    if (bomConditions.length > 0) {
+      allBoms = db.prepare(`
+        SELECT id, code, name, service_id FROM boms
+        WHERE (${bomConditions.join(' OR ')}) AND is_deleted = 0
+      `).all(...bomQueryParams) as any[]
+    }
 
+    // Group BOMs by project id (matched via bom_id or service_id)
+    const bomsByServiceId = new Map<string, any[]>()
+    const bomsById = new Map<string, any>()
+    for (const bom of allBoms) {
+      bomsById.set(bom.id, bom)
+      if (bom.service_id) {
+        const existing = bomsByServiceId.get(bom.service_id) || []
+        existing.push(bom)
+        bomsByServiceId.set(bom.service_id, existing)
+      }
+    }
+
+    const result = projects.map((p: any) => {
+      // Collect BOMs: by service_id match + by direct bom_id match (deduplicated)
+      const serviceBoms = bomsByServiceId.get(p.id) || []
+      const directBom = p.bom_id ? bomsById.get(p.bom_id) : null
+      const seen = new Set(serviceBoms.map((b: any) => b.id))
+      const boms = [...serviceBoms]
+      if (directBom && !seen.has(directBom.id)) {
+        boms.push(directBom)
+      }
       return {
         ...p,
         hasBom: !!p.bom_id && p.bom_id !== '',
-        boms: boms.map(b => ({ id: b.id, code: b.code, name: b.name })),
+        boms: boms.map((b: any) => ({ id: b.id, code: b.code, name: b.name })),
       }
     })
 
@@ -221,34 +257,68 @@ router.get('/materials', (req, res) => {
       ORDER BY m.name
     `).all() as any[]
 
-    const result = materials.map((m: any) => {
-      // 该物料关联的所有BOM标准用量之和
-      const bomUsages = db.prepare(`
-        SELECT bi.usage_per_sample, bi.unit, p.id as project_id
-        FROM bom_items bi
-        JOIN projects p ON bi.bom_id = p.bom_id
-        WHERE bi.material_id = ? AND p.is_deleted = 0
-      `).all(m.id) as any[]
+    // Batch 1: All BOM usages for all materials (replaces per-material query)
+    const allBomUsages = db.prepare(`
+      SELECT bi.material_id, bi.usage_per_sample, bi.unit, p.id as project_id
+      FROM bom_items bi
+      JOIN projects p ON bi.bom_id = p.bom_id
+      WHERE p.is_deleted = 0
+    `).all() as any[]
 
-      // 各项目病例数
+    // Group BOM usages by material_id
+    const bomUsagesByMaterial = new Map<string, any[]>()
+    for (const bu of allBomUsages) {
+      const existing = bomUsagesByMaterial.get(bu.material_id) || []
+      existing.push(bu)
+      bomUsagesByMaterial.set(bu.material_id, existing)
+    }
+
+    // Batch 2: All case counts by project (replaces per-project-per-material query)
+    const caseCountsByProject = new Map<string, number>()
+    if (hasDate) {
+      const rows = db.prepare(`
+        SELECT project_id, COUNT(*) as count FROM lis_cases
+        WHERE operate_time >= ? AND operate_time <= ?
+        GROUP BY project_id
+      `).all(startDate, `${endDate} 23:59:59`) as any[]
+      for (const r of rows) caseCountsByProject.set(r.project_id, r.count)
+    } else {
+      const rows = db.prepare(`
+        SELECT project_id, COUNT(*) as count FROM lis_cases
+        GROUP BY project_id
+      `).all() as any[]
+      for (const r of rows) caseCountsByProject.set(r.project_id, r.count)
+    }
+
+    // Batch 3: All actual outbound quantities by material (replaces per-material query)
+    const actualOutboundsByMaterial = new Map<string, number>()
+    const actualOutboundRows = hasDate
+      ? (db.prepare(`
+          SELECT oi.material_id, SUM(oi.quantity) as total_qty
+          FROM outbound_items oi
+          JOIN outbound_records o ON oi.outbound_id = o.id
+          WHERE o.status = 'completed' AND o.is_deleted = 0 AND o.created_at >= ? AND o.created_at <= ?
+          GROUP BY oi.material_id
+        `).all(startDate, `${endDate} 23:59:59`) as any[])
+      : (db.prepare(`
+          SELECT oi.material_id, SUM(oi.quantity) as total_qty
+          FROM outbound_items oi
+          JOIN outbound_records o ON oi.outbound_id = o.id
+          WHERE o.status = 'completed' AND o.is_deleted = 0
+          GROUP BY oi.material_id
+        `).all() as any[])
+    for (const r of actualOutboundRows) actualOutboundsByMaterial.set(r.material_id, r.total_qty || 0)
+
+    const result = materials.map((m: any) => {
+      const bomUsages = bomUsagesByMaterial.get(m.id) || []
+
       let theoryTotal = 0
       for (const bu of bomUsages) {
-        const cc = db.prepare(`
-          SELECT COUNT(*) as count FROM lis_cases
-          WHERE project_id = ? ${hasDate ? 'AND operate_time >= ? AND operate_time <= ?' : ''}
-        `).get(bu.project_id, ...dateParams) as any
-        theoryTotal += (cc?.count || 0) * (bu.usage_per_sample || 0)
+        const caseCount = caseCountsByProject.get(bu.project_id) || 0
+        theoryTotal += caseCount * (bu.usage_per_sample || 0)
       }
 
-      // 实际出库
-      const actual = db.prepare(`
-        SELECT SUM(oi.quantity) as total_qty
-        FROM outbound_items oi
-        JOIN outbound_records o ON oi.outbound_id = o.id
-        WHERE oi.material_id = ? AND o.status = 'completed' AND o.is_deleted = 0 ${hasDate ? 'AND o.created_at >= ? AND o.created_at <= ?' : ''}
-      `).get(m.id, ...dateParams) as any
-
-      const actualTotal = actual?.total_qty || 0
+      const actualTotal = actualOutboundsByMaterial.get(m.id) || 0
       const diff = actualTotal - theoryTotal
 
       let status = 'match'
@@ -293,20 +363,28 @@ router.get('/cases', (req, res) => {
     if (projectId) { where += ' AND project_id = ?'; params.push(projectId) }
     if (status) { where += ' AND status = ?'; params.push(status) }
 
+    // For JOIN query, qualify column names with table alias
+    let joinWhere = 'WHERE 1=1'
+    if (search) { joinWhere += ' AND (lc.case_no LIKE ? OR lc.project_name LIKE ?)' }
+    if (projectId) { joinWhere += ' AND lc.project_id = ?' }
+    if (status) { joinWhere += ' AND lc.status = ?' }
+
     const list = db.prepare(`
-      SELECT * FROM lis_cases ${where}
-      ORDER BY operate_time DESC
+      SELECT lc.*, p.name as joined_project_name, p.bom_id as joined_bom_id
+      FROM lis_cases lc
+      LEFT JOIN projects p ON lc.project_id = p.id AND p.is_deleted = 0
+      ${joinWhere}
+      ORDER BY lc.operate_time DESC
       LIMIT ? OFFSET ?
     `).all(...params, parseInt(pageSize), offset) as any[]
 
     const count = (db.prepare(`SELECT COUNT(*) as count FROM lis_cases ${where}`).get(...params) as any)?.count || 0
 
     const result = list.map((c: any) => {
-      const project = db.prepare('SELECT name, bom_id FROM projects WHERE id = ? AND is_deleted = 0').get(c.project_id || '') as any
       return {
         ...c,
-        projectName: project?.name || c.project_name || '-',
-        hasBom: !!project?.bom_id,
+        projectName: c.joined_project_name || c.project_name || '-',
+        hasBom: !!c.joined_bom_id,
       }
     })
 
@@ -330,32 +408,55 @@ router.post('/cases/import', (req, res) => {
     }
 
     const importBatch = `IMPORT-${Date.now()}`
-    const stmt = db.prepare(`
-      INSERT INTO lis_cases (id, case_no, project_id, project_name, operator, operate_time, import_batch)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(case_no) DO UPDATE SET
-        project_id = excluded.project_id,
-        project_name = excluded.project_name,
-        operator = excluded.operator,
-        operate_time = excluded.operate_time
-    `)
 
-    let successCount = 0
-    for (const item of items) {
-      const id = `LC-${Date.now()}-${Math.floor(Math.random() * 10000)}`
-      stmt.run(
-        id,
-        item.caseNo || item.case_no || '',
-        item.projectId || item.project_id || '',
-        item.projectName || item.project_name || '',
-        item.operator || '',
-        item.operateTime || item.operate_time || null,
-        importBatch
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      // 预加载有效项目 ID 集合
+      const validProjects = new Set(
+        (db.prepare("SELECT id FROM projects WHERE is_deleted = 0").all() as any[]).map(p => p.id)
       )
-      successCount++
-    }
 
-    success(res, { importBatch, count: successCount }, `成功导入 ${successCount} 条病例数据`)
+      const stmt = db.prepare(`
+        INSERT INTO lis_cases (id, case_no, project_id, project_name, operator, operate_time, import_batch)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(case_no) DO UPDATE SET
+          project_id = excluded.project_id,
+          project_name = excluded.project_name,
+          operator = excluded.operator,
+          operate_time = excluded.operate_time
+      `)
+
+      let successCount = 0
+      let skippedCount = 0
+      for (const item of items) {
+        const projectId = item.projectId || item.project_id || ''
+        // 验证 project_id 是否存在
+        if (projectId && !validProjects.has(projectId)) {
+          skippedCount++
+          continue
+        }
+        const id = `LC-${Date.now()}-${Math.floor(Math.random() * 10000)}`
+        stmt.run(
+          id,
+          item.caseNo || item.case_no || '',
+          projectId,
+          item.projectName || item.project_name || '',
+          item.operator || '',
+          item.operateTime || item.operate_time || null,
+          importBatch
+        )
+        successCount++
+      }
+
+      db.exec('COMMIT')
+      const msg = skippedCount > 0
+        ? `成功导入 ${successCount} 条病例数据，跳过 ${skippedCount} 条无效项目`
+        : `成功导入 ${successCount} 条病例数据`
+      success(res, { importBatch, count: successCount, skipped: skippedCount }, msg)
+    } catch (e: any) {
+      db.exec('ROLLBACK')
+      throw e
+    }
   } catch (e: any) {
     error(res, e.message || '导入失败')
   }
@@ -372,7 +473,7 @@ router.put('/cases/:id', (req, res) => {
     const { projectId, projectName, status } = req.body
 
     const existing = db.prepare('SELECT * FROM lis_cases WHERE id = ?').get(id)
-    if (!existing) { error(res, 'Not found', 'NOT_FOUND', 404); return }
+    if (!existing) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
 
     db.prepare(`
       UPDATE lis_cases SET
@@ -422,22 +523,34 @@ router.post('/logs', (req, res) => {
     const db = getDatabase()
     const { type, targetId, targetName, field, oldValue, newValue, reason, projectId, materialId, newUsage } = req.body
 
-    // 如果提供了projectId、materialId和newUsage，先更新bom_items
-    if (projectId && materialId && newUsage !== undefined) {
-      const project = db.prepare('SELECT bom_id FROM projects WHERE id = ? AND is_deleted = 0').get(projectId) as any
-      if (project?.bom_id) {
-        db.prepare('UPDATE bom_items SET usage_per_sample = ? WHERE bom_id = ? AND material_id = ?')
-          .run(newUsage, project.bom_id, materialId)
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      // 如果提供了projectId、materialId和newUsage，先更新bom_items
+      if (projectId && materialId && newUsage !== undefined) {
+        const usage = Number(newUsage)
+        if (isNaN(usage) || usage < 0) {
+          db.exec('ROLLBACK')
+          error(res, 'newUsage 必须为非负数', 'INVALID_PARAMETER', 400); return
+        }
+        const project = db.prepare('SELECT bom_id FROM projects WHERE id = ? AND is_deleted = 0').get(projectId) as any
+        if (project?.bom_id) {
+          db.prepare('UPDATE bom_items SET usage_per_sample = ? WHERE bom_id = ? AND material_id = ?')
+            .run(usage, project.bom_id, materialId)
+        }
       }
+
+      const id = `LOG-${Date.now()}-${Math.floor(Math.random() * 1000)}`
+      db.prepare(`
+        INSERT INTO reconciliation_logs (id, type, target_id, target_name, field, old_value, new_value, reason, operator, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      `).run(id, type || 'bom_fix', targetId, targetName, field, oldValue, newValue, reason, (req as any).user?.username || 'system')
+
+      db.exec('COMMIT')
+      success(res, { id }, 'BOM修正已生效，日志已记录')
+    } catch (innerErr: any) {
+      db.exec('ROLLBACK')
+      throw innerErr
     }
-
-    const id = `LOG-${Date.now()}-${Math.floor(Math.random() * 1000)}`
-    db.prepare(`
-      INSERT INTO reconciliation_logs (id, type, target_id, target_name, field, old_value, new_value, reason, operator, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-    `).run(id, type || 'bom_fix', targetId, targetName, field, oldValue, newValue, reason, (req as any).user?.username || 'system')
-
-    success(res, { id }, 'BOM修正已生效，日志已记录')
   } catch (e: any) {
     error(res, e.message || '记录日志失败')
   }

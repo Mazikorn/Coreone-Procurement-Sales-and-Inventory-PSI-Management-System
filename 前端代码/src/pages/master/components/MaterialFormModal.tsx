@@ -1,4 +1,5 @@
 import { X } from 'lucide-react'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { FormData } from '../hooks/useMaterialsPage'
 
 interface Props {
@@ -90,21 +91,24 @@ export function MaterialFormModal({
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1.5">物料分类</label>
-              <select value={form.categoryId} onChange={e => {
-                const val = e.target.value
-                onChange({ ...form, categoryId: val })
-                if (!editingId && val) onCategoryChange(val)
-              }} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm bg-white focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500">
-                <option value="">请选择</option>
-                {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              <SearchableSelect
+                value={form.categoryId}
+                onChange={val => {
+                  onChange({ ...form, categoryId: val })
+                  if (!editingId && val) onCategoryChange(val)
+                }}
+                options={categories.map(c => ({ value: c.id, label: c.name }))}
+                placeholder="请选择"
+              />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1.5">供应商</label>
-              <select value={form.supplierId} onChange={e => onChange({ ...form, supplierId: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm bg-white focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500">
-                <option value="">请选择</option>
-                {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
+              <SearchableSelect
+                value={form.supplierId}
+                onChange={val => onChange({ ...form, supplierId: val })}
+                options={suppliers.map(s => ({ value: s.id, label: s.name }))}
+                placeholder="请选择"
+              />
             </div>
           </div>
           <div className="grid grid-cols-3 gap-4">

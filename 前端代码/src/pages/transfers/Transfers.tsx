@@ -1,7 +1,10 @@
-import { useState, useEffect } from 'react'
-import { Plus, X, ArrowRightLeft, Trash2 } from 'lucide-react'
+import { useState, useEffect, useCallback } from 'react'
+import { ArrowRightLeft, Trash2 } from 'lucide-react'
 import { usePagination } from '@/hooks/usePagination'
 import { Pagination } from '@/components/ui/Pagination'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
+import { Modal } from '@/components/ui/Modal'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { transferApi } from '@/api/inventory'
 import { materialApi, locationApi } from '@/api/master'
 import type { TransferRecord, Material, Location } from '@/types'
@@ -37,6 +40,14 @@ export default function Transfers() {
 
   useEffect(() => { fetchRefs() }, [])
 
+  const fetchFn = useCallback(
+    async ({ page, pageSize }: { page: number; pageSize: number }) => {
+      const res: any = await transferApi.getList({ page, pageSize })
+      return { list: res.list || [], pagination: res.pagination }
+    },
+    []
+  )
+
   const {
     data,
     loading,
@@ -47,10 +58,7 @@ export default function Transfers() {
     setPageSize,
     refresh,
   } = usePagination<TransferRecord>({
-    fetchFn: async ({ page, pageSize }) => {
-      const res: any = await transferApi.getList({ page, pageSize })
-      return { list: res.list || [], pagination: res.pagination }
-    },
+    fetchFn,
     deps: [],
   })
 
@@ -136,7 +144,7 @@ export default function Transfers() {
                       <td className="px-4 py-3 font-medium text-gray-900">{mat?.name || row.materialName || row.materialId}</td>
                       <td className="px-4 py-3 text-right">{row.quantity} {mat?.unit}</td>
                       <td className="px-4 py-3">
-                        <span className="px-2 py-0.5 rounded text-xs bg-blue-50 text-blue-700">{row.locationName || row.toLocationId}</span>
+                        <span className="px-2 py-0.5 rounded text-xs bg-blue-50 text-blue-700">{row.toLocationName || row.toLocationId}</span>
                       </td>
                       <td className="px-4 py-3 text-gray-600">{row.operator}</td>
                       <td className="px-4 py-3 text-gray-500">{formatDate(row.createdAt)}</td>
@@ -166,118 +174,94 @@ export default function Transfers() {
 
       {/* Create Modal */}
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-900">调拨入库登记</h3>
-              <button onClick={() => setModalOpen(false)} className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-md transition-colors duration-150">
-                <X className="w-5 h-5" />
-              </button>
+        <Modal onClose={() => setModalOpen(false)} title="调拨入库登记" size="lg">
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">物料 <span className="text-red-500">*</span></label>
+              <SearchableSelect
+                value={form.materialId}
+                onChange={val => setForm({ ...form, materialId: val })}
+                options={materials.map(m => ({
+                  value: m.id,
+                  label: `${m.name} (${m.code}) - 库存 ${m.stock} ${m.unit}`,
+                }))}
+                placeholder="请选择"
+              />
             </div>
-            <div className="p-6 space-y-4">
+            <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">物料 <span className="text-red-500">*</span></label>
-                <select
-                  value={form.materialId}
-                  onChange={e => setForm({ ...form, materialId: e.target.value })}
-                  className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">请选择</option>
-                  {materials.map(m => (
-                    <option key={m.id} value={m.id}>{m.name} ({m.code}) - 库存 {m.stock} {m.unit}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">数量 <span className="text-red-500">*</span></label>
-                  <input
-                    type="number"
-                    min={1}
-                    value={form.quantity}
-                    onChange={e => setForm({ ...form, quantity: Number(e.target.value) })}
-                    className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">批号</label>
-                  <input
-                    type="text"
-                    value={form.batchNo}
-                    onChange={e => setForm({ ...form, batchNo: e.target.value })}
-                    className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">来源库位</label>
-                  <select
-                    value={form.fromLocationId}
-                    onChange={e => setForm({ ...form, fromLocationId: e.target.value })}
-                    className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="">请选择</option>
-                    {locations.map(l => (
-                      <option key={l.id} value={l.id}>{l.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">目标库位 <span className="text-red-500">*</span></label>
-                  <select
-                    value={form.toLocationId}
-                    onChange={e => setForm({ ...form, toLocationId: e.target.value })}
-                    className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="">请选择</option>
-                    {locations.map(l => (
-                      <option key={l.id} value={l.id}>{l.name}</option>
-                    ))}
-                  </select>
-                </div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">数量 <span className="text-red-500">*</span></label>
+                <input
+                  type="number"
+                  min={1}
+                  value={form.quantity}
+                  onChange={e => setForm({ ...form, quantity: Number(e.target.value) })}
+                  className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">备注</label>
-                <textarea
-                  value={form.remark}
-                  onChange={e => setForm({ ...form, remark: e.target.value })}
-                  rows={2}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                <label className="block text-sm font-medium text-gray-700 mb-1">批号</label>
+                <input
+                  type="text"
+                  value={form.batchNo}
+                  onChange={e => setForm({ ...form, batchNo: e.target.value })}
+                  className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
             </div>
-            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200">
-              <button onClick={() => setModalOpen(false)} className="px-4 py-2 text-sm text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors duration-150">取消</button>
-              <button onClick={handleCreate} disabled={isSubmitting} className="px-4 py-2 text-sm text-white bg-blue-500 rounded-md hover:bg-blue-600 transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed">{isSubmitting ? '提交中...' : '确认调拨'}</button>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">来源库位</label>
+                <SearchableSelect
+                  value={form.fromLocationId}
+                  onChange={val => setForm({ ...form, fromLocationId: val })}
+                  options={locations.map(l => ({
+                    value: l.id,
+                    label: l.name,
+                  }))}
+                  placeholder="请选择"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">目标库位 <span className="text-red-500">*</span></label>
+                <SearchableSelect
+                  value={form.toLocationId}
+                  onChange={val => setForm({ ...form, toLocationId: val })}
+                  options={locations.map(l => ({
+                    value: l.id,
+                    label: l.name,
+                  }))}
+                  placeholder="请选择"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">备注</label>
+              <textarea
+                value={form.remark}
+                onChange={e => setForm({ ...form, remark: e.target.value })}
+                rows={2}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
             </div>
           </div>
-        </div>
+          <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-gray-200">
+            <button onClick={() => setModalOpen(false)} className="px-4 h-10 text-sm text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors">取消</button>
+            <button onClick={handleCreate} disabled={isSubmitting} className="px-4 h-10 text-sm text-white bg-blue-500 rounded-md hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">{isSubmitting ? '提交中...' : '确认调拨'}</button>
+          </div>
+        </Modal>
       )}
 
-      {/* Delete Confirm Modal */}
-      {deleteConfirmOpen && recordToDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-900">确认撤销</h3>
-              <button onClick={() => setDeleteConfirmOpen(false)} className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-md transition-colors duration-150">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="p-6">
-              <p className="text-sm text-gray-600">
-                确定要撤销调拨记录 <span className="font-mono font-medium">{recordToDelete.inboundNo}</span> 吗？
-              </p>
-              <p className="text-sm text-gray-500 mt-2">撤销后库存将自动回滚。</p>
-            </div>
-            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200">
-              <button onClick={() => setDeleteConfirmOpen(false)} className="px-4 py-2 text-sm text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors duration-150">取消</button>
-              <button onClick={handleDelete} className="px-4 py-2 text-sm text-white bg-red-500 rounded-md hover:bg-red-600 transition-colors duration-150">确认撤销</button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Delete Confirm Dialog */}
+      <ConfirmDialog
+        open={deleteConfirmOpen && !!recordToDelete}
+        title="确认撤销"
+        description={`确定要撤销调拨记录 ${recordToDelete?.inboundNo} 吗？撤销后库存将自动回滚。`}
+        confirmText="确认撤销"
+        confirmVariant="danger"
+        onConfirm={handleDelete}
+        onCancel={() => { setDeleteConfirmOpen(false); setRecordToDelete(null) }}
+      />
     </div>
   )
 }

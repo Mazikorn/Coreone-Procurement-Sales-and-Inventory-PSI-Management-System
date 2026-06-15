@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { X, Trash2, Upload, Plus } from 'lucide-react'
+import { X, Trash2, Plus } from 'lucide-react'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { Project } from '@/types'
 
 interface OutboundMaterial {
@@ -99,6 +99,8 @@ export function OutboundModal({
                       <th className="bg-gray-50 px-4 py-3 text-left text-xs font-medium text-gray-700 tracking-wide border-b border-gray-200">库存</th>
                       <th className="bg-gray-50 px-4 py-3 text-left text-xs font-medium text-gray-700 tracking-wide border-b border-gray-200 w-[90px]">出库数量</th>
                       <th className="bg-gray-50 px-4 py-3 text-left text-xs font-medium text-gray-700 tracking-wide border-b border-gray-200 w-[120px]">领用人</th>
+                      <th className="bg-gray-50 px-4 py-3 text-left text-xs font-medium text-gray-700 tracking-wide border-b border-gray-200 w-[90px]">用途</th>
+                      <th className="bg-gray-50 px-4 py-3 text-left text-xs font-medium text-gray-700 tracking-wide border-b border-gray-200 w-[130px]">接收方</th>
                       <th className="bg-gray-50 px-4 py-3 text-left text-xs font-medium text-gray-700 tracking-wide border-b border-gray-200 w-[50px]">操作</th>
                     </tr>
                   </thead>
@@ -110,16 +112,19 @@ export function OutboundModal({
                           <div className="text-xs text-gray-500">{m.spec}</div>
                         </td>
                         <td className="px-4 py-3">
-                          <select
+                          <SearchableSelect
                             value={m.project}
-                            onChange={e => onUpdateProject(m.rowId, e.target.value)}
-                            className="h-8 px-3 border border-gray-300 rounded-md text-xs bg-white focus:outline-none focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 transition-all duration-150 ease"
-                          >
-                            <option value="">公共成本</option>
-                            {projectList.map(p => (
-                              <option key={p.id} value={p.name}>{p.name}</option>
-                            ))}
-                          </select>
+                            onChange={val => onUpdateProject(m.rowId, val)}
+                            options={[
+                              { value: '', label: '公共成本' },
+                              ...projectList.map(p => ({
+                                value: p.name,
+                                label: p.name,
+                              })),
+                            ]}
+                            placeholder="公共成本"
+                            className="w-36"
+                          />
                         </td>
                         <td className="px-4 py-3 text-gray-600">{m.batch || '-'}</td>
                         <td className="px-4 py-3 text-gray-900">{m.stock}</td>
@@ -134,26 +139,31 @@ export function OutboundModal({
                           />
                         </td>
                         <td className="px-4 py-3">
-                          <select
+                          <SearchableSelect
                             value={m.user}
-                            onChange={e => onUpdateUser(m.rowId, e.target.value)}
-                            className="h-8 px-3 border border-gray-300 rounded-md text-xs bg-white focus:outline-none focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 transition-all duration-150 ease"
-                          >
-                            <option value="">选择领用人</option>
-                            {userList.map(u => (
-                              <option key={u.id} value={u.real_name}>{u.real_name}</option>
-                            ))}
-                          </select>
+                            onChange={val => onUpdateUser(m.rowId, val)}
+                            options={[
+                              { value: '', label: '选择领用人' },
+                              ...userList.map(u => ({
+                                value: u.real_name,
+                                label: u.real_name,
+                              })),
+                            ]}
+                            placeholder="选择领用人"
+                            className="min-w-[120px]"
+                          />
                         </td>
                         <td className="px-4 py-3">
-                          <select
+                          <SearchableSelect
                             value={m.usage}
-                            onChange={e => onUpdateUsage(m.rowId, e.target.value as 'self' | 'external')}
-                            className="h-8 px-3 border border-gray-300 rounded-md text-xs bg-white focus:outline-none focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 transition-all duration-150 ease"
-                          >
-                            <option value="self">自用</option>
-                            <option value="external">外给</option>
-                          </select>
+                            onChange={val => onUpdateUsage(m.rowId, val as 'self' | 'external')}
+                            options={[
+                              { value: 'self', label: '自用' },
+                              { value: 'external', label: '外给' },
+                            ]}
+                            placeholder="请选择"
+                            className="min-w-[80px]"
+                          />
                         </td>
                         <td className="px-4 py-3">
                           <input

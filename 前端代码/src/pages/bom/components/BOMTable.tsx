@@ -1,6 +1,7 @@
 import { Search, Clock, FileText } from 'lucide-react'
 import { toast } from 'sonner'
 import { Pagination } from '@/components/ui/Pagination'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { BOM } from '@/types'
 import {
   STATUS_OPTIONS,
@@ -89,28 +90,20 @@ export function BOMTable({
           />
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <select
+          <SearchableSelect
             value={filterType}
-            onChange={(e) => onFilterTypeChange(e.target.value)}
-            className="h-10 px-3 border border-gray-300 rounded-md text-sm text-gray-700 bg-white focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
-          >
-            {TYPE_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-          <select
+            onChange={(val) => onFilterTypeChange(val)}
+            options={TYPE_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+            placeholder="全部类型"
+            className="w-32"
+          />
+          <SearchableSelect
             value={filterStatus}
-            onChange={(e) => onFilterStatusChange(e.target.value)}
-            className="h-10 px-3 border border-gray-300 rounded-md text-sm text-gray-700 bg-white focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
-          >
-            {STATUS_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
+            onChange={(val) => onFilterStatusChange(val)}
+            options={STATUS_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+            placeholder="全部状态"
+            className="w-28"
+          />
           <button
             onClick={onSearch}
             className="h-10 px-4 bg-white text-gray-700 border border-gray-300 rounded-md text-sm font-medium hover:bg-gray-50 transition-colors"
@@ -257,7 +250,10 @@ export function BOMTable({
               </tr>
             ) : (
               data.map((row) => {
-                const mStatus = getMaterialStatus(row)
+                const mStatus = getMaterialStatus({
+                  stock: row.supportableSamples,
+                  minStock: 30,
+                })
                 const selected = selectedIds.has(row.id)
                 const supportable = row.supportableSamples
                 const supportableClass =

@@ -29,9 +29,9 @@ async function run() {
   }
 
   const adminToken = await login('admin', 'admin123')
-  const whmToken = await login('cangguan', 'CoreOne2026!')
-  const proToken = await login('caigou', 'CoreOne2026!')
-  const techToken = await login('jishuyuan1', 'CoreOne2026!')
+  const whmToken = await login('wangkq', 'CoreOne2026!')
+  const proToken = await login('zhaohp', 'CoreOne2026!')
+  const techToken = await login('zhangwei', 'CoreOne2026!')
 
   // 获取一个有库存的物料（>=2，允许创建+删除恢复）
   let testMaterialId = ''

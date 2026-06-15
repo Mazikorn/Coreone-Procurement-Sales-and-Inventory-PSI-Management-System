@@ -1,4 +1,5 @@
 import { X } from 'lucide-react'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { FormData } from '../hooks/useSuppliersPage'
 
 interface Props {
@@ -93,14 +94,15 @@ export function SupplierFormModal({ open, type, form, onClose, onChange, onSubmi
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 合作状态 <span className="text-red-500">*</span>
               </label>
-              <select
+              <SearchableSelect
                 value={form.status}
-                onChange={(e) => onChange({ ...form, status: e.target.value as 'active' | 'inactive' })}
-                className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm bg-white focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
-              >
-                <option value="active">合作中</option>
-                <option value="inactive">已终止</option>
-              </select>
+                onChange={(val) => onChange({ ...form, status: val as 'active' | 'inactive' })}
+                options={[
+                  { value: 'active', label: '合作中' },
+                  { value: 'inactive', label: '已终止' },
+                ]}
+                placeholder="请选择"
+              />
             </div>
           </div>
           <div>

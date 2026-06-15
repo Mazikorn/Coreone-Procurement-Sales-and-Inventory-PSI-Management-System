@@ -1,6 +1,6 @@
 /**
- * 验收测试数据初始化脚本
- * 基于 TEST-PLAN-v1.1 的测试场景创建完整数据链
+ * 验收数据初始化脚本
+ * 基于 TEST-PLAN-v1.1 的验收场景创建完整数据链
  */
 
 import { initializeDatabase, getDatabase } from "../src/database/DatabaseManager";
@@ -17,7 +17,7 @@ async function seedAcceptanceData() {
     db.prepare(sql).run(...params)
   }
 
-  console.log("🌱 开始初始化验收测试数据...\n");
+  console.log("开始初始化验收数据...\n");
 
   // ============================================
   // 1. 创建供应商
@@ -26,7 +26,7 @@ async function seedAcceptanceData() {
   run(
     `INSERT INTO suppliers (id, public_id, name, contact_person, contact_phone, address, is_active, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [supplierId, supplierId, "验收测试供应商", "王经理", "13800138001", "北京市朝阳区", 1, now, now]
+    [supplierId, supplierId, "国药器械北京分公司", "王志强", "010-64321098", "北京市朝阳区望京科技园", 1, now, now]
   );
   console.log("✅ 供应商创建成功:", supplierId);
 
@@ -190,7 +190,7 @@ async function seedAcceptanceData() {
   // ============================================
   // 汇总
   // ============================================
-  console.log("\n📊 验收测试数据初始化完成:");
+  console.log("\n验收数据初始化完成:");
   console.log("  ├─ 供应商: 1 家");
   console.log("  ├─ 分类: 3 级");
   console.log("  ├─ 耗材配置: 1 项");

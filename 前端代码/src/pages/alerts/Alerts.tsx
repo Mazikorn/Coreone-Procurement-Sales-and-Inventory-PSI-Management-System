@@ -31,20 +31,20 @@ export default function Alerts() {
 
       {/* 统计卡片 */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white rounded-lg shadow-sm p-5 border-l-4 border-red-500">
-          <div className="text-2xl font-bold text-red-600">{page.stats.pending}</div>
+        <div className="bg-white rounded-lg p-5 shadow-sm border border-gray-200 border-l-4 border-l-red-500">
+          <div className="text-2xl font-semibold text-gray-900">{page.stats.pending}</div>
           <div className="mt-1 text-sm text-gray-500">待处理</div>
         </div>
-        <div className="bg-white rounded-lg shadow-sm p-5 border-l-4 border-green-500">
-          <div className="text-2xl font-bold text-green-600">{page.stats.processed}</div>
+        <div className="bg-white rounded-lg p-5 shadow-sm border border-gray-200 border-l-4 border-l-green-500">
+          <div className="text-2xl font-semibold text-gray-900">{page.stats.processed}</div>
           <div className="mt-1 text-sm text-gray-500">已处理</div>
         </div>
-        <div className="bg-white rounded-lg shadow-sm p-5 border-l-4 border-yellow-500">
-          <div className="text-2xl font-bold text-yellow-600">{page.stats.today}</div>
+        <div className="bg-white rounded-lg p-5 shadow-sm border border-gray-200 border-l-4 border-l-yellow-500">
+          <div className="text-2xl font-semibold text-gray-900">{page.stats.today}</div>
           <div className="mt-1 text-sm text-gray-500">今日预警</div>
         </div>
-        <div className="bg-white rounded-lg shadow-sm p-5 border-l-4 border-blue-500">
-          <div className="text-2xl font-bold text-blue-600">{page.stats.total}</div>
+        <div className="bg-white rounded-lg p-5 shadow-sm border border-gray-200 border-l-4 border-l-blue-500">
+          <div className="text-2xl font-semibold text-gray-900">{page.stats.total}</div>
           <div className="mt-1 text-sm text-gray-500">本月预警</div>
         </div>
       </div>

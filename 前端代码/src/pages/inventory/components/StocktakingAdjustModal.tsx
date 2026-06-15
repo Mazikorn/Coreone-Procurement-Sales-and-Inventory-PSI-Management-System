@@ -1,4 +1,5 @@
 import { X, CheckCircle, AlertTriangle } from 'lucide-react'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { StocktakingRecord } from '../hooks/useStocktakingPage'
 
 interface Props {
@@ -42,13 +43,19 @@ export function StocktakingAdjustModal({ open, row, onClose }: Props) {
                     账面: {row.systemStock} | 实盘: {row.actualStock} | 差异: <span className={row.difference > 0 ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold'}>{row.difference > 0 ? '+' : ''}{row.difference}</span>
                   </div>
                 </div>
-                <select className="px-3 py-1.5 border border-gray-300 rounded-md text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 w-32">
-                  <option value="">选择原因</option>
-                  <option value="normal">正常损耗</option>
-                  <option value="record">账务问题</option>
-                  <option value="physical">实物问题</option>
-                  <option value="other">其他</option>
-                </select>
+                <SearchableSelect
+                  value=""
+                  onChange={() => {}}
+                  options={[
+                    { value: '', label: '选择原因' },
+                    { value: 'normal', label: '正常损耗' },
+                    { value: 'record', label: '账务问题' },
+                    { value: 'physical', label: '实物问题' },
+                    { value: 'other', label: '其他' },
+                  ]}
+                  placeholder="选择原因"
+                  className="w-32"
+                />
                 <input placeholder="备注（选填）" className="px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-28" />
               </div>
             </div>

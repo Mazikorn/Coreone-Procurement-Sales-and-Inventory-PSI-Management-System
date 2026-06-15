@@ -1,7 +1,10 @@
-import { useState, useEffect } from 'react'
-import { Plus, X, Trash2 } from 'lucide-react'
+import { useState, useEffect, useCallback } from 'react'
+import { Trash2 } from 'lucide-react'
 import { usePagination } from '@/hooks/usePagination'
 import { Pagination } from '@/components/ui/Pagination'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
+import { Modal } from '@/components/ui/Modal'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { scrapApi } from '@/api/inventory'
 import { materialApi } from '@/api/master'
 import type { ScrapRecord, Material } from '@/types'
@@ -38,6 +41,14 @@ export default function Scraps() {
 
   useEffect(() => { fetchRefs() }, [])
 
+  const fetchFn = useCallback(
+    async ({ page, pageSize }: { page: number; pageSize: number }) => {
+      const res: any = await scrapApi.getList({ page, pageSize })
+      return { list: res.list || [], pagination: res.pagination }
+    },
+    []
+  )
+
   const {
     data,
     loading,
@@ -48,10 +59,7 @@ export default function Scraps() {
     setPageSize,
     refresh,
   } = usePagination<ScrapRecord>({
-    fetchFn: async ({ page, pageSize }) => {
-      const res: any = await scrapApi.getList({ page, pageSize })
-      return { list: res.list || [], pagination: res.pagination }
-    },
+    fetchFn,
     deps: [],
   })
 
@@ -168,92 +176,69 @@ export default function Scraps() {
 
       {/* Create Modal */}
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-900">报废登记</h3>
-              <button onClick={() => setModalOpen(false)} className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-md transition-colors duration-150">
-                <X className="w-5 h-5" />
-              </button>
+        <Modal onClose={() => setModalOpen(false)} title="报废登记" size="lg">
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">物料 <span className="text-red-500">*</span></label>
+              <SearchableSelect
+                value={form.materialId}
+                onChange={val => setForm({ ...form, materialId: val })}
+                options={materials.map(m => ({
+                  value: m.id,
+                  label: `${m.name} (${m.code}) - 库存 ${m.stock} ${m.unit}`,
+                }))}
+                placeholder="请选择"
+              />
             </div>
-            <div className="p-6 space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">物料 <span className="text-red-500">*</span></label>
-                <select
-                  value={form.materialId}
-                  onChange={e => setForm({ ...form, materialId: e.target.value })}
-                  className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">请选择</option>
-                  {materials.map(m => (
-                    <option key={m.id} value={m.id}>{m.name} ({m.code}) - 库存 {m.stock} {m.unit}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">报废数量 <span className="text-red-500">*</span></label>
-                <input
-                  type="number"
-                  min={1}
-                  value={form.quantity}
-                  onChange={e => setForm({ ...form, quantity: Number(e.target.value) })}
-                  className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">报废原因 <span className="text-red-500">*</span></label>
-                <select
-                  value={form.reason}
-                  onChange={e => setForm({ ...form, reason: e.target.value })}
-                  className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">请选择</option>
-                  {reasonOptions.map(r => (
-                    <option key={r.value} value={r.value}>{r.label}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">备注</label>
-                <textarea
-                  value={form.remark}
-                  onChange={e => setForm({ ...form, remark: e.target.value })}
-                  rows={2}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">报废数量 <span className="text-red-500">*</span></label>
+              <input
+                type="number"
+                min={1}
+                value={form.quantity}
+                onChange={e => setForm({ ...form, quantity: Number(e.target.value) })}
+                className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
             </div>
-            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200">
-              <button onClick={() => setModalOpen(false)} className="px-4 py-2 text-sm text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors duration-150">取消</button>
-              <button onClick={handleCreate} disabled={isSubmitting} className="px-4 py-2 text-sm text-white bg-red-500 rounded-md hover:bg-red-600 transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed">{isSubmitting ? '提交中...' : '确认报废'}</button>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">报废原因 <span className="text-red-500">*</span></label>
+              <SearchableSelect
+                value={form.reason}
+                onChange={val => setForm({ ...form, reason: val })}
+                options={[
+                  { value: '', label: '请选择' },
+                  ...reasonOptions,
+                ]}
+                placeholder="请选择"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">备注</label>
+              <textarea
+                value={form.remark}
+                onChange={e => setForm({ ...form, remark: e.target.value })}
+                rows={2}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
             </div>
           </div>
-        </div>
+          <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-gray-200">
+            <button onClick={() => setModalOpen(false)} className="px-4 h-10 text-sm text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors">取消</button>
+            <button onClick={handleCreate} disabled={isSubmitting} className="px-4 h-10 text-sm text-white bg-red-500 rounded-md hover:bg-red-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">{isSubmitting ? '提交中...' : '确认报废'}</button>
+          </div>
+        </Modal>
       )}
 
-      {/* Delete Confirm Modal */}
-      {deleteConfirmOpen && recordToDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-900">确认撤销</h3>
-              <button onClick={() => setDeleteConfirmOpen(false)} className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-md transition-colors duration-150">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="p-6">
-              <p className="text-sm text-gray-600">
-                确定要撤销报废记录 <span className="font-mono font-medium">{recordToDelete.scrapNo}</span> 吗？
-              </p>
-              <p className="text-sm text-gray-500 mt-2">撤销后库存将自动回滚。</p>
-            </div>
-            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200">
-              <button onClick={() => setDeleteConfirmOpen(false)} className="px-4 py-2 text-sm text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors duration-150">取消</button>
-              <button onClick={handleDelete} className="px-4 py-2 text-sm text-white bg-red-500 rounded-md hover:bg-red-600 transition-colors duration-150">确认撤销</button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Delete Confirm Dialog */}
+      <ConfirmDialog
+        open={deleteConfirmOpen && !!recordToDelete}
+        title="确认撤销"
+        description={`确定要撤销报废记录 ${recordToDelete?.scrapNo} 吗？撤销后库存将自动回滚。`}
+        confirmText="确认撤销"
+        confirmVariant="danger"
+        onConfirm={handleDelete}
+        onCancel={() => { setDeleteConfirmOpen(false); setRecordToDelete(null) }}
+      />
     </div>
   )
 }

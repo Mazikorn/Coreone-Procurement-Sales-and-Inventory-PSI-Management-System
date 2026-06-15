@@ -1,9 +1,11 @@
 import { Fragment } from 'react'
 import { Search, ArrowUpDown, ArrowUp, ArrowDown, X, Trash2, Upload, ChevronRight } from 'lucide-react'
 import { Pagination } from '@/components/ui/Pagination'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import { StockLevelIndicator } from './StockLevelIndicator'
 import { ExpiryTag } from './ExpiryTag'
 import type { InventoryItem } from '@/types'
+import { useNavigate } from 'react-router-dom'
 
 interface InventoryRow extends InventoryItem {
   batch?: string
@@ -110,6 +112,7 @@ export function InventoryTable({
   onBatchOutbound,
   onBatchScrap,
 }: Props) {
+  const navigate = useNavigate()
   const sortedData = [...data]
   if (sortField) {
     sortedData.sort((a, b) => {
@@ -199,26 +202,30 @@ export function InventoryTable({
                 className="w-[260px] pl-10 pr-4 h-10 border border-gray-300 rounded-md text-sm focus:outline-none focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 transition-all duration-150 ease"
               />
             </div>
-            <select
+            <SearchableSelect
               value={category}
-              onChange={e => onCategoryChange(e.target.value)}
-              className="h-10 px-3 border border-gray-300 rounded-md text-sm text-gray-700 focus:outline-none focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 transition-all duration-150 ease bg-white"
-            >
-              <option>全部分类</option>
-              <option>试剂</option>
-              <option>耗材</option>
-              <option>设备</option>
-            </select>
-            <select
+              onChange={val => onCategoryChange(val)}
+              options={[
+                { value: '全部分类', label: '全部分类' },
+                { value: '试剂', label: '试剂' },
+                { value: '耗材', label: '耗材' },
+                { value: '设备', label: '设备' },
+              ]}
+              placeholder="全部分类"
+              className="w-36"
+            />
+            <SearchableSelect
               value={location}
-              onChange={e => onLocationChange(e.target.value)}
-              className="h-10 px-3 border border-gray-300 rounded-md text-sm text-gray-700 focus:outline-none focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 transition-all duration-150 ease bg-white"
-            >
-              <option>全部库位</option>
-              <option>A区-试剂冷藏</option>
-              <option>B区-常温耗材</option>
-              <option>C区-设备配件</option>
-            </select>
+              onChange={val => onLocationChange(val)}
+              options={[
+                { value: '全部库位', label: '全部库位' },
+                { value: 'A区-试剂冷藏', label: 'A区-试剂冷藏' },
+                { value: 'B区-常温耗材', label: 'B区-常温耗材' },
+                { value: 'C区-设备配件', label: 'C区-设备配件' },
+              ]}
+              placeholder="全部库位"
+              className="w-36"
+            />
             <button
               onClick={onSearch}
               className="h-10 px-4 border border-gray-300 rounded-md text-sm text-gray-700 hover:bg-gray-50 transition-all duration-150 ease font-medium"
@@ -348,6 +355,13 @@ export function InventoryTable({
                   const first = batches[0]
                   const totalStock = batches.reduce((sum, b) => sum + (b.stock || 0), 0)
                   const minStock = first?.minStock || 0
+                  const isGroupSelected = batches.every(row => selectedIds.has(row.id))
+                  const toggleGroupSelection = () => {
+                    const shouldSelect = !isGroupSelected
+                    batches.forEach(row => {
+                      if (selectedIds.has(row.id) !== shouldSelect) onToggleSelectOne(row.id)
+                    })
+                  }
                   return (
                     <Fragment key={groupName}>
                       <tr
@@ -357,8 +371,10 @@ export function InventoryTable({
                         <td className="px-4 py-3">
                           <input
                             type="checkbox"
+                            checked={isGroupSelected}
                             className="w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-500"
-                            onChange={(e) => e.stopPropagation()}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={toggleGroupSelection}
                           />
                         </td>
                         <td className="px-4 py-3">
@@ -367,7 +383,10 @@ export function InventoryTable({
                               <ChevronRight className="w-3 h-3" strokeWidth={3} />
                             </span>
                             <div>
-                              <div className="font-semibold text-gray-900">{first?.name}</div>
+                              <div
+                                className="font-semibold text-gray-900 hover:text-blue-600 cursor-pointer transition-colors"
+                                onClick={(e) => { e.stopPropagation(); navigate(`/materials?keyword=${encodeURIComponent(first?.name || '')}`) }}
+                              >{first?.name}</div>
                               <div className="text-xs text-gray-500 mt-0.5">{first?.spec || ''}</div>
                             </div>
                           </div>

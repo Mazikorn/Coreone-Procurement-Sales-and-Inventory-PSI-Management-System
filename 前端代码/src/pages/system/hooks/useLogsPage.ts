@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from 'react'
-import request from '@/api/request'
+import { useState, useEffect, useMemo, useCallback } from 'react'
+import { logsApi } from '@/api/logs'
 import type { OperationLog } from '@/types'
 import { toast } from 'sonner'
 import { usePagination } from '@/hooks/usePagination'
@@ -42,7 +42,7 @@ export const USERS = [
 ]
 
 export function useLogsPage() {
-  const { get, getNumber, setMultiple } = useUrlParams()
+  const { getNumber, setMultiple } = useUrlParams()
 
   const [keyword, setKeyword] = useState('')
   const [typeFilter, setTypeFilter] = useState('')
@@ -56,21 +56,27 @@ export function useLogsPage() {
     ? getNumber('pageSize', 20)
     : 20
 
+  const fetchFn = useCallback(
+    async ({ page, pageSize }: { page: number; pageSize: number }) => {
+      const res = await logsApi.getList({
+        page, pageSize,
+        ...(keyword && { keyword }),
+        ...(typeFilter && { type: typeFilter as any }),
+        ...(moduleFilter && { module: moduleFilter as any }),
+        ...(userFilter && { username: userFilter }),
+        ...(startDate && { startDate }),
+        ...(endDate && { endDate }),
+      })
+      return { list: res?.list || [], pagination: res?.pagination }
+    },
+    [keyword, typeFilter, moduleFilter, userFilter, startDate, endDate]
+  )
+
   const {
     data, loading, page, pageSize, total,
     setPage, setPageSize,
   } = usePagination<OperationLog>({
-    fetchFn: async ({ page, pageSize }) => {
-      const params: any = { page, pageSize }
-      if (keyword) params.keyword = keyword
-      if (typeFilter) params.type = typeFilter
-      if (moduleFilter) params.module = moduleFilter
-      if (userFilter) params.username = userFilter
-      if (startDate) params.startDate = startDate
-      if (endDate) params.endDate = endDate
-      const res: any = await request.get('/logs', { params })
-      return { list: res?.list || [], pagination: res?.pagination }
-    },
+    fetchFn,
     initialPage: urlPage,
     initialPageSize: urlPageSize,
     deps: [keyword, typeFilter, moduleFilter, userFilter, startDate, endDate],
@@ -138,8 +144,11 @@ export function useLogsPage() {
 
   const handleExport = async () => {
     try {
-      const params = { startDate: exportForm.startDate, endDate: exportForm.endDate, format: exportForm.format }
-      const res: any = await request.get('/logs/export', { params, responseType: 'blob' })
+      const res = await logsApi.export({
+        startDate: exportForm.startDate,
+        endDate: exportForm.endDate,
+        format: exportForm.format,
+      })
       const blob = new Blob([res])
       const url = window.URL.createObjectURL(blob)
       const a = document.createElement('a')

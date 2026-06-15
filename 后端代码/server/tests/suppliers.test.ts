@@ -21,8 +21,8 @@ async function run() {
   }
 
   const adminToken = await login('admin', 'admin123')
-  const whmToken = await login('cangguan', 'CoreOne2026!')
-  const techToken = await login('jishuyuan1', 'CoreOne2026!')
+  const whmToken = await login('wangkq', 'CoreOne2026!')
+  const techToken = await login('zhangwei', 'CoreOne2026!')
 
   const supplierName = generateUnique('测试供应商')
 

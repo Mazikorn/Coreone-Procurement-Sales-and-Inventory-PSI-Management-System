@@ -1,6 +1,7 @@
 import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
+import helmet from 'helmet'
 import { initializeDatabase } from './database/DatabaseManager.js'
 import { errorHandler } from './middleware/errorHandler.js'
 import { authenticateToken, requireRole } from './middleware/auth.js'
@@ -29,12 +30,31 @@ import purchaseOrderRoutes from './routes/purchase-orders-v1.1.js'
 import transferRoutes from './routes/transfers-v1.1.js'
 import supplierReturnRoutes from './routes/supplier-returns-v1.1.js'
 import reconciliationRoutes from './routes/reconciliation-v1.1.js'
+import equipmentRoutes from './routes/equipment-v1.1.js'
+import equipmentTypeRoutes from './routes/equipment-types-v1.1.js'
+import laborTimeRoutes from './routes/labor-time-v1.1.js'
+import indirectCostRoutes from './routes/indirect-cost-v1.1.js'
+import abcRoutes from './routes/abc-v1.1.js'
+import costAdjustmentRoutes from './routes/cost-adjustment-v1.1.js'
 
 const app = express()
 const PORT = process.env.PORT || 3001
 
 // 中间件
-app.use(cors())
+app.use(cors({
+  origin: process.env.CORS_ORIGIN || 'http://localhost:8080',
+  credentials: true,
+}))
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:"],
+    },
+  },
+}))
 app.use(express.json())
 app.use(express.urlencoded({ extended: true }))
 
@@ -84,13 +104,29 @@ app.use('/api/v1/boms', authenticateToken, requireRole('admin', 'technician', 'p
 // 路由注册 - 成本对账 (admin/finance/pathologist可访问)
 app.use('/api/v1/reconciliation', authenticateToken, requireRole('admin', 'pathologist', 'finance'), reconciliationRoutes)
 
+// 路由注册 - 设备管理 (admin/technician/pathologist可访问)
+app.use('/api/v1/equipment', authenticateToken, requireRole('admin', 'technician', 'pathologist'), equipmentRoutes)
+app.use('/api/v1/equipment-types', authenticateToken, requireRole('admin', 'technician', 'pathologist'), equipmentTypeRoutes)
+
+// 路由注册 - 标准工时 (admin/technician/pathologist可访问)
+app.use('/api/v1/labor-times', authenticateToken, requireRole('admin', 'technician', 'pathologist'), laborTimeRoutes)
+
+// 路由注册 - 间接成本中心 (admin/finance可访问)
+app.use('/api/v1/indirect-costs', authenticateToken, requireRole('admin', 'finance'), indirectCostRoutes)
+
+// 路由注册 - ABC作业成本法 (admin/finance可访问)
+app.use('/api/v1/abc', authenticateToken, requireRole('admin', 'finance'), abcRoutes)
+
+// 路由注册 - 季度成本调整 (admin/finance可访问)
+app.use('/api/v1/cost-adjustments', authenticateToken, requireRole('admin', 'finance'), costAdjustmentRoutes)
+
 // 路由注册 - 通用主数据 (所有已认证角色可查看)
 app.use('/api/v1/categories', authenticateToken, categoryRoutes)
 app.use('/api/v1/materials', authenticateToken, requireRole('admin', 'warehouse_manager', 'technician', 'pathologist', 'procurement'), materialRoutes)
 
 // 健康检查
 app.get('/api/health', (_req, res) => {
-  res.json({ success: true, data: { status: 'ok', version: '1.1.0' } })
+  res.json({ success: true, data: { status: 'ok' } })
 })
 
 // 错误处理
@@ -101,7 +137,12 @@ app.use((_req, res) => {
   res.status(404).json({ success: false, error: { message: 'Not found', code: 'NOT_FOUND' } })
 })
 
-app.listen(PORT, () => {
-  console.log(`COREONE Backend Server running on port ${PORT}`)
-  console.log(`API Base URL: http://localhost:${PORT}/api/v1`)
-})
+// 在测试环境下不自动启动服务器（由测试 globalSetup 控制）
+if (process.env.NODE_ENV !== 'test') {
+  app.listen(PORT, () => {
+    console.log(`COREONE Backend Server running on port ${PORT}`)
+    console.log(`API Base URL: http://localhost:${PORT}/api/v1`)
+  })
+}
+
+export default app

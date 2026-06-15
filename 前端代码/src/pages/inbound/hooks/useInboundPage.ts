@@ -9,6 +9,7 @@ import { formatDateTime } from '@/lib/utils'
 import type { FormData } from '../components/InboundFormModal'
 
 type ModalType = 'create' | 'edit' | 'detail' | 'restore' | 'scan' | 'import' | 'print' | null
+type PurchaseOrderOption = { id: string; orderNo?: string; remainingQty?: number } & Record<string, unknown>
 
 function getTypeLabel(type: string): string {
   const map: Record<string, string> = {
@@ -60,7 +61,7 @@ export function useInboundPage() {
   }>({ open: false, title: '', message: '', onConfirm: null })
 
   // 表单状态
-  const [purchaseOrders, setPurchaseOrders] = useState<any[]>([])
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderOption[]>([])
   const [selectedOrderId, setSelectedOrderId] = useState<string>('')
   const [submitting, setSubmitting] = useState(false)
 
@@ -94,7 +95,7 @@ export function useInboundPage() {
 
   const fetchFn = useCallback(
     async (params: { page: number; pageSize: number }) => {
-      const res: any = await inboundApi.getList({
+      const res = await inboundApi.getList({
         ...params,
         status: effectiveStatus,
         type: effectiveType,
@@ -172,8 +173,8 @@ export function useInboundPage() {
 
   const fetchStats = async () => {
     try {
-      const res: any = await inboundApi.getStats()
-      setStats(res.data || res)
+      const res = await inboundApi.getStats()
+      setStats(res)
     } catch (e) { console.error(e) }
   }
 
@@ -198,7 +199,7 @@ export function useInboundPage() {
 
   const fetchRefs = async () => {
     try {
-      const [mRes, sRes, lRes]: any = await Promise.all([
+      const [mRes, sRes, lRes] = await Promise.all([
         materialApi.getList({ page: 1, pageSize: 999, status: 'active' }),
         supplierApi.getList({ page: 1, pageSize: 999, status: 'active' }),
         locationApi.getList({ page: 1, pageSize: 999, status: 'active' }),
@@ -214,13 +215,15 @@ export function useInboundPage() {
   const fetchPurchaseOrders = async () => {
     try {
       const res = await purchaseOrderApi.getList({ status: 'pending,partial', pageSize: 100 })
-      setPurchaseOrders(res.data?.list || [])
+      const payload = (res as any)?.data ?? res
+      setPurchaseOrders((payload?.list || []) as PurchaseOrderOption[])
     } catch (e) {
       setPurchaseOrders([])
     }
   }
 
   useEffect(() => {
+    fetchRefs()
     fetchPurchaseOrders()
   }, [])
 
@@ -287,6 +290,7 @@ export function useInboundPage() {
       productionDate: record.productionDate || '',
       expiryDate: record.expiryDate || '',
       remark: record.remark || '',
+      purchaseOrderId: record.purchaseOrderId || '',
     })
     fetchRefs()
     setModalType('edit')
@@ -295,8 +299,9 @@ export function useInboundPage() {
   const handleDelete = async (record: InboundRecord) => {
     try {
       const check = await inboundApi.checkDeletable(record.id)
-      if (!check.data?.canDelete) {
-        const reasons = check.data?.reasons || ['该记录不可删除']
+      const payload = (check as any)?.data ?? check
+      if (!payload?.canDelete) {
+        const reasons = payload?.reasons || ['该记录不可删除']
         openConfirmModal('不可删除', reasons.join('；'), () => {})
         return
       }
@@ -308,13 +313,13 @@ export function useInboundPage() {
             await inboundApi.delete(record.id)
             toast.success('删除成功')
             refresh()
-          } catch (e: any) {
-            toast.error(e?.message || '删除失败')
+          } catch (e) {
+            toast.error('删除失败')
           }
         }
       )
-    } catch (e: any) {
-      toast.error(e?.message || '预检查失败')
+    } catch (e) {
+      toast.error('预检查失败')
     }
   }
 
@@ -340,8 +345,9 @@ export function useInboundPage() {
       toast.error('请选择耗材并输入数量')
       return
     }
-    if (selectedOrderId && selectedOrder && form.quantity > selectedOrder.remainingQty) {
-      toast.error(`入库数量不能超过待入库数量 ${selectedOrder.remainingQty}`)
+    const remainingQty = selectedOrder?.remainingQty ?? 0
+    if (selectedOrderId && selectedOrder && form.quantity > remainingQty) {
+      toast.error(`入库数量不能超过待入库数量 ${remainingQty}`)
       return
     }
     if (form.type === 'transfer' && !form.fromLocationId && !form.fromLocationName) {
@@ -360,7 +366,7 @@ export function useInboundPage() {
           productionDate: form.productionDate,
           expiryDate: form.expiryDate,
           remark: form.remark,
-        } as any)
+        })
         toast.success('更新成功')
       } else if (form.type === 'transfer') {
         await inboundApi.createTransfer({
@@ -372,10 +378,10 @@ export function useInboundPage() {
           batchNo: form.batchNo,
           operator: 'system',
           remark: form.remark,
-        } as any)
+        })
         toast.success('入库成功')
       } else {
-        await inboundApi.create(form as any)
+        await inboundApi.create(form)
         if (selectedOrderId) {
           try {
             await purchaseOrderApi.receive(selectedOrderId, { quantity: form.quantity })
@@ -399,12 +405,12 @@ export function useInboundPage() {
   const handleRestoreInbound = async () => {
     if (!selectedRecord) return
     try {
-      await inboundApi.update(selectedRecord.id, { status: 'completed' } as any)
+      await inboundApi.update(selectedRecord.id, { status: 'completed' })
       toast.success('恢复成功', { description: '入库记录已恢复' })
       closeModal()
       refresh()
-    } catch (e: any) {
-      toast.error('恢复失败', { description: e?.message || '请检查后端接口是否支持状态恢复' })
+    } catch (e) {
+      toast.error('恢复失败', { description: '请检查后端接口是否支持状态恢复' })
     }
   }
 

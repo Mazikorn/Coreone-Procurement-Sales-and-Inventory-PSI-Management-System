@@ -1,7 +1,19 @@
 import { X, CheckCircle, ArrowLeft, ArrowRight, Loader2, BarChart3 } from 'lucide-react'
 import { toast } from 'sonner'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { Material } from '@/types'
 import type { FormData } from '../hooks/useStocktakingPage'
+
+const typeOptions = [
+  { value: 'full', label: '全面盘点' },
+  { value: 'sample', label: '抽样盘点' },
+]
+
+const scopeOptions = [
+  { value: 'all', label: '全部物料' },
+  { value: 'category', label: '按分类' },
+  { value: 'location', label: '按库位' },
+]
 
 interface Props {
   open: boolean
@@ -12,11 +24,12 @@ interface Props {
   onClose: () => void
   onChange: (form: FormData) => void
   onSetCreateStep: (s: number) => void
+  onSubmit: () => void
 }
 
 export function StocktakingCreateModal({
   open, form, createStep, materials, isSubmitting,
-  onClose, onChange, onSetCreateStep,
+  onClose, onChange, onSetCreateStep, onSubmit,
 }: Props) {
   if (!open) return null
 
@@ -53,35 +66,65 @@ export function StocktakingCreateModal({
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">盘点名称 <span className="text-red-500">*</span></label>
-                  <input value={form.name} onChange={e => onChange({ ...form, name: e.target.value })} placeholder="请输入盘点名称" className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500" />
+                  <input value={form.name} onChange={e => onChange({ ...form, name: e.target.value })} placeholder="请输入盘点名称" data-testid="stocktaking-name-input" className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">盘点方式 <span className="text-red-500">*</span></label>
-                  <select value={form.type} onChange={e => onChange({ ...form, type: e.target.value as 'full' | 'sample' })} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500 bg-white">
-                    <option value="">请选择盘点方式</option>
-                    <option value="full">全盘</option>
-                    <option value="sample">抽盘</option>
-                  </select>
+                  <SearchableSelect
+                    value={form.type}
+                    onChange={val => onChange({ ...form, type: val as 'full' | 'sample' })}
+                    options={typeOptions}
+                    placeholder="请选择"
+                    testId="stocktaking-type-select"
+                  />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">盘点范围 <span className="text-red-500">*</span></label>
-                  <select value={form.scope} onChange={e => onChange({ ...form, scope: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500 bg-white">
-                    <option value="">请选择盘点范围</option>
-                    <option value="all">全部物料</option>
-                    <option value="category">指定分类</option>
-                    <option value="location">指定库位</option>
-                  </select>
+                  <SearchableSelect
+                    value={form.scope}
+                    onChange={val => onChange({ ...form, scope: val })}
+                    options={scopeOptions}
+                    placeholder="请选择"
+                    testId="stocktaking-scope-select"
+                  />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">负责人 <span className="text-red-500">*</span></label>
-                  <input value={form.manager} onChange={e => onChange({ ...form, manager: e.target.value })} placeholder="请输入负责人" className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500" />
+                  <input value={form.manager} onChange={e => onChange({ ...form, manager: e.target.value })} placeholder="请输入负责人" data-testid="manager-input" className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">物料 <span className="text-red-500">*</span></label>
+                  <SearchableSelect
+                    value={form.materialId}
+                    onChange={val => {
+                      const mat = materials.find(m => m.id === val)
+                      onChange({ ...form, materialId: val, systemStock: mat?.stock || 0 })
+                    }}
+                    options={materials.map(m => ({ value: m.id, label: `${m.name} (${m.code})` }))}
+                    placeholder="请选择物料"
+                    testId="material-select"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">实盘数量 <span className="text-red-500">*</span></label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={form.actualStock || ''}
+                    onChange={e => onChange({ ...form, actualStock: Number(e.target.value) })}
+                    placeholder="请输入实盘数量"
+                    data-testid="actual-stock-input"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
+                  />
                 </div>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">备注</label>
-                <textarea value={form.remark} onChange={e => onChange({ ...form, remark: e.target.value })} rows={3} placeholder="请输入备注" className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500" />
+                <textarea value={form.remark} onChange={e => onChange({ ...form, remark: e.target.value })} rows={3} placeholder="请输入备注" data-testid="remark-input" className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500" />
               </div>
             </div>
           )}
@@ -148,14 +191,14 @@ export function StocktakingCreateModal({
         </div>
         {createStep < 3 && (
           <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 shrink-0">
-            <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-md border border-gray-300">取消</button>
+            <button onClick={onClose} data-testid="cancel-btn" className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-md border border-gray-300">取消</button>
             {createStep > 1 && <button onClick={() => onSetCreateStep(createStep - 1)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-md border border-gray-300 flex items-center gap-1"><ArrowLeft className="w-4 h-4" />上一步</button>}
-            <button onClick={() => {
+            <button data-testid="next-step-btn" onClick={() => {
               if (createStep === 1) {
                 if (!form.name.trim() || !form.type || !form.scope || !form.manager.trim()) { toast.error('请填写必填字段'); return }
                 onSetCreateStep(2)
               } else if (createStep === 2) {
-                onSetCreateStep(3)
+                onSubmit()
               }
             }} disabled={isSubmitting} className="px-4 py-2 bg-blue-500 text-white text-sm rounded-md hover:bg-blue-600 disabled:opacity-50 flex items-center gap-1">
               {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : createStep === 2 ? '创建盘点' : <>下一步<ArrowRight className="w-4 h-4" /></>}

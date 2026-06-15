@@ -3,6 +3,18 @@ import { Bell, User, LogOut, Search, ChevronRight, Settings, FileText } from 'lu
 import { toast } from 'sonner'
 import { useLocation } from 'react-router-dom'
 import { cn } from '@/lib/utils'
+import { alertsApi } from '@/api/alerts'
+
+function formatTimeAgo(dateStr: string): string {
+  if (!dateStr) return ''
+  const now = Date.now()
+  const then = new Date(dateStr).getTime()
+  const diff = now - then
+  if (diff < 60_000) return '刚刚'
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}分钟前`
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}小时前`
+  return `${Math.floor(diff / 86_400_000)}天前`
+}
 
 const breadcrumbMap: Record<string, string> = {
   '/': '仪表盘',
@@ -11,7 +23,7 @@ const breadcrumbMap: Record<string, string> = {
   '/outbound': '出库记录',
   '/stocktaking': '库存盘点',
   '/categories': '物料分类',
-  '/materials': '耗材管理',
+  '/materials': '物料管理',
   '/suppliers': '供应商管理',
   '/locations': '库位管理',
   '/projects': '检测项目',
@@ -26,14 +38,80 @@ const breadcrumbMap: Record<string, string> = {
   '/users': '用户管理',
   '/roles': '角色权限',
   '/logs': '操作日志',
+  // ABC 成本分析
+  '/abc/dashboard': '成本看板',
+  '/abc/slide-cost': '切片成本',
+  '/abc/profitability': '盈利分析',
+  '/abc/fee-comparison': '收费对照',
+  '/abc/trend': '成本趋势',
+  '/abc/activity-centers': '作业中心',
+  '/abc/cost-drivers': '成本动因',
+  '/abc/cost-pools': '成本池',
+  '/abc/budgets': '预算管理',
+  '/abc/quality-costs': '质量成本',
+  '/abc/variance': '差异分析',
+  '/abc/alerts': '成本预警',
+  '/abc/audit': '审计追踪',
+  '/abc/quarterly-adjustment': '季度调整',
+  '/abc/forecast': '成本预测',
+  '/abc/supplier-cost': '供应商成本',
+  '/abc/equipment-efficiency': '设备效率',
+  '/abc/personnel-efficiency': '人员效率',
+  '/abc/model-validation': '模型验证',
+  // 设备与成本中心
+  '/equipment': '设备管理',
+  '/equipment/types': '设备类型',
+  '/equipment/depreciation': '折旧统计',
+  '/indirect-costs': '间接成本中心',
+  '/labor-times': '标准工时库',
+  '/supplier-returns': '退货给供应商',
+}
+
+interface NotificationItem {
+  id: string
+  title: string
+  message: string
+  time: string
+  unread: boolean
+  level?: string
 }
 
 export default function TopBar() {
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [notificationOpen, setNotificationOpen] = useState(false)
+  const [notifications, setNotifications] = useState<NotificationItem[]>([])
+  const [unreadCount, setUnreadCount] = useState(0)
   const userMenuRef = useRef<HTMLDivElement>(null)
   const notificationRef = useRef<HTMLDivElement>(null)
   const location = useLocation()
+
+  // Fetch real alerts from API
+  useEffect(() => {
+    let cancelled = false
+    async function fetchAlerts() {
+      try {
+        const token = localStorage.getItem('token')
+        if (!token) return
+        const res = await alertsApi.getList({ status: 'pending', page: 1, pageSize: 5 })
+        if (cancelled) return
+        const items = (res?.data?.items || res?.data || []).map((a: Record<string, unknown>) => ({
+          id: a.id as string,
+          title: (a.type as string) === 'low_stock' ? '库存预警' : (a.type as string) === 'expiry' ? '效期预警' : '预警通知',
+          message: (a.message as string) || `${a.material_name} - 当前库存: ${a.current_stock}`,
+          time: formatTimeAgo(a.created_at as string),
+          unread: (a.status as string) === 'pending',
+          level: a.level as string,
+        }))
+        setNotifications(items)
+        setUnreadCount(items.filter((n: NotificationItem) => n.unread).length)
+      } catch {
+        // silent fail - notifications are non-critical
+      }
+    }
+    fetchAlerts()
+    const interval = setInterval(fetchAlerts, 60000) // refresh every minute
+    return () => { cancelled = true; clearInterval(interval) }
+  }, [])
 
   function decodeBase64Url(str: string): string {
     const padding = '='.repeat((4 - (str.length % 4)) % 4)
@@ -129,15 +207,6 @@ export default function TopBar() {
   }
 
   const breadcrumbs = generateBreadcrumbs()
-
-  // Mock notifications
-  const notifications = [
-    { id: 1, title: '库存预警', message: 'PCR试剂盒库存不足，请及时采购', time: '5分钟前', unread: true },
-    { id: 2, title: '入库提醒', message: '新批次试剂已入库，请确认验收', time: '1小时前', unread: true },
-    { id: 3, title: '系统通知', message: '系统将于今晚进行例行维护', time: '2小时前', unread: false },
-  ]
-
-  const unreadCount = notifications.filter(n => n.unread).length
 
   return (
     <header className="h-16 bg-white border-b border-[#e5e7eb] flex items-center justify-between px-6 flex-shrink-0">

@@ -21,7 +21,7 @@ export function AlertConsumptionDetailModal({ open, alert, onClose, onHandle }: 
             <X className="w-5 h-5 text-gray-500" />
           </button>
         </div>
-        <div className="p-6 space-y-5">
+        <div className="p-6 space-y-6">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="bg-gray-50 rounded-lg p-3 text-center">
               <div className="text-xs text-gray-500 mb-1">物料名称</div>

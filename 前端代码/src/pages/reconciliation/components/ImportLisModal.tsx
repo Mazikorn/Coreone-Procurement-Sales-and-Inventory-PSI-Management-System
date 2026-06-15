@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import { Upload } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -10,6 +11,24 @@ interface Props {
 }
 
 export function ImportLisModal({ open, importData, setImportData, onClose, onConfirm }: Props) {
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      const text = ev.target?.result as string
+      if (text?.trim()) {
+        setImportData(text.trim())
+        toast.success(`已读取文件 ${file.name}`)
+      }
+    }
+    reader.readAsText(file)
+    // reset so the same file can be selected again
+    e.target.value = ''
+  }
+
   if (!open) return null
 
   return (
@@ -21,9 +40,16 @@ export function ImportLisModal({ open, importData, setImportData, onClose, onCon
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl">&times;</button>
         </div>
         <div className="p-6">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".txt,.csv,.tsv"
+            className="hidden"
+            onChange={handleFileSelect}
+          />
           <div
             className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-blue-500 hover:bg-blue-50 transition-colors cursor-pointer"
-            onClick={() => toast.info('请直接粘贴数据到下方')}
+            onClick={() => fileInputRef.current?.click()}
           >
             <Upload className="w-12 h-12 mx-auto text-gray-400 mb-2" />
             <div className="font-medium text-gray-700">点击粘贴LIS数据</div>

@@ -1,36 +1,77 @@
-import { Router } from 'express'
+import { Request, Response, Router } from 'express'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
+import rateLimit from 'express-rate-limit'
+import { body, validationResult } from 'express-validator'
 import { getDatabase } from '../database/DatabaseManager.js'
 import { success, error } from '../utils/response.js'
-import { JWT_SECRET } from '../middleware/auth.js'
+import { JWT_SECRET, ROLE_PERMISSIONS } from '../middleware/auth.js'
 
 const router = Router()
 const JWT_EXPIRES = '8h'
+const REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || JWT_SECRET + '_refresh'
 
-router.post('/login', (req, res) => {
+// 登录速率限制：1 分钟内最多 5 次（本地开发/E2E 测试跳过）
+const loginLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 分钟
+  max: 5, // 5 次
+  message: { success: false, error: { message: '登录尝试过多，请稍后重试', code: 'RATE_LIMIT' } },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => {
+    const ip = req.ip || req.socket.remoteAddress || ''
+    return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1'
+  },
+})
+
+// 登录输入验证
+const loginValidation = [
+  body('username').notEmpty().withMessage('用户名不能为空').isString().trim(),
+  body('password').notEmpty().withMessage('密码不能为空').isString(),
+]
+
+router.post('/login', loginLimiter, loginValidation, (req: Request, res: Response) => {
   try {
-    const { username, password } = req.body
-    if (!username || !password) {
-      error(res, 'Username and password required', 'INVALID_PARAMETER', 400)
+    // 检查验证结果
+    const errors = validationResult(req)
+    if (!errors.isEmpty()) {
+      error(res, errors.array().map(e => e.msg).join(', '), 'INVALID_PARAMETER', 400)
       return
     }
 
-    const db = getDatabase()
-    let user = db.prepare('SELECT * FROM users WHERE username = ? AND status = 1 AND is_deleted = 0').get(username) as any
+    const { username, password } = req.body
 
-    // 兜底修复：如果登录失败，检查是否是admin或E2E测试用户被软删除了
-    if (!user) {
-      const softDeletedUser = db.prepare('SELECT * FROM users WHERE username = ? AND is_deleted = 1').get(username) as any
-      if (softDeletedUser) {
-        // 自动恢复被软删除的用户（E2E测试副作用）
-        db.prepare('UPDATE users SET is_deleted = 0, status = 1 WHERE username = ?').run(username)
-        // 重新查询
-        user = db.prepare('SELECT * FROM users WHERE username = ? AND status = 1 AND is_deleted = 0').get(username) as any
+    const db = getDatabase()
+    const ip = req.ip || req.socket.remoteAddress || 'unknown'
+
+    // 检查账户锁定（连续 5 次失败后锁定 15 分钟，本地开发跳过）
+    const isLocal = ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1'
+    if (!isLocal) {
+      const recentFailures = db.prepare(`
+        SELECT COUNT(*) as count FROM login_attempts
+        WHERE username = ? AND success = 0 AND attempted_at > datetime('now', '-15 minutes')
+      `).get(username) as any
+
+      if (recentFailures && recentFailures.count >= 5) {
+        error(res, '账户已锁定，请 15 分钟后重试', 'ACCOUNT_LOCKED', 429)
+        return
       }
     }
 
+    const user = db.prepare('SELECT * FROM users WHERE username = ? AND status = 1 AND is_deleted = 0').get(username) as any
+
     const validPassword = user && bcrypt.compareSync(password, user.password)
+
+    // 记录登录尝试
+    const attemptId = `LA-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    db.prepare(`
+      INSERT INTO login_attempts (id, username, ip_address, success, attempted_at)
+      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `).run(attemptId, username, ip, validPassword ? 1 : 0)
+
+    // 清理超过 24 小时的记录
+    db.prepare("DELETE FROM login_attempts WHERE attempted_at < datetime('now', '-24 hours')").run()
+
     if (!validPassword) {
       error(res, '用户名或密码错误', 'UNAUTHORIZED', 401)
       return
@@ -44,7 +85,7 @@ router.post('/login', (req, res) => {
 
     const refreshToken = jwt.sign(
       { userId: user.id, type: 'refresh' },
-      JWT_SECRET,
+      REFRESH_SECRET,
       { expiresIn: '7d' }
     )
 
@@ -57,7 +98,7 @@ router.post('/login', (req, res) => {
         username: user.username,
         realName: user.real_name,
         role: user.role,
-        permissions: ['inventory:view', 'inventory:edit', 'report:view', 'system:view'],
+        permissions: ROLE_PERMISSIONS[user.role] || [],
       },
     }, 'Login success')
   } catch (err: any) {
@@ -73,7 +114,7 @@ router.post('/refresh', (req, res) => {
       return
     }
 
-    const decoded = jwt.verify(refreshToken, JWT_SECRET) as { userId: string; type: string }
+    const decoded = jwt.verify(refreshToken, REFRESH_SECRET) as { userId: string; type: string }
     if (decoded.type !== 'refresh') {
       error(res, 'Invalid refresh token', 'UNAUTHORIZED', 401)
       return

@@ -1,4 +1,5 @@
-import { Search, CheckCircle2, XCircle, Trash2, RotateCcw, Edit2, Eye, Power } from 'lucide-react'
+import { Search, CheckCircle2, XCircle, Trash2, RotateCcw } from 'lucide-react'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { Material } from '@/types'
 import { Pagination } from '@/components/ui/Pagination'
 
@@ -85,22 +86,26 @@ export function MaterialTable({
             className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
-        <select
+        <SearchableSelect
           value={categoryId}
-          onChange={e => onCategoryIdChange(e.target.value)}
-          className="px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white min-w-[140px]"
-        >
-          <option value="">全部分类</option>
-          {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
-        <select
+          onChange={val => onCategoryIdChange(val || '')}
+          options={[
+            { value: '', label: '全部分类' },
+            ...categories.map(c => ({ value: c.id, label: c.name })),
+          ]}
+          placeholder="全部分类"
+          className="w-36"
+        />
+        <SearchableSelect
           value={supplierId}
-          onChange={e => onSupplierIdChange(e.target.value)}
-          className="px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white min-w-[140px]"
-        >
-          <option value="">全部供应商</option>
-          {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-        </select>
+          onChange={val => onSupplierIdChange(val || '')}
+          options={[
+            { value: '', label: '全部供应商' },
+            ...suppliers.map(s => ({ value: s.id, label: s.name })),
+          ]}
+          placeholder="全部供应商"
+          className="w-36"
+        />
         <button onClick={onSearch} className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-md hover:bg-gray-50 text-sm font-medium">
           <Search className="w-4 h-4" />
           查询
@@ -162,7 +167,7 @@ export function MaterialTable({
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">供应商</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">库存</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状态</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-[140px]">操作</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[180px]">操作</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -196,19 +201,14 @@ export function MaterialTable({
                   </td>
                   <td className="px-4 py-3">{statusBadge(row.status)}</td>
                   <td className="px-4 py-3">
-                    <div className="flex items-center gap-1">
-                      <button onClick={() => onOpenDetail(row)} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors" title="详情">
-                        <Eye className="w-3.5 h-3.5" />
-                      </button>
-                      <button onClick={() => onOpenEdit(row)} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors" title="编辑">
-                        <Edit2 className="w-3.5 h-3.5" />
-                      </button>
-                      <button onClick={() => onToggleStatus(row)} className="p-1.5 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded transition-colors" title={row.status === 'active' ? '停用' : '启用'}>
-                        <Power className="w-3.5 h-3.5" />
-                      </button>
-                      <button onClick={() => onDelete(row.id)} className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors" title="删除">
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                    <div className="flex items-center gap-2 whitespace-nowrap">
+                      <button onClick={() => onOpenDetail(row)} className="text-sm text-gray-600 hover:text-blue-600 transition-colors">详情</button>
+                      <span className="text-gray-300">|</span>
+                      <button onClick={() => onOpenEdit(row)} className="text-sm text-gray-600 hover:text-blue-600 transition-colors">编辑</button>
+                      <span className="text-gray-300">|</span>
+                      <button onClick={() => onToggleStatus(row)} className="text-sm text-gray-600 hover:text-amber-600 transition-colors">{row.status === 'active' ? '停用' : '启用'}</button>
+                      <span className="text-gray-300">|</span>
+                      <button onClick={() => onDelete(row.id)} className="text-sm text-gray-600 hover:text-red-600 transition-colors">删除</button>
                     </div>
                   </td>
                 </tr>

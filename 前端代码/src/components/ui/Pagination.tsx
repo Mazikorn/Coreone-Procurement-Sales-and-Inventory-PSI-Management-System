@@ -1,110 +1,114 @@
+import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface PaginationProps {
   page: number
   pageSize: number
   total: number
-  onChange?: (page: number) => void
-  onPageSizeChange?: (pageSize: number) => void
   onChangePage?: (page: number) => void
   onChangePageSize?: (pageSize: number) => void
+  onChange?: (page: number) => void
+  onPageSizeChange?: (pageSize: number) => void
+  pageSizeOptions?: number[]
 }
 
 export function Pagination({
   page,
   pageSize,
   total,
-  onChange,
-  onPageSizeChange,
   onChangePage,
   onChangePageSize,
+  onChange,
+  onPageSizeChange,
+  pageSizeOptions = [10, 20, 50, 100],
 }: PaginationProps) {
-  const handleChangePage = onChangePage || onChange || (() => {})
-  const handleChangePageSize = onChangePageSize || onPageSizeChange
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
-  if (totalPages <= 1 && !handleChangePageSize) return null
+  const currentPage = Math.min(Math.max(page, 1), totalPages)
+  const canPrev = currentPage > 1
+  const canNext = currentPage < totalPages
+  const handlePageChange = onChangePage ?? onChange
+  const handlePageSizeChange = onChangePageSize ?? onPageSizeChange
 
-  const getPageNumbers = () => {
-    const pages: (number | string)[] = []
-    const maxVisible = 5
-    if (totalPages <= maxVisible) {
-      for (let i = 1; i <= totalPages; i++) pages.push(i)
-    } else {
-      if (page <= 3) {
-        for (let i = 1; i <= 4; i++) pages.push(i)
-        pages.push('...')
-        pages.push(totalPages)
-      } else if (page >= totalPages - 2) {
-        pages.push(1)
-        pages.push('...')
-        for (let i = totalPages - 3; i <= totalPages; i++) pages.push(i)
-      } else {
-        pages.push(1)
-        pages.push('...')
-        for (let i = page - 1; i <= page + 1; i++) pages.push(i)
-        pages.push('...')
-        pages.push(totalPages)
-      }
-    }
-    return pages
-  }
+  const pages = getVisiblePages(currentPage, totalPages)
 
   return (
-    <div className="px-5 py-4 border-t border-gray-200 flex items-center justify-between flex-wrap gap-3">
-      <span className="text-sm text-gray-500">
-        共 {total} 条记录，第 {page} / {totalPages} 页
-      </span>
-      <div className="flex items-center gap-1.5">
-        <button
-          onClick={() => handleChangePage(Math.max(1, page - 1))}
-          disabled={page === 1}
-          className="px-3 h-9 text-sm bg-white border border-gray-200 text-gray-600 rounded-[6px] hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+    <div className="flex flex-wrap items-center justify-end gap-2 text-sm">
+      {handlePageSizeChange && (
+        <select
+          value={pageSize}
+          onChange={event => handlePageSizeChange(Number(event.target.value))}
+          className="h-9 rounded-md border border-gray-300 bg-white px-2 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/10"
+          aria-label="每页条数"
         >
-          上一页
+          {pageSizeOptions.map(option => (
+            <option key={option} value={option}>
+              {option} 条/页
+            </option>
+          ))}
+        </select>
+      )}
+
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          onClick={() => canPrev && handlePageChange?.(currentPage - 1)}
+          disabled={!canPrev || !handlePageChange}
+          className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+          aria-label="上一页"
+        >
+          <ChevronLeft className="h-4 w-4" />
         </button>
-        {getPageNumbers().map((p, i) =>
-          p === '...' ? (
-            <span key={`ellipsis-${i}`} className="px-2 text-gray-400">
+
+        {pages.map((item, index) =>
+          item === 'ellipsis' ? (
+            <span key={`ellipsis-${index}`} className="inline-flex h-9 w-9 items-center justify-center text-gray-400">
               ...
             </span>
           ) : (
             <button
-              key={p}
-              onClick={() => handleChangePage(p as number)}
+              key={item}
+              type="button"
+              onClick={() => handlePageChange?.(item)}
+              disabled={!handlePageChange}
               className={cn(
-                'px-3 h-9 text-sm rounded-[6px] transition-colors',
-                page === p
-                  ? 'bg-[#3b82f6] text-white'
-                  : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'
+                'inline-flex h-9 min-w-9 items-center justify-center rounded-md border px-3',
+                item === currentPage
+                  ? 'border-blue-500 bg-blue-50 text-blue-600'
+                  : 'border-gray-300 bg-white text-gray-600 hover:bg-gray-50'
               )}
+              aria-current={item === currentPage ? 'page' : undefined}
             >
-              {p}
+              {item}
             </button>
           )
         )}
+
         <button
-          onClick={() => handleChangePage(Math.min(totalPages, page + 1))}
-          disabled={page === totalPages}
-          className="px-3 h-9 text-sm bg-white border border-gray-200 text-gray-600 rounded-[6px] hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          type="button"
+          onClick={() => canNext && handlePageChange?.(currentPage + 1)}
+          disabled={!canNext || !handlePageChange}
+          className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+          aria-label="下一页"
         >
-          下一页
+          <ChevronRight className="h-4 w-4" />
         </button>
-        {handleChangePageSize && (
-          <select
-            value={pageSize}
-            onChange={(e) => {
-              handleChangePageSize(Number(e.target.value))
-              handleChangePage(1)
-            }}
-            className="ml-2 px-2 h-9 text-sm border border-gray-200 rounded-[6px] bg-white focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
-          >
-            <option value={10}>10条/页</option>
-            <option value={20}>20条/页</option>
-            <option value={50}>50条/页</option>
-            <option value={100}>100条/页</option>
-          </select>
-        )}
       </div>
     </div>
   )
+}
+
+function getVisiblePages(currentPage: number, totalPages: number): Array<number | 'ellipsis'> {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1)
+  }
+
+  if (currentPage <= 4) {
+    return [1, 2, 3, 4, 5, 'ellipsis', totalPages]
+  }
+
+  if (currentPage >= totalPages - 3) {
+    return [1, 'ellipsis', totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages]
+  }
+
+  return [1, 'ellipsis', currentPage - 1, currentPage, currentPage + 1, 'ellipsis', totalPages]
 }

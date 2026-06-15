@@ -1,4 +1,5 @@
 import { X } from 'lucide-react'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
 
 interface Props {
   open: boolean
@@ -24,14 +25,19 @@ export function CostExportModal({ open, onClose, onExport }: Props) {
             <X className="w-5 h-5" />
           </button>
         </div>
-        <div className="p-6 space-y-5">
+        <div className="p-6 space-y-6">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">报告格式</label>
-            <select className="w-full h-10 px-3 text-sm border border-gray-300 rounded-md bg-white outline-none transition-all focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10">
-              <option>PDF 格式</option>
-              <option>Excel 格式</option>
-              <option>Word 格式</option>
-            </select>
+            <SearchableSelect
+              value="PDF 格式"
+              onChange={() => {}}
+              options={[
+                { value: 'PDF 格式', label: 'PDF 格式' },
+                { value: 'Excel 格式', label: 'Excel 格式' },
+                { value: 'Word 格式', label: 'Word 格式' },
+              ]}
+              placeholder="请选择"
+            />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">报告内容</label>

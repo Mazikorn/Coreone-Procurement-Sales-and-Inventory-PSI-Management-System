@@ -23,7 +23,7 @@ export function AlertConsumptionHandleModal({ open, alert, form, onClose, onChan
             <X className="w-5 h-5 text-gray-500" />
           </button>
         </div>
-        <div className="p-6 space-y-5">
+        <div className="p-6 space-y-6">
           <div className="bg-red-50 border border-red-100 rounded-lg p-4">
             <div className="flex items-center gap-3 mb-3">
               <AlertTriangle className="w-6 h-6 text-red-600" />

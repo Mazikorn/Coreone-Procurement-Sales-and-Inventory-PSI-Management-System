@@ -1,3 +1,4 @@
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { LisCase, ProjectReconcile } from '../hooks/useReconciliationPage'
 
 interface Props {
@@ -36,28 +37,28 @@ export function EditCaseModal({
         <div className="p-6 space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">检测项目</label>
-            <select
+            <SearchableSelect
               value={editCaseProjectId}
-              onChange={e => setEditCaseProjectId(e.target.value)}
-              className="w-full px-3 py-2 text-sm border rounded-md focus:outline-none focus:border-blue-500"
-            >
-              <option value="">请选择</option>
-              {projects.map(p => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
+              onChange={val => setEditCaseProjectId(val)}
+              options={[
+                { value: '', label: '请选择' },
+                ...projects.map(p => ({ value: p.id, label: p.name })),
+              ]}
+              placeholder="请选择"
+            />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">状态</label>
-            <select
+            <SearchableSelect
               value={editCaseStatus}
-              onChange={e => setEditCaseStatus(e.target.value)}
-              className="w-full px-3 py-2 text-sm border rounded-md focus:outline-none focus:border-blue-500"
-            >
-              <option value="normal">正常</option>
-              <option value="modified">已修改</option>
-              <option value="unmatched">未关联BOM</option>
-            </select>
+              onChange={val => setEditCaseStatus(val)}
+              options={[
+                { value: 'normal', label: '正常' },
+                { value: 'modified', label: '已修改' },
+                { value: 'unmatched', label: '未关联BOM' },
+              ]}
+              placeholder="请选择"
+            />
           </div>
           <div className="bg-green-50 border border-green-200 rounded-md p-3 text-sm text-green-800">
             <strong>说明：</strong>修改仅影响本病例的成本归集，不会修改BOM标准。如需修改标准用量，请使用"修正BOM"功能。

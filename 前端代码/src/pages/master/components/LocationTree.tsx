@@ -2,6 +2,16 @@ import { ChevronDown, ChevronRight } from 'lucide-react'
 import type { TreeNode } from '../hooks/useLocationsPage'
 import { getTypeIcon } from '../hooks/useLocationsPage'
 
+function buildTaggedPath(node: TreeNode, levelConfigs: Record<string, string[]>): string {
+  const labels = levelConfigs[node.type || 'shelf'] || ['库区', '货架', '库位']
+  const values = [node.zone, node.shelf, node.position]
+  const parts: string[] = []
+  for (let i = 0; i < values.length; i++) {
+    if (values[i]) parts.push(`${values[i]}${labels[i] || ''}`)
+  }
+  return parts.join(' > ') || node.name
+}
+
 interface Props {
   treeData: TreeNode[]
   selectedNodeId: string | null
@@ -10,6 +20,7 @@ interface Props {
   onSelectNode: (id: string) => void
   onExpandAll: () => void
   onCollapseAll: () => void
+  levelConfigs: Record<string, string[]>
 }
 
 function TreeNodeItem({
@@ -19,6 +30,7 @@ function TreeNodeItem({
   expandedIds,
   onToggleExpand,
   onSelectNode,
+  levelConfigs,
 }: {
   node: TreeNode
   depth: number
@@ -26,9 +38,11 @@ function TreeNodeItem({
   expandedIds: Set<string>
   onToggleExpand: (id: string) => void
   onSelectNode: (id: string) => void
+  levelConfigs: Record<string, string[]>
 }) {
   const hasChildren = node.children && node.children.length > 0
   const isExpanded = expandedIds.has(node.id)
+  const taggedPath = buildTaggedPath(node, levelConfigs)
 
   return (
     <div>
@@ -50,7 +64,12 @@ function TreeNodeItem({
           <span className="w-5" />
         )}
         <span className="text-base">{getTypeIcon(node.type)}</span>
-        <span className="flex-1">{node.name}</span>
+        <span className="flex-1">
+          {node.name}
+          {taggedPath && taggedPath !== node.name && (
+            <span className="block text-xs text-gray-400 truncate max-w-[160px]" title={taggedPath}>{taggedPath}</span>
+          )}
+        </span>
         {hasChildren && <span className="text-xs text-gray-400">{node.children!.length}</span>}
       </div>
       {isExpanded && node.children && (
@@ -64,6 +83,7 @@ function TreeNodeItem({
               expandedIds={expandedIds}
               onToggleExpand={onToggleExpand}
               onSelectNode={onSelectNode}
+              levelConfigs={levelConfigs}
             />
           ))}
         </div>
@@ -80,6 +100,7 @@ export function LocationTree({
   onSelectNode,
   onExpandAll,
   onCollapseAll,
+  levelConfigs,
 }: Props) {
   return (
     <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm">
@@ -103,6 +124,7 @@ export function LocationTree({
               expandedIds={expandedIds}
               onToggleExpand={onToggleExpand}
               onSelectNode={onSelectNode}
+              levelConfigs={levelConfigs}
             />
           ))
         )}

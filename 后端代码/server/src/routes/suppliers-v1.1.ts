@@ -56,7 +56,7 @@ router.post('/', authenticateToken, requireSupplierWrite, (req, res) => {
       .run(id, finalCode, name, contact || null, phone || null, email || null, address || null)
     success(res, { id, code: finalCode }, 'Created', 201)
   } catch (err: any) {
-    if (err.message.includes('UNIQUE')) { error(res, 'Code exists', 'RESOURCE_CONFLICT', 409); return }
+    if (err.message?.includes('UNIQUE constraint failed')) { error(res, 'Code exists', 'RESOURCE_CONFLICT', 409); return }
     error(res, err.message)
   }
 })
@@ -67,7 +67,7 @@ router.put('/:id', authenticateToken, requireSupplierWrite, (req, res) => {
     const data = req.body
     const db = getDatabase()
     const existing = db.prepare('SELECT * FROM suppliers WHERE id = ? AND is_deleted = 0').get(id)
-    if (!existing) { error(res, 'Not found', 'NOT_FOUND', 404); return }
+    if (!existing) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
     const fields: string[] = []; const params: any[] = []
     if (data.code !== undefined) { fields.push('code = ?'); params.push(data.code) }
     if (data.name !== undefined) { fields.push('name = ?'); params.push(data.name) }
@@ -79,9 +79,78 @@ router.put('/:id', authenticateToken, requireSupplierWrite, (req, res) => {
     if (fields.length > 0) { params.push(id); db.prepare(`UPDATE suppliers SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND is_deleted = 0`).run(...params) }
     success(res, { id }, 'Updated')
   } catch (err: any) {
-    if (err.message.includes('UNIQUE')) { error(res, 'Code exists', 'RESOURCE_CONFLICT', 409); return }
+    if (err.message?.includes('UNIQUE constraint failed')) { error(res, 'Code exists', 'RESOURCE_CONFLICT', 409); return }
     error(res, err.message)
   }
+})
+
+/** 自动计算供应商评级 */
+function calculateSupplierRating(db: any, supplierId: string): number {
+  // 1. 总采购金额评分（40%）
+  const purchaseStats = db.prepare(`
+    SELECT COALESCE(SUM(total_amount), 0) as total, COUNT(*) as count
+    FROM purchase_orders
+    WHERE supplier_id = ? AND is_deleted = 0 AND status = 'completed'
+  `).get(supplierId) as any
+  const totalAmount = purchaseStats?.total || 0
+  const orderCount = purchaseStats?.count || 0
+
+  // 2. 退货率评分（30%）- 退货金额占比越低越好
+  const returnStats = db.prepare(`
+    SELECT COALESCE(SUM(refund_amount), 0) as total_return
+    FROM supplier_returns
+    WHERE supplier_id = ? AND is_deleted = 0
+  `).get(supplierId) as any
+  const totalReturn = returnStats?.total_return || 0
+  const returnRate = totalAmount > 0 ? totalReturn / totalAmount : 0
+
+  // 3. 合作频次评分（30%）
+  const scoreAmount = Math.min(totalAmount / 100000, 1) * 40 // 10万满分
+  const scoreReturn = Math.max(0, (1 - returnRate * 5)) * 30 // 退货率20%为0分
+  const scoreFreq = Math.min(orderCount / 20, 1) * 30 // 20次满分
+
+  const totalScore = scoreAmount + scoreReturn + scoreFreq
+  // 映射到 1-5 星
+  if (totalScore >= 80) return 5
+  if (totalScore >= 60) return 4
+  if (totalScore >= 40) return 3
+  if (totalScore >= 20) return 2
+  return 1
+}
+
+router.post('/:id/rating', authenticateToken, requireSupplierWrite, (req, res) => {
+  try {
+    const { id } = req.params
+    const db = getDatabase()
+    const existing = db.prepare('SELECT * FROM suppliers WHERE id = ? AND is_deleted = 0').get(id)
+    if (!existing) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
+
+    const rating = calculateSupplierRating(db, id)
+    db.prepare('UPDATE suppliers SET rating = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(rating, id)
+    success(res, { id, rating })
+  } catch (err: any) { error(res, err.message) }
+})
+
+router.post('/rating/all', authenticateToken, requireSupplierWrite, (req, res) => {
+  try {
+    const db = getDatabase()
+    const suppliers = db.prepare('SELECT id FROM suppliers WHERE is_deleted = 0').all() as any[]
+
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      let updated = 0
+      for (const s of suppliers) {
+        const rating = calculateSupplierRating(db, s.id)
+        db.prepare('UPDATE suppliers SET rating = ? WHERE id = ?').run(rating, s.id)
+        updated++
+      }
+      db.exec('COMMIT')
+      success(res, { updatedCount: updated }, `Updated ${updated} suppliers`)
+    } catch (e) {
+      db.exec('ROLLBACK')
+      throw e
+    }
+  } catch (err: any) { error(res, err.message) }
 })
 
 router.delete('/:id', authenticateToken, requireSupplierWrite, (req, res) => {
@@ -89,7 +158,7 @@ router.delete('/:id', authenticateToken, requireSupplierWrite, (req, res) => {
     const { id } = req.params
     const db = getDatabase()
     const existing = db.prepare('SELECT * FROM suppliers WHERE id = ? AND is_deleted = 0').get(id)
-    if (!existing) { error(res, 'Not found', 'NOT_FOUND', 404); return }
+    if (!existing) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
     db.prepare('UPDATE suppliers SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(id)
     success(res, null, 'Deleted')
   } catch (err: any) { error(res, err.message) }

@@ -1,4 +1,5 @@
 import { Search, Calendar } from 'lucide-react'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { Material } from '@/types'
 
 type StatusFilter = '' | 'completed' | 'pending' | 'cancelled'
@@ -55,38 +56,42 @@ export default function OutboundFilterBar({
           />
         </div>
         {/* Material Select */}
-        <select
+        <SearchableSelect
           value={materialFilter}
-          onChange={e => onMaterialChange(e.target.value)}
-          className="h-10 px-3 border border-gray-300 rounded-md text-sm bg-white focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
-        >
-          <option value="">全部耗材</option>
-          {materials.map(m => (
-            <option key={m.id} value={m.id}>{m.name}</option>
-          ))}
-        </select>
+          onChange={val => onMaterialChange(val || '')}
+          options={[
+            { value: '', label: '全部物料' },
+            ...materials.map(m => ({ value: m.id, label: m.name })),
+          ]}
+          placeholder="全部物料"
+          className="w-36"
+        />
         {/* Type Select */}
-        <select
+        <SearchableSelect
           value={typeFilter}
-          onChange={e => onTypeChange(e.target.value as TypeFilter)}
-          className="h-10 px-3 border border-gray-300 rounded-md text-sm bg-white focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
-        >
-          <option value="">全部类型</option>
-          <option value="project">项目出库</option>
-          <option value="transfer">调拨出库</option>
-          <option value="scrap">报废出库</option>
-        </select>
+          onChange={val => onTypeChange(val as TypeFilter)}
+          options={[
+            { value: '', label: '全部类型' },
+            { value: 'project', label: '项目出库' },
+            { value: 'transfer', label: '调拨出库' },
+            { value: 'scrap', label: '报废出库' },
+          ]}
+          placeholder="全部类型"
+          className="w-32"
+        />
         {/* Status Select */}
-        <select
+        <SearchableSelect
           value={statusFilter}
-          onChange={e => onStatusChange(e.target.value as StatusFilter)}
-          className="h-10 px-3 border border-gray-300 rounded-md text-sm bg-white focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
-        >
-          <option value="">全部状态</option>
-          <option value="completed">已完成</option>
-          <option value="pending">待出库</option>
-          <option value="cancelled">已取消</option>
-        </select>
+          onChange={val => onStatusChange(val as StatusFilter)}
+          options={[
+            { value: '', label: '全部状态' },
+            { value: 'completed', label: '已完成' },
+            { value: 'pending', label: '待出库' },
+            { value: 'cancelled', label: '已取消' },
+          ]}
+          placeholder="全部状态"
+          className="w-32"
+        />
         {/* Date Range */}
         <div className="flex items-center gap-2">
           <div className="relative">

@@ -1,6 +1,7 @@
-import { Search } from 'lucide-react'
+import { CheckCircle2, Search, Trash2, XCircle } from 'lucide-react'
 import type { Supplier } from '@/types'
 import { Pagination } from '@/components/ui/Pagination'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
 
 interface Props {
   data: Supplier[]
@@ -18,6 +19,9 @@ interface Props {
   onReset: () => void
   onToggleSelectAll: () => void
   onToggleSelect: (id: string) => void
+  onClearSelection: () => void
+  onBatchDelete: () => void
+  onBatchToggleStatus: (status: 'active' | 'inactive') => void
   onPageChange: (p: number) => void
   onPageSizeChange: (s: number) => void
   onOpenDetail: (row: Supplier) => void
@@ -31,7 +35,8 @@ export function SupplierTable({
   searchKeyword, searchStatus,
   getAvatarColor,
   onSearchKeywordChange, onSearchStatusChange, onSearch, onReset,
-  onToggleSelectAll, onToggleSelect,
+  onToggleSelectAll, onToggleSelect, onClearSelection,
+  onBatchDelete, onBatchToggleStatus,
   onPageChange, onPageSizeChange,
   onOpenDetail, onOpenEdit, onToggleStatus, onDelete,
 }: Props) {
@@ -53,15 +58,17 @@ export function SupplierTable({
               className="w-56 h-10 pl-9 pr-3 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
-          <select
+          <SearchableSelect
             value={searchStatus}
-            onChange={(e) => onSearchStatusChange(e.target.value)}
-            className="h-10 px-3 border border-gray-200 rounded-md text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="all">全部状态</option>
-            <option value="active">合作中</option>
-            <option value="inactive">已终止</option>
-          </select>
+            onChange={(val) => onSearchStatusChange(val)}
+            options={[
+              { value: 'all', label: '全部状态' },
+              { value: 'active', label: '合作中' },
+              { value: 'inactive', label: '已终止' },
+            ]}
+            placeholder="全部状态"
+            className="w-28"
+          />
           <button
             onClick={onSearch}
             className="h-10 px-4 text-sm text-gray-700 hover:bg-gray-50 rounded-md border border-gray-200 transition-colors"
@@ -76,6 +83,36 @@ export function SupplierTable({
           </button>
         </div>
       </div>
+
+      {/* 批量操作 */}
+      {selectedIds.size > 0 && (
+        <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5 mx-5 mt-3">
+          <div className="flex items-center gap-2 text-sm text-blue-800">
+            <input
+              type="checkbox"
+              checked={data.length > 0 && selectedIds.size === data.length}
+              onChange={onToggleSelectAll}
+              className="w-4 h-4 rounded border-gray-300 text-blue-600"
+            />
+            <span>已选择 <strong>{selectedIds.size}</strong> 项</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={() => onBatchToggleStatus('active')} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-700 hover:bg-white rounded-md border border-transparent hover:border-gray-200 transition-colors">
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              批量启用
+            </button>
+            <button onClick={() => onBatchToggleStatus('inactive')} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-700 hover:bg-white rounded-md border border-transparent hover:border-gray-200 transition-colors">
+              <XCircle className="w-3.5 h-3.5" />
+              批量停用
+            </button>
+            <button onClick={onBatchDelete} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-red-600 hover:bg-white rounded-md border border-transparent hover:border-red-200 transition-colors">
+              <Trash2 className="w-3.5 h-3.5" />
+              批量删除
+            </button>
+            <button onClick={onClearSelection} className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700">取消选择</button>
+          </div>
+        </div>
+      )}
 
       {/* 表格 */}
       <div className="overflow-x-auto">

@@ -1,5 +1,6 @@
 import { Search, Loader2, FolderOpen } from 'lucide-react'
 import { Pagination } from '@/components/ui/Pagination'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { Project } from '@/types'
 
 const typeMap: Record<string, string> = {
@@ -115,27 +116,27 @@ export function ProjectTable({
               className="w-56 pl-9 pr-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             />
           </div>
-          <select
+          <SearchableSelect
             value={typeFilter}
-            onChange={e => onTypeFilterChange(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-md text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            {typeOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
-          <select
+            onChange={val => onTypeFilterChange(val)}
+            options={typeOptions.map(o => ({ value: o.value, label: o.label }))}
+            placeholder="全部类型"
+            className="w-32"
+          />
+          <SearchableSelect
             value={statusFilter}
-            onChange={e => onStatusFilterChange(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-md text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            {statusOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
-          <select
+            onChange={val => onStatusFilterChange(val)}
+            options={statusOptions.map(o => ({ value: o.value, label: o.label }))}
+            placeholder="全部状态"
+            className="w-32"
+          />
+          <SearchableSelect
             value={bomFilter}
-            onChange={e => onBomFilterChange(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-md text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            {bomOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
+            onChange={val => onBomFilterChange(val)}
+            options={bomOptions.map(o => ({ value: o.value, label: o.label }))}
+            placeholder="BOM配置"
+            className="w-36"
+          />
           <button
             onClick={onQuery}
             className="px-4 py-2 bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 text-sm font-medium transition-colors"

@@ -9,8 +9,19 @@ export interface TreeNode {
   name: string
   type: string
   zone: string
+  shelf?: string
+  position?: string
+  depth: number
+  fullPath: string
   children?: TreeNode[]
   isLeaf?: boolean
+}
+
+/** 计算节点在树中的深度（由后端返回的 depth 决定，此函数用于前端兜底） */
+export function getNodeDepth(loc: Location): number {
+  if (loc.position) return 3
+  if (loc.shelf) return 2
+  return 1
 }
 
 export interface FormData {
@@ -64,6 +75,7 @@ export function useLocationsPage() {
   }, [data])
   const [modalType, setModalType] = useState<ModalType>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
   const [levelTab, setLevelTab] = useState<string>('shelf')
   const [levelConfigs, setLevelConfigs] = useState<Record<string, string[]>>({
     shelf: ['库区', '货架', '库位'],
@@ -90,7 +102,7 @@ export function useLocationsPage() {
         locationApi.getTree(),
       ])
       setData((listRes as any).list || [])
-      setTreeData((treeRes as any).data || [])
+      setTreeData((treeRes as any) || [])
     } catch (e) {
       console.error(e)
     } finally {
@@ -217,21 +229,37 @@ export function useLocationsPage() {
       }
       toast.success('保存成功')
       setModalType(null)
-      fetchData()
+      if (form.parentId) {
+        setExpandedIds(prev => new Set(prev).add(form.parentId))
+      }
+      await fetchData()
     } catch (e) {
       toast.error('保存失败')
     }
   }
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('确定删除该库位？')) return
+  const requestDelete = (id: string) => {
+    setPendingDeleteId(id)
+  }
+
+  const confirmDelete = async () => {
+    if (!pendingDeleteId) return
     try {
-      await locationApi.delete(id)
+      await locationApi.delete(pendingDeleteId)
       toast.success('删除成功')
+      setPendingDeleteId(null)
       fetchData()
     } catch (e) {
       toast.error('删除失败')
     }
+  }
+
+  const cancelDelete = () => {
+    setPendingDeleteId(null)
+  }
+
+  const handleDelete = async (id: string) => {
+    requestDelete(id)
   }
 
   const handleToggleStatus = async (row: Location) => {
@@ -292,5 +320,8 @@ export function useLocationsPage() {
     handleDelete,
     handleToggleStatus,
     saveLevelConfigs,
+    pendingDeleteId,
+    confirmDelete,
+    cancelDelete,
   }
 }

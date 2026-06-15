@@ -1,13 +1,11 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   CornerUpLeft,
-  X,
   Search,
   Package,
   Truck,
   RotateCcw,
-  FileText,
   Eye,
   Trash2,
   ChevronRight,
@@ -17,10 +15,13 @@ import {
 } from 'lucide-react'
 import { usePagination } from '@/hooks/usePagination'
 import { Pagination } from '@/components/ui/Pagination'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
+import { Modal } from '@/components/ui/Modal'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { supplierReturnApi, purchaseOrderApi, inboundApi } from '@/api/inventory'
 import { materialApi, supplierApi } from '@/api/master'
-import type { SupplierReturnRecord, Material, Supplier, PurchaseOrder, InboundRecord } from '@/types'
-import { formatDate } from '@/lib/utils'
+import type { SupplierReturnRecord, Material, Supplier, PurchaseOrder, InboundRecord, Batch } from '@/types'
+import { formatDate, formatCurrency } from '@/lib/utils'
 import { toast } from 'sonner'
 
 const statusMap: Record<string, { label: string; color: string; bg: string; icon: React.ElementType }> = {
@@ -45,6 +46,7 @@ export default function SupplierReturns() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([])
   const [inboundRecords, setInboundRecords] = useState<InboundRecord[]>([])
+  const [materialBatches, setMaterialBatches] = useState<Batch[]>([])
 
   const [keyword, setKeyword] = useState(searchParams.get('keyword') || '')
   const [statusFilter, setStatusFilter] = useState(searchParams.get('status') || '')
@@ -60,6 +62,7 @@ export default function SupplierReturns() {
   const [form, setForm] = useState({
     materialId: '',
     quantity: 1,
+    batchId: '',
     supplierId: '',
     purchaseOrderId: '',
     inboundRecordId: '',
@@ -90,6 +93,44 @@ export default function SupplierReturns() {
     fetchRefs()
   }, [])
 
+  // 选择物料后获取批次列表
+  useEffect(() => {
+    if (!form.materialId) {
+      setMaterialBatches([])
+      return
+    }
+    const fetchBatches = async () => {
+      try {
+        const res: any = await materialApi.getDetail(form.materialId)
+        const batches = (res?.batches || []).filter((b: Batch) => b.remaining > 0 && b.status === 'normal')
+        setMaterialBatches(batches)
+        // 如果只剩一个批次，自动选中
+        if (batches.length === 1) {
+          setForm(prev => ({ ...prev, batchId: batches[0].id }))
+        } else if (batches.length === 0) {
+          setForm(prev => ({ ...prev, batchId: '' }))
+        }
+      } catch (e) {
+        setMaterialBatches([])
+      }
+    }
+    fetchBatches()
+  }, [form.materialId])
+
+  const fetchFn = useCallback(
+    async ({ page, pageSize }: { page: number; pageSize: number }) => {
+      const res: any = await supplierReturnApi.getList({
+        page,
+        pageSize,
+        keyword: keyword || undefined,
+        status: statusFilter || undefined,
+        supplierId: supplierFilter || undefined,
+      })
+      return { list: res.list || [], pagination: res.pagination }
+    },
+    [keyword, statusFilter, supplierFilter]
+  )
+
   const {
     data,
     loading,
@@ -100,16 +141,7 @@ export default function SupplierReturns() {
     setPageSize,
     refresh,
   } = usePagination<SupplierReturnRecord>({
-    fetchFn: async ({ page, pageSize }) => {
-      const res: any = await supplierReturnApi.getList({
-        page,
-        pageSize,
-        keyword: keyword || undefined,
-        status: statusFilter || undefined,
-        supplierId: supplierFilter || undefined,
-      })
-      return { list: res.list || [], pagination: res.pagination }
-    },
+    fetchFn,
     deps: [keyword, statusFilter, supplierFilter],
   })
 
@@ -140,6 +172,7 @@ export default function SupplierReturns() {
       await supplierReturnApi.create({
         materialId: form.materialId,
         quantity: form.quantity,
+        batchId: form.batchId || undefined,
         supplierId: form.supplierId || undefined,
         purchaseOrderId: form.purchaseOrderId || undefined,
         inboundRecordId: form.inboundRecordId || undefined,
@@ -151,9 +184,10 @@ export default function SupplierReturns() {
       toast.success('退货记录创建成功')
       setModalOpen(false)
       setForm({
-        materialId: '', quantity: 1, supplierId: '', purchaseOrderId: '',
+        materialId: '', quantity: 1, batchId: '', supplierId: '', purchaseOrderId: '',
         inboundRecordId: '', reason: '', refundAmount: '', trackingNo: '', remark: '',
       })
+      setMaterialBatches([])
       refresh()
     } catch (e: any) {
       toast.error(e?.response?.data?.message || '创建失败')
@@ -210,7 +244,7 @@ export default function SupplierReturns() {
         </div>
         <button
           onClick={() => { fetchRefs(); setModalOpen(true) }}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm font-medium transition-colors shadow-sm"
+          className="inline-flex items-center gap-2 px-4 h-10 bg-blue-500 text-white rounded-md hover:bg-blue-600 text-sm font-medium transition-colors"
         >
           <CornerUpLeft className="w-4 h-4" />
           新建退货
@@ -231,28 +265,29 @@ export default function SupplierReturns() {
           />
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <select
+          <SearchableSelect
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="h-10 px-3 border border-gray-300 rounded-md text-sm text-gray-700 bg-white focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
-          >
-            <option value="">全部状态</option>
-            <option value="pending">待发货</option>
-            <option value="shipped">已发货</option>
-            <option value="received">已收货</option>
-            <option value="refunded">已退款</option>
-            <option value="cancelled">已取消</option>
-          </select>
-          <select
+            onChange={(val) => setStatusFilter(val)}
+            options={[
+              { value: '', label: '全部状态' },
+              { value: 'pending', label: '待发货' },
+              { value: 'shipped', label: '已发货' },
+              { value: 'received', label: '已收货' },
+              { value: 'refunded', label: '已退款' },
+              { value: 'cancelled', label: '已取消' },
+            ]}
+            placeholder="全部状态"
+          />
+          <SearchableSelect
             value={supplierFilter}
-            onChange={(e) => setSupplierFilter(e.target.value)}
-            className="h-10 px-3 border border-gray-300 rounded-md text-sm text-gray-700 bg-white focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
-          >
-            <option value="">全部供应商</option>
-            {suppliers.map((s) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-          </select>
+            onChange={(val) => setSupplierFilter(val)}
+            options={[
+              { value: '', label: '全部供应商' },
+              ...suppliers.map((s) => ({ value: s.id, label: s.name })),
+            ]}
+            placeholder="全部供应商"
+            className="w-48"
+          />
           <button
             onClick={handleSearch}
             className="h-10 px-4 bg-white text-gray-700 border border-gray-300 rounded-md text-sm font-medium hover:bg-gray-50 transition-colors"
@@ -276,10 +311,11 @@ export default function SupplierReturns() {
               <tr>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">退货单号</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">物料</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">批次</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">供应商</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">数量</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">退货原因</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">退款金额</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">退款金额</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状态</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作时间</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
@@ -288,7 +324,7 @@ export default function SupplierReturns() {
             <tbody className="divide-y divide-gray-100">
               {loading ? (
                 <tr>
-                  <td colSpan={9} className="px-4 py-12 text-center text-gray-400">
+                  <td colSpan={10} className="px-4 py-12 text-center text-gray-400">
                     <div className="flex items-center justify-center gap-2">
                       <Clock className="w-5 h-5 animate-spin" />
                       加载中...
@@ -297,7 +333,7 @@ export default function SupplierReturns() {
                 </tr>
               ) : data.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-4 py-12 text-center text-gray-400">
+                  <td colSpan={10} className="px-4 py-12 text-center text-gray-400">
                     <div className="flex flex-col items-center gap-2">
                       <Package className="w-12 h-12 text-gray-300" />
                       <p className="text-sm">暂无退货记录</p>
@@ -316,13 +352,14 @@ export default function SupplierReturns() {
                       <td className="px-4 py-3">
                         <div className="font-medium text-gray-900 text-sm">{row.materialName || '-'}</div>
                       </td>
+                      <td className="px-4 py-3 font-mono text-xs text-gray-500">{row.batchNo || '-'}</td>
                       <td className="px-4 py-3 text-gray-600">{row.supplierName || '-'}</td>
                       <td className="px-4 py-3 text-right text-gray-700">{row.quantity}</td>
                       <td className="px-4 py-3">
                         <span className="px-2 py-0.5 rounded text-xs bg-orange-50 text-orange-700">{reasonLabel}</span>
                       </td>
-                      <td className="px-4 py-3 text-gray-600">
-                        {row.refundAmount ? `¥${row.refundAmount}` : '-'}
+                      <td className="px-4 py-3 text-right text-gray-600">
+                        {row.refundAmount ? formatCurrency(row.refundAmount) : '-'}
                       </td>
                       <td className="px-4 py-3">
                         <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${statusInfo.bg} ${statusInfo.color}`}>
@@ -373,34 +410,21 @@ export default function SupplierReturns() {
 
       {/* Create Modal */}
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[90vh] flex flex-col">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 flex-shrink-0">
-              <h3 className="text-lg font-semibold text-gray-900">新建退货给供应商</h3>
-              <button
-                onClick={() => setModalOpen(false)}
-                className="p-1.5 hover:bg-gray-100 rounded-md transition-colors"
-              >
-                <X className="w-4 h-4 text-gray-500" />
-              </button>
-            </div>
-            <div className="p-6 space-y-4 overflow-y-auto">
+        <Modal onClose={() => setModalOpen(false)} title="新建退货给供应商" size="lg">
+          <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">
                   物料 <span className="text-red-500">*</span>
                 </label>
-                <select
+                <SearchableSelect
                   value={form.materialId}
-                  onChange={(e) => setForm({ ...form, materialId: e.target.value })}
-                  className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm bg-white text-gray-700 focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500 transition-colors"
-                >
-                  <option value="">请选择物料</option>
-                  {materials.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name} ({m.code}) - 库存 {m.stock} {m.unit}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(val) => setForm({ ...form, materialId: val })}
+                  options={materials.map((m) => ({
+                    value: m.id,
+                    label: `${m.name} (${m.code}) - 库存 ${m.stock} ${m.unit}`,
+                  }))}
+                  placeholder="请选择物料"
+                />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -421,54 +445,82 @@ export default function SupplierReturns() {
                   )}
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">供应商</label>
-                  <select
-                    value={form.supplierId}
-                    onChange={(e) => setForm({ ...form, supplierId: e.target.value })}
-                    className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm bg-white text-gray-700 focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500 transition-colors"
-                  >
-                    <option value="">请选择</option>
-                    {suppliers.map((s) => (
-                      <option key={s.id} value={s.id}>{s.name}</option>
-                    ))}
-                  </select>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                    退货批次 <span className="text-red-500">*</span>
+                  </label>
+                  <SearchableSelect
+                    value={form.batchId}
+                    onChange={(val) => setForm({ ...form, batchId: val })}
+                    options={[
+                      { value: '', label: '请选择批次' },
+                      ...materialBatches.map((b) => ({
+                        value: b.id,
+                        label: `${b.batchNo} (余${b.remaining}${selectedMaterial?.unit || ''} @${formatCurrency(b.inboundPrice)})`,
+                      })),
+                    ]}
+                    placeholder="请选择批次"
+                  />
+                  {form.batchId && (
+                    <p className="text-xs text-gray-400 mt-1">
+                      入库单价: {formatCurrency(materialBatches.find(b => b.id === form.batchId)?.inboundPrice || 0)}
+                      ，建议退款: {formatCurrency((materialBatches.find(b => b.id === form.batchId)?.inboundPrice || 0) * form.quantity)}
+                    </p>
+                  )}
+                  {form.materialId && materialBatches.length === 0 && (
+                    <p className="text-xs text-red-400 mt-1">该物料无可用批次</p>
+                  )}
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">关联采购订单</label>
-                  <select
-                    value={form.purchaseOrderId}
-                    onChange={(e) => setForm({ ...form, purchaseOrderId: e.target.value })}
-                    className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm bg-white text-gray-700 focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500 transition-colors"
-                  >
-                    <option value="">请选择</option>
-                    {purchaseOrders
-                      .filter((po) => !form.supplierId || po.supplierId === form.supplierId)
-                      .map((po) => (
-                        <option key={po.id} value={po.id}>
-                          {po.orderNo} ({po.materialName}) — {po.status === 'partial' ? '部分收货' : po.status === 'completed' ? '已完成' : po.status === 'pending' ? '待收货' : '已取消'}
-                        </option>
-                      ))}
-                  </select>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">供应商</label>
+                  <SearchableSelect
+                    value={form.supplierId}
+                    onChange={(val) => setForm({ ...form, supplierId: val })}
+                    options={suppliers.map((s) => ({
+                      value: s.id,
+                      label: s.name,
+                    }))}
+                    placeholder="请选择"
+                  />
                 </div>
                 <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">关联采购订单</label>
+                  <SearchableSelect
+                    value={form.purchaseOrderId}
+                    onChange={(val) => setForm({ ...form, purchaseOrderId: val })}
+                    options={[
+                      { value: '', label: '请选择' },
+                      ...purchaseOrders
+                        .filter((po) => !form.supplierId || po.supplierId === form.supplierId)
+                        .map((po) => ({
+                          value: po.id,
+                          label: `${po.orderNo} (${po.materialName}) — ${po.status === 'partial' ? '部分收货' : po.status === 'completed' ? '已完成' : po.status === 'pending' ? '待收货' : '已取消'}`,
+                        })),
+                    ]}
+                    placeholder="请选择"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1.5">关联入库记录</label>
-                  <select
+                  <SearchableSelect
                     value={form.inboundRecordId}
-                    onChange={(e) => setForm({ ...form, inboundRecordId: e.target.value })}
-                    className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm bg-white text-gray-700 focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500 transition-colors"
-                  >
-                    <option value="">请选择</option>
-                    {inboundRecords
-                      .filter((ir) => !form.materialId || ir.materialId === form.materialId)
-                      .map((ir) => (
-                        <option key={ir.id} value={ir.id}>
-                          {ir.inboundNo} ({ir.materialName} × {ir.quantity}{ir.unit})
-                        </option>
-                      ))}
-                  </select>
+                    onChange={(val) => setForm({ ...form, inboundRecordId: val })}
+                    options={[
+                      { value: '', label: '请选择' },
+                      ...inboundRecords
+                        .filter((ir) => !form.materialId || ir.materialId === form.materialId)
+                        .map((ir) => ({
+                          value: ir.id,
+                          label: `${ir.inboundNo} (${ir.materialName} × ${ir.quantity}${ir.unit})`,
+                        })),
+                    ]}
+                    placeholder="请选择"
+                  />
                 </div>
               </div>
 
@@ -476,16 +528,15 @@ export default function SupplierReturns() {
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">
                   退货原因 <span className="text-red-500">*</span>
                 </label>
-                <select
+                <SearchableSelect
                   value={form.reason}
-                  onChange={(e) => setForm({ ...form, reason: e.target.value })}
-                  className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm bg-white text-gray-700 focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500 transition-colors"
-                >
-                  <option value="">请选择</option>
-                  {reasonOptions.map((r) => (
-                    <option key={r.value} value={r.value}>{r.label}</option>
-                  ))}
-                </select>
+                  onChange={(val) => setForm({ ...form, reason: val })}
+                  options={[
+                    { value: '', label: '请选择' },
+                    ...reasonOptions,
+                  ]}
+                  placeholder="请选择"
+                />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -523,40 +574,29 @@ export default function SupplierReturns() {
                   className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm text-gray-700 placeholder:text-gray-400 focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500 transition-colors resize-none"
                 />
               </div>
-            </div>
-            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 flex-shrink-0">
+            <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-gray-200">
               <button
                 onClick={() => setModalOpen(false)}
-                className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-md transition-colors border border-gray-200"
+                className="px-4 h-10 text-sm text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
               >
                 取消
               </button>
               <button
                 onClick={handleCreate}
                 disabled={isSubmitting}
-                className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-4 h-10 bg-blue-500 text-white text-sm rounded-md hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isSubmitting ? '提交中...' : '确认创建'}
               </button>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
       {/* Detail Modal */}
       {detailOpen && detailRecord && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[90vh] flex flex-col">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 flex-shrink-0">
-              <h3 className="text-lg font-semibold text-gray-900">退货详情</h3>
-              <button
-                onClick={() => setDetailOpen(false)}
-                className="p-1.5 hover:bg-gray-100 rounded-md transition-colors"
-              >
-                <X className="w-4 h-4 text-gray-500" />
-              </button>
-            </div>
-            <div className="p-6 space-y-4 overflow-y-auto">
+        <Modal onClose={() => setDetailOpen(false)} title="退货详情" size="lg">
+          <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <span className="text-sm text-gray-500">退货单号</span>
                 <span className="text-sm font-mono text-gray-900">{detailRecord.returnNo}</span>
@@ -568,6 +608,10 @@ export default function SupplierReturns() {
               <div className="flex items-center justify-between">
                 <span className="text-sm text-gray-500">退货数量</span>
                 <span className="text-sm text-gray-900">{detailRecord.quantity}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-500">退货批次</span>
+                <span className="text-sm font-mono text-gray-900">{detailRecord.batchNo || '-'}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-gray-500">供应商</span>
@@ -589,7 +633,7 @@ export default function SupplierReturns() {
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-gray-500">退款金额</span>
-                <span className="text-sm text-gray-900">{detailRecord.refundAmount ? `¥${detailRecord.refundAmount}` : '-'}</span>
+                <span className="text-sm text-gray-900">{detailRecord.refundAmount ? formatCurrency(detailRecord.refundAmount) : '-'}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-gray-500">物流单号</span>
@@ -643,14 +687,12 @@ export default function SupplierReturns() {
                         标记退款完成
                       </button>
                     )}
-                    {detailRecord.status !== 'cancelled' && (
-                      <button
-                        onClick={() => handleStatusChange(detailRecord.id, 'cancelled')}
-                        className="px-3 py-1.5 bg-gray-100 text-gray-600 text-xs rounded-md hover:bg-gray-200 transition-colors"
-                      >
-                        取消退货
-                      </button>
-                    )}
+                    <button
+                      onClick={() => handleStatusChange(detailRecord.id, 'cancelled')}
+                      className="px-3 py-1.5 bg-gray-100 text-gray-600 text-xs rounded-md hover:bg-gray-200 transition-colors"
+                    >
+                      取消退货
+                    </button>
                   </div>
                 </div>
               )}
@@ -676,55 +718,28 @@ export default function SupplierReturns() {
                   )}
                 </div>
               </div>
-            </div>
-            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 flex-shrink-0">
+            <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-gray-200">
               <button
                 onClick={() => setDetailOpen(false)}
-                className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-md transition-colors border border-gray-200"
+                className="px-4 h-10 text-sm text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
               >
                 关闭
               </button>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
-      {/* Delete Confirm Modal */}
-      {deleteConfirmOpen && recordToDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-900">确认删除</h3>
-              <button
-                onClick={() => setDeleteConfirmOpen(false)}
-                className="p-1.5 hover:bg-gray-100 rounded-md transition-colors"
-              >
-                <X className="w-4 h-4 text-gray-500" />
-              </button>
-            </div>
-            <div className="p-6">
-              <p className="text-sm text-gray-600">
-                确定要删除退货记录 <span className="font-mono font-medium">{recordToDelete.returnNo}</span> 吗？
-              </p>
-              <p className="text-sm text-gray-500 mt-2">仅待发货状态可删除，删除后库存将自动恢复。</p>
-            </div>
-            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200">
-              <button
-                onClick={() => setDeleteConfirmOpen(false)}
-                className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-md transition-colors border border-gray-200"
-              >
-                取消
-              </button>
-              <button
-                onClick={handleDelete}
-                className="px-4 py-2 bg-red-600 text-white text-sm rounded-md hover:bg-red-700 transition-colors shadow-sm"
-              >
-                确认删除
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Delete Confirm Dialog */}
+      <ConfirmDialog
+        open={deleteConfirmOpen && !!recordToDelete}
+        title="确认删除"
+        description={`确定要删除退货记录 ${recordToDelete?.returnNo} 吗？仅待发货状态可删除，删除后库存将自动恢复。`}
+        confirmText="确认删除"
+        confirmVariant="danger"
+        onConfirm={handleDelete}
+        onCancel={() => { setDeleteConfirmOpen(false); setRecordToDelete(null) }}
+      />
     </div>
   )
 }

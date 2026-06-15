@@ -1,7 +1,9 @@
-import { useState, useEffect } from 'react'
-import { Search, Plus, X, Package } from 'lucide-react'
+import { useState, useEffect, useCallback } from 'react'
+import { Search, Plus } from 'lucide-react'
 import { usePagination } from '@/hooks/usePagination'
 import { Pagination } from '@/components/ui/Pagination'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
+import { Modal } from '@/components/ui/Modal'
 import { purchaseOrderApi } from '@/api/inventory'
 import { materialApi, supplierApi } from '@/api/master'
 import type { PurchaseOrder, Material, Supplier } from '@/types'
@@ -50,6 +52,18 @@ export default function PurchaseOrders() {
 
   useEffect(() => { fetchRefs() }, [])
 
+  const fetchFn = useCallback(
+    async ({ page, pageSize }: { page: number; pageSize: number }) => {
+      const res: any = await purchaseOrderApi.getList({
+        page, pageSize,
+        status: statusFilter || undefined,
+        keyword: searchText || undefined,
+      })
+      return { list: res.list || [], pagination: res.pagination }
+    },
+    [statusFilter, searchText]
+  )
+
   const {
     data,
     loading,
@@ -60,14 +74,7 @@ export default function PurchaseOrders() {
     setPageSize,
     refresh,
   } = usePagination<PurchaseOrder>({
-    fetchFn: async ({ page, pageSize }) => {
-      const res: any = await purchaseOrderApi.getList({
-        page, pageSize,
-        status: statusFilter || undefined,
-        keyword: searchText || undefined,
-      })
-      return { list: res.list || [], pagination: res.pagination }
-    },
+    fetchFn,
     deps: [statusFilter, searchText],
   })
 
@@ -149,17 +156,19 @@ export default function PurchaseOrders() {
                 className="pl-9 pr-3 h-10 w-64 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               />
             </div>
-            <select
+            <SearchableSelect
               value={statusFilter}
-              onChange={e => setStatusFilter(e.target.value)}
-              className="h-10 px-3 border border-gray-300 rounded-md text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="">全部状态</option>
-              <option value="pending">待收货</option>
-              <option value="partial">部分收货</option>
-              <option value="completed">已完成</option>
-              <option value="cancelled">已取消</option>
-            </select>
+              onChange={val => setStatusFilter(val)}
+              options={[
+                { value: '', label: '全部状态' },
+                { value: 'pending', label: '待收货' },
+                { value: 'partial', label: '部分收货' },
+                { value: 'completed', label: '已完成' },
+                { value: 'cancelled', label: '已取消' },
+              ]}
+              placeholder="全部状态"
+              className="w-32"
+            />
             <button
               onClick={() => { setSearchText(''); setStatusFilter(''); setPage(1) }}
               className="h-10 px-4 text-gray-500 rounded-md text-sm hover:text-gray-700 hover:bg-gray-50 transition-all duration-150"
@@ -249,222 +258,196 @@ export default function PurchaseOrders() {
 
       {/* Create Modal */}
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-900">新建采购订单</h3>
-              <button onClick={() => setModalOpen(false)} className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-md transition-colors duration-150">
-                <X className="w-5 h-5" />
-              </button>
+        <Modal onClose={() => setModalOpen(false)} title="新建采购订单" size="lg">
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">物料 <span className="text-red-500">*</span></label>
+              <SearchableSelect
+                value={form.materialId}
+                onChange={val => setForm({ ...form, materialId: val })}
+                options={materials.map(m => ({
+                  value: m.id,
+                  label: `${m.name} (${m.code})`,
+                }))}
+                placeholder="请选择"
+              />
             </div>
-            <div className="p-6 space-y-4">
+            <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">物料 <span className="text-red-500">*</span></label>
-                <select
-                  value={form.materialId}
-                  onChange={e => setForm({ ...form, materialId: e.target.value })}
-                  className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">请选择</option>
-                  {materials.map(m => (
-                    <option key={m.id} value={m.id}>{m.name} ({m.code})</option>
-                  ))}
-                </select>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">供应商</label>
-                  <select
-                    value={form.supplierId}
-                    onChange={e => setForm({ ...form, supplierId: e.target.value })}
-                    className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="">请选择</option>
-                    {suppliers.map(s => (
-                      <option key={s.id} value={s.id}>{s.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">采购数量 <span className="text-red-500">*</span></label>
-                  <input
-                    type="number"
-                    min={1}
-                    value={form.orderedQty}
-                    onChange={e => setForm({ ...form, orderedQty: Number(e.target.value) })}
-                    className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">单价</label>
-                  <input
-                    type="number"
-                    min={0}
-                    step={0.01}
-                    value={form.unitPrice}
-                    onChange={e => setForm({ ...form, unitPrice: Number(e.target.value) })}
-                    className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">单位</label>
-                  <input
-                    type="text"
-                    value={form.unit}
-                    onChange={e => setForm({ ...form, unit: e.target.value })}
-                    className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">供应商</label>
+                <SearchableSelect
+                  value={form.supplierId}
+                  onChange={val => setForm({ ...form, supplierId: val })}
+                  options={suppliers.map(s => ({
+                    value: s.id,
+                    label: s.name,
+                  }))}
+                  placeholder="请选择"
+                />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">预计到货日期</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">采购数量 <span className="text-red-500">*</span></label>
                 <input
-                  type="date"
-                  value={form.expectedDate}
-                  onChange={e => setForm({ ...form, expectedDate: e.target.value })}
+                  type="number"
+                  min={1}
+                  value={form.orderedQty}
+                  onChange={e => setForm({ ...form, orderedQty: Number(e.target.value) })}
+                  className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">单价</label>
+                <input
+                  type="number"
+                  min={0}
+                  step={0.01}
+                  value={form.unitPrice}
+                  onChange={e => setForm({ ...form, unitPrice: Number(e.target.value) })}
                   className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">备注</label>
-                <textarea
-                  value={form.remark}
-                  onChange={e => setForm({ ...form, remark: e.target.value })}
-                  rows={2}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                <label className="block text-sm font-medium text-gray-700 mb-1">单位</label>
+                <input
+                  type="text"
+                  value={form.unit}
+                  onChange={e => setForm({ ...form, unit: e.target.value })}
+                  className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
             </div>
-            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200">
-              <button onClick={() => setModalOpen(false)} className="px-4 py-2 text-sm text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors duration-150">取消</button>
-              <button onClick={handleCreate} className="px-4 py-2 text-sm text-white bg-blue-500 rounded-md hover:bg-blue-600 transition-colors duration-150">确认创建</button>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">预计到货日期</label>
+              <input
+                type="date"
+                value={form.expectedDate}
+                onChange={e => setForm({ ...form, expectedDate: e.target.value })}
+                className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">备注</label>
+              <textarea
+                value={form.remark}
+                onChange={e => setForm({ ...form, remark: e.target.value })}
+                rows={2}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
             </div>
           </div>
-        </div>
+          <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-gray-200">
+            <button onClick={() => setModalOpen(false)} className="px-4 h-10 text-sm text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors">取消</button>
+            <button onClick={handleCreate} className="px-4 h-10 text-sm text-white bg-blue-500 rounded-md hover:bg-blue-600 transition-colors">确认创建</button>
+          </div>
+        </Modal>
       )}
 
       {/* Detail Modal */}
       {detailModalOpen && selectedOrder && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-900">采购订单详情</h3>
-              <button onClick={() => setDetailModalOpen(false)} className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-md transition-colors duration-150">
-                <X className="w-5 h-5" />
-              </button>
+        <Modal onClose={() => setDetailModalOpen(false)} title="采购订单详情" size="lg">
+          <div className="space-y-4">
+            <div className="flex justify-between items-center">
+              <span className="text-sm text-gray-500">订单号</span>
+              <span className="font-mono text-sm font-medium">{selectedOrder.orderNo}</span>
             </div>
-            <div className="p-6 space-y-4">
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-gray-500">订单号</span>
-                <span className="font-mono text-sm font-medium">{selectedOrder.orderNo}</span>
+            <div className="flex justify-between items-center">
+              <span className="text-sm text-gray-500">物料</span>
+              <span className="text-sm font-medium">{selectedOrder.materialName}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-sm text-gray-500">供应商</span>
+              <span className="text-sm font-medium">{suppliers.find(s => s.id === selectedOrder.supplierId)?.name || '-'}</span>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-gray-50 rounded-md p-3">
+                <div className="text-xs text-gray-500">采购数量</div>
+                <div className="text-lg font-semibold">{selectedOrder.orderedQty} {selectedOrder.unit}</div>
               </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-gray-500">物料</span>
-                <span className="text-sm font-medium">{selectedOrder.materialName}</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-gray-500">供应商</span>
-                <span className="text-sm font-medium">{suppliers.find(s => s.id === selectedOrder.supplierId)?.name || '-'}</span>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="bg-gray-50 rounded-md p-3">
-                  <div className="text-xs text-gray-500">采购数量</div>
-                  <div className="text-lg font-semibold">{selectedOrder.orderedQty} {selectedOrder.unit}</div>
-                </div>
-                <div className="bg-gray-50 rounded-md p-3">
-                  <div className="text-xs text-gray-500">已收货</div>
-                  <div className="text-lg font-semibold">{selectedOrder.receivedQty} {selectedOrder.unit}</div>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="bg-gray-50 rounded-md p-3">
-                  <div className="text-xs text-gray-500">剩余待收</div>
-                  <div className="text-lg font-semibold">{selectedOrder.remainingQty} {selectedOrder.unit}</div>
-                </div>
-                <div className="bg-gray-50 rounded-md p-3">
-                  <div className="text-xs text-gray-500">总金额</div>
-                  <div className="text-lg font-semibold">{formatCurrency(selectedOrder.totalAmount)}</div>
-                </div>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-gray-500">单价</span>
-                <span className="text-sm">{formatCurrency(selectedOrder.unitPrice)}</span>
-              </div>
-              {selectedOrder.expectedDate && (
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-500">预计到货</span>
-                  <span className="text-sm">{selectedOrder.expectedDate}</span>
-                </div>
-              )}
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-gray-500">状态</span>
-                <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${statusConfig[selectedOrder.status]?.bg} ${statusConfig[selectedOrder.status]?.text}`}>
-                  {statusConfig[selectedOrder.status]?.label}
-                </span>
-              </div>
-              {selectedOrder.remark && (
-                <div className="bg-gray-50 rounded-md p-3">
-                  <div className="text-xs text-gray-500 mb-1">备注</div>
-                  <div className="text-sm">{selectedOrder.remark}</div>
-                </div>
-              )}
-              <div className="flex justify-between items-center text-xs text-gray-400">
-                <span>创建时间: {selectedOrder.createdAt}</span>
+              <div className="bg-gray-50 rounded-md p-3">
+                <div className="text-xs text-gray-500">已收货</div>
+                <div className="text-lg font-semibold">{selectedOrder.receivedQty} {selectedOrder.unit}</div>
               </div>
             </div>
-            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200">
-              <button onClick={() => setDetailModalOpen(false)} className="px-4 py-2 text-sm text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors duration-150">关闭</button>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-gray-50 rounded-md p-3">
+                <div className="text-xs text-gray-500">剩余待收</div>
+                <div className="text-lg font-semibold">{selectedOrder.remainingQty} {selectedOrder.unit}</div>
+              </div>
+              <div className="bg-gray-50 rounded-md p-3">
+                <div className="text-xs text-gray-500">总金额</div>
+                <div className="text-lg font-semibold">{formatCurrency(selectedOrder.totalAmount)}</div>
+              </div>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-sm text-gray-500">单价</span>
+              <span className="text-sm">{formatCurrency(selectedOrder.unitPrice)}</span>
+            </div>
+            {selectedOrder.expectedDate && (
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-gray-500">预计到货</span>
+                <span className="text-sm">{selectedOrder.expectedDate}</span>
+              </div>
+            )}
+            <div className="flex justify-between items-center">
+              <span className="text-sm text-gray-500">状态</span>
+              <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${statusConfig[selectedOrder.status]?.bg} ${statusConfig[selectedOrder.status]?.text}`}>
+                {statusConfig[selectedOrder.status]?.label}
+              </span>
+            </div>
+            {selectedOrder.remark && (
+              <div className="bg-gray-50 rounded-md p-3">
+                <div className="text-xs text-gray-500 mb-1">备注</div>
+                <div className="text-sm">{selectedOrder.remark}</div>
+              </div>
+            )}
+            <div className="flex justify-between items-center text-xs text-gray-400">
+              <span>创建时间: {selectedOrder.createdAt}</span>
             </div>
           </div>
-        </div>
+          <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-gray-200">
+            <button onClick={() => setDetailModalOpen(false)} className="px-4 h-10 text-sm text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors">关闭</button>
+          </div>
+        </Modal>
       )}
 
       {/* Receive Modal */}
       {receiveModalOpen && selectedOrder && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-900">采购收货</h3>
-              <button onClick={() => setReceiveModalOpen(false)} className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-md transition-colors duration-150">
-                <X className="w-5 h-5" />
-              </button>
+        <Modal onClose={() => setReceiveModalOpen(false)} title="采购收货" size="md">
+          <div className="space-y-4">
+            <div className="bg-gray-50 p-3 rounded-md">
+              <div className="text-xs text-gray-500">订单号</div>
+              <div className="font-mono text-sm">{selectedOrder.orderNo}</div>
             </div>
-            <div className="p-6 space-y-4">
-              <div className="bg-gray-50 p-3 rounded-md">
-                <div className="text-xs text-gray-500">订单号</div>
-                <div className="font-mono text-sm">{selectedOrder.orderNo}</div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <div className="text-xs text-gray-500">采购数量</div>
-                  <div className="text-sm font-medium">{selectedOrder.orderedQty} {selectedOrder.unit}</div>
-                </div>
-                <div>
-                  <div className="text-xs text-gray-500">已收货</div>
-                  <div className="text-sm font-medium">{selectedOrder.receivedQty} {selectedOrder.unit}</div>
-                </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <div className="text-xs text-gray-500">采购数量</div>
+                <div className="text-sm font-medium">{selectedOrder.orderedQty} {selectedOrder.unit}</div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">本次收货数量 <span className="text-red-500">*</span></label>
-                <input
-                  type="number"
-                  min={1}
-                  max={selectedOrder.remainingQty}
-                  value={receiveQty}
-                  onChange={e => setReceiveQty(Number(e.target.value))}
-                  className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                <p className="text-xs text-gray-400 mt-1">剩余可收货：{selectedOrder.remainingQty} {selectedOrder.unit}</p>
+                <div className="text-xs text-gray-500">已收货</div>
+                <div className="text-sm font-medium">{selectedOrder.receivedQty} {selectedOrder.unit}</div>
               </div>
             </div>
-            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200">
-              <button onClick={() => setReceiveModalOpen(false)} className="px-4 py-2 text-sm text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors duration-150">取消</button>
-              <button onClick={handleReceive} className="px-4 py-2 text-sm text-white bg-blue-500 rounded-md hover:bg-blue-600 transition-colors duration-150">确认收货</button>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">本次收货数量 <span className="text-red-500">*</span></label>
+              <input
+                type="number"
+                min={1}
+                max={selectedOrder.remainingQty}
+                value={receiveQty}
+                onChange={e => setReceiveQty(Number(e.target.value))}
+                className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <p className="text-xs text-gray-400 mt-1">剩余可收货：{selectedOrder.remainingQty} {selectedOrder.unit}</p>
             </div>
           </div>
-        </div>
+          <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-gray-200">
+            <button onClick={() => setReceiveModalOpen(false)} className="px-4 h-10 text-sm text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors">取消</button>
+            <button onClick={handleReceive} className="px-4 h-10 text-sm text-white bg-blue-500 rounded-md hover:bg-blue-600 transition-colors">确认收货</button>
+          </div>
+        </Modal>
       )}
     </div>
   )

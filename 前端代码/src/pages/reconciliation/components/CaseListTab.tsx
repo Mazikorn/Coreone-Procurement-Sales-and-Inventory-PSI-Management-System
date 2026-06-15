@@ -1,5 +1,6 @@
 import { Search, Download } from 'lucide-react'
 import { Pagination } from '@/components/ui/Pagination'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { UsePaginationReturn } from '@/hooks/usePagination'
 import type { ProjectReconcile, LisCase } from '../hooks/useReconciliationPage'
 
@@ -48,30 +49,36 @@ export function CaseListTab({
                 className="pl-9 pr-4 h-9 text-sm border border-gray-300 rounded-md focus:outline-none focus:border-blue-500 w-48"
               />
             </div>
-            <select
+            <SearchableSelect
               value={caseFilterProject}
-              onChange={e => setCaseFilterProject(e.target.value)}
-              className="h-9 px-3 text-sm border border-gray-300 rounded-md focus:outline-none focus:border-blue-500"
-            >
-              <option value="">全部检测项目</option>
-              {projects.map(p => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
-            <select
+              onChange={val => setCaseFilterProject(val)}
+              options={[
+                { value: '', label: '全部检测项目' },
+                ...projects.map(p => ({ value: p.id, label: p.name })),
+              ]}
+              placeholder="全部检测项目"
+              className="min-w-[160px]"
+            />
+            <SearchableSelect
               value={caseFilterStatus}
-              onChange={e => setCaseFilterStatus(e.target.value)}
-              className="h-9 px-3 text-sm border border-gray-300 rounded-md focus:outline-none focus:border-blue-500"
-            >
-              <option value="">全部状态</option>
-              <option value="normal">正常</option>
-              <option value="modified">已修改</option>
-              <option value="unmatched">未关联BOM</option>
-            </select>
+              onChange={val => setCaseFilterStatus(val)}
+              options={[
+                { value: '', label: '全部状态' },
+                { value: 'normal', label: '正常' },
+                { value: 'modified', label: '已修改' },
+                { value: 'unmatched', label: '未关联BOM' },
+              ]}
+              placeholder="全部状态"
+              className="min-w-[120px]"
+            />
             <button onClick={() => casePagination.setPage(1)} className="h-9 px-4 text-sm bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200">查询</button>
             <button onClick={onReset} className="h-9 px-4 text-sm text-gray-500 hover:text-gray-700">重置</button>
           </div>
-          <button className="inline-flex items-center gap-2 px-3 py-1.5 text-sm border border-gray-300 rounded-md hover:bg-gray-50">
+          <button
+            disabled
+            title="导出功能暂未开放，需后端支持全量数据导出"
+            className="inline-flex items-center gap-2 px-3 py-1.5 text-sm border border-gray-200 rounded-md text-gray-400 cursor-not-allowed"
+          >
             <Download className="w-4 h-4" />
             导出
           </button>

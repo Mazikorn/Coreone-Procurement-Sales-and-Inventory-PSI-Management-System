@@ -1,6 +1,15 @@
 import { X, CheckCircle, ArrowLeft, ArrowRight, FileText, AlertTriangle, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { BOM } from '@/types'
+
+const serviceTypeOptions = [
+  { value: 'he', label: '病理技术-HE制片' },
+  { value: 'ihc', label: '病理技术-免疫组化' },
+  { value: 'ss', label: '病理技术-特殊染色' },
+  { value: 'mp', label: '分子诊断' },
+  { value: 'cyto', label: '病理诊断-细胞学检测' },
+]
 import type { FormData } from '../hooks/useProjectsPage'
 
 interface Props {
@@ -8,21 +17,18 @@ interface Props {
   form: FormData
   createStep: number
   bomOption: 'select' | 'create' | 'skip'
-  selectedBomId: string
   boms: BOM[]
-  selectedBom: BOM | undefined
   isSubmitting: boolean
   onClose: () => void
   onChange: (form: FormData) => void
   onSetCreateStep: (s: number) => void
   onSetBomOption: (o: 'select' | 'create' | 'skip') => void
-  onSetSelectedBomId: (id: string) => void
   onSubmit: () => void
 }
 
 export function ProjectCreateModal({
-  open, form, createStep, bomOption, selectedBomId, boms, selectedBom, isSubmitting,
-  onClose, onChange, onSetCreateStep, onSetBomOption, onSetSelectedBomId, onSubmit,
+  open, form, createStep, bomOption, boms, isSubmitting,
+  onClose, onChange, onSetCreateStep, onSetBomOption, onSubmit,
 }: Props) {
   if (!open) return null
 
@@ -67,17 +73,12 @@ export function ProjectCreateModal({
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     服务类型 <span className="text-red-500">*</span>
                   </label>
-                  <select
+                  <SearchableSelect
                     value={form.type}
-                    onChange={e => onChange({ ...form, type: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
-                  >
-                    <option value="he">病理技术-HE制片</option>
-                    <option value="ihc">病理技术-免疫组化</option>
-                    <option value="ss">病理技术-特殊染色</option>
-                    <option value="mp">分子诊断</option>
-                    <option value="cyto">病理诊断-细胞学检测</option>
-                  </select>
+                    onChange={val => onChange({ ...form, type: val })}
+                    options={serviceTypeOptions}
+                    placeholder="请选择"
+                  />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -125,14 +126,15 @@ export function ProjectCreateModal({
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">状态</label>
-                  <select
+                  <SearchableSelect
                     value={form.status}
-                    onChange={e => onChange({ ...form, status: e.target.value as 'active' | 'inactive' })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
-                  >
-                    <option value="active">已启用</option>
-                    <option value="inactive">已停用</option>
-                  </select>
+                    onChange={val => onChange({ ...form, status: val as 'active' | 'inactive' })}
+                    options={[
+                      { value: 'active', label: '已启用' },
+                      { value: 'inactive', label: '已停用' },
+                    ]}
+                    placeholder="请选择"
+                  />
                 </div>
               </div>
               <div>
@@ -168,38 +170,43 @@ export function ProjectCreateModal({
               </div>
               {bomOption === 'select' && (
                 <div className="space-y-3">
-                  <select
-                    value={selectedBomId}
-                    onChange={e => onSetSelectedBomId(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                  >
-                    <option value="">请选择BOM清单</option>
-                    {boms.map(b => (
-                      <option key={b.id} value={b.id}>{b.code} - {b.name} ({b.version})</option>
-                    ))}
-                  </select>
-                  {selectedBom && (
-                    <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-sm font-medium">BOM预览</span>
+                  <SearchableSelect
+                    value={form.bomId}
+                    onChange={val => onChange({ ...form, bomId: val })}
+                    options={[
+                      { value: '', label: '请选择BOM清单' },
+                      ...boms.map(b => ({
+                        value: b.id,
+                        label: `${b.code} - ${b.name} (${b.version})`,
+                      })),
+                    ]}
+                    placeholder="请选择BOM清单"
+                  />
+                  {(() => {
+                    const selectedBom = boms.find(b => b.id === form.bomId)
+                    return selectedBom ? (
+                      <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-sm font-medium">BOM预览</span>
+                        </div>
+                        <div className="flex flex-wrap gap-2 mb-3">
+                          {selectedBom.materials?.slice(0, 5).map(m => (
+                            <span key={m.id} className="px-2 py-1 bg-white border border-gray-200 rounded text-xs text-gray-600">
+                              {m.name}
+                            </span>
+                          ))}
+                          {(selectedBom.materials?.length || 0) > 5 && (
+                            <span className="text-xs text-gray-400">+{selectedBom.materials!.length - 5}项</span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-4 text-xs text-gray-500 border-t border-gray-200 pt-3">
+                          <span>共 {selectedBom.materialCount} 项物料</span>
+                          <span>可支撑样本数: <span className="text-green-600 font-medium">{selectedBom.supportableSamples || '-'}</span></span>
+                          <span>单样本成本: <span className="text-blue-600 font-medium">¥{selectedBom.unitCost?.toFixed(2) || '-'}</span></span>
+                        </div>
                       </div>
-                      <div className="flex flex-wrap gap-2 mb-3">
-                        {selectedBom.materials?.slice(0, 5).map(m => (
-                          <span key={m.id} className="px-2 py-1 bg-white border border-gray-200 rounded text-xs text-gray-600">
-                            {m.name}
-                          </span>
-                        ))}
-                        {(selectedBom.materials?.length || 0) > 5 && (
-                          <span className="text-xs text-gray-400">+{selectedBom.materials!.length - 5}项</span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-4 text-xs text-gray-500 border-t border-gray-200 pt-3">
-                        <span>共 {selectedBom.materialCount} 项物料</span>
-                        <span>可支撑样本数: <span className="text-green-600 font-medium">{selectedBom.supportableSamples || '-'}</span></span>
-                        <span>单样本成本: <span className="text-blue-600 font-medium">¥{selectedBom.unitCost?.toFixed(2) || '-'}</span></span>
-                      </div>
-                    </div>
-                  )}
+                    ) : null
+                  })()}
                 </div>
               )}
               {bomOption === 'create' && (

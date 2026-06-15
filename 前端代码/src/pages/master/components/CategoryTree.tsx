@@ -1,4 +1,3 @@
-import { useCallback } from 'react'
 import { ChevronRight, ChevronDown, Folder, Circle, Plus, Edit2, Trash2, Search, X } from 'lucide-react'
 import type { Category } from '@/types'
 
@@ -14,7 +13,6 @@ interface Props {
   onOpenCreate: (parentId: string | null, level: number) => void
   onOpenEdit: (node: Category) => void
   onOpenDelete: (node: Category) => void
-  onContextMenu: (e: React.MouseEvent, node: Category) => void
   filterMatch: (node: Category) => boolean
 }
 
@@ -29,7 +27,6 @@ function TreeNodeItem({
   onOpenCreate,
   onOpenEdit,
   onOpenDelete,
-  onContextMenu,
   filterMatch,
 }: {
   node: Category
@@ -42,7 +39,6 @@ function TreeNodeItem({
   onOpenCreate: (parentId: string | null, level: number) => void
   onOpenEdit: (node: Category) => void
   onOpenDelete: (node: Category) => void
-  onContextMenu: (e: React.MouseEvent, node: Category) => void
   filterMatch: (node: Category) => boolean
 }) {
   const hasChildren = node.children && node.children.length > 0
@@ -60,7 +56,6 @@ function TreeNodeItem({
         }`}
         style={{ paddingLeft: `${depth * 20 + 12}px` }}
         onClick={() => onSelectNode(node.id)}
-        onContextMenu={e => onContextMenu(e, node)}
       >
         <button
           className={`w-5 h-5 flex items-center justify-center rounded hover:bg-gray-200 transition-colors ${hasChildren ? '' : 'invisible'}`}
@@ -96,15 +91,13 @@ function TreeNodeItem({
           >
             <Edit2 className="w-3.5 h-3.5" />
           </button>
-          {!hasChildren && (
-            <button
-              onClick={e => { e.stopPropagation(); onOpenDelete(node) }}
-              className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded"
-              title="删除"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
-          )}
+          <button
+            onClick={e => { e.stopPropagation(); onOpenDelete(node) }}
+            className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded"
+            title="删除"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
         </div>
       </div>
       {hasChildren && isExpanded && (
@@ -122,7 +115,6 @@ function TreeNodeItem({
               onOpenCreate={onOpenCreate}
               onOpenEdit={onOpenEdit}
               onOpenDelete={onOpenDelete}
-              onContextMenu={onContextMenu}
               filterMatch={filterMatch}
             />
           ))}
@@ -144,7 +136,6 @@ export function CategoryTree({
   onOpenCreate,
   onOpenEdit,
   onOpenDelete,
-  onContextMenu,
   filterMatch,
 }: Props) {
   return (
@@ -193,7 +184,6 @@ export function CategoryTree({
               onOpenCreate={onOpenCreate}
               onOpenEdit={onOpenEdit}
               onOpenDelete={onOpenDelete}
-              onContextMenu={onContextMenu}
               filterMatch={filterMatch}
             />
           ))

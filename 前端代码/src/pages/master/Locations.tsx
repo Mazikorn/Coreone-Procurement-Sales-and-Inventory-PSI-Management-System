@@ -1,9 +1,11 @@
 import { Search, Plus, Settings } from 'lucide-react'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import { useLocationsPage } from './hooks/useLocationsPage'
 import { LocationTree } from './components/LocationTree'
 import { LocationCards } from './components/LocationCards'
 import { LocationFormModal } from './components/LocationFormModal'
 import { LevelConfigModal } from './components/LevelConfigModal'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 
 export default function Locations() {
   const page = useLocationsPage()
@@ -13,7 +15,7 @@ export default function Locations() {
     : ''
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       {/* Page Header */}
       <div className="flex items-start justify-between">
         <div>
@@ -67,6 +69,7 @@ export default function Locations() {
           onSelectNode={page.setSelectedNodeId}
           onExpandAll={page.expandAll}
           onCollapseAll={page.collapseAll}
+          levelConfigs={page.levelConfigs}
         />
 
         <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm">
@@ -89,15 +92,17 @@ export default function Locations() {
                   className="w-48 h-10 pl-9 pr-3 border border-gray-300 rounded-md text-sm outline-none transition-all focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10"
                 />
               </div>
-              <select
+              <SearchableSelect
                 value={page.searchStatus}
-                onChange={e => page.setSearchStatus(e.target.value)}
-                className="h-10 px-3 border border-gray-300 rounded-md text-sm bg-white outline-none transition-all focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 cursor-pointer"
-              >
-                <option value="all">全部状态</option>
-                <option value="active">已启用</option>
-                <option value="inactive">已停用</option>
-              </select>
+                onChange={val => page.setSearchStatus(val)}
+                options={[
+                  { value: 'all', label: '全部状态' },
+                  { value: 'active', label: '已启用' },
+                  { value: 'inactive', label: '已停用' },
+                ]}
+                placeholder="全部状态"
+                className="w-28"
+              />
               <button
                 onClick={page.handleSearch}
                 className="h-10 px-4 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
@@ -120,6 +125,7 @@ export default function Locations() {
             onEdit={page.openEdit}
             onDelete={page.handleDelete}
             onToggleStatus={page.handleToggleStatus}
+            levelConfigs={page.levelConfigs}
           />
         </div>
       </div>
@@ -147,6 +153,16 @@ export default function Locations() {
         onChangeTab={page.setLevelTab}
         onChangeConfigs={page.setLevelConfigs}
         onSave={page.saveLevelConfigs}
+      />
+
+      {/* Delete Confirm Dialog */}
+      <ConfirmDialog
+        open={!!page.pendingDeleteId}
+        title="确认删除"
+        description="确定删除该库位？删除后无法恢复。"
+        confirmText="确认删除"
+        onConfirm={page.confirmDelete}
+        onCancel={page.cancelDelete}
       />
     </div>
   )

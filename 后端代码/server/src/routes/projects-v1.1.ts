@@ -41,7 +41,7 @@ router.get('/:id', (req, res) => {
     const { id } = req.params
     const db = getDatabase()
     const row = db.prepare('SELECT * FROM projects WHERE id = ? AND is_deleted = 0').get(id) as any
-    if (!row) { error(res, 'Not found', 'NOT_FOUND', 404); return }
+    if (!row) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
 
     const costStats = db.prepare(`
       SELECT SUM(total_cost) as total_cost, COUNT(DISTINCT id) as sample_count
@@ -65,12 +65,19 @@ router.get('/:id', (req, res) => {
 
 router.post('/', requireProjectWrite, (req, res) => {
   try {
-    const { code, name, type, cycle, manager, description } = req.body
+    const { code, name, type, cycle, manager, description, bomId } = req.body
     if (!code || !name || !type) { error(res, 'Code, name and type required', 'INVALID_PARAMETER', 400); return }
     const db = getDatabase()
+
+    // 校验 bomId 是否存在
+    if (bomId) {
+      const bom = db.prepare('SELECT id FROM boms WHERE id = ? AND is_deleted = 0').get(bomId)
+      if (!bom) { error(res, 'BOM not found', 'NOT_FOUND', 404); return }
+    }
+
     const id = uuidv4()
-    db.prepare('INSERT INTO projects (id, code, name, type, cycle, manager, description, status) VALUES (?, ?, ?, ?, ?, ?, ?, 1)')
-      .run(id, code, name, type, cycle || null, manager || null, description || null)
+    db.prepare('INSERT INTO projects (id, code, name, type, cycle, manager, description, status, bom_id) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)')
+      .run(id, code, name, type, cycle || null, manager || null, description || null, bomId || null)
     const row = db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as any
     success(res, {
       id: row.id, code: row.code, name: row.name, type: row.type, cycle: row.cycle,
@@ -79,7 +86,7 @@ router.post('/', requireProjectWrite, (req, res) => {
       description: row.description, createdAt: row.created_at,
     }, 'Created', 201)
   } catch (err: any) {
-    if (err.message.includes('UNIQUE')) { error(res, 'Code exists', 'RESOURCE_CONFLICT', 409); return }
+    if (err.message?.includes('UNIQUE constraint failed')) { error(res, 'Code exists', 'RESOURCE_CONFLICT', 409); return }
     error(res, err.message)
   }
 })
@@ -90,7 +97,7 @@ router.put('/:id', requireProjectWrite, (req, res) => {
     const data = req.body
     const db = getDatabase()
     const existing = db.prepare('SELECT * FROM projects WHERE id = ? AND is_deleted = 0').get(id)
-    if (!existing) { error(res, 'Not found', 'NOT_FOUND', 404); return }
+    if (!existing) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
     if (data.code === '' || data.code === null || data.code === undefined ||
         data.name === '' || data.name === null || data.name === undefined ||
         data.type === '' || data.type === null || data.type === undefined) {
@@ -104,6 +111,7 @@ router.put('/:id', requireProjectWrite, (req, res) => {
     if (data.manager !== undefined) { fields.push('manager = ?'); params.push(data.manager) }
     if (data.description !== undefined) { fields.push('description = ?'); params.push(data.description) }
     if (data.status !== undefined) { fields.push('status = ?'); params.push(data.status === 'active' ? 1 : 0) }
+    if (data.bomId !== undefined) { fields.push('bom_id = ?'); params.push(data.bomId || null) }
     if (fields.length > 0) { params.push(id); db.prepare(`UPDATE projects SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND is_deleted = 0`).run(...params) }
     success(res, { id }, 'Updated')
   } catch (err: any) { error(res, err.message) }
@@ -114,7 +122,15 @@ router.delete('/:id', requireProjectWrite, (req, res) => {
     const { id } = req.params
     const db = getDatabase()
     const existing = db.prepare('SELECT * FROM projects WHERE id = ? AND is_deleted = 0').get(id)
-    if (!existing) { error(res, 'Not found', 'NOT_FOUND', 404); return }
+    if (!existing) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
+
+    // 检查是否有关联的出库记录
+    const outboundCount = (db.prepare('SELECT COUNT(*) as count FROM outbound_records WHERE project_id = ? AND is_deleted = 0').get(id) as any)?.count || 0
+    if (outboundCount > 0) {
+      error(res, `项目有 ${outboundCount} 条出库记录，不可删除`, 'CONFLICT', 409)
+      return
+    }
+
     db.prepare('UPDATE projects SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(id)
     success(res, null, 'Deleted')
   } catch (err: any) { error(res, err.message) }

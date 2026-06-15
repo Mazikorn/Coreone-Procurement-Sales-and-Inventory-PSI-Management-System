@@ -1,9 +1,9 @@
-import { useState, useEffect } from 'react'
-import { supplierApi } from '@/api/master'
-import type { Supplier } from '@/types'
+import { useState, useCallback, useMemo } from 'react'
 import { toast } from 'sonner'
+import { supplierApi } from '@/api/master'
 import { usePagination } from '@/hooks/usePagination'
 import { useUrlParams } from '@/hooks/useUrlParams'
+import type { Supplier } from '@/types'
 
 export interface FormData {
   code: string
@@ -16,22 +16,57 @@ export interface FormData {
   bankName: string
   bankAccount: string
   status: 'active' | 'inactive'
+  rating: number
 }
 
-export type ModalType = 'create' | 'edit' | 'detail' | null
+const defaultForm: FormData = {
+  code: '',
+  name: '',
+  contact: '',
+  phone: '',
+  email: '',
+  address: '',
+  taxNo: '',
+  bankName: '',
+  bankAccount: '',
+  status: 'active',
+  rating: 5,
+}
 
 export function useSuppliersPage() {
-  const { get, getNumber, setMultiple } = useUrlParams()
+  const url = useUrlParams()
+  const [searchKeyword, setSearchKeyword] = useState(url.get('keyword', ''))
+  const [searchStatus, setSearchStatus] = useState(url.get('status', ''))
+  const [keyword, setKeyword] = useState(url.get('keyword', ''))
+  const [status, setStatus] = useState(url.get('status', ''))
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [modalType, setModalType] = useState<'create' | 'edit' | 'detail' | null>(null)
+  const [form, setForm] = useState<FormData>(defaultForm)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [detailRow, setDetailRow] = useState<Supplier | null>(null)
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [confirmProps, setConfirmProps] = useState<{
+    title: string
+    description: string
+    confirmText: string
+    confirmVariant: 'primary' | 'danger'
+    onConfirm: () => void
+  } | null>(null)
 
-  const [searchKeyword, setSearchKeyword] = useState('')
-  const [searchStatus, setSearchStatus] = useState<string>('all')
-  const [keyword, setKeyword] = useState('')
-  const [statusFilter, setStatusFilter] = useState<string>('all')
-
-  const urlPage = Math.max(1, getNumber('page', 1))
-  const urlPageSize = [10, 20, 50, 100].includes(getNumber('pageSize', 100))
-    ? getNumber('pageSize', 100)
-    : 100
+  const fetchFn = useCallback(
+    async (params: { page: number; pageSize: number }) => {
+      const res: any = await supplierApi.getList({
+        ...params,
+        keyword: keyword || undefined,
+        status: status || undefined,
+      })
+      return {
+        list: res?.list || res?.data?.list || [],
+        pagination: res?.pagination || res?.data?.pagination,
+      }
+    },
+    [keyword, status]
+  )
 
   const {
     data,
@@ -43,202 +78,151 @@ export function useSuppliersPage() {
     setPageSize,
     refresh,
   } = usePagination<Supplier>({
-    fetchFn: async ({ page, pageSize }) => {
-      const params: any = { page, pageSize, keyword: keyword || undefined }
-      if (statusFilter && statusFilter !== 'all') {
-        params.status = statusFilter
-      }
-      const res: any = await supplierApi.getList(params)
-      return { list: res.list || [], pagination: res.pagination }
-    },
-    initialPage: urlPage,
-    initialPageSize: urlPageSize,
-    deps: [keyword, statusFilter],
+    fetchFn,
+    initialPage: Math.max(1, url.getNumber('page', 1)),
+    initialPageSize: 20,
+    deps: [keyword, status],
   })
 
-  useEffect(() => {
-    setMultiple({
-      page: page > 1 ? page : null,
-      pageSize: pageSize !== 100 ? pageSize : null,
-      keyword: keyword || null,
-      status: statusFilter !== 'all' ? statusFilter : null,
-    })
-  }, [page, pageSize, keyword, statusFilter, setMultiple])
-
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [modalType, setModalType] = useState<ModalType>(null)
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [detailRow, setDetailRow] = useState<Supplier | null>(null)
-
-  const [confirmOpen, setConfirmOpen] = useState(false)
-  const [confirmProps, setConfirmProps] = useState<{
-    title: string
-    description: string
-    confirmText: string
-    confirmVariant: 'danger' | 'primary'
-    onConfirm: () => void
-  } | null>(null)
-
-  const openConfirm = (props: {
-    title: string
-    description: string
-    confirmText: string
-    confirmVariant: 'danger' | 'primary'
-    onConfirm: () => void
-  }) => {
-    setConfirmProps(props)
-    setConfirmOpen(true)
-  }
-
-  const [form, setForm] = useState<FormData>({
-    code: '', name: '', contact: '', phone: '', email: '',
-    address: '', taxNo: '', bankName: '', bankAccount: '', status: 'active',
-  })
-
-  const stats = {
-    total,
-    active: data.filter((d) => d.status === 'active').length,
-    inactive: data.filter((d) => d.status === 'inactive').length,
-    newThisMonth: data.filter((d) => {
-      if (!d.createdAt) return false
-      const created = new Date(d.createdAt)
-      const now = new Date()
-      return (
-        created.getMonth() === now.getMonth() &&
-        created.getFullYear() === now.getFullYear()
-      )
-    }).length,
-  }
-
-  const handleSearch = () => {
-    setKeyword(searchKeyword)
-    setStatusFilter(searchStatus)
-    setPage(1)
-  }
-
-  const handleReset = () => {
-    setSearchKeyword('')
-    setSearchStatus('all')
-    setKeyword('')
-    setStatusFilter('all')
-    setPage(1)
-  }
-
-  const openCreate = () => {
-    setEditingId(null)
-    setForm({
-      code: '', name: '', contact: '', phone: '', email: '',
-      address: '', taxNo: '', bankName: '', bankAccount: '', status: 'active',
-    })
-    setModalType('create')
-  }
-
-  const openEdit = (row: Supplier) => {
-    setEditingId(row.id)
-    setForm({
-      code: row.code, name: row.name, contact: row.contact || '',
-      phone: row.phone || '', email: row.email || '', address: row.address || '',
-      taxNo: row.taxNo || '', bankName: row.bankName || '',
-      bankAccount: row.bankAccount || '', status: row.status,
-    })
-    setModalType('edit')
-  }
-
-  const openDetail = (row: Supplier) => {
-    setDetailRow(row)
-    setModalType('detail')
-  }
-
-  const handleSubmit = async () => {
-    if (!form.name.trim()) {
-      toast.error('请填写供应商名称')
-      return
+  const stats = useMemo(() => {
+    const all = data
+    return {
+      total: total || 0,
+      active: all.filter(s => s.status === 'active').length,
+      inactive: all.filter(s => s.status === 'inactive').length,
+      newThisMonth: all.filter(s => {
+        const d = new Date(s.createdAt)
+        const now = new Date()
+        return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()
+      }).length,
     }
-    try {
-      if (editingId) {
-        await supplierApi.update(editingId, form)
-      } else {
-        await supplierApi.create(form)
-      }
-      toast.success('保存成功')
-      setModalType(null)
-      refresh()
-    } catch (e) {
-      toast.error('保存失败')
-    }
+  }, [data, total])
+
+  const getAvatarColor = (name: string) => {
+    const colors = [
+      { bg: 'bg-blue-100', text: 'text-blue-600' },
+      { bg: 'bg-green-100', text: 'text-green-600' },
+      { bg: 'bg-purple-100', text: 'text-purple-600' },
+      { bg: 'bg-orange-100', text: 'text-orange-600' },
+      { bg: 'bg-pink-100', text: 'text-pink-600' },
+    ]
+    const idx = name.charCodeAt(0) % colors.length
+    return colors[idx]
   }
 
-  const handleDelete = async (id: string) => {
-    openConfirm({
-      title: '确认删除',
-      description: '确定删除该供应商？删除后不可恢复。',
-      confirmText: '删除',
-      confirmVariant: 'danger',
-      onConfirm: async () => {
-        try {
-          await supplierApi.delete(id)
-          toast.success('删除成功')
-          refresh()
-        } catch (e) {
-          toast.error('删除失败')
-        }
-      },
-    })
-  }
-
-  const handleToggleStatus = async (row: Supplier) => {
-    const newStatus = row.status === 'active' ? 'inactive' : 'active'
-    try {
-      await supplierApi.update(row.id, { status: newStatus })
-      toast.success(newStatus === 'active' ? '已启用' : '已停用')
-      refresh()
-    } catch (e) {
-      toast.error('操作失败')
-    }
-  }
+  const handleSearch = () => { setKeyword(searchKeyword); setStatus(searchStatus); setPage(1) }
+  const handleReset = () => { setSearchKeyword(''); setSearchStatus(''); setKeyword(''); setStatus(''); setPage(1) }
 
   const toggleSelectAll = () => {
-    if (selectedIds.size === data.length) {
-      setSelectedIds(new Set())
-    } else {
-      setSelectedIds(new Set(data.map((d) => d.id)))
-    }
+    if (data.length > 0 && selectedIds.size === data.length) setSelectedIds(new Set())
+    else setSelectedIds(new Set(data.map(d => d.id)))
   }
-
   const toggleSelect = (id: string) => {
     const next = new Set(selectedIds)
     if (next.has(id)) next.delete(id)
     else next.add(id)
     setSelectedIds(next)
   }
+  const clearSelection = () => setSelectedIds(new Set())
 
-  const getAvatarColor = (name: string) => {
-    const colors = [
-      { bg: '#e0e7ff', text: '#4f46e5' },
-      { bg: '#fef3c7', text: '#d97706' },
-      { bg: '#dbeafe', text: '#2563eb' },
-      { bg: '#dcfce7', text: '#16a34a' },
-      { bg: '#fce7f3', text: '#db2777' },
-      { bg: '#f3e8ff', text: '#9333ea' },
-    ]
-    const index = name.charCodeAt(0) % colors.length
-    return colors[index]
+  const openCreate = () => { setForm(defaultForm); setEditingId(null); setModalType('create') }
+  const openEdit = (row: Supplier) => {
+    setDetailRow(row)
+    setForm({
+      code: row.code, name: row.name, contact: row.contact || '', phone: row.phone || '',
+      email: row.email || '', address: row.address || '', taxNo: row.taxNo || '',
+      bankName: row.bankName || '', bankAccount: row.bankAccount || '',
+      status: row.status, rating: row.rating,
+    })
+    setEditingId(row.id)
+    setModalType('edit')
+  }
+  const openDetail = (row: Supplier) => { setDetailRow(row); setModalType('detail') }
+
+  const handleSubmit = async () => {
+    if (!form.code || !form.name) { toast.error('请填写编码和名称'); return }
+    try {
+      if (editingId) {
+        await supplierApi.update(editingId, form)
+        toast.success('修改成功')
+      } else {
+        await supplierApi.create(form)
+        toast.success('创建成功')
+      }
+      setModalType(null)
+      refresh()
+    } catch {
+      toast.error(editingId ? '修改失败' : '创建失败')
+    }
+  }
+
+  const handleToggleStatus = async (row: Supplier) => {
+    try {
+      await supplierApi.update(row.id, { status: row.status === 'active' ? 'inactive' : 'active' })
+      toast.success('状态已更新')
+      refresh()
+    } catch {
+      toast.error('操作失败')
+    }
+  }
+
+  const handleDelete = (id: string) => {
+    const row = data.find(s => s.id === id)
+    if (!row) return
+
+    setConfirmProps({
+      title: '确认删除',
+      description: `确定要删除供应商「${row.name}」吗？此操作不可撤销。`,
+      confirmText: '确认删除',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        try {
+          await supplierApi.delete(row.id)
+          toast.success('删除成功')
+          refresh()
+        } catch {
+          toast.error('删除失败')
+        }
+      },
+    })
+    setConfirmOpen(true)
+  }
+
+  const batchDelete = async () => {
+    const ids = Array.from(selectedIds)
+    for (const id of ids) {
+      try { await supplierApi.delete(id) } catch { /* skip */ }
+    }
+    toast.success(`已删除 ${ids.length} 个供应商`)
+    clearSelection()
+    refresh()
+  }
+
+  const batchToggleStatus = async (status: 'active' | 'inactive') => {
+    const ids = Array.from(selectedIds)
+    for (const id of ids) {
+      try { await supplierApi.update(id, { status }) } catch { /* skip */ }
+    }
+    toast.success(`已更新 ${ids.length} 个供应商状态`)
+    clearSelection()
+    refresh()
   }
 
   return {
-    data, loading, page, pageSize, total, setPage, setPageSize,
-    searchKeyword, setSearchKeyword, searchStatus, setSearchStatus,
-    keyword, statusFilter,
-    selectedIds,
-    modalType, setModalType,
-    editingId, detailRow,
-    confirmOpen, setConfirmOpen, confirmProps, setConfirmProps,
-    form, setForm,
     stats,
-    handleSearch, handleReset,
-    openCreate, openEdit, openDetail,
-    handleSubmit, handleDelete, handleToggleStatus,
-    toggleSelectAll, toggleSelect,
+    data, loading, total, page, pageSize, setPage, setPageSize,
+    selectedIds,
+    searchKeyword, setSearchKeyword, searchStatus, setSearchStatus,
     getAvatarColor,
+    handleSearch, handleReset,
+    toggleSelectAll, toggleSelect, clearSelection,
+    batchDelete, batchToggleStatus,
+    openCreate, openEdit, openDetail,
+    handleToggleStatus, handleDelete,
+    modalType, setModalType,
+    form, setForm,
+    handleSubmit,
+    detailRow,
+    confirmOpen, setConfirmOpen, confirmProps,
   }
 }

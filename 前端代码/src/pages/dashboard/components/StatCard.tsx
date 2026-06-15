@@ -1,7 +1,28 @@
+import {
+  AlertTriangle,
+  ArrowDownToLine,
+  BarChart3,
+  ClipboardCheck,
+  Package,
+  ShoppingCart,
+  TrendingUp,
+  type LucideIcon,
+} from 'lucide-react'
+
+const iconMap: Record<string, LucideIcon> = {
+  AlertTriangle,
+  ArrowDownToLine,
+  BarChart3,
+  ClipboardCheck,
+  Package,
+  ShoppingCart,
+  TrendingUp,
+}
+
 interface Props {
   title: string
   value: string | number
-  icon: React.ElementType
+  icon: string | React.ElementType
   colorClass: string
   bgClass: string
   subtitle?: string
@@ -9,6 +30,8 @@ interface Props {
 }
 
 export function StatCard({ title, value, icon: Icon, colorClass, bgClass, subtitle, onClick }: Props) {
+  const IconComponent = typeof Icon === 'string' ? (iconMap[Icon] || Package) : Icon
+
   return (
     <div
       onClick={onClick}
@@ -27,7 +50,7 @@ export function StatCard({ title, value, icon: Icon, colorClass, bgClass, subtit
           )}
         </div>
         <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${bgClass}`}>
-          <Icon className={`w-5 h-5 ${colorClass}`} />
+          <IconComponent className={`w-5 h-5 ${colorClass}`} />
         </div>
       </div>
     </div>

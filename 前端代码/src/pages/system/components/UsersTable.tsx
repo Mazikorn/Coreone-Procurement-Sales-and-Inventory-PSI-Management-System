@@ -1,6 +1,7 @@
 import { Search } from 'lucide-react'
 import type { User } from '@/types'
 import { Pagination } from '@/components/ui/Pagination'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { RoleItem } from '../hooks/useUsersPage'
 
 interface Props {
@@ -93,25 +94,27 @@ export function UsersTable({
                 className="w-full h-10 pl-10 pr-4 text-sm text-gray-900 bg-white border border-gray-200 rounded-md outline-none transition-all focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10"
               />
             </div>
-            <select
+            <SearchableSelect
               value={roleFilter}
-              onChange={e => onRoleFilterChange(e.target.value)}
-              className="h-10 px-3 pr-8 text-sm text-gray-900 bg-white border border-gray-200 rounded-md outline-none transition-all focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 appearance-none cursor-pointer"
-              style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 10px center' }}
-            >
-              <option value="">全部角色</option>
-              {roles.map(r => <option key={r.id} value={r.code}>{r.name}</option>)}
-            </select>
-            <select
+              onChange={val => onRoleFilterChange(val)}
+              options={[
+                { value: '', label: '全部角色' },
+                ...roles.map(r => ({ value: r.code, label: r.name })),
+              ]}
+              placeholder="全部角色"
+              className="w-28"
+            />
+            <SearchableSelect
               value={statusFilter}
-              onChange={e => onStatusFilterChange(e.target.value)}
-              className="h-10 px-3 pr-8 text-sm text-gray-900 bg-white border border-gray-200 rounded-md outline-none transition-all focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 appearance-none cursor-pointer"
-              style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 10px center' }}
-            >
-              <option value="">全部状态</option>
-              <option value="active">正常</option>
-              <option value="inactive">禁用</option>
-            </select>
+              onChange={val => onStatusFilterChange(val)}
+              options={[
+                { value: '', label: '全部状态' },
+                { value: 'active', label: '正常' },
+                { value: 'inactive', label: '禁用' },
+              ]}
+              placeholder="全部状态"
+              className="w-28"
+            />
             <button onClick={onSearch} className="h-10 px-4 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 shadow-sm transition-all">查询</button>
             <button onClick={onReset} className="h-10 px-4 text-sm font-medium text-gray-700 bg-transparent hover:bg-gray-100 rounded-md transition-all">重置</button>
           </div>

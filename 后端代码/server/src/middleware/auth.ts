@@ -8,7 +8,7 @@ if (!jwtSecret) {
 export const JWT_SECRET = jwtSecret
 
 // 角色权限映射
-const ROLE_PERMISSIONS: Record<string, string[]> = {
+export const ROLE_PERMISSIONS: Record<string, string[]> = {
   admin: ['*'],
   warehouse_manager: [
     'dashboard', 'inventory', 'inbound', 'outbound', 'stocktaking',

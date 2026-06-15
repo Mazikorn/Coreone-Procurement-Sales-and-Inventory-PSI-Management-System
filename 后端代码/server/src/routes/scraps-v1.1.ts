@@ -29,18 +29,24 @@ router.get('/', (req, res) => {
 
 router.post('/', (req, res) => {
   try {
-    const { materialId, quantity, reason, operator, remark } = req.body
+    const { materialId, quantity, reason, remark } = req.body
+    const operator = (req as any).user?.username || 'system'
     if (!materialId || quantity === undefined || quantity === null || isNaN(Number(quantity)) || Number(quantity) <= 0 || !reason) {
       error(res, 'Missing or invalid fields', 'INVALID_PARAMETER', 400); return
     }
     const db = getDatabase()
     const material = db.prepare('SELECT * FROM materials WHERE id = ? AND is_deleted = 0').get(materialId) as any
     if (!material) { error(res, '物料不存在或已删除', 'NOT_FOUND', 404); return }
-    const inv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
-    if (!inv || inv.stock < quantity) { error(res, 'Insufficient stock', 'STOCK_INSUFFICIENT', 422); return }
 
+    // 库存检查移入事务内（防止 TOCTOU 竞态条件）
     db.exec('BEGIN IMMEDIATE')
     try {
+      const inv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+      if (!inv || inv.stock < quantity) {
+        db.exec('ROLLBACK')
+        error(res, `库存不足，当前可用: ${inv?.stock || 0}`, 'STOCK_INSUFFICIENT', 422)
+        return
+      }
       const id = uuidv4()
       db.prepare('INSERT INTO scrap_records (id, scrap_no, material_id, quantity, reason, operator, remark) VALUES (?, ?, ?, ?, ?, ?, ?)')
         .run(id, generateNo(), materialId, quantity, reason, operator || 'system', remark || null)
@@ -83,14 +89,14 @@ router.delete('/:id', (req, res) => {
 
       const inv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(record.material_id) as any
       const beforeStock = inv?.stock || 0
+      db.prepare('UPDATE inventory SET stock = stock + ? WHERE material_id = ?').run(record.quantity, record.material_id)
       const afterStock = beforeStock + record.quantity
-      db.prepare('UPDATE inventory SET stock = ? WHERE material_id = ?').run(afterStock, record.material_id)
 
       const logId = uuidv4()
       db.prepare(`
         INSERT INTO stock_logs (id, type, material_id, quantity, before_stock, after_stock, related_id, related_type, operator, remark)
         VALUES (?, 'cancel', ?, ?, ?, ?, ?, 'scrap_cancel', ?, '撤销报废记录')
-      `).run(logId, record.material_id, record.quantity, beforeStock, afterStock, id, req.body.operator || 'system')
+      `).run(logId, record.material_id, record.quantity, beforeStock, afterStock, id, (req as any).user?.username || 'system')
 
       db.exec('COMMIT')
       success(res, null, '报废记录已撤销')

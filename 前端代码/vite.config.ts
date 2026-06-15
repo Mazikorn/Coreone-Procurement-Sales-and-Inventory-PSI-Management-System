@@ -11,6 +11,12 @@ export default defineConfig(({ mode }) => ({
     hmr: {
       overlay: false,
     },
+    proxy: {
+      '/api/v1': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+      },
+    },
     // 添加缓存控制头
     headers: {
       "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",

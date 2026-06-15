@@ -21,7 +21,7 @@ export function BOMExportModal({ open, onClose, onConfirm }: Props) {
             <X className="w-4 h-4 text-gray-500" />
           </button>
         </div>
-        <div className="p-6 space-y-5">
+        <div className="p-6 space-y-6">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">导出范围</label>
             <div className="space-y-2">
