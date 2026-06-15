@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { decodeBase64Url, getUserRole, ROLE_MENU_MAP } from './permissions'
+import { canAccessPath, decodeBase64Url, getUserRole, ROLE_MENU_MAP } from './permissions'
 
 describe('permissions', () => {
   describe('decodeBase64Url', () => {
@@ -111,6 +111,27 @@ describe('permissions', () => {
       Object.values(ROLE_MENU_MAP).forEach(routes => {
         expect(routes).toContain('/')
       })
+    })
+  })
+
+  describe('canAccessPath', () => {
+    it('should allow permitted role routes', () => {
+      expect(canAccessPath('warehouse_manager', '/outbound')).toBe(true)
+      expect(canAccessPath('technician', '/inventory')).toBe(true)
+    })
+
+    it('should deny routes outside the role permission map', () => {
+      expect(canAccessPath('technician', '/outbound')).toBe(false)
+      expect(canAccessPath('finance', '/stocktaking')).toBe(false)
+    })
+
+    it('should allow nested routes under an allowed route', () => {
+      expect(canAccessPath('admin', '/abc/dashboard/detail')).toBe(true)
+    })
+
+    it('should deny missing or unknown roles', () => {
+      expect(canAccessPath(null, '/inventory')).toBe(false)
+      expect(canAccessPath('unknown', '/inventory')).toBe(false)
     })
   })
 })

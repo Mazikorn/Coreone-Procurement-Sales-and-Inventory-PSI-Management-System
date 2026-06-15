@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { Toaster } from 'sonner'
 import AppSidebar from '@/components/layout/AppSidebar'
 import TopBar from '@/components/layout/TopBar'
@@ -50,12 +50,19 @@ import CostForecast from '@/pages/cost/CostForecast'
 import SupplierCostAnalysis from '@/pages/cost/SupplierCostAnalysis'
 import EquipmentEfficiency from '@/pages/cost/EquipmentEfficiency'
 import IndirectCostCenterList from '@/pages/cost-center/IndirectCostCenterList'
+import { canAccessPath, getUserRole } from '@/lib/permissions'
 
 function ProtectedLayout() {
   const token = localStorage.getItem('token')
+  const role = getUserRole()
+  const location = useLocation()
 
-  if (!token) {
+  if (!token || !role) {
     return <Navigate to="/login" replace />
+  }
+
+  if (!canAccessPath(role, location.pathname)) {
+    return <Navigate to="/" replace />
   }
 
   return (

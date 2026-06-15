@@ -29,6 +29,17 @@ export function getUserRole(): string | null {
   }
 }
 
+export function canAccessPath(role: string | null, pathname: string): boolean {
+  if (!role) return false
+  const allowedPaths = ROLE_MENU_MAP[role]
+  if (!allowedPaths) return false
+
+  return allowedPaths.some(path => {
+    if (path === '/') return pathname === '/'
+    return pathname === path || pathname.startsWith(`${path}/`)
+  })
+}
+
 // 角色-菜单权限映射
 // 侧边栏显示 24 项，其余页面通过 URL 直接访问（高级用户/财务）
 export const ROLE_MENU_MAP: Record<string, string[]> = {
