@@ -379,11 +379,11 @@
 
 > **核对口径**：2026-06-11 不再把“spec 文件存在”写成“测试已通过”。状态列只记录文件映射和待运行事项，最终结论以 Playwright 实际运行结果为准。
 >
-> **2026-06-15 更新**：Draft PR #1 已触发 GitHub Actions `e2e`，当前仍在运行中。后端测试、前端 typecheck/build 已通过；本表中所有 E2E 项在 CI 完成前仍不得改写为“已通过”。
+> **2026-06-15 更新**：Draft PR #1 GitHub Actions `e2e` 已完成，结果为 256/257 通过。唯一失败为 `auth.spec.ts` 中 `BF-PERM-technician-outbound`：测试预期 technician 访问 `/outbound` 应被拦截，但当前实现未拦截。后端测试、前端 typecheck/build 已通过；本表中与 technician 出库权限相关的验收项不得标记为通过。
 
 | PM 测试用例 | 对应 E2E spec | E2E 状态 |
 |-------------|--------------|----------|
-| TC-AUTH-001~004 | `e2e/auth.spec.ts` | 文件存在，待运行 |
+| TC-AUTH-001~004 | `e2e/auth.spec.ts` | CI 已运行；256/257 通过，technician `/outbound` 权限预期冲突失败 |
 | TC-CAT-001~003 | `e2e/categories.spec.ts` | 文件存在，待运行 |
 | TC-MAT-001~002 | `e2e/materials.spec.ts` | 文件存在，待运行 |
 | TC-IN-001~002 | `e2e/inbound.spec.ts` | 文件存在，待运行 |

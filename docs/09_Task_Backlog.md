@@ -11,7 +11,7 @@
 
 > **重要核对说明（2026-06-11）**：本清单整合了历史计划、功能矩阵和 QA 报告，不能直接等同当前代码缺陷列表。执行任何任务前必须按目标分支重新 triage：确认页面、API、路由、测试是否仍然缺失或失败。
 
-> **2026-06-15 PR 再清点说明**：基于 Draft PR #1（`codex/master-aligned-integration-2026-06-15`，head `afb8c71`）已完成一轮治理复核。后端 build/test、前端 typecheck/build、路由一致性已通过；GitHub `e2e` 仍在运行；前端单测仍有 3 个 inventory hook 旧失败。因此本清单的历史 P0/P1 不再直接作为“当前阻断数”，需要按下表重新分流。
+> **2026-06-15 PR 再清点说明**：基于 Draft PR #1（`codex/master-aligned-integration-2026-06-15`，head `3f66b93`）已完成一轮治理复核。后端 build/test、前端 typecheck/build、路由一致性已通过；GitHub `e2e` 256/257 通过，唯一失败为 technician 访问 `/outbound` 未被拦截；前端单测仍有 3 个 inventory hook 旧失败。因此本清单的历史 P0/P1 不再直接作为“当前阻断数”，需要按下表重新分流。
 
 | 优先级 | 数量 | 类型分布 |
 |--------|------|---------|
@@ -30,9 +30,9 @@
 |------|------|----------|
 | 已有证据显示已修复 | TASK-P1-001、TASK-P1-002、BUG-P0-001、BUG-P0-002、BUG-P0-003、BUG-P0-004、BUG-P0-005、BUG-P0-006、BUG-P0-007、SEC-P0-002、SEC-P0-003、SEC-P0-004、SEC-P0-006、SEC-P2-003 | 代码中已看到对应修复线索，且后端 build/test 或前端 build/typecheck 通过；仍需在 Bug Log 中补关闭证据 |
 | 本次已处理 | SEC-P0-008 | PR 分支已从 Git 索引移除 `前端代码/.env`、`后端代码/server/.env`；历史泄露风险需通过密钥轮换/历史治理另行处理 |
-| 仍需处理或 PM 决策 | SEC-P0-001、SEC-P0-005、BUG-P1-001、BUG-P1-002、PM-001~PM-006 | 仍有供应商退货状态更新无事务、供应商退货撤销日志 operator 来源、调拨原库位恢复、退库撤销逻辑、BOM 出库缺料策略等未闭环 |
+| 仍需处理或 PM 决策 | SEC-P0-001、SEC-P0-005、BUG-P1-001、BUG-P1-002、PM-001~PM-006、technician `/outbound` 权限预期冲突 | 仍有供应商退货状态更新无事务、供应商退货撤销日志 operator 来源、调拨原库位恢复、退库撤销逻辑、BOM 出库缺料策略、technician 是否可访问出库等未闭环 |
 | 验收/产品化项，非当前 PR 阻断 | TASK-P0-005、TASK-P0-006、TASK-P1-004、TASK-P1-005、TASK-P1-008、TASK-P1-011、TASK-P1-013、P2/P3 批量优化项 | 建议进入后续产品化任务，不阻断 Draft PR 审查；是否阻断合并由 PM 决策 |
-| 测试门禁项 | 前端 `npm test`、GitHub `e2e`、lint | 前端单测 81/84 通过但 3 个 inventory hook 失败；GitHub `e2e` 仍在运行；lint 仍有配置/历史代码问题 |
+| 测试门禁项 | 前端 `npm test`、GitHub `e2e`、lint | 前端单测 81/84 通过但 3 个 inventory hook 失败；GitHub `e2e` 256/257 通过但仍失败；lint 仍有配置/历史代码问题 |
 
 ---
 
