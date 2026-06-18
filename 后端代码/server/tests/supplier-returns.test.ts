@@ -383,6 +383,41 @@ describe('供应商退货', () => {
     expect(Number(cancelLogs.count)).toBe(0)
   })
 
+  it('SR-011: 删除待发货退货时若库存总账缺失必须拒绝，避免只恢复批次和库位', async () => {
+    const { materialId, supplierId, batchId } = seedSupplierReturnMaterialWithBatch(db, `delete-missing-inv-${Date.now()}`)
+    const createRes = await request(app)
+      .post('/api/v1/supplier-returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId,
+        supplierId,
+        batchId,
+        quantity: 4,
+        reason: '库存总账缺失后删除退货',
+      })
+    expect(createRes.status).toBe(200)
+    db.prepare('DELETE FROM inventory WHERE material_id = ?').run(materialId)
+
+    const deleteRes = await request(app)
+      .delete(`/api/v1/supplier-returns/${createRes.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(deleteRes.status).toBe(404)
+    expect(deleteRes.body.error.message).toContain('物料无库存记录')
+
+    const record = db.prepare('SELECT is_deleted FROM supplier_returns WHERE id = ?').get(createRes.body.data.id) as any
+    const batch = db.prepare('SELECT remaining FROM batches WHERE id = ?').get(batchId) as any
+    const cancelLogs = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM stock_logs
+      WHERE related_id = ? AND related_type = 'supplier_return_cancel'
+    `).get(createRes.body.data.id) as any
+
+    expect(record.is_deleted).toBe(0)
+    expect(Number(batch.remaining)).toBe(6)
+    expect(Number(cancelLogs.count)).toBe(0)
+  })
+
   it('SR-008: 默认仓管和采购角色可访问并创建供应商退货', async () => {
     const warehouseToken = await loginRole(app, 'wangkq')
     const procurementToken = await loginRole(app, 'zhaohp')

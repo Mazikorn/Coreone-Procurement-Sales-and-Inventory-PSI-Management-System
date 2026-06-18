@@ -434,11 +434,17 @@ router.delete('/:id', (req, res) => {
         return
       }
 
+      const inv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(record.material_id) as any
+      if (!inv) {
+        db.exec('ROLLBACK')
+        error(res, '物料无库存记录，无法取消退货', 'NOT_FOUND', 404)
+        return
+      }
+
       db.prepare('UPDATE supplier_returns SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id)
 
       // 恢复库存
-      const inv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(record.material_id) as any
-      const beforeStock = Number(inv?.stock || 0)
+      const beforeStock = Number(inv.stock || 0)
       const afterStock = beforeStock + Number(record.quantity)
       db.prepare('UPDATE inventory SET stock = ?, update_time = CURRENT_TIMESTAMP WHERE material_id = ?').run(afterStock, record.material_id)
       restoreInventoryLocationStock(db, record.material_id, Number(record.quantity), { relatedType: 'supplier_return', relatedId: req.params.id })

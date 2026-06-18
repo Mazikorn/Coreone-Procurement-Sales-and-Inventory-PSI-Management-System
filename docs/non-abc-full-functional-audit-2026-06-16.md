@@ -10416,7 +10416,51 @@ git diff --check
 
 - 如果业务未来希望通过盘点把“账上无库存、实物有库存”的物料直接盘盈入账，需要设计新的库存初始化流程，而不是沿用当前会在确认阶段失败的隐式路径。
 
-## 二百零七、结论
+## 二百零七、批次 252: 供应商退货删除不得在库存总账缺失时部分恢复
+
+**发现的问题**
+
+- 供应商退货有两条取消/恢复路径：状态流转到 `cancelled`，以及删除 `pending` 退货记录。
+- 状态取消路径已经检查物料库存总账是否存在；但删除 `pending` 记录路径没有检查。
+- 如果退货创建后库存总账行被历史脏数据或异常操作删除，旧删除路径仍会软删除退货记录、恢复批次和库位明细、写入取消流水。
+- 由于 `inventory` 总账不存在，旧路径无法恢复总库存，形成“记录已删除、批次/库位恢复、总账缺失”的部分副作用。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/supplier-returns-v1.1.ts`
+  - 删除 `pending` 退货记录时，在软删除和任何库存恢复前检查 `inventory` 总账。
+  - 如果库存总账不存在，返回 `404 NOT_FOUND` 和“物料无库存记录，无法取消退货”，并回滚事务。
+  - 正常删除路径继续恢复总库存、库位明细、批次剩余量并写库存流水，接口响应不变。
+- `后端代码/server/tests/supplier-returns.test.ts`
+  - 新增 `SR-011`，覆盖库存总账缺失时删除 pending 退货必须失败，且退货记录、批次剩余量和取消流水均不发生副作用。
+
+**ABC 影响评估**
+
+- 本批不修改 ABC 本体、成本公式、成本池、收费映射、成本异常判定或废弃 `/cost-analysis` 代码。
+- 变更保护的是 ABC 上游采购、入库、供应商退货、库存总账、库位明细和批次成本来源事实，避免旧供应商退货删除写出不完整库存恢复。
+- 采购入库、库存、出库和精确 ABC 输入回归通过，说明 pending 删除保护没有破坏正常供应商退货、采购入库联动、库存查询、出库分配、BOM 出库和病例收费重排。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --config vitest.supplier-returns.config.ts --run tests/supplier-returns.test.ts -t "SR-011"` 修复前失败：旧接口返回 `200`，证明库存总账缺失时仍会执行删除恢复路径。
+- 修复后验证:
+  - `后端代码/server npm test -- --config vitest.supplier-returns.config.ts --run tests/supplier-returns.test.ts -t "SR-011"` 通过，1 file / 1 test passed；仍有既有 Vitest 退出等待提示，但命令返回成功。
+  - `后端代码/server npm test -- --config vitest.supplier-returns.config.ts --run tests/supplier-returns.test.ts` 通过，1 file / 14 tests passed；仍有既有 Vitest 退出等待提示，但命令返回成功。
+  - `后端代码/server npm test -- --run tests/purchase-order-inbound.test.ts tests/integration/inventory.test.ts tests/integration/outbound.test.ts` 通过，3 files / 57 tests passed；仍有既有 Vitest 退出等待提示，但命令返回成功。
+  - `后端代码/server npm test -- --run tests/integration/cost-exceptions.test.ts -t "同一病例多个BOM|取消非最新病例"` 通过，2 tests passed / 9 skipped，覆盖出库删除后 ABC 病例收费和重排链路。
+  - `后端代码/server npm run build` 通过。
+  - `git diff --check` 通过。
+- 需单独跟进的待评估项:
+  - `cost-exceptions` 全套当前红灯沿用批次 243 记录，仍需独立鉴别，不作为本批通过证据。
+- 浏览器复核:
+  - 本批为后端供应商退货删除恢复事务保护，核心风险在 API 层是否发生部分副作用；已用接口级真实副作用测试覆盖，不新增截图证据。
+
+**后续风险**
+
+- 若历史数据已经出现供应商退货记录、库存总账、库位明细和批次剩余量之间的不一致，需要继续通过库存一致性巡检或专项历史数据巡检暴露后治理。
+
+## 二百零八、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 
