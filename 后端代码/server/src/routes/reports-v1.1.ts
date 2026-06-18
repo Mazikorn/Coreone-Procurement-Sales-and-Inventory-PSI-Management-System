@@ -188,7 +188,7 @@ router.get('/cost-trend', (req, res) => {
           COUNT(*) as record_count,
           SUM(COALESCE(r.sample_count, 1)) as sample_count
         FROM outbound_records r
-        LEFT JOIN projects p ON r.project_id = p.id AND p.is_deleted = 0
+        LEFT JOIN projects p ON r.project_id = p.id
         WHERE ${where}
         GROUP BY period
         ORDER BY period
@@ -218,7 +218,7 @@ router.get('/cost-trend', (req, res) => {
           COUNT(*) as record_count,
           SUM(COALESCE(r.sample_count, 1)) as sample_count
         FROM outbound_records r
-        LEFT JOIN projects p ON r.project_id = p.id AND p.is_deleted = 0
+        LEFT JOIN projects p ON r.project_id = p.id
         WHERE ${where}
         GROUP BY period
         ORDER BY period
