@@ -11180,7 +11180,46 @@ git diff --check
 
 - 当前成本差异报表仍依赖当前 `boms.standard_*` 字段解释历史出库；如果后续 BOM 标准成本被编辑，彻底历史快照化需要单独设计出库/BOM 标准成本快照字段和兼容迁移。
 
-## 二百二十六、结论
+## 二百二十六、批次 271: 人员效率不得因操作人软删除丢失历史角色和姓名
+
+**发现的问题**
+
+- `/api/v1/reports/personnel-efficiency` 读取操作人元数据时，通过 `LEFT JOIN users u ON u.username = r.operator AND u.is_deleted = 0` 关联当前用户。
+- 如果历史出库的操作人后续被软删除，人员效率报表会丢失该用户的真实姓名和角色。
+- 更严重的是，当按 `role=technician` 等角色过滤时，软删除用户的历史出库会被完全筛掉，导致产出、标准工时、人工成本和趋势都少算。
+- 这会让实验运营/人员效率页面被后续用户维护动作污染，无法复盘真实历史产出。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/reports-v1.1.ts`
+  - `personnel-efficiency` 读取操作人用户信息时不再排除软删除用户。
+  - 已完成且未删除的历史出库记录继续按原操作人的姓名和角色进入人员效率汇总与角色筛选。
+- `后端代码/server/tests/integration/personnel-efficiency.test.ts`
+  - 新增 `REPORT-EFFICIENCY-002`，覆盖历史出库后操作人被软删除，人员效率报表仍必须保留角色筛选结果、姓名、角色、标准工时和人工成本。
+
+**ABC 影响评估**
+
+- 本批不修改 ABC 本体、成本公式、成本池、收费映射、成本异常判定或废弃 `/cost-analysis` 代码。
+- 变更只影响非 ABC 人员效率报表读取操作人元数据的口径，不写用户、库存、项目、出库、成本异常或 ABC 明细。
+- 人员效率、项目成本、全成本、出库流程和精确 ABC 输入回归通过，说明操作人软删除历史事实修复没有破坏出库删除后的报表扣除、成本结构/差异或 ABC 病例收费重排。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/personnel-efficiency.test.ts -t "REPORT-EFFICIENCY-002"` 修复前失败：操作人软删除后 `role=technician` 查询返回 `personCount=0`、`totalOutput=0`、`totalLaborCost=0`、`totalStandardHours=0`。
+- 修复后验证:
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/personnel-efficiency.test.ts -t "REPORT-EFFICIENCY-002"` 通过，1 file / 1 test passed / 3 skipped。
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/personnel-efficiency.test.ts tests/integration/reports-cost-by-project.test.ts tests/integration/full-cost.test.ts tests/integration/outbound-flow.test.ts` 通过，4 files / 13 tests passed。
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/cost-exceptions.test.ts -t "同一病例多个BOM|取消非最新病例"` 通过，2 tests passed / 9 skipped，覆盖出库删除后 ABC 病例收费和重排链路。
+  - `后端代码/server npm run build` 通过。
+- 浏览器复核:
+  - 本批为后端人员效率报表操作人元数据读取口径修复，核心风险在 API 层是否保留历史角色和姓名并正确参与角色筛选；已用接口级测试覆盖，不新增截图证据。
+
+**后续风险**
+
+- 当前人员效率报表仍依赖当前 `users.real_name/role` 解释历史出库；如果用户姓名或角色后续被编辑，彻底历史快照化需要单独设计出库操作人姓名/角色快照字段和兼容迁移。
+
+## 二百二十七、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

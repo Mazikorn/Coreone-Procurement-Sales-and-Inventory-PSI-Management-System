@@ -191,4 +191,59 @@ describe('集成测试：人员效率报表', () => {
       costPerOutput: 60,
     })
   })
+
+  it('REPORT-EFFICIENCY-002: 人员效率不因操作人后续软删除而丢失历史角色和姓名', async () => {
+    const suffix = Date.now()
+    const operator = `pe-deleted-user-tech-${suffix}`
+    const projectId = `pe-deleted-user-project-${suffix}`
+    const outboundId = `pe-deleted-user-out-${suffix}`
+
+    db.prepare('DELETE FROM standard_labor_times').run()
+    db.prepare(`
+      INSERT INTO standard_labor_times (
+        id, step_code, step_name, project_type, standard_minutes, labor_rate_per_minute, is_equipment_step
+      )
+      VALUES (?, 'PE-DEL-USER-HE', '已删除操作人HE工时', 'he', 15, 4, 0)
+    `).run(`pe-deleted-user-labor-${suffix}`)
+    db.prepare(`
+      INSERT INTO users (id, username, password, real_name, role, is_deleted)
+      VALUES (?, ?, 'x', '已删除但有历史产出技术员', 'technician', 0)
+    `).run(`user-${operator}`, operator)
+    db.prepare(`
+      INSERT INTO projects (id, code, name, type, is_deleted)
+      VALUES (?, ?, '操作人软删除人员效率历史项目', 'he', 0)
+    `).run(projectId, `PE-DEL-USER-PROJECT-${suffix}`)
+    db.prepare(`
+      INSERT INTO outbound_records (
+        id, outbound_no, type, project_id, total_cost, sample_count,
+        operator, status, created_at, is_deleted
+      )
+      VALUES (?, ?, 'project', ?, 180, 2, ?, 'completed', '2032-01-10T09:00:00', 0)
+    `).run(outboundId, `PE-DEL-USER-OUT-${suffix}`, projectId, operator)
+    db.prepare('UPDATE users SET is_deleted = 1 WHERE username = ?').run(operator)
+
+    const res = await request(app)
+      .get('/api/v1/reports/personnel-efficiency?startDate=2032-01-01&endDate=2032-01-31&role=technician')
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(200)
+    expect(res.body.success).toBe(true)
+    expect(res.body.data.summary).toMatchObject({
+      personCount: 1,
+      totalOutput: 2,
+      totalLaborCost: 120,
+      totalStandardHours: 0.5,
+      costPerOutput: 60,
+    })
+    expect(res.body.data.ranking[0]).toMatchObject({
+      id: operator,
+      name: '已删除但有历史产出技术员',
+      role: 'technician',
+      outputCount: 2,
+      totalCost: 120,
+      standardHours: 0.5,
+      outputPerHour: 4,
+      costPerOutput: 60,
+    })
+  })
 })
