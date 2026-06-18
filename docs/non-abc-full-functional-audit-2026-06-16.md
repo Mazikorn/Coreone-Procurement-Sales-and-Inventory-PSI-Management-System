@@ -10198,7 +10198,50 @@ git diff --check
 
 - 若历史数据已经存在 `quantity < 0`、`remaining < 0` 或 `remaining > quantity` 的批次，需要通过库存一致性巡检单独暴露和治理。
 
-## 二百零二、结论
+## 二百零二、批次 247: 库存一致性扫描必须暴露批次剩余量超过批次数量
+
+**发现的问题**
+
+- 前序批次已在退库、报废、供应商退货、出库、入库删除和入库取消等写路径阻断 `remaining > quantity` 或批次扣成负数。
+- 但库存一致性扫描此前只比较“库存总账”和“启用批次剩余量汇总”。
+- 如果历史脏数据里某个批次 `remaining > quantity`，且库存总账刚好等于这个错误的 `remaining`，旧扫描不会报错，导致巡检无法暴露这类批次事实污染。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/inventory-v1.1.ts`
+  - 在 `buildInventoryConsistencyIssues` 中新增批次级检查。
+  - 启用批次如果 `remaining - quantity > 0.0001`，返回 `BATCH_REMAINING_EXCEEDS_QUANTITY` critical issue。
+  - 问题明细包含批次号、物料编码、当前批次数量和当前批次剩余量，方便后续治理。
+- `后端代码/server/tests/inventory-consistency.test.ts`
+  - 新增 `INV-CONSISTENCY-002`，覆盖库存总账与批次剩余量汇总一致、但单个批次 `remaining > quantity` 的隐蔽脏状态。
+
+**ABC 影响评估**
+
+- 本批不修改 ABC 本体、成本公式、成本池、收费映射、成本异常判定或废弃 `/cost-analysis` 代码。
+- 变更只增强库存一致性巡检输出，保护 ABC 上游的批次成本来源可解释性。
+- 库存查询、库存批次契约、出库整套和精确 ABC 输入回归通过，说明巡检新增 issue 未影响正常库存列表、出库分配、BOM 出库、病例聚合收费和出库删除后的阶梯收费重排。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/inventory-consistency.test.ts -t "INV-CONSISTENCY-002"` 修复前失败：未返回 `BATCH_REMAINING_EXCEEDS_QUANTITY`。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/inventory-consistency.test.ts -t "INV-CONSISTENCY-002"` 通过，1 file / 1 test passed；仍有既有 Vitest 退出等待提示，但命令返回成功。
+  - `后端代码/server npm test -- --run tests/inventory-consistency.test.ts tests/inventory-batches.test.ts tests/integration/inventory.test.ts` 通过，3 files / 19 tests passed；仍有既有 Vitest 退出等待提示，但命令返回成功。
+  - `后端代码/server npm test -- --run tests/integration/outbound.test.ts` 顺序重跑通过，1 file / 27 tests passed；第一次与其他套件并行运行时出现 `database is locked`，属于已知测试运行方式噪声。
+  - `后端代码/server npm test -- --run tests/integration/cost-exceptions.test.ts -t "同一病例多个BOM|取消非最新病例"` 通过，2 tests passed / 9 skipped，覆盖出库删除后 ABC 病例收费和重排链路。
+  - `后端代码/server npm run build` 通过。
+  - `git diff --check` 通过。
+- 需单独跟进的待评估项:
+  - `cost-exceptions` 全套当前红灯沿用批次 243 记录，仍需独立鉴别，不作为本批通过证据。
+- 浏览器复核:
+  - 本批为后端库存一致性巡检增强，核心风险在 API 层返回可治理清单；已用接口级测试覆盖，不新增截图证据。
+
+**后续风险**
+
+- 若历史数据已经存在 `quantity < 0`、`remaining < 0` 或库位库存负数，还需要继续按计划补巡检项，先红灯验证后再修复。
+
+## 二百零三、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

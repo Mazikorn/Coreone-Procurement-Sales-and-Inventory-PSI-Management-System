@@ -116,4 +116,38 @@ describe('库存与主数据一致性扫描', () => {
     const projectIssue = res.body.data.issues.find((issue: any) => issue.code === 'ACTIVE_PROJECT_INVALID_BOM')
     expect(projectIssue.impacts.bomId).toBe(inactiveBomId)
   })
+
+  it('INV-CONSISTENCY-002: 扫描批次剩余量超过批次数量的历史脏状态', async () => {
+    const suffix = `${Date.now()}`
+    const categoryId = `cat-consistency-batch-over-${suffix}`
+    const materialId = `mat-consistency-batch-over-${suffix}`
+    const batchId = `batch-consistency-over-${suffix}`
+
+    db.prepare('INSERT INTO material_categories (id, code, name, level) VALUES (?, ?, ?, 1)')
+      .run(categoryId, `CAT-CONS-BATCH-OVER-${suffix}`, '批次超量扫描分类')
+    db.prepare('INSERT INTO materials (id, code, name, unit, category_id, status) VALUES (?, ?, ?, ?, ?, 1)')
+      .run(materialId, `MAT-CONS-BATCH-OVER-${suffix}`, '批次剩余量超量物料', '瓶', categoryId)
+    db.prepare('INSERT INTO inventory (id, material_id, stock, locked_stock) VALUES (?, ?, ?, 0)')
+      .run(`inv-cons-batch-over-${suffix}`, materialId, 8)
+    db.prepare(`
+      INSERT INTO batches (id, material_id, batch_no, quantity, remaining, expiry_date, inbound_id, inbound_price, status)
+      VALUES (?, ?, ?, 6, 8, ?, ?, 10, 1)
+    `).run(batchId, materialId, `BATCH-CONS-OVER-${suffix}`, '2028-12-31', `inbound-cons-over-${suffix}`)
+
+    const res = await request(app)
+      .get('/api/v1/inventory/consistency-check')
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(200)
+    const issue = res.body.data.issues.find((item: any) => item.code === 'BATCH_REMAINING_EXCEEDS_QUANTITY')
+    expect(issue).toMatchObject({
+      severity: 'critical',
+      entityType: 'batch',
+      entityId: batchId,
+      impacts: {
+        quantity: 6,
+        remaining: 8,
+      },
+    })
+  })
 })
