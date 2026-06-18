@@ -885,6 +885,12 @@ router.put('/:id', requireWriteAccess, (req, res) => {
     const record = db.prepare('SELECT * FROM outbound_records WHERE id = ? AND is_deleted = 0').get(id) as any
     if (!record) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
 
+    const refValidation = validateDirectOutboundReferences(db, { projectId, items: newItems })
+    if (!refValidation.ok) {
+      error(res, refValidation.message, refValidation.code, refValidation.status)
+      return
+    }
+
     const oldItems = db.prepare('SELECT * FROM outbound_items WHERE outbound_id = ?').all(id) as any[]
     const materialUnits = db.prepare('SELECT id, unit FROM materials WHERE id IN (' + newItems.map(() => '?').join(',') + ')').all(...newItems.map((i: any) => i.materialId)) as any[]
     const unitMap = new Map(materialUnits.map((m: any) => [m.id, m.unit]))

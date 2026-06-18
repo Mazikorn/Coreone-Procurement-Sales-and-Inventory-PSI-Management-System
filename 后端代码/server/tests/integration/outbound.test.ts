@@ -289,6 +289,76 @@ describe('集成测试：出库管理', () => {
       `).get(inactiveProjectId, inactiveMaterialId) as any).count
       expect(outboundCount).toBe(0)
     })
+
+    it('OUT-REF-002: 修改普通出库拒绝停用物料和停用检测项目且不改变原单库存', async () => {
+      const suffix = `guard-update-${Date.now()}`
+      const inactiveMaterialId = await createMaterial(app, token, `OB-UP-INACTIVE-MAT-${suffix}`, 30)
+      await inbound(app, token, inactiveMaterialId, `B-OB-UP-INACTIVE-MAT-${suffix}`, 10, 30)
+      db.prepare('UPDATE materials SET status = 0 WHERE id = ?').run(inactiveMaterialId)
+
+      const inactiveProjectRes = await request(app)
+        .post('/api/v1/projects')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          code: `OB-UP-INACTIVE-PRJ-${suffix}`,
+          name: `停用项目出库编辑-${suffix}`,
+          type: 'ihc',
+          status: 'active',
+        })
+      expect(inactiveProjectRes.status).toBe(201)
+      const inactiveProjectId = inactiveProjectRes.body.data.id
+      db.prepare('UPDATE projects SET status = 0 WHERE id = ?').run(inactiveProjectId)
+
+      const createRes = await request(app)
+        .post('/api/v1/outbound')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          type: 'project',
+          items: [{ materialId, quantity: 1 }],
+          remark: '原始有效出库',
+        })
+      expect(createRes.status).toBe(201)
+      const outboundId = createRes.body.data.id
+      const beforeActiveStock = (db.prepare('SELECT stock FROM inventory WHERE material_id = ?')
+        .get(materialId) as any).stock
+      const beforeInactiveStock = (db.prepare('SELECT stock FROM inventory WHERE material_id = ?')
+        .get(inactiveMaterialId) as any).stock
+
+      const inactiveMaterialUpdate = await request(app)
+        .put(`/api/v1/outbound/${outboundId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          type: 'project',
+          items: [{ materialId: inactiveMaterialId, quantity: 1 }],
+          remark: '尝试改为停用物料',
+        })
+      expect(inactiveMaterialUpdate.status).toBe(409)
+
+      const inactiveProjectUpdate = await request(app)
+        .put(`/api/v1/outbound/${outboundId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          type: 'project',
+          projectId: inactiveProjectId,
+          items: [{ materialId, quantity: 1 }],
+          remark: '尝试改为停用项目',
+        })
+      expect(inactiveProjectUpdate.status).toBe(409)
+
+      const activeStock = (db.prepare('SELECT stock FROM inventory WHERE material_id = ?')
+        .get(materialId) as any).stock
+      const inactiveStock = (db.prepare('SELECT stock FROM inventory WHERE material_id = ?')
+        .get(inactiveMaterialId) as any).stock
+      const savedRecord = db.prepare('SELECT project_id, remark FROM outbound_records WHERE id = ?').get(outboundId) as any
+      const savedItems = db.prepare('SELECT material_id, quantity FROM outbound_items WHERE outbound_id = ?').all(outboundId) as any[]
+
+      expect(activeStock).toBe(beforeActiveStock)
+      expect(inactiveStock).toBe(beforeInactiveStock)
+      expect(savedRecord.project_id).toBeNull()
+      expect(savedRecord.remark).toBe('原始有效出库')
+      expect(savedItems).toHaveLength(1)
+      expect(savedItems[0]).toMatchObject({ material_id: materialId, quantity: 1 })
+    })
   })
 
   describe('多批次分配', () => {
