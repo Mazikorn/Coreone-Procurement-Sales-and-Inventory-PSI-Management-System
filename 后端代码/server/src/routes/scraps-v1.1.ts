@@ -282,10 +282,16 @@ router.delete('/:id', (req, res) => {
         }
       }
 
+      const inv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(record.material_id) as any
+      if (!inv) {
+        db.exec('ROLLBACK')
+        error(res, '物料无库存记录，无法撤销报废记录', 'NOT_FOUND', 404)
+        return
+      }
+
       db.prepare('UPDATE scrap_records SET is_deleted = 1 WHERE id = ?').run(id)
 
-      const inv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(record.material_id) as any
-      const beforeStock = inv?.stock || 0
+      const beforeStock = Number(inv.stock || 0)
       db.prepare('UPDATE inventory SET stock = stock + ?, update_time = CURRENT_TIMESTAMP WHERE material_id = ?').run(record.quantity, record.material_id)
       restoreInventoryLocationStock(db, record.material_id, Number(record.quantity), { relatedType: 'scrap', relatedId: id })
       const afterStock = beforeStock + record.quantity

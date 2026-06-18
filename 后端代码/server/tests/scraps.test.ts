@@ -316,6 +316,38 @@ describe('报废管理 API', () => {
     expect(cancelLogs.count).toBe(0)
   })
 
+  it('SC-010: 撤销报废时若库存总账缺失必须拒绝，避免只恢复批次和库位', async () => {
+    const suffix = `missing-inventory-cancel-${Date.now()}`
+    const { materialId, batchId } = seedScrapMaterialWithBatch(db, suffix, 10)
+
+    const res = await request(app)
+      .post('/api/v1/scraps')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ materialId, batchId, quantity: 4, reason: 'damaged' })
+
+    expect(res.status).toBe(200)
+    db.prepare('DELETE FROM inventory WHERE material_id = ?').run(materialId)
+
+    const cancelRes = await request(app)
+      .delete(`/api/v1/scraps/${res.body.data.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+
+    expect(cancelRes.status).toBe(404)
+    expect(cancelRes.body.error.message).toContain('物料无库存记录')
+
+    const record = db.prepare('SELECT is_deleted FROM scrap_records WHERE id = ?').get(res.body.data.id) as any
+    const batch = db.prepare('SELECT remaining FROM batches WHERE id = ?').get(batchId) as any
+    const cancelLogs = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM stock_logs
+      WHERE related_id = ? AND related_type = 'scrap_cancel'
+    `).get(res.body.data.id) as any
+
+    expect(record.is_deleted).toBe(0)
+    expect(batch.remaining).toBe(6)
+    expect(cancelLogs.count).toBe(0)
+  })
+
   it('SC-008: 批量报废会逐条同步扣减批次剩余量', async () => {
     const suffix = `batch-with-batches-${Date.now()}`
     const materialA = seedScrapMaterialWithBatch(db, `${suffix}-a`, 10)
