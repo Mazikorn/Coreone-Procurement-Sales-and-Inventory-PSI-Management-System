@@ -117,4 +117,38 @@ describe('BOMBatchImpactModal', () => {
     expect(screen.getByText('停用物料 1，未启用设备 1，未启用设备类型 1')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /确认启用/ })).toBeDisabled()
   })
+
+  it('shows missing core material blocker before enabling BOMs', () => {
+    const check: BOMStatusCheck = {
+      bom: { id: 'bom-1', code: 'BOM-001', name: '免疫组化BOM' },
+      targetStatus: 'active',
+      canChange: false,
+      impacts: {
+        activeProjectCount: 0,
+        coreMaterialCount: 0,
+        inactiveMaterialCount: 0,
+        inactiveEquipmentCount: 0,
+        inactiveEquipmentTypeCount: 0,
+      },
+      reasons: ['缺少核心物料明细'],
+    }
+
+    render(
+      <BOMBatchImpactModal
+        open
+        action="active"
+        targetsCount={1}
+        deleteResults={[]}
+        statusResults={[{ bom, check }]}
+        checking={false}
+        submitting={false}
+        onClose={vi.fn()}
+        onConfirm={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('无法批量启用BOM')).toBeInTheDocument()
+    expect(screen.getByText('核心物料缺失 1')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /确认启用/ })).toBeDisabled()
+  })
 })

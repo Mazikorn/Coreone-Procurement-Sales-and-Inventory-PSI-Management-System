@@ -104,6 +104,7 @@ export function BOMBatchImpactModal({
                 const impacts = item.check?.impacts
                 const summary = impacts ? nonZeroSummary([
                   { label: '启用检测项目', value: impacts.activeProjectCount },
+                  { label: '核心物料缺失', value: impacts.coreMaterialCount === 0 ? 1 : 0 },
                   { label: '停用物料', value: impacts.inactiveMaterialCount },
                   { label: '未启用设备', value: impacts.inactiveEquipmentCount },
                   { label: '未启用设备类型', value: impacts.inactiveEquipmentTypeCount },

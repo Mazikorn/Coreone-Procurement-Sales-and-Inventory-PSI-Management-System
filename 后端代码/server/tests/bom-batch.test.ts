@@ -334,6 +334,38 @@ describe('BOM 批量操作', () => {
     expect(Number(bom.status)).toBe(0)
   })
 
+  it('BOM-STATUS-006: 历史无核心物料BOM不可重新启用', async () => {
+    const suffix = `activate-empty-${Date.now()}`
+    const bomId = `bom-empty-activate-${suffix}`
+    db.prepare('INSERT INTO boms (id, code, name, version, type, status) VALUES (?, ?, ?, ?, ?, 0)')
+      .run(bomId, `BOM-EMPTY-ACT-${suffix}`, `历史空BOM-${suffix}`, 'v1.0', 'ihc')
+
+    const check = await request(app)
+      .get(`/api/v1/boms/${bomId}/check-status?status=active`)
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(check.status).toBe(200)
+    expect(check.body.data).toMatchObject({
+      targetStatus: 'active',
+      canChange: false,
+      impacts: {
+        coreMaterialCount: 0,
+      },
+    })
+    expect(check.body.data.reasons).toEqual(expect.arrayContaining([
+      '缺少核心物料明细',
+    ]))
+
+    const activated = await request(app)
+      .patch(`/api/v1/boms/${bomId}/status`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ status: 'active' })
+
+    expect(activated.status).toBe(409)
+    const bom = db.prepare('SELECT status FROM boms WHERE id = ?').get(bomId) as any
+    expect(Number(bom.status)).toBe(0)
+  })
+
   it('BOM-STATUS-002: 批量停用遇到被项目引用BOM时整批拒绝', async () => {
     const suffix = `batch-status-ref-${Date.now()}`
     const freeBomId = await createBom(app, token, `${suffix}-free`)
@@ -388,6 +420,27 @@ describe('BOM 批量操作', () => {
     expect(res.status).toBe(409)
     const rows = db.prepare('SELECT id, status FROM boms WHERE id IN (?, ?)')
       .all(freeBomId, blockedBomId) as any[]
+    expect(rows).toHaveLength(2)
+    expect(rows.every(row => Number(row.status) === 0)).toBe(true)
+  })
+
+  it('BOM-STATUS-007: 批量启用遇到历史无核心物料BOM时整批拒绝', async () => {
+    const suffix = `batch-activate-empty-${Date.now()}`
+    const validBomId = await createBom(app, token, `${suffix}-valid`)
+    const emptyBomId = `bom-empty-batch-${suffix}`
+    db.prepare('INSERT INTO boms (id, code, name, version, type, status) VALUES (?, ?, ?, ?, ?, 0)')
+      .run(emptyBomId, `BOM-EMPTY-BATCH-${suffix}`, `批量历史空BOM-${suffix}`, 'v1.0', 'ihc')
+    db.prepare('UPDATE boms SET status = 0 WHERE id = ?').run(validBomId)
+
+    const res = await request(app)
+      .patch('/api/v1/boms/batch-status')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ ids: [validBomId, emptyBomId], status: 'active' })
+
+    expect(res.status).toBe(409)
+    expect(res.body.error?.code).toBe('BOM_DEPENDENCY_INACTIVE')
+    const rows = db.prepare('SELECT id, status FROM boms WHERE id IN (?, ?)')
+      .all(validBomId, emptyBomId) as any[]
     expect(rows).toHaveLength(2)
     expect(rows.every(row => Number(row.status) === 0)).toBe(true)
   })

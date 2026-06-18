@@ -438,6 +438,7 @@ export interface BOMStatusCheck {
   canChange: boolean
   impacts: {
     activeProjectCount: number
+    coreMaterialCount?: number
     inactiveMaterialCount: number
     inactiveEquipmentCount: number
     inactiveEquipmentTypeCount: number

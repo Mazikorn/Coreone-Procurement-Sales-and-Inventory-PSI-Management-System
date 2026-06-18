@@ -9273,7 +9273,60 @@ git diff --check
 - 本批关闭检测服务导入/绑定的空 BOM 风险；下一步基础数据 P0 应继续检查物料状态、BOM 状态与出库/导入之间是否还存在绕过路径。
 - 若后续新增批量导入 BOM 本体，需要同样做“导入前预检 + 后端强约束”，不能只依赖页面表单规则。
 
-## 一百八十、结论
+## 一百八十、批次 225: BOM 启用阻断历史无核心物料配置
+
+**发现的问题**
+
+- BOM 创建和编辑已经要求核心物料，但历史停用的空 BOM 仍可能通过状态接口重新启用。
+- 旧状态检查只校验启用检测项目引用、停用物料依赖、设备依赖和设备类型依赖，没有把 `bom_items` 核心物料数量纳入启用条件。
+- 这会让“无核心物料 BOM”重新进入启用列表；上一批虽然已阻断检测服务绑定，但基础数据本体仍可能恢复成业务不可用状态。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/bom-v1.1.ts`
+  - `getBomActivationDependencyImpacts` 增加 `coreMaterialCount`。
+  - `buildBomStatusCheck` 在启用 BOM 时检查核心物料数量，缺失则加入阻断原因“缺少核心物料明细”。
+  - 单个启用和批量启用复用同一状态检查，因此均会被阻断。
+- `前端代码/src/types/index.ts`
+  - `BOMStatusCheck.impacts` 增加可选 `coreMaterialCount`。
+- `前端代码/src/pages/bom/components/BOMBatchImpactModal.tsx`
+  - 批量启用影响摘要展示“核心物料缺失 1”，让管理员能在弹窗中看到真实原因。
+- `后端代码/server/tests/bom-batch.test.ts`
+  - 新增历史无核心物料 BOM 单个启用阻断用例。
+  - 新增批量启用遇到历史无核心物料 BOM 时整批拒绝用例。
+- `前端代码/src/pages/bom/components/BOMBatchImpactModal.test.tsx`
+  - 新增批量启用弹窗展示“核心物料缺失”的组件测试。
+
+**ABC 影响评估**
+
+- 本批不修改 ABC 本体、成本公式、成本池、收费映射、成本异常判定或废弃 `/cost-analysis` 代码。
+- 变更继续收紧 ABC 上游 BOM 配置事实，避免启用状态下出现没有核心物料的成本对象。
+- 对已有有效 BOM 启用/停用无影响；启用时多出的条件只针对 `bom_items` 为空的历史脏配置。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/bom-batch.test.ts` 修复前新增 2 个用例失败：历史空 BOM 单个启用返回 `canChange: true`，批量启用返回 `200`。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/bom-batch.test.ts` 通过，1 file / 20 tests passed；仍有既有 Vitest 退出等待提示，但命令返回成功。
+  - `前端代码 npm test -- --run src/pages/bom/hooks/useBOMPage.test.ts src/pages/bom/components/BOMBatchImpactModal.test.tsx` 通过，2 files / 13 tests passed。
+  - `前端代码 npm run build` 通过；仍有既有 chunk size warning，不影响本批功能结论。
+  - `后端代码/server npm run build` 通过。
+- 浏览器复核:
+  - 使用指定 Chrome for Testing 路径启动 headless Playwright，前端端口 `8080`。
+  - 通过 Playwright 路由 mock 一个停用且物料数为 `0` 的 BOM `BOM-EMPTY-ACT`。
+  - 打开 `/bom`，选择该 BOM 并点击“批量启用”。
+  - 弹窗展示“无法批量启用BOM”和“核心物料缺失 1”，确认启用按钮 disabled。
+  - 监控到 `PATCH /api/v1/boms/batch-status` 调用次数为 `0`。
+  - 控制台错误和失败网络响应均为 `0`。
+  - 截图证据保留在 `/tmp/coreone-b225-bom-empty-activation-block.png`。
+
+**后续风险**
+
+- 本批关闭 BOM 状态启用绕过路径；下一步基础数据 P0 应继续检查出库侧是否只读取启用且有效的 BOM/检测服务，而不是只依赖前端可选项过滤。
+- 对历史已经启用但无核心物料的 BOM，当前状态检查会阻断再次启用，但仍需要后续数据巡检或一致性面板继续暴露存量问题。
+
+## 一百八十一、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及退库/报废/供应商退货/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；退库、报废、供应商退货和库存盘点均已把总库存与批次剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

@@ -172,6 +172,11 @@ function getActiveProjectReferencedBoms(db: any, ids: string[]) {
 }
 
 function getBomActivationDependencyImpacts(db: any, bomId: string) {
+  const coreMaterialCount = Number((db.prepare(`
+    SELECT COUNT(*) as count
+    FROM bom_items
+    WHERE bom_id = ?
+  `).get(bomId) as any)?.count || 0)
   const materialSources = [
     'bom_items',
     'bom_general_reagents',
@@ -210,6 +215,7 @@ function getBomActivationDependencyImpacts(db: any, bomId: string) {
   `).get(bomId) as any)?.count || 0)
 
   return {
+    coreMaterialCount,
     inactiveMaterialCount: inactiveMaterialIds.size,
     inactiveEquipmentCount,
     inactiveEquipmentTypeCount,
@@ -234,6 +240,7 @@ function buildBomStatusCheck(db: any, bomId: string, targetStatus: 'active' | 'i
   const activationImpacts = targetStatus === 'active'
     ? getBomActivationDependencyImpacts(db, bomId)
     : {
+      coreMaterialCount: 0,
       inactiveMaterialCount: 0,
       inactiveEquipmentCount: 0,
       inactiveEquipmentTypeCount: 0,
@@ -241,6 +248,7 @@ function buildBomStatusCheck(db: any, bomId: string, targetStatus: 'active' | 'i
   const reasons: string[] = []
 
   if (activeProjectCount > 0) reasons.push(`存在 ${activeProjectCount} 个启用检测项目引用`)
+  if (targetStatus === 'active' && activationImpacts.coreMaterialCount <= 0) reasons.push('缺少核心物料明细')
   if (activationImpacts.inactiveMaterialCount > 0) reasons.push(`存在 ${activationImpacts.inactiveMaterialCount} 个停用或已删除物料依赖`)
   if (activationImpacts.inactiveEquipmentCount > 0) reasons.push(`存在 ${activationImpacts.inactiveEquipmentCount} 个未启用设备依赖`)
   if (activationImpacts.inactiveEquipmentTypeCount > 0) reasons.push(`存在 ${activationImpacts.inactiveEquipmentTypeCount} 个未启用设备类型依赖`)
