@@ -259,7 +259,7 @@ router.get('/cost-by-project-group', (req, res) => {
       FROM outbound_records r
       JOIN outbound_items oi ON oi.outbound_id = r.id
       LEFT JOIN projects p ON r.project_id = p.id
-      LEFT JOIN boms b ON b.id = p.bom_id AND b.is_deleted = 0
+      LEFT JOIN boms b ON b.id = p.bom_id
       LEFT JOIN bom_items bi ON bi.bom_id = b.id AND bi.material_id = oi.material_id
       WHERE ${where}
       GROUP BY r.project_id, COALESCE(bi.group_name, '未分组')

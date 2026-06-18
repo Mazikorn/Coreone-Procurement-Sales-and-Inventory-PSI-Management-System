@@ -93,4 +93,70 @@ describe('集成测试：非ABC项目分组成本报表', () => {
       }),
     ])
   })
+
+  it('REPORT-GROUP-002: BOM软删除后仍保留历史出库的分组归属', async () => {
+    const suffix = Date.now()
+    const categoryId = `report-group-bom-cat-${suffix}`
+    const materialId = `report-group-bom-mat-${suffix}`
+    const bomId = `report-group-deleted-bom-${suffix}`
+    const projectId = `report-group-bom-project-${suffix}`
+    const outboundId = `report-group-bom-out-${suffix}`
+    const itemId = `report-group-bom-item-${suffix}`
+
+    db.prepare(`
+      INSERT INTO material_categories (id, code, name, level)
+      VALUES (?, ?, 'BOM分组报表分类', 1)
+    `).run(categoryId, `REPORT-GROUP-BOM-CAT-${suffix}`)
+    db.prepare(`
+      INSERT INTO materials (id, code, name, spec, unit, category_id, price, status, is_deleted)
+      VALUES (?, ?, 'BOM分组报表物料', '1ml', '瓶', ?, 30, 1, 0)
+    `).run(materialId, `REPORT-GROUP-BOM-MAT-${suffix}`, categoryId)
+    db.prepare(`
+      INSERT INTO boms (id, code, name, version, type, status, is_deleted)
+      VALUES (?, ?, '已删除但有分组历史BOM', 'v1', 'ihc', 1, 0)
+    `).run(bomId, `REPORT-GROUP-DEL-BOM-${suffix}`)
+    db.prepare(`
+      INSERT INTO bom_items (id, bom_id, material_id, usage_per_sample, unit, group_name)
+      VALUES (?, ?, ?, 1, '瓶', '特异性试剂')
+    `).run(`report-group-del-bi-${suffix}`, bomId, materialId)
+    db.prepare(`
+      INSERT INTO projects (id, code, name, type, bom_id, status, is_deleted)
+      VALUES (?, ?, 'BOM软删除分组历史项目', 'ihc', ?, 1, 0)
+    `).run(projectId, `REPORT-GROUP-BOM-PROJECT-${suffix}`, bomId)
+    db.prepare(`
+      INSERT INTO outbound_records (
+        id, outbound_no, type, project_id, total_cost, sample_count,
+        operator, status, created_at, is_deleted
+      )
+      VALUES (?, ?, 'bom', ?, 60, 1, 'admin', 'completed', '2032-05-10T09:00:00', 0)
+    `).run(outboundId, `REPORT-GROUP-BOM-OUT-${suffix}`, projectId)
+    db.prepare(`
+      INSERT INTO outbound_items (id, outbound_id, material_id, quantity, unit, unit_cost, total_cost)
+      VALUES (?, ?, ?, 2, '瓶', 30, 60)
+    `).run(itemId, outboundId, materialId)
+    db.prepare('UPDATE boms SET is_deleted = 1 WHERE id = ?').run(bomId)
+
+    const res = await request(app)
+      .get(`/api/v1/reports/cost-by-project-group?projectId=${projectId}&startDate=2032-05-01&endDate=2032-05-31`)
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(200)
+    expect(res.body.success).toBe(true)
+    const project = res.body.data.projects.find((row: any) => row.projectId === projectId)
+    expect(project).toBeDefined()
+    expect(project.projectName).toBe('BOM软删除分组历史项目')
+    expect(project.groups).toEqual([
+      expect.objectContaining({
+        groupName: '特异性试剂',
+        totalCost: 60,
+        materials: [
+          expect.objectContaining({
+            materialId,
+            materialName: 'BOM分组报表物料',
+            totalCost: 60,
+          }),
+        ],
+      }),
+    ])
+  })
 })

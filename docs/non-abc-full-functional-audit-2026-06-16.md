@@ -10946,7 +10946,46 @@ git diff --check
 
 - 当前项目分组成本报表仍依赖当前 `projects.bom_id`、当前 BOM 和当前 `bom_items.group_name` 解释历史出库；如果后续 BOM 本身软删除或分组改名，彻底历史快照化需要单独设计出库 BOM 分组快照字段和兼容迁移。
 
-## 二百二十、结论
+## 二百二十、批次 265: 项目分组成本报表不得因 BOM 软删除丢失历史分组
+
+**发现的问题**
+
+- `/api/v1/reports/cost-by-project-group` 的项目分组汇总查询通过 `LEFT JOIN boms b ON b.id = p.bom_id AND b.is_deleted = 0` 读取 BOM 分组。
+- 如果项目已有历史 BOM 出库，后续 BOM 被软删除，旧项目分组成本报表会把原 BOM 分组退化为 `未分组`，并且材料明细无法挂回该分组。
+- 这会让特异性试剂、通用试剂、耗材、QC 等分组成本解释失去历史归属，影响按 BOM 分组复盘真实出库成本。
+- 当前 `outbound_records/outbound_items` 尚未保存 BOM 分组快照；本批先收口“BOM 软删除不应丢失仍可关联的历史分组”这一最小不变量，不扩展 schema。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/reports-v1.1.ts`
+  - `cost-by-project-group` 汇总查询读取 BOM 时不再排除软删除 BOM。
+  - 已完成且未删除的历史出库记录继续按其项目关联的 BOM 分组进入汇总。
+- `后端代码/server/tests/integration/reports-cost-by-project-group.test.ts`
+  - 新增 `REPORT-GROUP-002`，覆盖历史 BOM 出库后 BOM 被软删除，项目分组成本报表仍必须保留原分组、物料明细和金额。
+
+**ABC 影响评估**
+
+- 本批不修改 ABC 本体、成本公式、成本池、收费映射、成本异常判定或废弃 `/cost-analysis` 代码。
+- 变更只影响非 ABC 项目分组成本报表的读取口径，不写库存、BOM、出库、成本异常或 ABC 明细。
+- 项目分组成本报表、项目成本、全成本、出库流程和精确 ABC 输入回归通过，说明 BOM 软删除分组修复没有破坏全成本结构、出库删除后的报表扣除或 ABC 病例收费重排。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/reports-cost-by-project-group.test.ts -t "REPORT-GROUP-002"` 修复前失败：BOM 软删除后分组退化为 `未分组`，材料明细为空。
+- 修复后验证:
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/reports-cost-by-project-group.test.ts -t "REPORT-GROUP-002"` 通过，1 file / 1 test passed / 1 skipped。
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/reports-cost-by-project-group.test.ts tests/integration/reports-cost-by-project.test.ts tests/integration/full-cost.test.ts tests/integration/outbound-flow.test.ts` 通过，4 files / 8 tests passed。
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/cost-exceptions.test.ts -t "同一病例多个BOM|取消非最新病例"` 通过，2 tests passed / 9 skipped，覆盖出库删除后 ABC 病例收费和重排链路。
+  - `后端代码/server npm run build` 通过。
+- 浏览器复核:
+  - 本批为后端项目分组成本报表读取口径修复，核心风险在 API 层是否保留历史 BOM 分组；已用接口级测试覆盖，不新增截图证据。
+
+**后续风险**
+
+- 当前项目分组成本报表仍依赖当前 `bom_items.group_name` 解释历史出库；如果后续 BOM 分组改名或物料映射被重写，彻底历史快照化需要单独设计出库 BOM 分组快照字段和兼容迁移。
+
+## 二百二十一、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 
