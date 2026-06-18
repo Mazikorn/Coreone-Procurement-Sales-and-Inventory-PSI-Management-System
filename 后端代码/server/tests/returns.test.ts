@@ -211,6 +211,38 @@ describe('退库管理', () => {
     expect(cancelLogs.count).toBe(0)
   })
 
+  it('RT-006: 撤销退库时若库存总账缺失必须拒绝，避免只恢复批次和库位', async () => {
+    const suffix = `missing-inventory-cancel-${Date.now()}`
+    const { materialId, batchId } = seedReturnMaterialWithBatch(db, suffix, 10)
+
+    const createRes = await request(app)
+      .post('/api/v1/returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ materialId, batchId, quantity: 3, reason: 'unused' })
+
+    expect(createRes.status).toBe(200)
+    db.prepare('DELETE FROM inventory WHERE material_id = ?').run(materialId)
+
+    const cancelRes = await request(app)
+      .delete(`/api/v1/returns/${createRes.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(cancelRes.status).toBe(404)
+    expect(cancelRes.body.error.message).toContain('物料无库存记录')
+
+    const record = db.prepare('SELECT is_deleted FROM return_records WHERE id = ?').get(createRes.body.data.id) as any
+    const batch = db.prepare('SELECT remaining FROM batches WHERE id = ?').get(batchId) as any
+    const cancelLogs = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM stock_logs
+      WHERE related_id = ? AND related_type = 'return_cancel'
+    `).get(createRes.body.data.id) as any
+
+    expect(record.is_deleted).toBe(0)
+    expect(batch.remaining).toBe(7)
+    expect(cancelLogs.count).toBe(0)
+  })
+
   it('RT-REF-001: 创建退库拒绝停用物料且不扣库存', async () => {
     const materialId = seedReturnMaterial(db, `inactive-ref-${Date.now()}`)
     db.prepare('UPDATE materials SET status = 0 WHERE id = ?').run(materialId)
