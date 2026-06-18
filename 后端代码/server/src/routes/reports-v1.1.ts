@@ -277,7 +277,7 @@ router.get('/cost-by-project-group', (req, res) => {
         SUM(oi.total_cost) as total_cost
       FROM outbound_records r
       JOIN outbound_items oi ON oi.outbound_id = r.id
-      JOIN materials m ON oi.material_id = m.id AND m.is_deleted = 0
+      JOIN materials m ON oi.material_id = m.id
       LEFT JOIN projects p ON r.project_id = p.id
       LEFT JOIN boms b ON b.id = p.bom_id
       LEFT JOIN bom_items bi ON bi.bom_id = b.id AND bi.material_id = oi.material_id
