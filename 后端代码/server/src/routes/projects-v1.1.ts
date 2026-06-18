@@ -262,7 +262,7 @@ router.get('/:id', (req, res) => {
     if (!row) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
 
     const costStats = db.prepare(`
-      SELECT SUM(total_cost) as total_cost, COUNT(DISTINCT id) as sample_count
+      SELECT SUM(total_cost) as total_cost, SUM(COALESCE(sample_count, 1)) as sample_count
       FROM outbound_records WHERE project_id = ? AND status = 'completed' AND is_deleted = 0
     `).get(id) as any
 

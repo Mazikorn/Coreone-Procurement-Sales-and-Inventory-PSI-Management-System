@@ -11258,7 +11258,44 @@ git diff --check
 
 - 当前项目分组成本报表仍依赖当前项目、BOM、BOM 分组和物料名称解释历史出库；彻底历史快照化需要单独设计出库项目/BOM/分组/物料快照字段和兼容迁移。
 
-## 二百二十八、结论
+## 二百二十八、批次 273: 项目详情成本统计样本数不得按出库单数误算
+
+**发现的问题**
+
+- `/api/v1/projects/:id` 的详情成本统计使用 `COUNT(DISTINCT id) as sample_count` 作为样本数。
+- 如果同一检测项目有两条已完成出库，每条 `sample_count=5`，详情页会显示样本数 2，而真实样本数应为 10。
+- 这会直接放大详情页单位成本，例如总成本 220 时单位成本从真实的 22 误显示为 110，影响项目经营判断。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/projects-v1.1.ts`
+  - 项目详情 `costStats.sampleCount` 改为 `SUM(COALESCE(sample_count, 1))`，与项目成本报表、出库事实和历史样本数口径保持一致。
+- `后端代码/server/tests/integration/projects.test.ts`
+  - 新增 `PROJECT-DETAIL-001`，覆盖同一项目两条各 5 个样本的已完成出库，详情成本统计必须返回样本数 10、总成本 220、单位成本 22。
+
+**ABC 影响评估**
+
+- 本批不修改 ABC 本体、成本公式、成本池、收费映射、成本异常判定或废弃 `/cost-analysis` 代码。
+- 变更只影响非 ABC 项目详情接口的读取统计口径，不写库存、BOM、项目、出库、成本异常或 ABC 明细。
+- 项目详情、项目成本、全成本、出库流程和精确 ABC 输入回归通过，说明详情统计口径修复没有破坏出库删除后的报表扣除、成本结构/差异或 ABC 病例收费重排。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/projects.test.ts -t "PROJECT-DETAIL-001"` 修复前失败：两条各 5 个样本的出库，详情 `costStats.sampleCount` 返回 2、`unitCost` 返回 110，期望 10 和 22。
+- 修复后验证:
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/projects.test.ts -t "PROJECT-DETAIL-001"` 通过，1 file / 1 test passed。
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/projects.test.ts tests/integration/reports-cost-by-project.test.ts tests/integration/outbound-flow.test.ts tests/integration/full-cost.test.ts` 通过，4 files / 10 tests passed。
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/cost-exceptions.test.ts -t "同一病例多个BOM|取消非最新病例"` 通过，2 tests passed / 9 skipped，覆盖出库删除后 ABC 病例收费和重排链路。
+  - `后端代码/server npm run build` 通过。
+- 浏览器复核:
+  - 本批为后端项目详情成本统计口径修复，核心风险在 API 层样本数是否按真实出库样本数汇总；已用接口级测试覆盖，不新增截图证据。
+
+**后续风险**
+
+- 当前项目详情仍依赖当前项目名称、类型和当前 BOM 名称解释历史出库；彻底历史快照化需要单独设计出库项目/BOM 快照字段和兼容迁移。
+
+## 二百二十九、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 
