@@ -225,4 +225,73 @@ describe('集成测试：非ABC项目分组成本报表', () => {
       }),
     ])
   })
+
+  it('REPORT-GROUP-004: 项目分组成本报表按真实样本数汇总而不是按出库单数计数', async () => {
+    const suffix = Date.now()
+    const categoryId = `report-group-sample-cat-${suffix}`
+    const materialId = `report-group-sample-mat-${suffix}`
+    const bomId = `report-group-sample-bom-${suffix}`
+    const projectId = `report-group-sample-project-${suffix}`
+    const outboundIdA = `report-group-sample-out-a-${suffix}`
+    const outboundIdB = `report-group-sample-out-b-${suffix}`
+
+    db.prepare(`
+      INSERT INTO material_categories (id, code, name, level)
+      VALUES (?, ?, '样本数分组报表分类', 1)
+    `).run(categoryId, `REPORT-GROUP-SAMPLE-CAT-${suffix}`)
+    db.prepare(`
+      INSERT INTO materials (id, code, name, spec, unit, category_id, price, status, is_deleted)
+      VALUES (?, ?, '样本数分组报表物料', '1ml', '瓶', ?, 20, 1, 0)
+    `).run(materialId, `REPORT-GROUP-SAMPLE-MAT-${suffix}`, categoryId)
+    db.prepare(`
+      INSERT INTO boms (id, code, name, version, type, status, is_deleted)
+      VALUES (?, ?, '样本数分组报表BOM', 'v1', 'ihc', 1, 0)
+    `).run(bomId, `REPORT-GROUP-SAMPLE-BOM-${suffix}`)
+    db.prepare(`
+      INSERT INTO bom_items (id, bom_id, material_id, usage_per_sample, unit, group_name)
+      VALUES (?, ?, ?, 1, '瓶', '特异性试剂')
+    `).run(`report-group-sample-bi-${suffix}`, bomId, materialId)
+    db.prepare(`
+      INSERT INTO projects (id, code, name, type, bom_id, status, is_deleted)
+      VALUES (?, ?, '分组样本数历史项目', 'ihc', ?, 1, 0)
+    `).run(projectId, `REPORT-GROUP-SAMPLE-PROJECT-${suffix}`, bomId)
+    db.prepare(`
+      INSERT INTO outbound_records (
+        id, outbound_no, type, project_id, total_cost, sample_count,
+        operator, status, created_at, is_deleted
+      )
+      VALUES
+        (?, ?, 'bom', ?, 100, 5, 'admin', 'completed', '2032-07-10T09:00:00', 0),
+        (?, ?, 'bom', ?, 120, 5, 'admin', 'completed', '2032-07-11T09:00:00', 0)
+    `).run(
+      outboundIdA, `REPORT-GROUP-SAMPLE-OUT-A-${suffix}`, projectId,
+      outboundIdB, `REPORT-GROUP-SAMPLE-OUT-B-${suffix}`, projectId,
+    )
+    db.prepare(`
+      INSERT INTO outbound_items (id, outbound_id, material_id, quantity, unit, unit_cost, total_cost)
+      VALUES
+        (?, ?, ?, 5, '瓶', 20, 100),
+        (?, ?, ?, 6, '瓶', 20, 120)
+    `).run(
+      `report-group-sample-item-a-${suffix}`, outboundIdA, materialId,
+      `report-group-sample-item-b-${suffix}`, outboundIdB, materialId,
+    )
+
+    const res = await request(app)
+      .get(`/api/v1/reports/cost-by-project-group?projectId=${projectId}&startDate=2032-07-01&endDate=2032-07-31`)
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(200)
+    expect(res.body.success).toBe(true)
+    const project = res.body.data.projects.find((row: any) => row.projectId === projectId)
+    expect(project).toBeDefined()
+    expect(project.sampleCount).toBe(10)
+    expect(project.groups).toEqual([
+      expect.objectContaining({
+        groupName: '特异性试剂',
+        sampleCount: 10,
+        totalCost: 220,
+      }),
+    ])
+  })
 })

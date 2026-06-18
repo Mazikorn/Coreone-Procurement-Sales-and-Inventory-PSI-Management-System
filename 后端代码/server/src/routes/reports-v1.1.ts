@@ -251,19 +251,29 @@ router.get('/cost-by-project-group', (req, res) => {
     // 1. 按 project + group 汇总
     const groupRows = db.prepare(`
       SELECT
-        r.project_id,
-        p.name as project_name,
-        COALESCE(bi.group_name, '未分组') as group_name,
-        COUNT(DISTINCT r.id) as sample_count,
-        SUM(oi.total_cost) as total_cost
-      FROM outbound_records r
-      JOIN outbound_items oi ON oi.outbound_id = r.id
-      LEFT JOIN projects p ON r.project_id = p.id
-      LEFT JOIN boms b ON b.id = p.bom_id
-      LEFT JOIN bom_items bi ON bi.bom_id = b.id AND bi.material_id = oi.material_id
-      WHERE ${where}
-      GROUP BY r.project_id, COALESCE(bi.group_name, '未分组')
-      ORDER BY r.project_id, total_cost DESC
+        project_id,
+        project_name,
+        group_name,
+        SUM(record_sample_count) as sample_count,
+        SUM(record_group_cost) as total_cost
+      FROM (
+        SELECT
+          r.id as outbound_id,
+          r.project_id,
+          p.name as project_name,
+          COALESCE(bi.group_name, '未分组') as group_name,
+          COALESCE(r.sample_count, 1) as record_sample_count,
+          SUM(oi.total_cost) as record_group_cost
+        FROM outbound_records r
+        JOIN outbound_items oi ON oi.outbound_id = r.id
+        LEFT JOIN projects p ON r.project_id = p.id
+        LEFT JOIN boms b ON b.id = p.bom_id
+        LEFT JOIN bom_items bi ON bi.bom_id = b.id AND bi.material_id = oi.material_id
+        WHERE ${where}
+        GROUP BY r.id, r.project_id, p.name, COALESCE(bi.group_name, '未分组')
+      ) grouped
+      GROUP BY project_id, project_name, group_name
+      ORDER BY project_id, total_cost DESC
     `).all(...params) as any[]
 
     // 2. 按 project + group + material 明细
