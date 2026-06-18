@@ -221,6 +221,33 @@ describe('库存盘点 API', () => {
     expect(log.remark).toContain('physical')
   })
 
+  it('ST-VALIDATION-001: 创建盘点拒绝非有限实际库存且不写盘点记录', async () => {
+    const suffix = `finite-number-${Date.now()}`
+    const { materialId } = seedStocktakingFixture(db, suffix, 10)
+
+    const beforeInventory = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+    const beforeCount = (db.prepare('SELECT COUNT(*) as count FROM stocktaking_records WHERE material_id = ?')
+      .get(materialId) as any).count
+
+    const res = await request(app)
+      .post('/api/v1/stocktaking')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        materialId,
+        actualStock: 'Infinity',
+        remark: '非有限盘点库存',
+      })
+
+    expect(res.status).toBe(400)
+    expect(res.body.error.message).toContain('actual stock')
+
+    const afterInventory = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+    const afterCount = (db.prepare('SELECT COUNT(*) as count FROM stocktaking_records WHERE material_id = ?')
+      .get(materialId) as any).count
+    expect(afterInventory.stock).toBe(beforeInventory.stock)
+    expect(afterCount).toBe(beforeCount)
+  })
+
   it('ST-005: 确认盘点前库存已变化时拒绝覆盖新库存', async () => {
     const suffix = `stale-${Date.now()}`
     const { materialId } = seedStocktakingFixture(db, suffix, 10)

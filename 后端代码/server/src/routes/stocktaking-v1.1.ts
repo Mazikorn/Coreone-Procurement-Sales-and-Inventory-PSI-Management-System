@@ -207,8 +207,9 @@ router.post('/', (req, res) => {
     const { materialId, actualStock, remark } = req.body
     const operator = (req as any).user?.username || 'system'
     if (!materialId || actualStock === undefined) { error(res, 'Missing fields', 'INVALID_PARAMETER', 400); return }
-    if (isNaN(Number(actualStock))) { error(res, 'Invalid actual stock', 'INVALID_PARAMETER', 400); return }
-    if (Number(actualStock) < 0) { error(res, 'actualStock 不能为负数', 'INVALID_PARAMETER', 400); return }
+    const normalizedActualStock = Number(actualStock)
+    if (!Number.isFinite(normalizedActualStock)) { error(res, 'Invalid actual stock', 'INVALID_PARAMETER', 400); return }
+    if (normalizedActualStock < 0) { error(res, 'actualStock 不能为负数', 'INVALID_PARAMETER', 400); return }
     const db = getDatabase()
     const material = db.prepare('SELECT 1 FROM materials WHERE id = ? AND is_deleted = 0').get(materialId)
     if (!material) { error(res, '物料不存在或已删除', 'NOT_FOUND', 404); return }
@@ -216,10 +217,10 @@ router.post('/', (req, res) => {
     db.exec('BEGIN IMMEDIATE')
     try {
       const systemStock = (db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any)?.stock || 0
-      const difference = actualStock - systemStock
+      const difference = normalizedActualStock - systemStock
       const id = uuidv4()
       db.prepare('INSERT INTO stocktaking_records (id, stocktaking_no, material_id, system_stock, actual_stock, difference, operator, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-        .run(id, generateStocktakingNo(), materialId, systemStock, actualStock, difference, operator || 'system', remark || null)
+        .run(id, generateStocktakingNo(), materialId, systemStock, normalizedActualStock, difference, operator || 'system', remark || null)
 
       db.exec('COMMIT')
       success(res, { id }, 'Stocktaking created')
