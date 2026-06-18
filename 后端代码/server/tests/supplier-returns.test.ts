@@ -44,7 +44,7 @@ function seedSupplierReturnMaterial(db: any, suffix: string) {
   db.prepare('INSERT INTO inventory (id, material_id, stock, locked_stock, location_id) VALUES (?, ?, ?, 0, ?)')
     .run(`inv-sr-${suffix}`, materialId, 10, locationId)
 
-  return { materialId, supplierId }
+  return { materialId, supplierId, locationId }
 }
 
 function seedSupplierReturnMaterialWithBatch(db: any, suffix: string, batchRemaining = 10) {
@@ -385,5 +385,78 @@ describe('供应商退货', () => {
     expect(materialInventory.stock).toBe(10)
     expect(supplierInventory.stock).toBe(10)
     expect(records.count).toBe(0)
+  })
+
+  it('SR-REF-002: 创建供应商退货必须拒绝不匹配的采购订单和入库记录引用', async () => {
+    const returnSeed = seedSupplierReturnMaterialWithBatch(db, `ref-return-${Date.now()}`)
+    const otherOrderSeed = seedSupplierReturnMaterialWithBatch(db, `ref-order-${Date.now()}`)
+    const otherInboundSeed = seedSupplierReturnMaterialWithBatch(db, `ref-inbound-${Date.now()}`)
+    const purchaseOrderId = `po-sr-ref-${Date.now()}`
+    const inboundRecordId = `inbound-sr-ref-${Date.now()}`
+
+    db.prepare(`
+      INSERT INTO purchase_orders (
+        id, order_no, material_id, material_name, supplier_id,
+        ordered_qty, received_qty, unit, unit_price, total_amount, status
+      ) VALUES (?, ?, ?, ?, ?, 10, 10, '瓶', 12, 120, 'completed')
+    `).run(
+      purchaseOrderId,
+      `PO-SR-REF-${Date.now()}`,
+      otherOrderSeed.materialId,
+      '其他采购物料',
+      otherOrderSeed.supplierId,
+    )
+    db.prepare(`
+      INSERT INTO inbound_records (
+        id, inbound_no, type, material_id, batch_no, quantity, unit, price,
+        amount, supplier_id, location_id, operator, status, purchase_order_id
+      ) VALUES (?, ?, 'purchase', ?, ?, 2, '瓶', 12, 24, ?, ?, 'admin', 'completed', ?)
+    `).run(
+      inboundRecordId,
+      `IN-SR-REF-${Date.now()}`,
+      otherInboundSeed.materialId,
+      otherInboundSeed.batchNo,
+      otherInboundSeed.supplierId,
+      otherInboundSeed.locationId,
+      purchaseOrderId,
+    )
+
+    const wrongOrderRes = await request(app)
+      .post('/api/v1/supplier-returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId: returnSeed.materialId,
+        supplierId: returnSeed.supplierId,
+        batchId: returnSeed.batchId,
+        purchaseOrderId,
+        quantity: 1,
+        reason: '伪造采购订单引用',
+      })
+
+    const wrongInboundRes = await request(app)
+      .post('/api/v1/supplier-returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId: returnSeed.materialId,
+        supplierId: returnSeed.supplierId,
+        batchId: returnSeed.batchId,
+        inboundRecordId,
+        quantity: 1,
+        reason: '伪造入库记录引用',
+      })
+
+    expect(wrongOrderRes.status).toBe(409)
+    expect(wrongOrderRes.body.error?.code || wrongOrderRes.body.code).toBe('SUPPLIER_RETURN_REFERENCE_MISMATCH')
+    expect(wrongInboundRes.status).toBe(409)
+    expect(wrongInboundRes.body.error?.code || wrongInboundRes.body.code).toBe('SUPPLIER_RETURN_REFERENCE_MISMATCH')
+
+    const batch = db.prepare('SELECT remaining FROM batches WHERE id = ?').get(returnSeed.batchId) as any
+    const inv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(returnSeed.materialId) as any
+    const records = db.prepare('SELECT COUNT(*) as count FROM supplier_returns WHERE material_id = ?')
+      .get(returnSeed.materialId) as any
+
+    expect(Number(batch.remaining)).toBe(10)
+    expect(Number(inv.stock)).toBe(10)
+    expect(Number(records.count)).toBe(0)
   })
 })

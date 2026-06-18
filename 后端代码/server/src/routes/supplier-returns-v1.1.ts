@@ -11,6 +11,62 @@ function generateSupplierReturnNo(): string {
   return generateNo('SR')
 }
 
+function normalizeOptionalId(value: unknown): string | null {
+  const id = String(value || '').trim()
+  return id || null
+}
+
+function validateSupplierReturnReferences(db: any, payload: {
+  materialId: string
+  supplierId?: string | null
+  purchaseOrderId?: string | null
+  inboundRecordId?: string | null
+}) {
+  const supplierId = normalizeOptionalId(payload.supplierId)
+  const purchaseOrderId = normalizeOptionalId(payload.purchaseOrderId)
+  const inboundRecordId = normalizeOptionalId(payload.inboundRecordId)
+  let purchaseOrder: any = null
+
+  if (purchaseOrderId) {
+    purchaseOrder = db.prepare(`
+      SELECT id, material_id, supplier_id, status
+      FROM purchase_orders
+      WHERE id = ? AND is_deleted = 0
+    `).get(purchaseOrderId) as any
+    if (!purchaseOrder) {
+      return { ok: false, status: 404, code: 'NOT_FOUND', message: '关联采购订单不存在' }
+    }
+    if (purchaseOrder.material_id !== payload.materialId || (supplierId && purchaseOrder.supplier_id && purchaseOrder.supplier_id !== supplierId)) {
+      return { ok: false, status: 409, code: 'SUPPLIER_RETURN_REFERENCE_MISMATCH', message: '关联采购订单与退货物料或供应商不一致' }
+    }
+    if (purchaseOrder.status === 'cancelled') {
+      return { ok: false, status: 409, code: 'CONFLICT', message: '已取消采购订单不能关联供应商退货' }
+    }
+  }
+
+  if (inboundRecordId) {
+    const inbound = db.prepare(`
+      SELECT id, material_id, supplier_id, purchase_order_id, status
+      FROM inbound_records
+      WHERE id = ? AND is_deleted = 0
+    `).get(inboundRecordId) as any
+    if (!inbound) {
+      return { ok: false, status: 404, code: 'NOT_FOUND', message: '关联入库记录不存在' }
+    }
+    if (inbound.status !== 'completed') {
+      return { ok: false, status: 409, code: 'CONFLICT', message: '仅已完成入库记录可关联供应商退货' }
+    }
+    if (inbound.material_id !== payload.materialId || (supplierId && inbound.supplier_id && inbound.supplier_id !== supplierId)) {
+      return { ok: false, status: 409, code: 'SUPPLIER_RETURN_REFERENCE_MISMATCH', message: '关联入库记录与退货物料或供应商不一致' }
+    }
+    if (purchaseOrder && inbound.purchase_order_id && inbound.purchase_order_id !== purchaseOrder.id) {
+      return { ok: false, status: 409, code: 'SUPPLIER_RETURN_REFERENCE_MISMATCH', message: '关联入库记录与采购订单不一致' }
+    }
+  }
+
+  return { ok: true }
+}
+
 // 列表查询
 router.get('/', (req, res) => {
   try {
@@ -149,6 +205,16 @@ router.post('/', (req, res) => {
       const supplier = db.prepare('SELECT id, status FROM suppliers WHERE id = ? AND is_deleted = 0').get(supplierId) as any
       if (!supplier) { error(res, '供应商不存在或已删除', 'NOT_FOUND', 404); return }
       if (Number(supplier.status) !== 1) { error(res, '供应商已停用，不能创建供应商退货', 'CONFLICT', 409); return }
+    }
+    const refValidation = validateSupplierReturnReferences(db, {
+      materialId,
+      supplierId,
+      purchaseOrderId,
+      inboundRecordId,
+    })
+    if (!refValidation.ok) {
+      error(res, refValidation.message, refValidation.code, refValidation.status)
+      return
     }
 
     db.exec('BEGIN IMMEDIATE')

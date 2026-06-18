@@ -9776,7 +9776,49 @@ git diff --check
 - 若历史项目已经在出库或 LIS 后被换过 BOM，本批不会自动回滚；需要后续历史一致性巡检单独暴露。
 - 基础数据配置下一步继续复核检测项目导入、BOM 服务绑定双向一致性和物料启停对出库选择的影响。
 
-## 一百九十二、结论
+## 一百九十二、批次 237: 供应商退货关联采购和入库引用校验
+
+**发现的问题**
+
+- 供应商退货创建接口会校验物料、供应商、库存和批次，但 `purchaseOrderId`、`inboundRecordId` 只是直接写入。
+- 调用方可以把 A 物料的供应商退货挂到 B 物料的采购订单或入库记录上，接口仍会创建退货并扣减 A 物料库存。
+- 供应商退货页面和规范都把采购订单、入库记录作为业务来源线索；引用错配会破坏采购-入库-退货追踪，影响批次成本来源和后续审计，属于 P0 进销存业务流一致性风险。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/supplier-returns-v1.1.ts`
+  - 新增 `normalizeOptionalId` 和 `validateSupplierReturnReferences`。
+  - 创建供应商退货时，如果传入采购订单，必须存在、未删除、未取消，且物料/供应商与退货一致。
+  - 如果传入入库记录，必须存在、未删除、已完成，且物料/供应商与退货一致。
+  - 同时传入采购订单和入库记录时，入库记录若已绑定采购订单，也必须与本次采购订单一致。
+  - 引用不匹配时返回 `409 SUPPLIER_RETURN_REFERENCE_MISMATCH`，不进入库存扣减事务。
+- `后端代码/server/tests/supplier-returns.test.ts`
+  - 新增 `SR-REF-002`，覆盖伪造采购订单和伪造入库记录引用均被拒绝，库存、批次和退货记录不发生副作用。
+
+**ABC 影响评估**
+
+- 本批不修改 ABC 本体、成本公式、成本池、收费映射、成本异常判定或废弃 `/cost-analysis` 代码。
+- 变更收紧的是 ABC 上游采购、入库、供应商退货来源线索，避免库存扣减事实与采购/入库引用错挂。
+- 正常供应商退货、状态取消、删除恢复、采购入库和库存查询回归通过，说明有效库存流转没有被误伤。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --config vitest.supplier-returns.config.ts --run tests/supplier-returns.test.ts -t "SR-REF-002"` 修复前失败：错误采购订单引用返回 `200`，证明伪造引用会创建退货并扣库存。
+- 修复后验证:
+  - `后端代码/server npm test -- --config vitest.supplier-returns.config.ts --run tests/supplier-returns.test.ts -t "SR-REF-002"` 通过，1 file / 1 test passed；仍有既有 Vitest 退出等待提示，但命令返回成功。
+  - `后端代码/server npm test -- --config vitest.supplier-returns.config.ts --run tests/supplier-returns.test.ts` 通过，1 file / 11 tests passed；仍有既有 Vitest 退出等待提示，但命令返回成功。
+  - `后端代码/server npm test -- --run tests/purchase-order-inbound.test.ts tests/integration/inventory.test.ts` 通过，2 files / 30 tests passed；仍有既有 Vitest 退出等待提示，但命令返回成功。
+  - `后端代码/server npm run build` 通过。
+- 浏览器复核:
+  - 本批为后端供应商退货引用保护；核心风险在绕过前端提交伪造 ID，因此未新增截图证据。
+
+**后续风险**
+
+- 若历史供应商退货已经存在错配采购订单或入库记录，本批不会自动修复；需要后续历史一致性巡检单独暴露。
+- 进销存业务流下一步继续复核报废、退库、调拨、出库编辑/撤销和库存盘点的来源引用与真实副作用。
+
+## 一百九十三、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及退库/报废/供应商退货/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；退库、报废、供应商退货和库存盘点均已把总库存与批次剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 
