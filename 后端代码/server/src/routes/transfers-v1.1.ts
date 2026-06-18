@@ -49,7 +49,8 @@ router.post('/inbound', (req, res) => {
   try {
     const { materialId, batchNo, quantity, fromLocationId, fromLocationName, toLocationId, remark } = req.body
     const operator = (req as any).user?.username || 'system'
-    if (!materialId || !toLocationId || quantity === undefined || quantity === null || isNaN(Number(quantity)) || Number(quantity) <= 0) {
+    const transferQuantity = Number(quantity)
+    if (!materialId || !toLocationId || quantity === undefined || quantity === null || !Number.isFinite(transferQuantity) || transferQuantity <= 0) {
       error(res, '物料、目标库位和数量必填', 'INVALID_PARAMETER', 400)
       return
     }
@@ -84,7 +85,7 @@ router.post('/inbound', (req, res) => {
       db.prepare(`
         INSERT INTO inbound_records (id, inbound_no, type, material_id, batch_no, quantity, unit, location_id, from_location_id, from_location_name, operator, status, remark)
         VALUES (?, ?, 'transfer', ?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?)
-      `).run(id, inboundNo, materialId, batchNo || null, quantity, material.unit || '个', toLocationId, fromLocationId || null, fromLocationName || null, operator || 'system', remark || '')
+      `).run(id, inboundNo, materialId, batchNo || null, transferQuantity, material.unit || '个', toLocationId, fromLocationId || null, fromLocationName || null, operator || 'system', remark || '')
 
       // 调拨不改变总库存，只变更库位
       const existingInv = db.prepare('SELECT * FROM inventory WHERE material_id = ?').get(materialId) as any
@@ -94,7 +95,6 @@ router.post('/inbound', (req, res) => {
         return
       }
 
-      const transferQuantity = Number(quantity)
       const currentStock = Number(existingInv.stock || 0)
       const sourceStock = fromLocationId ? getInventoryLocationStock(db, materialId, fromLocationId) : currentStock
 
@@ -119,7 +119,7 @@ router.post('/inbound', (req, res) => {
       `).run(logId, materialId, beforeStock, beforeStock, id, operator || 'system', `从 ${fromLocationName || fromLocationId} 调拨至 ${location.name}`)
 
       db.exec('COMMIT')
-      success(res, { id, inboundNo, materialId, quantity, fromLocationId, fromLocationName, toLocationId }, 'Transfer created')
+      success(res, { id, inboundNo, materialId, quantity: transferQuantity, fromLocationId, fromLocationName, toLocationId }, 'Transfer created')
     } catch (e: any) {
       db.exec('ROLLBACK')
       throw e

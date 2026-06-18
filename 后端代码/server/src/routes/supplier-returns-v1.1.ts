@@ -131,8 +131,14 @@ router.post('/', (req, res) => {
   try {
     const { materialId, batchId, quantity, supplierId, purchaseOrderId, inboundRecordId, reason, refundAmount, trackingNo, remark } = req.body
     const qty = Number(quantity)
-    if (!materialId || quantity === undefined || quantity === null || isNaN(qty) || qty <= 0 || !reason) {
+    if (!materialId || quantity === undefined || quantity === null || !Number.isFinite(qty) || qty <= 0 || !reason) {
       error(res, '物料、数量和退货原因必填', 'INVALID_PARAMETER', 400); return
+    }
+    const normalizedRefundAmount = refundAmount === undefined || refundAmount === null || refundAmount === ''
+      ? 0
+      : Number(refundAmount)
+    if (!Number.isFinite(normalizedRefundAmount) || normalizedRefundAmount < 0) {
+      error(res, '退款金额不能为负数', 'INVALID_PARAMETER', 400); return
     }
     const db = getDatabase()
     const operator = (req as any).user?.username || 'system'
@@ -199,7 +205,7 @@ router.post('/', (req, res) => {
       db.prepare(`
         INSERT INTO supplier_returns (id, return_no, material_id, batch_id, batch_no, quantity, supplier_id, purchase_order_id, inbound_record_id, reason, refund_amount, tracking_no, status, operator, remark)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-      `).run(id, returnNo, materialId, batch?.id || null, batch?.batch_no || null, qty, supplierId || null, purchaseOrderId || null, inboundRecordId || null, reason, refundAmount || 0, trackingNo || null, operator, remark || null)
+      `).run(id, returnNo, materialId, batch?.id || null, batch?.batch_no || null, qty, supplierId || null, purchaseOrderId || null, inboundRecordId || null, reason, normalizedRefundAmount, trackingNo || null, operator, remark || null)
 
       // 扣减库存
       const beforeStock = Number(inv.stock)

@@ -216,6 +216,43 @@ describe('供应商退货', () => {
     expect(Number(records.count)).toBe(0)
   })
 
+  it('SR-VALIDATION-001: 供应商退货拒绝非有限数量且不扣库存和批次', async () => {
+    const { materialId, supplierId, batchId } = seedSupplierReturnMaterialWithBatch(db, `finite-number-${Date.now()}`)
+    const invalidPayloads = [
+      { quantity: 'Infinity', refundAmount: 0, message: '数量' },
+      { quantity: 1, refundAmount: '1e309', message: '退款金额' },
+    ]
+
+    for (const payload of invalidPayloads) {
+      const res = await request(app)
+        .post('/api/v1/supplier-returns')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          materialId,
+          supplierId,
+          batchId,
+          quantity: payload.quantity,
+          refundAmount: payload.refundAmount,
+          reason: '非有限数值退货',
+        })
+
+      expect(res.status).toBe(400)
+      expect(res.body.error.message).toContain(payload.message)
+    }
+
+    const batch = db.prepare('SELECT remaining FROM batches WHERE id = ?').get(batchId) as any
+    const inv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+    const records = db.prepare('SELECT COUNT(*) as count FROM supplier_returns WHERE material_id = ?')
+      .get(materialId) as any
+    const logs = db.prepare('SELECT COUNT(*) as count FROM stock_logs WHERE material_id = ? AND related_type = ?')
+      .get(materialId, 'supplier_return') as any
+
+    expect(Number(batch.remaining)).toBe(10)
+    expect(Number(inv.stock)).toBe(10)
+    expect(Number(records.count)).toBe(0)
+    expect(Number(logs.count)).toBe(0)
+  })
+
   it('SR-007: 状态流转取消退货时恢复库存和批次', async () => {
     const { materialId, supplierId, batchId } = seedSupplierReturnMaterialWithBatch(db, `status-cancel-${Date.now()}`)
     const createRes = await request(app)

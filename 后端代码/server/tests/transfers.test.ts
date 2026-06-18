@@ -117,6 +117,37 @@ describe('调拨管理', () => {
     expect(afterRejected.location_id).toBe(fromLocationId)
   })
 
+  it('TR-VALIDATION-001: 调拨拒绝非有限数量，避免异常数量进入库存流转', async () => {
+    const { materialId, fromLocationId, toLocationId } = seedTransferMaterial(db, `finite-number-${Date.now()}`)
+
+    const res = await request(app)
+      .post('/api/v1/transfers/inbound')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId,
+        quantity: 'Infinity',
+        fromLocationId,
+        toLocationId,
+        remark: '非有限数量调拨',
+      })
+
+    expect(res.status).toBe(400)
+    expect(res.body.error.message).toContain('数量')
+
+    const aggregate = db.prepare('SELECT stock, location_id FROM inventory WHERE material_id = ?').get(materialId) as any
+    const targetStock = db.prepare('SELECT stock FROM inventory_locations WHERE material_id = ? AND location_id = ?')
+      .get(materialId, toLocationId) as any
+    const transferCount = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM inbound_records
+      WHERE type = 'transfer' AND material_id = ? AND is_deleted = 0
+    `).get(materialId) as any
+
+    expect(aggregate).toMatchObject({ stock: 10, location_id: fromLocationId })
+    expect(targetStock).toBeUndefined()
+    expect(transferCount.count).toBe(0)
+  })
+
   it('TR-003: 调拨后物料列表返回库存当前库位而不是旧默认库位', async () => {
     const suffix = `material-location-${Date.now()}`
     const { materialId, fromLocationId, toLocationId } = seedTransferMaterial(db, suffix)
