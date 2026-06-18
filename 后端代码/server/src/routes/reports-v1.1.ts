@@ -75,7 +75,7 @@ router.get('/cost-by-material', (req, res) => {
   try {
     const { startDate, endDate, categoryId } = req.query
     const db = getDatabase()
-    let where = "o.status = 'completed' AND o.is_deleted = 0 AND m.is_deleted = 0"
+    let where = "o.status = 'completed' AND o.is_deleted = 0"
     const params: any[] = []
     if (startDate) { where += ' AND o.created_at >= ?'; params.push(startDate) }
     if (endDate) { where += ' AND o.created_at <= ?'; params.push(`${endDate}T23:59:59`) }
