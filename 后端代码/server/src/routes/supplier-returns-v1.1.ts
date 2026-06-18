@@ -6,9 +6,28 @@ import { generateNo } from '../utils/generateNo.js'
 import { consumeInventoryLocationStock, restoreInventoryLocationStock } from '../utils/inventory-locations.js'
 
 const router = Router()
+const BATCH_RESTORE_EPSILON = 0.000001
 
 function generateSupplierReturnNo(): string {
   return generateNo('SR')
+}
+
+function validateBatchRestoreCapacity(db: any, record: any) {
+  if (!record.batch_id) return { ok: true }
+
+  const batch = db.prepare('SELECT id, quantity, remaining FROM batches WHERE id = ? AND material_id = ?')
+    .get(record.batch_id, record.material_id) as any
+  if (!batch) {
+    return { ok: false, status: 409, code: 'BATCH_NOT_FOUND', message: '退货批次不存在，无法恢复批次库存' }
+  }
+
+  const nextRemaining = Number(batch.remaining || 0) + Number(record.quantity || 0)
+  const batchQuantity = Number(batch.quantity || 0)
+  if (nextRemaining - batchQuantity > BATCH_RESTORE_EPSILON) {
+    return { ok: false, status: 409, code: 'BATCH_RESTORE_CONFLICT', message: '批次数量已被后续业务调整，无法取消退货记录' }
+  }
+
+  return { ok: true }
 }
 
 function normalizeOptionalId(value: unknown): string | null {
@@ -341,6 +360,12 @@ router.put('/:id/status', (req, res) => {
     db.exec('BEGIN IMMEDIATE')
     try {
       if (status === 'cancelled') {
+        const batchRestore = validateBatchRestoreCapacity(db, record)
+        if (!batchRestore.ok) {
+          db.exec('ROLLBACK')
+          error(res, batchRestore.message, batchRestore.code, batchRestore.status)
+          return
+        }
         const inv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(record.material_id) as any
         if (!inv) {
           db.exec('ROLLBACK')
@@ -354,13 +379,6 @@ router.put('/:id/status', (req, res) => {
         restoreInventoryLocationStock(db, record.material_id, Number(record.quantity), { relatedType: 'supplier_return', relatedId: req.params.id })
 
         if (record.batch_id) {
-          const batch = db.prepare('SELECT id FROM batches WHERE id = ? AND material_id = ?')
-            .get(record.batch_id, record.material_id) as any
-          if (!batch) {
-            db.exec('ROLLBACK')
-            error(res, '退货批次不存在，无法恢复批次库存', 'BATCH_NOT_FOUND', 409)
-            return
-          }
           db.prepare(`
             UPDATE batches
             SET remaining = remaining + ?, status = 1, updated_at = CURRENT_TIMESTAMP
@@ -409,6 +427,13 @@ router.delete('/:id', (req, res) => {
 
     db.exec('BEGIN IMMEDIATE')
     try {
+      const batchRestore = validateBatchRestoreCapacity(db, record)
+      if (!batchRestore.ok) {
+        db.exec('ROLLBACK')
+        error(res, batchRestore.message, batchRestore.code, batchRestore.status)
+        return
+      }
+
       db.prepare('UPDATE supplier_returns SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id)
 
       // 恢复库存
@@ -419,13 +444,6 @@ router.delete('/:id', (req, res) => {
       restoreInventoryLocationStock(db, record.material_id, Number(record.quantity), { relatedType: 'supplier_return', relatedId: req.params.id })
 
       if (record.batch_id) {
-        const batch = db.prepare('SELECT id, remaining FROM batches WHERE id = ? AND material_id = ?')
-          .get(record.batch_id, record.material_id) as any
-        if (!batch) {
-          db.exec('ROLLBACK')
-          error(res, '退货批次不存在，无法恢复批次库存', 'BATCH_NOT_FOUND', 409)
-          return
-        }
         db.prepare(`
           UPDATE batches
           SET remaining = remaining + ?, status = 1, updated_at = CURRENT_TIMESTAMP

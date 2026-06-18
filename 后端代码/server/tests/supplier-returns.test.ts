@@ -300,6 +300,89 @@ describe('供应商退货', () => {
     expect(cancelLog.operator).toBe('admin')
   })
 
+  it('SR-009: 删除待发货退货时若批次数量已下调必须拒绝，避免批次剩余量超过批次数量', async () => {
+    const { materialId, supplierId, batchId } = seedSupplierReturnMaterialWithBatch(db, `delete-stale-cancel-${Date.now()}`)
+    const createRes = await request(app)
+      .post('/api/v1/supplier-returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId,
+        supplierId,
+        batchId,
+        quantity: 4,
+        reason: '待发货退货后撤销',
+      })
+    expect(createRes.status).toBe(200)
+    db.prepare('UPDATE batches SET quantity = 6 WHERE id = ?').run(batchId)
+
+    const deleteRes = await request(app)
+      .delete(`/api/v1/supplier-returns/${createRes.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(deleteRes.status).toBe(409)
+    expect(deleteRes.body.error.code).toBe('BATCH_RESTORE_CONFLICT')
+
+    const record = db.prepare('SELECT is_deleted FROM supplier_returns WHERE id = ?').get(createRes.body.data.id) as any
+    const inv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+    const batch = db.prepare('SELECT quantity, remaining FROM batches WHERE id = ?').get(batchId) as any
+    const cancelLogs = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM stock_logs
+      WHERE related_id = ? AND related_type = 'supplier_return_cancel'
+    `).get(createRes.body.data.id) as any
+
+    expect(record.is_deleted).toBe(0)
+    expect(Number(inv.stock)).toBe(6)
+    expect(Number(batch.quantity)).toBe(6)
+    expect(Number(batch.remaining)).toBe(6)
+    expect(Number(cancelLogs.count)).toBe(0)
+  })
+
+  it('SR-010: 状态取消退货时若批次数量已下调必须拒绝，避免批次剩余量超过批次数量', async () => {
+    const { materialId, supplierId, batchId } = seedSupplierReturnMaterialWithBatch(db, `status-stale-cancel-${Date.now()}`)
+    const createRes = await request(app)
+      .post('/api/v1/supplier-returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId,
+        supplierId,
+        batchId,
+        quantity: 4,
+        reason: '状态取消退货后撤销',
+      })
+    expect(createRes.status).toBe(200)
+
+    const shippedRes = await request(app)
+      .put(`/api/v1/supplier-returns/${createRes.body.data.id}/status`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ status: 'shipped' })
+    expect(shippedRes.status).toBe(200)
+    db.prepare('UPDATE batches SET quantity = 6 WHERE id = ?').run(batchId)
+
+    const cancelRes = await request(app)
+      .put(`/api/v1/supplier-returns/${createRes.body.data.id}/status`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ status: 'cancelled' })
+
+    expect(cancelRes.status).toBe(409)
+    expect(cancelRes.body.error.code).toBe('BATCH_RESTORE_CONFLICT')
+
+    const record = db.prepare('SELECT status FROM supplier_returns WHERE id = ?').get(createRes.body.data.id) as any
+    const inv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+    const batch = db.prepare('SELECT quantity, remaining FROM batches WHERE id = ?').get(batchId) as any
+    const cancelLogs = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM stock_logs
+      WHERE related_id = ? AND related_type = 'supplier_return_cancel'
+    `).get(createRes.body.data.id) as any
+
+    expect(record.status).toBe('shipped')
+    expect(Number(inv.stock)).toBe(6)
+    expect(Number(batch.quantity)).toBe(6)
+    expect(Number(batch.remaining)).toBe(6)
+    expect(Number(cancelLogs.count)).toBe(0)
+  })
+
   it('SR-008: 默认仓管和采购角色可访问并创建供应商退货', async () => {
     const warehouseToken = await loginRole(app, 'wangkq')
     const procurementToken = await loginRole(app, 'zhaohp')
