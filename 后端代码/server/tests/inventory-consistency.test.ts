@@ -185,4 +185,40 @@ describe('库存与主数据一致性扫描', () => {
     ].sort())
     expect(issues.every((issue: any) => issue.severity === 'critical')).toBe(true)
   })
+
+  it('INV-CONSISTENCY-004: 扫描库位库存为负数的历史脏状态', async () => {
+    const suffix = `${Date.now()}`
+    const categoryId = `cat-consistency-location-negative-${suffix}`
+    const materialId = `mat-consistency-location-negative-${suffix}`
+    const locationId = `loc-consistency-location-negative-${suffix}`
+    const inventoryLocationId = `il-consistency-location-negative-${suffix}`
+
+    db.prepare('INSERT INTO material_categories (id, code, name, level) VALUES (?, ?, ?, 1)')
+      .run(categoryId, `CAT-CONS-LOC-NEG-${suffix}`, '库位负数扫描分类')
+    db.prepare('INSERT INTO locations (id, code, name, type, zone, status) VALUES (?, ?, ?, ?, ?, 1)')
+      .run(locationId, `LOC-CONS-NEG-${suffix}`, '负数库位库存库位', 'shelf', 'A区')
+    db.prepare('INSERT INTO materials (id, code, name, unit, category_id, status, location_id) VALUES (?, ?, ?, ?, ?, 1, ?)')
+      .run(materialId, `MAT-CONS-LOC-NEG-${suffix}`, '库位负数物料', '瓶', categoryId, locationId)
+    db.prepare('INSERT INTO inventory (id, material_id, stock, locked_stock, location_id) VALUES (?, ?, ?, 0, ?)')
+      .run(`inv-cons-loc-neg-${suffix}`, materialId, 0, locationId)
+    db.prepare('INSERT INTO inventory_locations (id, material_id, location_id, stock, locked_stock) VALUES (?, ?, ?, -2, 0)')
+      .run(inventoryLocationId, materialId, locationId)
+
+    const res = await request(app)
+      .get('/api/v1/inventory/consistency-check')
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(200)
+    const issue = res.body.data.issues.find((item: any) => item.code === 'LOCATION_NEGATIVE_STOCK')
+    expect(issue).toMatchObject({
+      severity: 'critical',
+      entityType: 'inventory_location',
+      entityId: inventoryLocationId,
+      impacts: {
+        stock: -2,
+        locationId,
+        materialId,
+      },
+    })
+  })
 })

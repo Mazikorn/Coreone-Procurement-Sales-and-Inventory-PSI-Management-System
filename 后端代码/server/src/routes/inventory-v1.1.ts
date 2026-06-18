@@ -273,6 +273,29 @@ function buildInventoryConsistencyIssues(db: any): ConsistencyIssue[] {
     },
   }))
 
+  const negativeLocationStocks = db.prepare(`
+    SELECT il.id, il.material_id, il.location_id, il.stock, m.code as material_code, m.name as material_name, l.code as location_code, l.name as location_name
+    FROM inventory_locations il
+    JOIN materials m ON m.id = il.material_id AND m.is_deleted = 0
+    LEFT JOIN locations l ON l.id = il.location_id
+    WHERE COALESCE(il.stock, 0) < -0.0001
+  `).all() as any[]
+  negativeLocationStocks.forEach(row => addIssue({
+    code: 'LOCATION_NEGATIVE_STOCK',
+    severity: 'critical',
+    entityType: 'inventory_location',
+    entityId: row.id,
+    entityCode: row.location_code || row.location_id,
+    entityName: row.location_name || row.material_name,
+    message: '库位库存为负数',
+    impacts: {
+      materialId: row.material_id,
+      materialCode: row.material_code,
+      locationId: row.location_id,
+      stock: Number(row.stock) || 0,
+    },
+  }))
+
   const locationMismatches = db.prepare(`
     SELECT i.material_id, m.code, m.name, i.stock, COALESCE(SUM(il.stock), 0) as location_stock
     FROM inventory i
