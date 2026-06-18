@@ -11024,7 +11024,46 @@ git diff --check
 
 - 当前项目分组成本报表仍依赖当前 `materials.name` 和当前 `bom_items.group_name` 解释历史出库；如果后续物料改名或 BOM 分组改名，彻底历史快照化需要单独设计出库物料/BOM 分组快照字段和兼容迁移。
 
-## 二百二十二、结论
+## 二百二十二、批次 267: 成本结构不得因 BOM 软删除丢失历史设备成本
+
+**发现的问题**
+
+- `/api/v1/reports/cost-structure` 的成本结构查询通过 `LEFT JOIN boms b ON p.bom_id = b.id AND b.is_deleted = 0` 读取 BOM 标准设备成本。
+- 如果项目已有历史出库，后续关联 BOM 被软删除，成本结构报表会把该项目历史出库的设备折旧/设备成本部分计算为 0。
+- 这会让历史出库的成本结构从“材料 + 设备”退化为只保留材料/人工/间接成本，影响对已发生项目成本的结构解释。
+- 当前 `outbound_records` 尚未保存 BOM 标准设备成本快照；本批先收口“BOM 软删除不应丢失仍可关联的历史设备成本”这一最小不变量，不扩展 schema。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/reports-v1.1.ts`
+  - `cost-structure` 成本结构查询读取 BOM 时不再排除软删除 BOM。
+  - 已完成且未删除的历史出库记录继续按其项目关联 BOM 的标准设备成本计入设备类成本。
+- `后端代码/server/tests/integration/full-cost.test.ts`
+  - 新增 `REPORT-STRUCTURE-002`，覆盖历史项目出库后 BOM 被软删除，成本结构报表仍必须保留设备成本金额。
+
+**ABC 影响评估**
+
+- 本批不修改 ABC 本体、成本公式、成本池、收费映射、成本异常判定或废弃 `/cost-analysis` 代码。
+- 变更只影响非 ABC 成本结构报表的读取口径，不写库存、BOM、出库、成本异常或 ABC 明细。
+- 全成本、项目成本、项目分组成本、出库流程和精确 ABC 输入回归通过，说明 BOM 软删除设备成本修复没有破坏出库删除后的报表扣除、项目分组成本或 ABC 病例收费重排。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/full-cost.test.ts -t "REPORT-STRUCTURE-002"` 修复前失败：BOM 软删除后设备成本金额为 0，期望为 24。
+- 修复后验证:
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/full-cost.test.ts -t "REPORT-STRUCTURE-002"` 通过，1 file / 1 test passed / 2 skipped。
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/full-cost.test.ts tests/integration/reports-cost-by-project.test.ts tests/integration/reports-cost-by-project-group.test.ts tests/integration/outbound-flow.test.ts` 通过，4 files / 10 tests passed。
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/cost-exceptions.test.ts -t "同一病例多个BOM|取消非最新病例"` 通过，2 tests passed / 9 skipped，覆盖出库删除后 ABC 病例收费和重排链路。
+  - `后端代码/server npm run build` 通过。
+- 浏览器复核:
+  - 本批为后端成本结构报表读取口径修复，核心风险在 API 层是否保留历史 BOM 设备成本；已用接口级测试覆盖，不新增截图证据。
+
+**后续风险**
+
+- 当前成本结构报表仍依赖当前 `boms.standard_equipment_cost` 解释历史出库；如果后续 BOM 标准设备成本被修改，彻底历史快照化需要单独设计出库/BOM 成本快照字段和兼容迁移。
+
+## 二百二十三、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

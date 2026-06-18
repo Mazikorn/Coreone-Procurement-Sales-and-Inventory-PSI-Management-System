@@ -628,7 +628,7 @@ router.get('/cost-structure', (req, res) => {
         strftime('%Y-%m', r.created_at) as cost_month
       FROM outbound_records r
       LEFT JOIN projects p ON r.project_id = p.id
-      LEFT JOIN boms b ON p.bom_id = b.id AND b.is_deleted = 0
+      LEFT JOIN boms b ON p.bom_id = b.id
       WHERE ${where}
     `).all(...params) as any[] : []
 

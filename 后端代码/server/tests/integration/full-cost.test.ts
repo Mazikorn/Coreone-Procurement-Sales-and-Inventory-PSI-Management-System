@@ -56,6 +56,49 @@ describe('集成测试：全成本计算端到端', () => {
     db.prepare('UPDATE projects SET is_deleted = 1 WHERE id = ?').run(projectId)
   })
 
+  it('REPORT-STRUCTURE-002: 成本结构不因BOM后续软删除而丢失历史设备成本', async () => {
+    const { app, db } = await getApp()
+    const token = await loginAdmin(app)
+    const suffix = Date.now()
+    const bomId = `structure-deleted-bom-${suffix}`
+    const projectId = `structure-bom-project-${suffix}`
+    const outboundId = `structure-bom-out-${suffix}`
+
+    db.prepare(`
+      INSERT INTO boms (
+        id, code, name, version, type, standard_equipment_cost, status, is_deleted
+      )
+      VALUES (?, ?, '已删除但有设备成本历史BOM', 'v1', 'ihc', 8, 1, 0)
+    `).run(bomId, `STRUCT-BOM-${suffix}`)
+    db.prepare(`
+      INSERT INTO projects (id, code, name, type, bom_id, is_deleted)
+      VALUES (?, ?, 'BOM软删除成本结构历史项目', 'ihc', ?, 0)
+    `).run(projectId, `STRUCT-BOM-PROJECT-${suffix}`, bomId)
+    db.prepare(`
+      INSERT INTO outbound_records (
+        id, outbound_no, type, project_id, total_cost, sample_count,
+        operator, status, created_at, is_deleted
+      )
+      VALUES (?, ?, 'bom', ?, 120, 3, 'admin', 'completed', '2031-09-10T09:00:00', 0)
+    `).run(outboundId, `STRUCT-BOM-OUT-${suffix}`, projectId)
+    db.prepare('UPDATE boms SET is_deleted = 1 WHERE id = ?').run(bomId)
+
+    const res = await request(app)
+      .get('/api/v1/reports/cost-structure?startDate=2031-09-01&endDate=2031-09-30')
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(200)
+    expect(res.body.success).toBe(true)
+    const equipment = res.body.data.structure.find((item: any) => item.costType === 'equipment')
+    expect(equipment).toMatchObject({
+      costType: 'equipment',
+      amount: 24,
+    })
+
+    db.prepare('UPDATE outbound_records SET is_deleted = 1 WHERE id = ?').run(outboundId)
+    db.prepare('UPDATE boms SET is_deleted = 1 WHERE id = ?').run(bomId)
+  })
+
   it('完整流程：BOM扩展配额 → 设备/工时/间接成本 → 出库 → 全成本报表验证', async () => {
     const { app, db } = await getApp()
     const token = await loginAdmin(app)
