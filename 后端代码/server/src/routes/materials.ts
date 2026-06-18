@@ -296,6 +296,46 @@ function validateMaterialIdentityUnique(db: any, refs: { id?: string; code?: unk
   return { ok: true }
 }
 
+type MaterialNumberResult =
+  | { ok: true; value: number }
+  | { ok: false; status: number; message: string; code: string }
+
+type MaterialNumericPayloadResult =
+  | { ok: true; values: Record<string, number> }
+  | { ok: false; status: number; message: string; code: string }
+
+function normalizeMaterialNumber(value: unknown, label: string, defaultValue: number): MaterialNumberResult {
+  if (value === undefined || value === null || value === '') {
+    return { ok: true, value: defaultValue }
+  }
+  const numberValue = Number(value)
+  if (!Number.isFinite(numberValue) || numberValue < 0) {
+    return { ok: false, status: 400, message: `${label}必须是有限非负数`, code: 'INVALID_PARAMETER' }
+  }
+  return { ok: true, value: numberValue }
+}
+
+function normalizeMaterialNumericPayload(payload: Record<string, unknown>, defaults: Record<string, number>): MaterialNumericPayloadResult {
+  const fields = [
+    ['specQty', '规格量'],
+    ['price', '参考单价'],
+    ['minStock', '最低库存'],
+    ['maxStock', '最高库存'],
+    ['safetyStock', '安全库存'],
+  ] as const
+  const normalized: Record<string, number> = {}
+
+  for (const [field, label] of fields) {
+    const result = normalizeMaterialNumber(payload[field], label, defaults[field])
+    if (result.ok === false) {
+      return { ok: false, status: result.status, message: result.message, code: result.code }
+    }
+    normalized[field] = result.value
+  }
+
+  return { ok: true, values: normalized }
+}
+
 function getMaterialReferences(db: any, materialId: string) {
   const check = buildMaterialDeleteCheck(db, materialId)
   if (!check) return []
@@ -428,7 +468,7 @@ function validateMaterialStatusChange(db: any, material: any, status: 'active' |
 
 router.post('/', requireMaterialWrite, (req, res) => {
   try {
-    const { name, spec, unit, specQty, specUnit, categoryId, supplierId, price, minStock, maxStock, safetyStock, locationId, remark, code: userCode, barcode } = req.body
+    const { name, spec, unit, specUnit, categoryId, supplierId, locationId, remark, code: userCode, barcode } = req.body
     const nameText = requireValidText(name, '物料名称')
     if (sendTextError(res, nameText)) return
     const unitText = requireValidText(unit, '物料单位', 40)
@@ -451,6 +491,17 @@ router.post('/', requireMaterialWrite, (req, res) => {
       error(res, refValidation.message, refValidation.code, refValidation.status)
       return
     }
+    const numberPayload = normalizeMaterialNumericPayload(req.body, {
+      specQty: 0,
+      price: 0,
+      minStock: 0,
+      maxStock: 999999,
+      safetyStock: 0,
+    })
+    if (numberPayload.ok === false) {
+      error(res, numberPayload.message, numberPayload.code, numberPayload.status)
+      return
+    }
     const id = uuidv4()
     let finalCode: string
     if (codeText.value) {
@@ -471,7 +522,24 @@ router.post('/', requireMaterialWrite, (req, res) => {
     db.prepare(`
       INSERT INTO materials (id, code, barcode, name, spec, unit, spec_qty, spec_unit, category_id, supplier_id, price, min_stock, max_stock, safety_stock, location_id, status, remark)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
-    `).run(id, finalCode, barcodeText.value, nameText.value, specText.value, unitText.value, specQty || 0, specUnitText.value, categoryId, supplierId || null, price || 0, minStock || 0, maxStock || 999999, safetyStock || 0, locationId || null, remarkText.value)
+    `).run(
+      id,
+      finalCode,
+      barcodeText.value,
+      nameText.value,
+      specText.value,
+      unitText.value,
+      numberPayload.values.specQty,
+      specUnitText.value,
+      categoryId,
+      supplierId || null,
+      numberPayload.values.price,
+      numberPayload.values.minStock,
+      numberPayload.values.maxStock,
+      numberPayload.values.safetyStock,
+      locationId || null,
+      remarkText.value,
+    )
 
     const invId = uuidv4()
     db.prepare(`INSERT INTO inventory (id, material_id, stock, locked_stock, location_id) VALUES (?, ?, 0, 0, ?)`)
@@ -589,6 +657,17 @@ router.put('/:id', requireMaterialWrite, (req, res) => {
       error(res, identityValidation.message, identityValidation.code, identityValidation.status)
       return
     }
+    const numberPayload = normalizeMaterialNumericPayload(data, {
+      specQty: existing.spec_qty ?? 0,
+      price: existing.price ?? 0,
+      minStock: existing.min_stock ?? 0,
+      maxStock: existing.max_stock ?? 999999,
+      safetyStock: existing.safety_stock ?? 0,
+    })
+    if (numberPayload.ok === false) {
+      error(res, numberPayload.message, numberPayload.code, numberPayload.status)
+      return
+    }
 
     const fields: string[] = []
     const params: any[] = []
@@ -618,7 +697,7 @@ router.put('/:id', requireMaterialWrite, (req, res) => {
       if (sendTextError(res, unitText)) return
       fields.push('unit = ?'); params.push(unitText.value)
     }
-    if (data.specQty !== undefined) { fields.push('spec_qty = ?'); params.push(data.specQty) }
+    if (data.specQty !== undefined) { fields.push('spec_qty = ?'); params.push(numberPayload.values.specQty) }
     if (data.specUnit !== undefined) {
       const specUnitText = normalizeDisplayText(data.specUnit, '规格单位', { maxLength: 40 })
       if (sendTextError(res, specUnitText)) return
@@ -626,10 +705,10 @@ router.put('/:id', requireMaterialWrite, (req, res) => {
     }
     if (data.categoryId !== undefined) { fields.push('category_id = ?'); params.push(data.categoryId) }
     if (data.supplierId !== undefined) { fields.push('supplier_id = ?'); params.push(data.supplierId) }
-    if (data.price !== undefined) { fields.push('price = ?'); params.push(data.price) }
-    if (data.minStock !== undefined) { fields.push('min_stock = ?'); params.push(data.minStock) }
-    if (data.maxStock !== undefined) { fields.push('max_stock = ?'); params.push(data.maxStock) }
-    if (data.safetyStock !== undefined) { fields.push('safety_stock = ?'); params.push(data.safetyStock) }
+    if (data.price !== undefined) { fields.push('price = ?'); params.push(numberPayload.values.price) }
+    if (data.minStock !== undefined) { fields.push('min_stock = ?'); params.push(numberPayload.values.minStock) }
+    if (data.maxStock !== undefined) { fields.push('max_stock = ?'); params.push(numberPayload.values.maxStock) }
+    if (data.safetyStock !== undefined) { fields.push('safety_stock = ?'); params.push(numberPayload.values.safetyStock) }
     if (data.locationId !== undefined) { fields.push('location_id = ?'); params.push(data.locationId) }
     if (data.remark !== undefined) {
       const remarkText = normalizeDisplayText(data.remark, '物料备注', { maxLength: 500 })

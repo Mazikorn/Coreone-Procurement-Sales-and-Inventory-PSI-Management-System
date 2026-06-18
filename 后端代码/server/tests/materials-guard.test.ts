@@ -656,4 +656,59 @@ describe('物料删除与批量状态保护', () => {
       barcode: `BAR-UNIQUE-${suffix}-B`,
     })
   })
+
+  it('MAT-VALIDATION-001: 创建物料时拒绝非有限数值且不写入主数据和库存行', async () => {
+    const suffix = `finite-create-${Date.now()}`
+    const refs = seedRefs(db, suffix)
+
+    const res = await request(app)
+      .post('/api/v1/materials')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        code: `MAT-FINITE-${suffix}`,
+        name: `非有限物料-${suffix}`,
+        unit: '瓶',
+        categoryId: refs.categoryId,
+        price: 'Infinity',
+        minStock: 1,
+        maxStock: 10,
+        safetyStock: 2,
+      })
+
+    expect(res.status).toBe(400)
+    expect(res.body.error.message).toContain('有限')
+    const material = db.prepare('SELECT id FROM materials WHERE code = ?').get(`MAT-FINITE-${suffix}`)
+    expect(material).toBeUndefined()
+    const inventoryCount = (db.prepare(`
+      SELECT COUNT(*) as count
+      FROM inventory i
+      JOIN materials m ON m.id = i.material_id
+      WHERE m.code = ?
+    `).get(`MAT-FINITE-${suffix}`) as any).count
+    expect(inventoryCount).toBe(0)
+  })
+
+  it('MAT-VALIDATION-002: 更新物料时拒绝非有限库存阈值且保留原数值', async () => {
+    const suffix = `finite-update-${Date.now()}`
+    const refs = seedRefs(db, suffix)
+    const materialId = await createMaterial(app, token, refs, suffix)
+    db.prepare('UPDATE materials SET min_stock = 1, max_stock = 20, safety_stock = 3, price = 8 WHERE id = ?')
+      .run(materialId)
+
+    const res = await request(app)
+      .put(`/api/v1/materials/${materialId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ minStock: 'Infinity' })
+
+    expect(res.status).toBe(400)
+    expect(res.body.error.message).toContain('有限')
+    const row = db.prepare('SELECT min_stock, max_stock, safety_stock, price FROM materials WHERE id = ?')
+      .get(materialId) as any
+    expect(row).toMatchObject({
+      min_stock: 1,
+      max_stock: 20,
+      safety_stock: 3,
+      price: 8,
+    })
+  })
 })
