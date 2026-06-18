@@ -66,4 +66,44 @@ describe('集成测试：非ABC物料成本报表', () => {
       totalCost: 300,
     })
   })
+
+  it('REPORT-MATERIAL-002: 成本差异按物料维度保留软删除物料的历史名称和单位', async () => {
+    const suffix = Date.now()
+    const categoryId = `report-variance-category-${suffix}`
+    const materialId = `report-variance-material-${suffix}`
+    const outboundId = `report-variance-outbound-${suffix}`
+    const outboundItemId = `report-variance-item-${suffix}`
+
+    db.prepare('INSERT INTO material_categories (id, code, name, level) VALUES (?, ?, ?, 1)')
+      .run(categoryId, `REPORT-VAR-CAT-${suffix}`, '差异历史物料分类')
+    db.prepare(`
+      INSERT INTO materials (id, code, name, spec, unit, category_id, price, status, is_deleted)
+      VALUES (?, ?, '已删除但有成本差异物料', '20ml', '盒', ?, 45, 1, 0)
+    `).run(materialId, `REPORT-VAR-MAT-${suffix}`, categoryId)
+    db.prepare(`
+      INSERT INTO outbound_records (id, outbound_no, type, total_cost, sample_count, operator, status, created_at, is_deleted)
+      VALUES (?, ?, 'normal', 180, 1, 'admin', 'completed', '2026-06-13T09:00:00', 0)
+    `).run(outboundId, `REPORT-VAR-OUT-${suffix}`)
+    db.prepare(`
+      INSERT INTO outbound_items (id, outbound_id, material_id, quantity, unit, unit_cost, total_cost)
+      VALUES (?, ?, ?, 4, '盒', 45, 180)
+    `).run(outboundItemId, outboundId, materialId)
+    db.prepare('UPDATE materials SET is_deleted = 1 WHERE id = ?').run(materialId)
+
+    const res = await request(app)
+      .get('/api/v1/reports/cost-variance?compareType=material&startDate=2026-06-01&endDate=2026-06-30')
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(200)
+    const item = res.body.data.items.find((row: any) => row.projectId === materialId)
+    expect(item).toMatchObject({
+      projectId: materialId,
+      projectName: '已删除但有成本差异物料',
+      groupType: 'material',
+      unit: '盒',
+      materialActual: 180,
+      materialStandard: 180,
+      sampleCount: 4,
+    })
+  })
 })

@@ -716,7 +716,7 @@ router.get('/cost-variance', (req, res) => {
         FROM outbound_items oi
         JOIN outbound_records r ON oi.outbound_id = r.id
         LEFT JOIN projects p ON r.project_id = p.id
-        LEFT JOIN materials m ON oi.material_id = m.id AND m.is_deleted = 0
+        LEFT JOIN materials m ON oi.material_id = m.id
         WHERE ${where}
         GROUP BY oi.material_id
         ORDER BY actual_cost DESC
