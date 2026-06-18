@@ -281,6 +281,41 @@ describe('报废管理 API', () => {
     expect(batchAfterCancel.status).toBe(1)
   })
 
+  it('SC-009: 批次数量后续下调后撤销旧报废必须拒绝，避免批次剩余量超过批次数量', async () => {
+    const suffix = `batch-stale-cancel-${Date.now()}`
+    const { materialId, batchId } = seedScrapMaterialWithBatch(db, suffix, 10)
+
+    const res = await request(app)
+      .post('/api/v1/scraps')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ materialId, batchId, quantity: 4, reason: 'damaged' })
+
+    expect(res.status).toBe(200)
+    db.prepare('UPDATE batches SET quantity = 6 WHERE id = ?').run(batchId)
+
+    const cancelRes = await request(app)
+      .delete(`/api/v1/scraps/${res.body.data.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+
+    expect(cancelRes.status).toBe(409)
+    expect(cancelRes.body.error.code).toBe('BATCH_RESTORE_CONFLICT')
+
+    const record = db.prepare('SELECT is_deleted FROM scrap_records WHERE id = ?').get(res.body.data.id) as any
+    const inventory = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+    const batch = db.prepare('SELECT quantity, remaining FROM batches WHERE id = ?').get(batchId) as any
+    const cancelLogs = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM stock_logs
+      WHERE related_id = ? AND related_type = 'scrap_cancel'
+    `).get(res.body.data.id) as any
+
+    expect(record.is_deleted).toBe(0)
+    expect(inventory.stock).toBe(6)
+    expect(batch.quantity).toBe(6)
+    expect(batch.remaining).toBe(6)
+    expect(cancelLogs.count).toBe(0)
+  })
+
   it('SC-008: 批量报废会逐条同步扣减批次剩余量', async () => {
     const suffix = `batch-with-batches-${Date.now()}`
     const materialA = seedScrapMaterialWithBatch(db, `${suffix}-a`, 10)
