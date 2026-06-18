@@ -375,6 +375,82 @@ describe('批量入库 API', () => {
     expect(inventory.stock).toBe(7)
   })
 
+  it('INB-UPDATE-003: 入库数量更新不能把已有出库的批次剩余量扣成负数', async () => {
+    const suffix = `update-batch-remaining-${Date.now()}`
+    const fixture = seedBatchInboundFixture(db, suffix)
+    const consumedBatchNo = `B-INB-${suffix}-A`
+    const spareBatchNo = `B-INB-${suffix}-B`
+
+    const consumedInbound = await request(app)
+      .post('/api/v1/inbound')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        type: 'direct',
+        materialId: fixture.materialId,
+        batchNo: consumedBatchNo,
+        quantity: 10,
+        price: 10,
+        supplierId: fixture.supplierId,
+        locationId: fixture.locationId,
+        expiryDate: '2027-01-01',
+      })
+    expect(consumedInbound.status).toBe(201)
+
+    const spareInbound = await request(app)
+      .post('/api/v1/inbound')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        type: 'direct',
+        materialId: fixture.materialId,
+        batchNo: spareBatchNo,
+        quantity: 20,
+        price: 10,
+        supplierId: fixture.supplierId,
+        locationId: fixture.locationId,
+        expiryDate: '2027-01-01',
+      })
+    expect(spareInbound.status).toBe(201)
+
+    db.prepare(`
+      INSERT INTO outbound_records (id, outbound_no, type, total_cost, operator, status)
+      VALUES (?, ?, 'normal', 80, 'admin', 'completed')
+    `).run(`out-${suffix}`, `OUT-${suffix}`)
+    db.prepare(`
+      INSERT INTO outbound_items (id, outbound_id, material_id, batch_no, quantity, unit, unit_cost, total_cost)
+      VALUES (?, ?, ?, ?, 8, '瓶', 10, 80)
+    `).run(`out-item-${suffix}`, `out-${suffix}`, fixture.materialId, consumedBatchNo)
+    db.prepare('UPDATE batches SET remaining = 2 WHERE material_id = ? AND batch_no = ?')
+      .run(fixture.materialId, consumedBatchNo)
+    db.prepare('UPDATE inventory SET stock = 22 WHERE material_id = ?')
+      .run(fixture.materialId)
+    db.prepare('UPDATE inventory_locations SET stock = 22 WHERE material_id = ? AND location_id = ?')
+      .run(fixture.materialId, fixture.locationId)
+
+    const updateRes = await request(app)
+      .put(`/api/v1/inbound/${consumedInbound.body.data.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ quantity: 1 })
+
+    expect(updateRes.status).toBe(400)
+    expect(updateRes.body.error.message).toContain('批次剩余量')
+
+    const record = db.prepare('SELECT quantity, amount FROM inbound_records WHERE id = ?')
+      .get(consumedInbound.body.data.id) as any
+    const consumedBatch = db.prepare('SELECT quantity, remaining, status FROM batches WHERE material_id = ? AND batch_no = ?')
+      .get(fixture.materialId, consumedBatchNo) as any
+    const spareBatch = db.prepare('SELECT quantity, remaining, status FROM batches WHERE material_id = ? AND batch_no = ?')
+      .get(fixture.materialId, spareBatchNo) as any
+    const inventory = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(fixture.materialId) as any
+    const locationStock = db.prepare('SELECT stock FROM inventory_locations WHERE material_id = ? AND location_id = ?')
+      .get(fixture.materialId, fixture.locationId) as any
+
+    expect(record).toMatchObject({ quantity: 10, amount: 100 })
+    expect(consumedBatch).toMatchObject({ quantity: 10, remaining: 2, status: 1 })
+    expect(spareBatch).toMatchObject({ quantity: 20, remaining: 20, status: 1 })
+    expect(inventory.stock).toBe(22)
+    expect(locationStock.stock).toBe(22)
+  })
+
   it('INB-DELETE-001: 删除已完成入库的库存流水必须记录物料总库存真实扣减', async () => {
     const suffix = `delete-log-${Date.now()}`
     const fixture = seedBatchInboundFixture(db, suffix)

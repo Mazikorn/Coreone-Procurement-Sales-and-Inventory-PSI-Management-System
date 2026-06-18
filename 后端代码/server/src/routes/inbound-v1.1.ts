@@ -819,6 +819,16 @@ router.put('/:id', requireWriteAccess, (req, res) => {
             error(res, `库存不足，当前库存 ${currentStock}，无法减少 ${Math.abs(qtyDiff)}`, 'STOCK_INSUFFICIENT', 422)
             return
           }
+          if (oldBatch && !batchChanged) {
+            const currentBatch = db.prepare('SELECT remaining FROM batches WHERE material_id = ? AND batch_no = ?')
+              .get(record.material_id, oldBatch) as any
+            const currentRemaining = Number(currentBatch?.remaining ?? 0)
+            if (!currentBatch || currentRemaining + qtyDiff < 0) {
+              db.exec('ROLLBACK')
+              error(res, `批次剩余量不足，当前批次剩余量 ${currentRemaining}，无法减少 ${Math.abs(qtyDiff)}`, 'BUSINESS_RULE', 400)
+              return
+            }
+          }
         }
 
         if (batchChanged) {
