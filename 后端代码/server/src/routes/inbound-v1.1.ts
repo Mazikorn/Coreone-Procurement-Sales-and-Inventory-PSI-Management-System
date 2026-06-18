@@ -5,6 +5,7 @@ import { success, successList, error } from '../utils/response.js'
 import { adjustInventoryLocationStock, syncInventoryPrimaryLocation } from '../utils/inventory-locations.js'
 
 const router = Router()
+const BATCH_DECREASE_EPSILON = 0.000001
 
 import { checkStockAlerts } from '../utils/alertChecker.js'
 
@@ -148,6 +149,29 @@ function validateInboundReferences(db: any, refs: { materialId?: unknown; suppli
     if (Number(location.status) !== 1) {
       return { ok: false, status: 409, message: '停用库位不能用于入库', code: 'CONFLICT' }
     }
+  }
+
+  return { ok: true }
+}
+
+function validateInboundBatchDeduction(db: any, record: any, conflictMessage: string) {
+  const batchNo = String(record.batch_no || '').trim()
+  if (!batchNo) return { ok: true }
+
+  const batch = db.prepare('SELECT id, quantity, remaining FROM batches WHERE material_id = ? AND batch_no = ?')
+    .get(record.material_id, batchNo) as any
+  if (!batch) {
+    return { ok: false, status: 409, code: 'BATCH_NOT_FOUND', message: '入库批次不存在，无法扣减库存' }
+  }
+
+  const deduction = Number(record.quantity || 0)
+  const batchQuantity = Number(batch.quantity || 0)
+  const batchRemaining = Number(batch.remaining || 0)
+  if (
+    batchQuantity + BATCH_DECREASE_EPSILON < deduction ||
+    batchRemaining + BATCH_DECREASE_EPSILON < deduction
+  ) {
+    return { ok: false, status: 409, code: 'BATCH_UNDERFLOW_CONFLICT', message: conflictMessage }
   }
 
   return { ok: true }
@@ -974,6 +998,17 @@ router.delete('/:id', requireWriteAccess, (req, res) => {
         if (totalInbound < totalOutbound) {
           db.exec('ROLLBACK')
           error(res, `删除后该批次库存将变为负数（剩余 ${totalInbound}，已出库 ${totalOutbound}），不可删除`, 'BUSINESS_RULE', 400)
+          return
+        }
+
+        const batchDeduction = validateInboundBatchDeduction(
+          db,
+          record,
+          '批次数量已被后续业务调整，无法删除入库记录',
+        )
+        if (!batchDeduction.ok) {
+          db.exec('ROLLBACK')
+          error(res, batchDeduction.message, batchDeduction.code, batchDeduction.status)
           return
         }
 

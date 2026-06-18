@@ -513,6 +513,59 @@ describe('批量入库 API', () => {
     })
   })
 
+  it('INB-DELETE-003: 批次数量后续下调后删除旧入库必须拒绝，避免批次和总库存扣成负数', async () => {
+    const suffix = `delete-stale-batch-${Date.now()}`
+    const fixture = seedBatchInboundFixture(db, suffix)
+    const batchNo = `B-INB-${suffix}`
+
+    const inboundRes = await request(app)
+      .post('/api/v1/inbound')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        type: 'direct',
+        materialId: fixture.materialId,
+        batchNo,
+        quantity: 10,
+        price: 10,
+        supplierId: fixture.supplierId,
+        locationId: fixture.locationId,
+        expiryDate: '2027-01-01',
+      })
+    expect(inboundRes.status).toBe(201)
+    const inboundId = inboundRes.body.data.id
+
+    db.prepare('UPDATE batches SET quantity = 6, remaining = 6 WHERE material_id = ? AND batch_no = ?')
+      .run(fixture.materialId, batchNo)
+    db.prepare('UPDATE inventory SET stock = 6 WHERE material_id = ?')
+      .run(fixture.materialId)
+    db.prepare('UPDATE inventory_locations SET stock = 6 WHERE material_id = ? AND location_id = ?')
+      .run(fixture.materialId, fixture.locationId)
+    const logCountBefore = db.prepare('SELECT COUNT(*) as count FROM stock_logs WHERE related_id = ?')
+      .get(inboundId) as any
+
+    const deleteRes = await request(app)
+      .delete(`/api/v1/inbound/${inboundId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+
+    expect(deleteRes.status).toBe(409)
+    expect(deleteRes.body.error.code).toBe('BATCH_UNDERFLOW_CONFLICT')
+
+    const record = db.prepare('SELECT is_deleted, status FROM inbound_records WHERE id = ?').get(inboundId) as any
+    const batch = db.prepare('SELECT quantity, remaining, status FROM batches WHERE material_id = ? AND batch_no = ?')
+      .get(fixture.materialId, batchNo) as any
+    const inventory = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(fixture.materialId) as any
+    const locationStock = db.prepare('SELECT stock FROM inventory_locations WHERE material_id = ? AND location_id = ?')
+      .get(fixture.materialId, fixture.locationId) as any
+    const logCountAfter = db.prepare('SELECT COUNT(*) as count FROM stock_logs WHERE related_id = ?')
+      .get(inboundId) as any
+
+    expect(record).toMatchObject({ is_deleted: 0, status: 'completed' })
+    expect(batch).toMatchObject({ quantity: 6, remaining: 6, status: 1 })
+    expect(inventory.stock).toBe(6)
+    expect(locationStock.stock).toBe(6)
+    expect(Number(logCountAfter.count)).toBe(Number(logCountBefore.count))
+  })
+
   it('INB-DELETE-002: 删除已取消入库不应再生成库存变动流水', async () => {
     const suffix = `delete-cancelled-${Date.now()}`
     const fixture = seedBatchInboundFixture(db, suffix)
