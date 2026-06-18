@@ -85,16 +85,18 @@ router.put('/rules/:id', (req, res) => {
     if (!existing) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
     const fields: string[] = []; const params: any[] = []
     if (threshold !== undefined) {
-      if (isNaN(Number(threshold)) || Number(threshold) < 0) {
+      const normalizedThreshold = Number(threshold)
+      if (!Number.isFinite(normalizedThreshold) || normalizedThreshold < 0) {
         error(res, 'Invalid threshold', 'INVALID_PARAMETER', 400); return
       }
-      fields.push('threshold = ?'); params.push(threshold)
+      fields.push('threshold = ?'); params.push(normalizedThreshold)
     }
     if (thresholdDays !== undefined) {
-      if (isNaN(Number(thresholdDays)) || Number(thresholdDays) < 0) {
+      const normalizedThresholdDays = Number(thresholdDays)
+      if (!Number.isFinite(normalizedThresholdDays) || normalizedThresholdDays < 0) {
         error(res, 'Invalid thresholdDays', 'INVALID_PARAMETER', 400); return
       }
-      fields.push('threshold_days = ?'); params.push(thresholdDays)
+      fields.push('threshold_days = ?'); params.push(normalizedThresholdDays)
     }
     if (enabled !== undefined) { fields.push('enabled = ?'); params.push(enabled ? 1 : 0) }
     if (fields.length > 0) { params.push(id); db.prepare(`UPDATE alert_rules SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(...params) }

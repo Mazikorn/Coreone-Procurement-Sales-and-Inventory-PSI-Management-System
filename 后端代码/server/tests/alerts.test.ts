@@ -320,6 +320,35 @@ describe('预警处理', () => {
     expect(history.body.data.list[0].handledAt).toBeTruthy()
   })
 
+  it('ALERT-RULE-001: 预警规则拒绝非有限阈值且不更新原规则', async () => {
+    const beforeLowStock = db.prepare('SELECT threshold, threshold_days FROM alert_rules WHERE id = ?')
+      .get('RULE-001') as any
+    const beforeExpiry = db.prepare('SELECT threshold, threshold_days FROM alert_rules WHERE id = ?')
+      .get('RULE-002') as any
+
+    const invalidThreshold = await request(app)
+      .put('/api/v1/alerts/rules/RULE-001')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ threshold: 'Infinity' })
+
+    const invalidThresholdDays = await request(app)
+      .put('/api/v1/alerts/rules/RULE-002')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ thresholdDays: '1e309' })
+
+    expect(invalidThreshold.status).toBe(400)
+    expect(invalidThreshold.body.error.message).toContain('threshold')
+    expect(invalidThresholdDays.status).toBe(400)
+    expect(invalidThresholdDays.body.error.message).toContain('thresholdDays')
+
+    const afterLowStock = db.prepare('SELECT threshold, threshold_days FROM alert_rules WHERE id = ?')
+      .get('RULE-001') as any
+    const afterExpiry = db.prepare('SELECT threshold, threshold_days FROM alert_rules WHERE id = ?')
+      .get('RULE-002') as any
+    expect(afterLowStock).toMatchObject(beforeLowStock)
+    expect(afterExpiry).toMatchObject(beforeExpiry)
+  })
+
   it('ALERT-009: 非处理角色不能处理、忽略、批量处理或手动扫描预警', async () => {
     const techToken = await loginRole(app, 'zhangwei')
     const firstId = seedAlert(db, `forbidden-a-${Date.now()}`)
