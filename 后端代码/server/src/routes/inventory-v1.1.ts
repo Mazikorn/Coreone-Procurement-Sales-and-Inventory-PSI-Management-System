@@ -319,6 +319,55 @@ function buildInventoryConsistencyIssues(db: any): ConsistencyIssue[] {
     },
   }))
 
+  const activeBatchesWithoutInventory = db.prepare(`
+    SELECT b.id, b.batch_no, b.material_id, b.remaining, m.code as material_code, m.name as material_name
+    FROM batches b
+    JOIN materials m ON m.id = b.material_id AND m.is_deleted = 0
+    LEFT JOIN inventory i ON i.material_id = b.material_id
+    WHERE b.status = 1
+      AND COALESCE(b.remaining, 0) > 0.0001
+      AND i.material_id IS NULL
+  `).all() as any[]
+  activeBatchesWithoutInventory.forEach(row => addIssue({
+    code: 'ACTIVE_BATCH_WITHOUT_INVENTORY',
+    severity: 'critical',
+    entityType: 'batch',
+    entityId: row.id,
+    entityCode: row.batch_no,
+    entityName: row.material_name,
+    message: '启用批次仍有剩余量但库存总账缺失',
+    impacts: {
+      materialId: row.material_id,
+      materialCode: row.material_code,
+      remaining: Number(row.remaining) || 0,
+    },
+  }))
+
+  const locationStocksWithoutInventory = db.prepare(`
+    SELECT il.id, il.material_id, il.location_id, il.stock, m.code as material_code, m.name as material_name, l.code as location_code, l.name as location_name
+    FROM inventory_locations il
+    JOIN materials m ON m.id = il.material_id AND m.is_deleted = 0
+    LEFT JOIN inventory i ON i.material_id = il.material_id
+    LEFT JOIN locations l ON l.id = il.location_id
+    WHERE COALESCE(il.stock, 0) > 0.0001
+      AND i.material_id IS NULL
+  `).all() as any[]
+  locationStocksWithoutInventory.forEach(row => addIssue({
+    code: 'LOCATION_STOCK_WITHOUT_INVENTORY',
+    severity: 'critical',
+    entityType: 'inventory_location',
+    entityId: row.id,
+    entityCode: row.location_code || row.location_id,
+    entityName: row.location_name || row.material_name,
+    message: '库位库存仍有数量但库存总账缺失',
+    impacts: {
+      materialId: row.material_id,
+      materialCode: row.material_code,
+      locationId: row.location_id,
+      stock: Number(row.stock) || 0,
+    },
+  }))
+
   return issues
 }
 

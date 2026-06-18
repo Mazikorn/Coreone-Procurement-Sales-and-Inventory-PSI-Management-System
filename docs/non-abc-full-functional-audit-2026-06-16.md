@@ -10548,7 +10548,49 @@ git diff --check
 
 - 若历史数据已经出现报废记录、库存总账、库位明细和批次剩余量之间的不一致，需要继续通过库存一致性巡检或专项历史数据巡检暴露后治理。
 
-## 二百一十、结论
+## 二百一十、批次 255: 库存一致性巡检必须暴露总账缺失的批次和库位残留
+
+**发现的问题**
+
+- 库存一致性巡检已经能发现“库存总账与启用批次剩余量不一致”和“库存总账与库位库存不一致”。
+- 但这两个检查都以 `inventory` 总账行存在为前提。
+- 如果历史脏数据或异常操作删除了 `inventory` 总账行，只剩启用批次 `remaining > 0` 或库位库存 `stock > 0`，旧巡检不会把它们纳入治理清单。
+- 这会让库存报表/巡检看不到“批次和库位仍有库存、但总账缺失”的断链状态，影响后续库存解释、出库分配、报废/退库撤销和 ABC 上游成本事实可信度。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/inventory-v1.1.ts`
+  - 一致性巡检新增 `ACTIVE_BATCH_WITHOUT_INVENTORY`。
+  - 一致性巡检新增 `LOCATION_STOCK_WITHOUT_INVENTORY`。
+  - 两类问题均返回 `critical`，并带出物料、批次/库位、数量等治理所需信息。
+  - 本批只增强巡检报表，不修改任何库存写接口、不自动修复历史数据。
+- `后端代码/server/tests/inventory-consistency.test.ts`
+  - 新增 `INV-CONSISTENCY-005`，覆盖物料存在、库存总账缺失、但批次和库位仍有正库存的历史脏状态。
+
+**ABC 影响评估**
+
+- 本批不修改 ABC 本体、成本公式、成本池、收费映射、成本异常判定或废弃 `/cost-analysis` 代码。
+- 变更保护的是 ABC 上游库存巡检和异常解释能力，避免总账缺失时批次成本和库位库存残留被漏报。
+- 库存、出库和精确 ABC 输入回归通过，说明新增巡检问题类型没有破坏库存查询、出库分配、BOM 出库或病例收费重排。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/inventory-consistency.test.ts -t "INV-CONSISTENCY-005"` 修复前失败：旧巡检没有返回 `ACTIVE_BATCH_WITHOUT_INVENTORY`，证明总账缺失但批次残留会漏报。
+- 修复后验证:
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/inventory-consistency.test.ts -t "INV-CONSISTENCY-005"` 通过，1 file / 1 test passed / 5 skipped。
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/inventory-consistency.test.ts tests/integration/inventory.test.ts tests/integration/outbound.test.ts` 通过，3 files / 46 tests passed。
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/cost-exceptions.test.ts -t "同一病例多个BOM|取消非最新病例"` 通过，2 tests passed / 9 skipped，覆盖出库删除后 ABC 病例收费和重排链路。
+  - `后端代码/server npm run build` 通过。
+  - `git diff --check` 通过。
+- 浏览器复核:
+  - 本批为后端库存一致性巡检报表增强，核心风险在 API 层是否暴露真实历史脏状态；已用接口级真实副作用测试覆盖，不新增截图证据。
+
+**后续风险**
+
+- 本批只负责发现问题，不自动补总账；如果实际库存在生产或开发库中出现该问题，需要用治理单独决定是补账、冻结物料、还是按审计流程核销。
+
+## 二百一十一、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

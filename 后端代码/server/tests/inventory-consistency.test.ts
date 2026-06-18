@@ -221,4 +221,57 @@ describe('库存与主数据一致性扫描', () => {
       },
     })
   })
+
+  it('INV-CONSISTENCY-005: 扫描库存总账缺失但批次和库位仍有库存的历史脏状态', async () => {
+    const suffix = `${Date.now()}`
+    const categoryId = `cat-consistency-orphan-${suffix}`
+    const materialId = `mat-consistency-orphan-${suffix}`
+    const locationId = `loc-consistency-orphan-${suffix}`
+    const batchId = `batch-consistency-orphan-${suffix}`
+    const inventoryLocationId = `il-consistency-orphan-${suffix}`
+
+    db.prepare('INSERT INTO material_categories (id, code, name, level) VALUES (?, ?, ?, 1)')
+      .run(categoryId, `CAT-CONS-ORPHAN-${suffix}`, '总账缺失扫描分类')
+    db.prepare('INSERT INTO locations (id, code, name, type, zone, status) VALUES (?, ?, ?, ?, ?, 1)')
+      .run(locationId, `LOC-CONS-ORPHAN-${suffix}`, '总账缺失库位', 'shelf', 'A区')
+    db.prepare('INSERT INTO materials (id, code, name, unit, category_id, status, location_id) VALUES (?, ?, ?, ?, ?, 1, ?)')
+      .run(materialId, `MAT-CONS-ORPHAN-${suffix}`, '总账缺失但仍有批次库位物料', '瓶', categoryId, locationId)
+    db.prepare(`
+      INSERT INTO batches (id, material_id, batch_no, quantity, remaining, expiry_date, inbound_id, inbound_price, status)
+      VALUES (?, ?, ?, 5, 5, ?, ?, 10, 1)
+    `).run(batchId, materialId, `BATCH-CONS-ORPHAN-${suffix}`, '2028-12-31', `inbound-cons-orphan-${suffix}`)
+    db.prepare('INSERT INTO inventory_locations (id, material_id, location_id, stock, locked_stock) VALUES (?, ?, ?, 5, 0)')
+      .run(inventoryLocationId, materialId, locationId)
+
+    const res = await request(app)
+      .get('/api/v1/inventory/consistency-check')
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(200)
+    const batchIssue = res.body.data.issues.find((item: any) =>
+      item.code === 'ACTIVE_BATCH_WITHOUT_INVENTORY' && item.entityId === batchId
+    )
+    expect(batchIssue).toMatchObject({
+      severity: 'critical',
+      entityType: 'batch',
+      entityId: batchId,
+      impacts: {
+        materialId,
+        remaining: 5,
+      },
+    })
+    const locationIssue = res.body.data.issues.find((item: any) =>
+      item.code === 'LOCATION_STOCK_WITHOUT_INVENTORY' && item.entityId === inventoryLocationId
+    )
+    expect(locationIssue).toMatchObject({
+      severity: 'critical',
+      entityType: 'inventory_location',
+      entityId: inventoryLocationId,
+      impacts: {
+        materialId,
+        locationId,
+        stock: 5,
+      },
+    })
+  })
 })
