@@ -6,6 +6,7 @@ import { generateNo } from '../utils/generateNo.js'
 import { consumeInventoryLocationStock, restoreInventoryLocationStock } from '../utils/inventory-locations.js'
 
 const router = Router()
+const BATCH_RESTORE_EPSILON = 0.000001
 
 function generateReturnNo(): string {
   return generateNo('RT')
@@ -172,6 +173,25 @@ router.delete('/:id', (req, res) => {
 
     db.exec('BEGIN IMMEDIATE')
     try {
+      const restoreBatch = record.batch_id
+        ? db.prepare('SELECT id, quantity, remaining FROM batches WHERE id = ? AND material_id = ?')
+          .get(record.batch_id, record.material_id) as any
+        : null
+      if (record.batch_id && !restoreBatch) {
+        db.exec('ROLLBACK')
+        error(res, '退库批次不存在，无法恢复批次库存', 'BATCH_NOT_FOUND', 409)
+        return
+      }
+      if (restoreBatch) {
+        const nextRemaining = Number(restoreBatch.remaining || 0) + Number(record.quantity || 0)
+        const batchQuantity = Number(restoreBatch.quantity || 0)
+        if (nextRemaining - batchQuantity > BATCH_RESTORE_EPSILON) {
+          db.exec('ROLLBACK')
+          error(res, '批次数量已被后续业务调整，无法撤销退库记录', 'BATCH_RESTORE_CONFLICT', 409)
+          return
+        }
+      }
+
       db.prepare('UPDATE return_records SET is_deleted = 1 WHERE id = ?').run(id)
 
       const inv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(record.material_id) as any
@@ -181,13 +201,6 @@ router.delete('/:id', (req, res) => {
       restoreInventoryLocationStock(db, record.material_id, Number(record.quantity), { relatedType: 'return', relatedId: id })
 
       if (record.batch_id) {
-        const batch = db.prepare('SELECT id FROM batches WHERE id = ? AND material_id = ?')
-          .get(record.batch_id, record.material_id) as any
-        if (!batch) {
-          db.exec('ROLLBACK')
-          error(res, '退库批次不存在，无法恢复批次库存', 'BATCH_NOT_FOUND', 409)
-          return
-        }
         db.prepare(`
           UPDATE batches
           SET remaining = remaining + ?, status = 1, updated_at = CURRENT_TIMESTAMP

@@ -176,6 +176,41 @@ describe('退库管理', () => {
     expect(batchAfterCancel.status).toBe(1)
   })
 
+  it('RT-005: 批次数量后续下调后撤销旧退库必须拒绝，避免批次剩余量超过批次数量', async () => {
+    const suffix = `batch-stale-cancel-${Date.now()}`
+    const { materialId, batchId } = seedReturnMaterialWithBatch(db, suffix, 10)
+
+    const createRes = await request(app)
+      .post('/api/v1/returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ materialId, batchId, quantity: 3, reason: 'unused' })
+
+    expect(createRes.status).toBe(200)
+    db.prepare('UPDATE batches SET quantity = 7 WHERE id = ?').run(batchId)
+
+    const cancelRes = await request(app)
+      .delete(`/api/v1/returns/${createRes.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(cancelRes.status).toBe(409)
+    expect(cancelRes.body.error.code).toBe('BATCH_RESTORE_CONFLICT')
+
+    const record = db.prepare('SELECT is_deleted FROM return_records WHERE id = ?').get(createRes.body.data.id) as any
+    const inventory = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+    const batch = db.prepare('SELECT quantity, remaining FROM batches WHERE id = ?').get(batchId) as any
+    const cancelLogs = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM stock_logs
+      WHERE related_id = ? AND related_type = 'return_cancel'
+    `).get(createRes.body.data.id) as any
+
+    expect(record.is_deleted).toBe(0)
+    expect(inventory.stock).toBe(7)
+    expect(batch.quantity).toBe(7)
+    expect(batch.remaining).toBe(7)
+    expect(cancelLogs.count).toBe(0)
+  })
+
   it('RT-REF-001: 创建退库拒绝停用物料且不扣库存', async () => {
     const materialId = seedReturnMaterial(db, `inactive-ref-${Date.now()}`)
     db.prepare('UPDATE materials SET status = 0 WHERE id = ?').run(materialId)
