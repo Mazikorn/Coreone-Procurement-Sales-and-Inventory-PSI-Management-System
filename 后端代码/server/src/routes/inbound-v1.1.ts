@@ -773,6 +773,17 @@ router.put('/:id', requireWriteAccess, (req, res) => {
           return
         }
 
+        const batchDeduction = validateInboundBatchDeduction(
+          db,
+          record,
+          '批次数量已被后续业务调整，无法取消入库记录',
+        )
+        if (!batchDeduction.ok) {
+          db.exec('ROLLBACK')
+          error(res, batchDeduction.message, batchDeduction.code, batchDeduction.status)
+          return
+        }
+
         if (record.purchase_order_id) {
           const order = db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(record.purchase_order_id) as any
           if (order) {
@@ -1112,6 +1123,17 @@ router.post('/:id/cancel', requireWriteAccess, (req, res) => {
       if (otherInbound < outboundTotal) {
         db.exec('ROLLBACK')
         error(res, `取消后库存将变为负数，不可取消`, 'BUSINESS_RULE', 400)
+        return
+      }
+
+      const batchDeduction = validateInboundBatchDeduction(
+        db,
+        record,
+        '批次数量已被后续业务调整，无法取消入库记录',
+      )
+      if (!batchDeduction.ok) {
+        db.exec('ROLLBACK')
+        error(res, batchDeduction.message, batchDeduction.code, batchDeduction.status)
         return
       }
 
