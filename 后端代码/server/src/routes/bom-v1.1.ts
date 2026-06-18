@@ -556,6 +556,46 @@ function validateMaterialGroup(db: any, rawItems: unknown, label: string, usageF
   return { ok: true }
 }
 
+function readBomMaterialGroup(db: any, bomId: string, table: string) {
+  return db.prepare(`SELECT material_id FROM ${table} WHERE bom_id = ?`)
+    .all(bomId)
+    .map((row: any) => ({ materialId: row.material_id }))
+}
+
+function validateBomMaterialUniqueness(db: any, payload: any, options?: { bomId?: string }) {
+  const groups = [
+    { field: 'materials', table: 'bom_items', label: '特异性试剂' },
+    { field: 'generalReagents', table: 'bom_general_reagents', label: '通用试剂' },
+    { field: 'generalConsumables', table: 'bom_general_consumables', label: '通用耗材' },
+    { field: 'qualityControls', table: 'bom_quality_controls', label: '质控品' },
+  ] as const
+  const seen = new Map<string, string>()
+
+  for (const group of groups) {
+    const rawItems = payload?.[group.field]
+    const items = Array.isArray(rawItems)
+      ? rawItems
+      : (options?.bomId ? readBomMaterialGroup(db, options.bomId, group.table) : [])
+
+    for (const item of items) {
+      const materialId = String(item?.materialId || '').trim()
+      if (!materialId) continue
+      const previousLabel = seen.get(materialId)
+      if (previousLabel && previousLabel !== group.label) {
+        return {
+          ok: false,
+          status: 409,
+          message: `${previousLabel}与${group.label}存在重复物料`,
+          code: 'RESOURCE_CONFLICT',
+        }
+      }
+      seen.set(materialId, group.label)
+    }
+  }
+
+  return { ok: true }
+}
+
 function validateEquipmentTemplates(db: any, rawItems: unknown) {
   const items = Array.isArray(rawItems) ? rawItems : []
   const seen = new Set<string>()
@@ -602,7 +642,7 @@ function validateEquipmentTemplates(db: any, rawItems: unknown) {
   return { ok: true }
 }
 
-function validateBomPayload(db: any, payload: any, options?: { requireCoreMaterials?: boolean }) {
+function validateBomPayload(db: any, payload: any, options?: { requireCoreMaterials?: boolean; bomId?: string }) {
   const type = normalizeBomType(payload?.type)
   if (type && !VALID_BOM_TYPES.has(type)) {
     return { ok: false, status: 400, message: 'BOM类型不支持', code: 'INVALID_PARAMETER' }
@@ -615,7 +655,9 @@ function validateBomPayload(db: any, payload: any, options?: { requireCoreMateri
     validateMaterialGroup(db, payload?.qualityControls, '质控品', 'usagePerBatch'),
     validateEquipmentTemplates(db, payload?.equipmentTemplates),
   ]
-  return checks.find(check => !check.ok) || { ok: true }
+  return checks.find(check => !check.ok)
+    || validateBomMaterialUniqueness(db, payload, { bomId: options?.bomId })
+    || { ok: true }
 }
 
 function runRetroactiveBomRecalculation(db: any, impactSummary: any, operator: string) {
@@ -1171,7 +1213,7 @@ router.put('/:id', authenticateToken, requireBomWrite, (req, res) => {
 
     const existing = db.prepare('SELECT * FROM boms WHERE id = ? AND is_deleted = 0').get(id) as any
     if (!existing) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
-    const validation = validateBomPayload(db, { type: existing.type, ...normalizedPayload }, { requireCoreMaterials: Array.isArray(materials) })
+    const validation = validateBomPayload(db, { type: existing.type, ...normalizedPayload }, { requireCoreMaterials: Array.isArray(materials), bomId: id })
     if (!validation.ok) { error(res, validation.message, validation.code, validation.status); return }
     const nextServiceId = serviceId === undefined ? existing.service_id : (String(serviceId || '').trim() || null)
     const serviceValidation = validateBomService(db, nextServiceId, existing.type, id)

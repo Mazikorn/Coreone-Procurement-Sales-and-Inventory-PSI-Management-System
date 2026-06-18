@@ -537,6 +537,52 @@ describe('BOM 批量操作', () => {
     expect(template).toMatchObject({ equipment_type_id: equipmentTypeId, usage_minutes: 45 })
   })
 
+  it('BOM-MATERIAL-001: 创建BOM时同一物料不能跨核心/通用/质控分组重复配置', async () => {
+    const suffix = `mat-dup-create-${Date.now()}`
+    const materialId = await createMaterial(app, token, `dup-${suffix}`)
+
+    const res = await request(app)
+      .post('/api/v1/boms')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        code: `BOM-MAT-DUP-${suffix}`,
+        name: `重复物料BOM-${suffix}`,
+        type: 'ihc',
+        materials: [{ materialId, usagePerSample: 1, unit: '瓶' }],
+        generalReagents: [{ materialId, usagePerSample: 0.5, unit: 'ml' }],
+      })
+
+    expect(res.status).toBe(409)
+    expect(res.body.error?.message).toContain('重复物料')
+    expect(db.prepare('SELECT COUNT(*) as count FROM boms WHERE code = ?')
+      .get(`BOM-MAT-DUP-${suffix}`) as any).toMatchObject({ count: 0 })
+  })
+
+  it('BOM-MATERIAL-002: 编辑BOM时同一物料跨分组重复配置会整单拒绝且不覆盖原明细', async () => {
+    const suffix = `mat-dup-update-${Date.now()}`
+    const firstMaterialId = await createMaterial(app, token, `dup-first-${suffix}`)
+    const secondMaterialId = await createMaterial(app, token, `dup-second-${suffix}`)
+    const bomId = await createBom(app, token, suffix)
+
+    const res = await request(app)
+      .put(`/api/v1/boms/${bomId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        name: `重复物料编辑BOM-${suffix}`,
+        materials: [{ materialId: firstMaterialId, usagePerSample: 1, unit: '瓶' }],
+        qualityControls: [{ materialId: firstMaterialId, usagePerBatch: 1, coversSamples: 10, unit: '片' }],
+        generalConsumables: [{ materialId: secondMaterialId, usagePerSample: 1, unit: '个' }],
+      })
+
+    expect(res.status).toBe(409)
+    expect(res.body.error?.message).toContain('重复物料')
+    const coreRows = db.prepare('SELECT material_id FROM bom_items WHERE bom_id = ?').all(bomId) as any[]
+    const qcRows = db.prepare('SELECT material_id FROM bom_quality_controls WHERE bom_id = ?').all(bomId) as any[]
+    expect(coreRows).toHaveLength(1)
+    expect(coreRows[0].material_id).not.toBe(firstMaterialId)
+    expect(qcRows).toHaveLength(0)
+  })
+
   it('BOM-SERVICE-001: 创建BOM关联启用检测服务时同步项目BOM并返回服务名称', async () => {
     const suffix = `service-ok-${Date.now()}`
     const materialId = await createMaterial(app, token, `svc-${suffix}`)
