@@ -348,4 +348,33 @@ describe('库存盘点 API', () => {
     expect(adjustmentBatchAfterDelete.remaining).toBe(0)
     expect(adjustmentBatchAfterDelete.status).toBe(0)
   })
+
+  it('ST-008: 盘点确认后库存再次变化时禁止撤销旧盘点覆盖新库存', async () => {
+    const suffix = `delete-stale-${Date.now()}`
+    const { materialId, recordId, batchId } = seedStocktakingFixtureWithBatch(db, suffix, 10)
+
+    const confirmRes = await request(app)
+      .post(`/api/v1/stocktaking/${recordId}/confirm`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ reason: 'physical', remark: '盘亏确认后再出库' })
+    expect(confirmRes.status).toBe(200)
+
+    db.prepare('UPDATE inventory SET stock = stock - 1 WHERE material_id = ?').run(materialId)
+    db.prepare('UPDATE batches SET remaining = remaining - 1 WHERE id = ?').run(batchId)
+
+    const deleteRes = await request(app)
+      .delete(`/api/v1/stocktaking/${recordId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+
+    expect(deleteRes.status).toBe(409)
+    expect(deleteRes.body.error.message).toContain('当前库存已变化')
+
+    const record = db.prepare('SELECT is_deleted, status FROM stocktaking_records WHERE id = ?').get(recordId) as any
+    const inventory = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+    const batch = db.prepare('SELECT remaining FROM batches WHERE id = ?').get(batchId) as any
+
+    expect(record).toMatchObject({ is_deleted: 0, status: 'confirmed' })
+    expect(inventory.stock).toBe(7)
+    expect(batch.remaining).toBe(7)
+  })
 })

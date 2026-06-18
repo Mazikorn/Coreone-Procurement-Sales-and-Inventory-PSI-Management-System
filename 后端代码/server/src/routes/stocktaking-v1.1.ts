@@ -325,6 +325,12 @@ router.delete('/:id', (req, res) => {
         // 使用相对增量恢复到系统库存
         const diff = record.system_stock - beforeStock
 
+        if (Number(beforeStock) !== Number(record.actual_stock)) {
+          db.exec('ROLLBACK')
+          error(res, '当前库存已变化，无法撤销盘点记录', 'BUSINESS_RULE', 409)
+          return
+        }
+
         // 检查恢复后库存是否会变负
         if (afterStock < 0) {
           db.exec('ROLLBACK')
