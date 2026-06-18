@@ -156,6 +156,37 @@ describe('采购订单入库联动', () => {
     expect(order.total_amount).toBe(24)
   })
 
+  it('PO-VALIDATION-001: 创建采购订单拒绝非有限数量和单价，避免订单金额污染', async () => {
+    const suffix = `finite-number-${Date.now()}`
+    const fixture = seedPurchaseFixture(db, suffix)
+    const invalidPayloads = [
+      { orderedQty: 'Infinity', unitPrice: 12, message: '采购数量' },
+      { orderedQty: 5, unitPrice: '1e309', message: '采购单价' },
+    ]
+
+    for (const payload of invalidPayloads) {
+      const res = await request(app)
+        .post('/api/v1/purchase-orders')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          materialId: fixture.materialId,
+          supplierId: fixture.supplierId,
+          orderedQty: payload.orderedQty,
+          unitPrice: payload.unitPrice,
+        })
+
+      expect(res.status).toBe(400)
+      expect(res.body.error.message).toContain(payload.message)
+    }
+
+    const orderCount = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM purchase_orders
+      WHERE material_id = ?
+    `).get(fixture.materialId) as any
+    expect(orderCount.count).toBe(0)
+  })
+
   it('PO-IN-001: 采购入库只更新一次订单收货数量，并创建库存批次', async () => {
     const suffix = `once-${Date.now()}`
     const fixture = seedPurchaseFixture(db, suffix)

@@ -121,7 +121,7 @@ router.post('/', (req, res) => {
     const normalizedMaterialId = normalizeOptionalId(materialId)
     const normalizedSupplierId = normalizeOptionalId(supplierId)
     const normalizedOrderedQty = Number(orderedQty)
-    if (!normalizedMaterialId || orderedQty === undefined || orderedQty === null || isNaN(normalizedOrderedQty) || normalizedOrderedQty <= 0) {
+    if (!normalizedMaterialId || orderedQty === undefined || orderedQty === null || !Number.isFinite(normalizedOrderedQty) || normalizedOrderedQty <= 0) {
       error(res, '物料和采购数量必填', 'INVALID_PARAMETER', 400); return
     }
     const db = getDatabase()
@@ -137,7 +137,7 @@ router.post('/', (req, res) => {
     const normalizedUnitPrice = unitPrice === undefined || unitPrice === null || unitPrice === ''
       ? Number(material.price || 0)
       : Number(unitPrice)
-    if (isNaN(normalizedUnitPrice) || normalizedUnitPrice < 0) {
+    if (!Number.isFinite(normalizedUnitPrice) || normalizedUnitPrice < 0) {
       error(res, '采购单价不能为负数', 'INVALID_PARAMETER', 400); return
     }
     const id = uuidv4()
