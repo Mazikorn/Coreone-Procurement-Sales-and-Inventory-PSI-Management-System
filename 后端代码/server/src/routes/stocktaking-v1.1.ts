@@ -213,10 +213,12 @@ router.post('/', (req, res) => {
     const db = getDatabase()
     const material = db.prepare('SELECT 1 FROM materials WHERE id = ? AND is_deleted = 0').get(materialId)
     if (!material) { error(res, '物料不存在或已删除', 'NOT_FOUND', 404); return }
+    const inventory = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+    if (!inventory) { error(res, '物料无库存记录，无法创建盘点', 'NOT_FOUND', 404); return }
 
     db.exec('BEGIN IMMEDIATE')
     try {
-      const systemStock = (db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any)?.stock || 0
+      const systemStock = Number(inventory.stock || 0)
       const difference = normalizedActualStock - systemStock
       const id = uuidv4()
       db.prepare('INSERT INTO stocktaking_records (id, stocktaking_no, material_id, system_stock, actual_stock, difference, operator, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')

@@ -64,6 +64,23 @@ function seedStocktakingFixtureWithBatch(db: any, suffix: string, stock = 10) {
   return { ...fixture, batchId }
 }
 
+function seedMaterialWithoutInventory(db: any, suffix: string) {
+  const categoryId = `cat-stocktaking-no-inv-${suffix}`
+  const locationId = `loc-stocktaking-no-inv-${suffix}`
+  const materialId = `mat-stocktaking-no-inv-${suffix}`
+
+  db.prepare('INSERT INTO material_categories (id, code, name, level) VALUES (?, ?, ?, ?)')
+    .run(categoryId, `CAT-ST-NOINV-${suffix}`, '无库存盘点分类', 1)
+  db.prepare('INSERT INTO locations (id, code, name, type, zone) VALUES (?, ?, ?, ?, ?)')
+    .run(locationId, `LOC-ST-NOINV-${suffix}`, '无库存盘点库位', 'shelf', 'A区')
+  db.prepare(`
+    INSERT INTO materials (id, code, name, spec, unit, category_id, price, location_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(materialId, `MAT-ST-NOINV-${suffix}`, '无库存盘点物料', '1ml', '瓶', categoryId, 20, locationId)
+
+  return { materialId }
+}
+
 describe('库存盘点 API', () => {
   let app: any
   let db: any
@@ -425,5 +442,26 @@ describe('库存盘点 API', () => {
       .get(surplusFixture.materialId) as any
     expect(surplusInventory.stock).toBe(12)
     expect(getLocationStock(db, surplusFixture.materialId)).toBe(12)
+  })
+
+  it('ST-010: 创建盘点拒绝没有库存记录的物料，避免生成无法确认的盘点单', async () => {
+    const suffix = `no-inventory-${Date.now()}`
+    const { materialId } = seedMaterialWithoutInventory(db, suffix)
+
+    const res = await request(app)
+      .post('/api/v1/stocktaking')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        materialId,
+        actualStock: 3,
+        remark: '没有库存记录的盘点',
+      })
+
+    expect(res.status).toBe(404)
+    expect(res.body.error.message).toContain('无库存记录')
+
+    const records = db.prepare('SELECT COUNT(*) as count FROM stocktaking_records WHERE material_id = ?')
+      .get(materialId) as any
+    expect(records.count).toBe(0)
   })
 })
