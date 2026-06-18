@@ -445,6 +445,67 @@ describe('检测项目批量操作', () => {
     expect(row).toMatchObject({ type: 'he', bom_id: bomId })
   })
 
+  it('PRJ-BOM-006: 检测项目尚无历史业务时允许更换为合法BOM', async () => {
+    const suffix = `bom-change-free-${Date.now()}`
+    const firstBomId = `bom-prj-change-free-a-${suffix}`
+    const secondBomId = `bom-prj-change-free-b-${suffix}`
+    db.prepare('INSERT INTO boms (id, code, name, version, type, status) VALUES (?, ?, ?, ?, ?, 1)')
+      .run(firstBomId, `BOM-PRJ-CHG-FREE-A-${suffix}`, '可更换原BOM', 'v1.0', 'he')
+    db.prepare('INSERT INTO boms (id, code, name, version, type, status) VALUES (?, ?, ?, ?, ?, 1)')
+      .run(secondBomId, `BOM-PRJ-CHG-FREE-B-${suffix}`, '可更换新BOM', 'v1.0', 'he')
+    attachCoreMaterial(db, firstBomId, `change-free-a-${suffix}`)
+    attachCoreMaterial(db, secondBomId, `change-free-b-${suffix}`)
+    const projectId = await createProject(app, token, `${suffix}-project`, { type: 'he', bomId: firstBomId })
+
+    const res = await request(app)
+      .put(`/api/v1/projects/${projectId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        code: `PRJ-BATCH-${suffix}-project`,
+        name: `无历史可换BOM项目-${suffix}`,
+        type: 'he',
+        bomId: secondBomId,
+      })
+
+    expect(res.status).toBe(200)
+    const row = db.prepare('SELECT bom_id FROM projects WHERE id = ?').get(projectId) as any
+    expect(row.bom_id).toBe(secondBomId)
+  })
+
+  it('PRJ-BOM-007: 检测项目已有出库或LIS记录后禁止直接更换BOM', async () => {
+    const suffix = `bom-change-history-${Date.now()}`
+    const firstBomId = `bom-prj-change-history-a-${suffix}`
+    const secondBomId = `bom-prj-change-history-b-${suffix}`
+    const outboundId = `out-prj-change-history-${suffix}`
+    const caseId = `case-prj-change-history-${suffix}`
+    db.prepare('INSERT INTO boms (id, code, name, version, type, status) VALUES (?, ?, ?, ?, ?, 1)')
+      .run(firstBomId, `BOM-PRJ-CHG-HIS-A-${suffix}`, '历史原BOM', 'v1.0', 'he')
+    db.prepare('INSERT INTO boms (id, code, name, version, type, status) VALUES (?, ?, ?, ?, ?, 1)')
+      .run(secondBomId, `BOM-PRJ-CHG-HIS-B-${suffix}`, '历史新BOM', 'v1.0', 'he')
+    attachCoreMaterial(db, firstBomId, `change-history-a-${suffix}`)
+    attachCoreMaterial(db, secondBomId, `change-history-b-${suffix}`)
+    const projectId = await createProject(app, token, `${suffix}-project`, { type: 'he', bomId: firstBomId })
+    db.prepare("INSERT INTO outbound_records (id, outbound_no, type, project_id, total_cost, sample_count, operator, status) VALUES (?, ?, 'project', ?, 20, 2, 'admin', 'completed')")
+      .run(outboundId, `OUT-PRJ-CHG-HIS-${suffix}`, projectId)
+    db.prepare('INSERT INTO lis_cases (id, case_no, project_id, project_name, operator, operate_time, status) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(caseId, `CASE-PRJ-CHG-HIS-${suffix}`, projectId, `历史项目-${suffix}`, 'admin', '2026-06-18 11:30:00', 'normal')
+
+    const res = await request(app)
+      .put(`/api/v1/projects/${projectId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        code: `PRJ-BATCH-${suffix}-project`,
+        name: `历史禁止换BOM项目-${suffix}`,
+        type: 'he',
+        bomId: secondBomId,
+      })
+
+    expect(res.status).toBe(409)
+    expect(res.body.error?.code || res.body.code).toBe('PROJECT_BOM_CHANGE_BLOCKED')
+    const row = db.prepare('SELECT bom_id FROM projects WHERE id = ?').get(projectId) as any
+    expect(row.bom_id).toBe(firstBomId)
+  })
+
   it('PRJ-STATUS-001: 更新检测项目状态必须拒绝页面选项以外的状态', async () => {
     const suffix = `status-update-${Date.now()}`
     const projectId = await createProject(app, token, `${suffix}-project`, { status: 'active' })

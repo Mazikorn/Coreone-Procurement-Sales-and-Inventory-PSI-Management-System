@@ -126,6 +126,15 @@ function getProjectReferenceCounts(db: any, project: any) {
   }
 }
 
+function getProjectHistoryCounts(db: any, projectId: string) {
+  const outboundCount = (db.prepare('SELECT COUNT(*) as count FROM outbound_records WHERE project_id = ? AND is_deleted = 0').get(projectId) as any)?.count || 0
+  const lisCaseCount = (db.prepare('SELECT COUNT(*) as count FROM lis_cases WHERE project_id = ?').get(projectId) as any)?.count || 0
+  return {
+    outboundCount: Number(outboundCount),
+    lisCaseCount: Number(lisCaseCount),
+  }
+}
+
 function buildProjectStatusCheck(db: any, id: string, targetStatus: 'active' | 'inactive') {
   const project = db.prepare('SELECT id, code, name, type, bom_id FROM projects WHERE id = ? AND is_deleted = 0').get(id) as any
   if (!project) return null
@@ -414,6 +423,20 @@ router.put('/:id', requireProjectWrite, (req, res) => {
     if (effectiveBomId) {
       const bomValidation = validateProjectBom(db, effectiveBomId, effectiveType)
       if (!bomValidation.ok) { error(res, bomValidation.message, bomValidation.code, bomValidation.status); return }
+    }
+    if (data.bomId !== undefined) {
+      const currentBomId = String((existing as any).bom_id || '').trim()
+      const nextBomId = String(data.bomId || '').trim()
+      if (currentBomId !== nextBomId) {
+        const history = getProjectHistoryCounts(db, id)
+        if (history.outboundCount > 0 || history.lisCaseCount > 0) {
+          const reasons: string[] = []
+          if (history.outboundCount > 0) reasons.push(`已有出库记录 ${history.outboundCount} 条`)
+          if (history.lisCaseCount > 0) reasons.push(`已有LIS检测记录 ${history.lisCaseCount} 条`)
+          error(res, `检测项目已有历史业务，不可直接更换BOM：${reasons.join('；')}`, 'PROJECT_BOM_CHANGE_BLOCKED', 409)
+          return
+        }
+      }
     }
     const fields: string[] = []; const params: any[] = []
     if (normalizedCode !== null) { fields.push('code = ?'); params.push(normalizedCode) }
