@@ -11063,7 +11063,46 @@ git diff --check
 
 - 当前成本结构报表仍依赖当前 `boms.standard_equipment_cost` 解释历史出库；如果后续 BOM 标准设备成本被修改，彻底历史快照化需要单独设计出库/BOM 成本快照字段和兼容迁移。
 
-## 二百二十三、结论
+## 二百二十三、批次 268: 人员效率不得因项目软删除丢失历史项目类型工时
+
+**发现的问题**
+
+- `/api/v1/reports/personnel-efficiency` 汇总人员效率时，通过 `LEFT JOIN projects p ON p.id = r.project_id AND (p.is_deleted = 0 OR p.id IS NULL)` 读取项目类型。
+- 如果历史出库关联的项目后续被软删除，效率报表会把该出库的项目类型退化为 `all`。
+- 标准人工工时和人工成本按项目类型匹配；当 HE/IHC 等类型被退化为 `all` 后，历史出库可能被算成 0 标准工时、0 人工成本和 0 单位人工成本。
+- 这会影响实验运营/人员效率页面对已发生工作的产出效率解释，也会让依赖项目类型的历史人工成本展示被后续删除动作污染。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/reports-v1.1.ts`
+  - `personnel-efficiency` 读取项目类型时不再排除软删除项目。
+  - 已完成且未删除的历史出库记录继续按其出库时关联项目的类型匹配标准工时。
+- `后端代码/server/tests/integration/personnel-efficiency.test.ts`
+  - 新增 `REPORT-EFFICIENCY-001`，覆盖历史 HE 项目出库后项目被软删除，人员效率报表仍必须保留 HE 标准工时、人工成本和单位人工成本。
+
+**ABC 影响评估**
+
+- 本批不修改 ABC 本体、成本公式、成本池、收费映射、成本异常判定或废弃 `/cost-analysis` 代码。
+- 变更只影响非 ABC 人员效率报表读取项目类型的口径，不写库存、项目、出库、成本异常或 ABC 明细。
+- 人员效率、项目成本、成本趋势、成本结构、出库流程和精确 ABC 输入回归通过，说明项目软删除工时修复没有破坏出库删除后的报表扣除、项目类型趋势过滤、成本结构或 ABC 病例收费重排。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/personnel-efficiency.test.ts -t "REPORT-EFFICIENCY-001"` 修复前失败：项目软删除后 `totalLaborCost=0`、`totalStandardHours=0`、`costPerOutput=0`，期望分别为 120、1、60。
+- 修复后验证:
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/personnel-efficiency.test.ts -t "REPORT-EFFICIENCY-001"` 通过，1 file / 1 test passed / 2 skipped。
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/personnel-efficiency.test.ts tests/integration/reports-cost-by-project.test.ts tests/integration/reports-cost-trend.test.ts tests/integration/full-cost.test.ts tests/integration/outbound-flow.test.ts` 通过，5 files / 12 tests passed。
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/cost-exceptions.test.ts -t "同一病例多个BOM|取消非最新病例"` 通过，2 tests passed / 9 skipped，覆盖出库删除后 ABC 病例收费和重排链路。
+  - `后端代码/server npm run build` 通过。
+- 浏览器复核:
+  - 本批为后端人员效率报表读取口径修复，核心风险在 API 层是否保留历史项目类型并正确计算标准工时；已用接口级测试覆盖，不新增截图证据。
+
+**后续风险**
+
+- 当前人员效率报表仍依赖当前 `standard_labor_times` 解释历史出库；如果标准工时后续被修改，彻底历史快照化需要单独设计出库人工工时/费率快照字段和兼容迁移。
+
+## 二百二十四、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

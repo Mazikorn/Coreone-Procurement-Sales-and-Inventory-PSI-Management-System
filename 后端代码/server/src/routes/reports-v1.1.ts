@@ -979,7 +979,7 @@ router.get('/personnel-efficiency', (req, res) => {
         SUM(COALESCE(r.total_cost, 0)) as material_cost
       FROM outbound_records r
       LEFT JOIN users u ON u.username = r.operator AND u.is_deleted = 0
-      LEFT JOIN projects p ON p.id = r.project_id AND (p.is_deleted = 0 OR p.id IS NULL)
+      LEFT JOIN projects p ON p.id = r.project_id
       WHERE ${where}
       GROUP BY r.operator, operator_name, role, project_type, month
       ORDER BY sample_count DESC

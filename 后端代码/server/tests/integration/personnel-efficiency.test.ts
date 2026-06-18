@@ -138,4 +138,57 @@ describe('集成测试：人员效率报表', () => {
     expect(res.body.data.ranking).toEqual([])
     expect(res.body.data.trend).toEqual([])
   })
+
+  it('REPORT-EFFICIENCY-001: 人员效率不因项目后续软删除而丢失历史项目类型工时', async () => {
+    const suffix = Date.now()
+    const operator = `pe-deleted-project-tech-${suffix}`
+    const projectId = `pe-deleted-project-${suffix}`
+    const outboundId = `pe-deleted-project-out-${suffix}`
+
+    db.prepare('DELETE FROM standard_labor_times').run()
+    db.prepare(`
+      INSERT INTO standard_labor_times (
+        id, step_code, step_name, project_type, standard_minutes, labor_rate_per_minute, is_equipment_step
+      )
+      VALUES (?, 'PE-DEL-HE', '已删除项目HE工时', 'he', 30, 2, 0)
+    `).run(`pe-deleted-labor-${suffix}`)
+    db.prepare(`
+      INSERT INTO users (id, username, password, real_name, role)
+      VALUES (?, ?, 'x', '软删除项目历史技术员', 'technician')
+    `).run(`user-${operator}`, operator)
+    db.prepare(`
+      INSERT INTO projects (id, code, name, type, is_deleted)
+      VALUES (?, ?, '软删除但有人员效率历史项目', 'he', 0)
+    `).run(projectId, `PE-DEL-PROJECT-${suffix}`)
+    db.prepare(`
+      INSERT INTO outbound_records (
+        id, outbound_no, type, project_id, total_cost, sample_count,
+        operator, status, created_at, is_deleted
+      )
+      VALUES (?, ?, 'project', ?, 120, 2, ?, 'completed', '2031-10-10T09:00:00', 0)
+    `).run(outboundId, `PE-DEL-OUT-${suffix}`, projectId, operator)
+    db.prepare('UPDATE projects SET is_deleted = 1 WHERE id = ?').run(projectId)
+
+    const res = await request(app)
+      .get('/api/v1/reports/personnel-efficiency?startDate=2031-10-01&endDate=2031-10-31&role=technician')
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(200)
+    expect(res.body.success).toBe(true)
+    expect(res.body.data.summary).toMatchObject({
+      personCount: 1,
+      totalOutput: 2,
+      totalLaborCost: 120,
+      totalStandardHours: 1,
+      costPerOutput: 60,
+    })
+    expect(res.body.data.ranking[0]).toMatchObject({
+      id: operator,
+      outputCount: 2,
+      totalCost: 120,
+      standardHours: 1,
+      outputPerHour: 2,
+      costPerOutput: 60,
+    })
+  })
 })
