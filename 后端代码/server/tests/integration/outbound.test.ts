@@ -424,6 +424,49 @@ describe('集成测试：出库管理', () => {
       expect(savedItems).toHaveLength(1)
       expect(savedItems[0]).toMatchObject({ material_id: materialId, quantity: 1 })
     })
+
+    it('OUT-UPDATE-001: 修改出库未提交项目字段时必须保留原检测项目归属', async () => {
+      const suffix = `keep-project-${Date.now()}`
+      const projectRes = await request(app)
+        .post('/api/v1/projects')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          code: `OB-KEEP-PRJ-${suffix}`,
+          name: `出库编辑保留项目-${suffix}`,
+          type: 'ihc',
+          status: 'active',
+        })
+      expect(projectRes.status).toBe(201)
+      const projectId = projectRes.body.data.id
+
+      const createRes = await request(app)
+        .post('/api/v1/outbound')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          type: 'project',
+          projectId,
+          items: [{ materialId, quantity: 1 }],
+          remark: '带项目出库',
+        })
+      expect(createRes.status).toBe(201)
+      const outboundId = createRes.body.data.id
+
+      const updateRes = await request(app)
+        .put(`/api/v1/outbound/${outboundId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          items: [{ materialId, quantity: 2 }],
+          remark: '只改数量不改项目',
+        })
+
+      expect(updateRes.status).toBe(200)
+      const savedRecord = db.prepare('SELECT type, project_id, remark FROM outbound_records WHERE id = ?').get(outboundId) as any
+      expect(savedRecord).toMatchObject({
+        type: 'project',
+        project_id: projectId,
+        remark: '只改数量不改项目',
+      })
+    })
   })
 
   describe('多批次分配', () => {
