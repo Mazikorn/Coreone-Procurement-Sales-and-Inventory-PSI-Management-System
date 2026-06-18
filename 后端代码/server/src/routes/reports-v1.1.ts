@@ -785,7 +785,7 @@ router.get('/cost-variance', (req, res) => {
       const placeholders = bomIds.map(() => '?').join(',')
       const bomRows = db.prepare(`
         SELECT id, standard_labor_cost, standard_equipment_cost, standard_indirect_cost, standard_total_cost
-        FROM boms WHERE id IN (${placeholders}) AND is_deleted = 0
+        FROM boms WHERE id IN (${placeholders})
       `).all(...bomIds) as any[]
       for (const b of bomRows) {
         bomMap[b.id] = b
