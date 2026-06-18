@@ -41,6 +41,10 @@ function validateProjectBom(db: any, bomId: unknown, projectType: string) {
   if (bom.type !== projectType && bom.type !== 'project') {
     return { ok: false, status: 422, message: '所选BOM类型与检测服务类型不一致', code: 'BOM_PROJECT_TYPE_MISMATCH' }
   }
+  const coreMaterialCount = (db.prepare('SELECT COUNT(*) as count FROM bom_items WHERE bom_id = ?').get(id) as any)?.count || 0
+  if (Number(coreMaterialCount) <= 0) {
+    return { ok: false, status: 422, message: '所选BOM缺少核心物料', code: 'BOM_CORE_MATERIAL_REQUIRED' }
+  }
   return { ok: true }
 }
 

@@ -31,6 +31,17 @@ async function createProject(app: any, token: string, suffix: string, extra: Rec
   return res.body.data.id as string
 }
 
+function attachCoreMaterial(db: any, bomId: string, suffix: string) {
+  const categoryId = `cat-prj-core-${suffix}`
+  const materialId = `mat-prj-core-${suffix}`
+  db.prepare('INSERT OR IGNORE INTO material_categories (id, code, name, level) VALUES (?, ?, ?, 1)')
+    .run(categoryId, `CAT-PRJ-CORE-${suffix}`, `项目核心物料分类-${suffix}`)
+  db.prepare('INSERT OR IGNORE INTO materials (id, code, name, unit, category_id, price) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(materialId, `MAT-PRJ-CORE-${suffix}`, `项目核心物料-${suffix}`, '瓶', categoryId, 10)
+  db.prepare('INSERT OR IGNORE INTO bom_items (id, bom_id, material_id, usage_per_sample, unit) VALUES (?, ?, ?, ?, ?)')
+    .run(`bi-prj-core-${suffix}`, bomId, materialId, 1, '瓶')
+}
+
 describe('检测项目批量操作', () => {
   let app: any
   let db: any
@@ -112,6 +123,7 @@ describe('检测项目批量操作', () => {
     const bomId = `bom-prj-stats-${suffix}`
     db.prepare('INSERT INTO boms (id, code, name, version, type, status) VALUES (?, ?, ?, ?, ?, 1)')
       .run(bomId, `BOM-PRJ-STATS-${suffix}`, '项目统计BOM', 'v1.0', 'he')
+    attachCoreMaterial(db, bomId, `stats-${suffix}`)
 
     await createProject(app, token, `${suffix}-active`, { manager: `负责人-${suffix}` })
     await createProject(app, token, `${suffix}-inactive`, { status: 'inactive', manager: `负责人-${suffix}` })
@@ -184,6 +196,7 @@ describe('检测项目批量操作', () => {
     const bomId = `bom-prj-name-${suffix}`
     db.prepare('INSERT INTO boms (id, code, name, version, type, status) VALUES (?, ?, ?, ?, ?, 1)')
       .run(bomId, `BOM-PRJ-NAME-${suffix}`, '详情可见BOM', 'v2.1', 'he')
+    attachCoreMaterial(db, bomId, `name-${suffix}`)
     const projectId = await createProject(app, token, `${suffix}-project`, { bomId })
 
     const detail = await request(app)
@@ -387,11 +400,34 @@ describe('检测项目批量操作', () => {
     expect(res.status).toBe(409)
   })
 
+  it('PRJ-BOM-005: 创建检测项目时拒绝关联无核心物料的BOM', async () => {
+    const suffix = `bom-empty-${Date.now()}`
+    const bomId = `bom-prj-empty-${suffix}`
+    db.prepare('INSERT INTO boms (id, code, name, version, type, status) VALUES (?, ?, ?, ?, ?, 1)')
+      .run(bomId, `BOM-PRJ-EMPTY-${suffix}`, '无核心物料BOM', 'v1.0', 'he')
+
+    const res = await request(app)
+      .post('/api/v1/projects')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        code: `PRJ-BOM-EMPTY-${suffix}`,
+        name: `无核心物料BOM项目-${suffix}`,
+        type: 'he',
+        bomId,
+      })
+
+    expect(res.status).toBe(422)
+    expect(res.body.error?.code || res.body.code).toBe('BOM_CORE_MATERIAL_REQUIRED')
+    const project = db.prepare('SELECT id FROM projects WHERE code = ?').get(`PRJ-BOM-EMPTY-${suffix}`)
+    expect(project).toBeUndefined()
+  })
+
   it('PRJ-BOM-004: 更新检测项目类型时必须重新校验已绑定BOM类型', async () => {
     const suffix = `bom-update-type-${Date.now()}`
     const bomId = `bom-prj-update-type-${suffix}`
     db.prepare('INSERT INTO boms (id, code, name, version, type, status) VALUES (?, ?, ?, ?, ?, 1)')
       .run(bomId, `BOM-PRJ-UP-TYPE-${suffix}`, '更新类型绑定BOM', 'v1.0', 'he')
+    attachCoreMaterial(db, bomId, `update-type-${suffix}`)
     const projectId = await createProject(app, token, `${suffix}-project`, { type: 'he', bomId })
 
     const res = await request(app)
@@ -438,6 +474,7 @@ describe('检测项目批量操作', () => {
 
     db.prepare('INSERT INTO boms (id, code, name, version, type, service_id, status) VALUES (?, ?, ?, ?, ?, ?, 1)')
       .run(bomId, `BOM-PRJ-STATUS-${suffix}`, '状态影响BOM', 'v1.0', 'he', projectId)
+    attachCoreMaterial(db, bomId, `status-${suffix}`)
     db.prepare('UPDATE projects SET bom_id = ? WHERE id = ?').run(bomId, projectId)
     db.prepare("INSERT INTO outbound_records (id, outbound_no, type, project_id, total_cost, sample_count, operator, status) VALUES (?, ?, 'project', ?, 20, 2, 'admin', 'completed')")
       .run(outboundId, `OUT-PRJ-STATUS-${suffix}`, projectId)

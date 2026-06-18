@@ -172,6 +172,7 @@ export default function Projects() {
         open={page.modalType === 'import'}
         onClose={() => page.setModalType(null)}
         importing={page.isSubmitting}
+        boms={page.boms}
         onImport={page.handleImportProjects}
       />
     </div>

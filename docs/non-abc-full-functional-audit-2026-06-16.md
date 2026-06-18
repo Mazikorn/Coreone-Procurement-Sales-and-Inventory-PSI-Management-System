@@ -9217,7 +9217,63 @@ git diff --check
 - BOM 导入入口仍需继续检查，尤其是导入时是否能制造无核心物料、重复物料、错误用量或错误检测服务绑定。
 - 后续排查应从“基础数据业务闭环”出发，而不是继续按按钮零散扫点。
 
-## 一百七十九、结论
+## 一百七十九、批次 224: 检测服务导入与绑定拒绝无核心物料BOM
+
+**发现的问题**
+
+- 检测服务创建/更新的后端 BOM 校验只检查 BOM 是否存在、启用、类型匹配，没有确认该 BOM 至少包含一项核心物料。
+- 历史无核心物料 BOM 如果仍是启用状态，可以被检测服务绑定，后续会让库存扣减、可支撑样本数和成本分析建立在无效配置上。
+- 检测服务导入弹窗此前只校验编码、名称和服务类型；导入文件填写错误 BOM ID、类型不符 BOM 或无核心物料 BOM 时，预览仍显示为可导入，只能等提交后逐条失败，且用户无法在文件阶段看到具体原因。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/projects-v1.1.ts`
+  - `validateProjectBom` 增加核心物料校验：关联 BOM 必须存在 `bom_items` 明细。
+  - 创建、更新和批量启用检测服务时复用同一校验，拒绝无核心物料 BOM。
+  - 错误码为 `BOM_CORE_MATERIAL_REQUIRED`，提示“所选BOM缺少核心物料”。
+- `前端代码/src/pages/master/components/ProjectImportModal.tsx`
+  - 导入解析接收当前启用 BOM 列表。
+  - 文件预览阶段拦截 BOM ID 不存在或未启用、BOM 类型与服务类型不一致、BOM 缺少核心物料。
+  - 错误行不再进入可导入列表。
+- `前端代码/src/pages/master/Projects.tsx`
+  - 将页面已加载的 BOM 引用数据传入检测服务导入弹窗。
+- `后端代码/server/tests/projects-batch.test.ts`
+  - 新增无核心物料 BOM 绑定检测服务的后端拒绝用例。
+  - 将原本表示“有效 BOM”的测试夹具补齐核心物料明细，避免继续把空 BOM 当有效配置。
+- `前端代码/src/pages/master/components/ProjectImportModal.test.ts`
+  - 新增导入前 BOM 存在性、类型匹配和核心物料校验用例。
+
+**ABC 影响评估**
+
+- 本批不修改 ABC 本体、成本公式、成本池、收费映射、成本异常判定或废弃 `/cost-analysis` 代码。
+- 变更收紧的是检测服务与 BOM 的上游配置事实，避免 ABC 后续读取到“已绑定但无核心物料”的假成本对象。
+- 对有效 BOM 的业务流无影响；测试夹具已按新规则显式补核心物料。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/master/components/ProjectImportModal.test.ts` 修复前新增导入校验用例失败，4 行都被当作可导入。
+  - `后端代码/server npm test -- --run tests/projects-batch.test.ts` 修复前新增无核心物料绑定用例失败，接口返回 `201`。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/master/components/ProjectImportModal.test.ts` 通过，1 file / 2 tests passed。
+  - `后端代码/server npm test -- --run tests/projects-batch.test.ts` 通过，1 file / 17 tests passed；仍有既有 Vitest 退出等待提示，但命令返回成功。
+  - `前端代码 npm run build` 通过；仍有既有 chunk size warning，不影响本批功能结论。
+  - `后端代码/server npm run build` 通过。
+- 浏览器复核:
+  - 使用指定 Chrome for Testing 路径启动 headless Playwright，前端端口 `8080`。
+  - 通过 Playwright 路由 mock 3 个 BOM：有效 HE BOM、类型不匹配 IHC BOM、无核心物料 HE BOM。
+  - 上传 `/tmp/coreone-project-import-invalid-bom.xlsx` 后，导入弹窗只保留 `PRJ-OK` 1 条可导入。
+  - 页面展示三条阻断原因：`BOM ID不存在或未启用`、`BOM类型与服务类型不一致`、`BOM缺少核心物料`。
+  - 点击“开始导入 (1)”后监控到 `POST /api/v1/projects` 调用 1 次，payload 只包含有效 `bom-he-ok`。
+  - 控制台错误和失败网络响应均为 `0`。
+  - 导入前截图保留在 `/tmp/coreone-b224-project-import-bom-guard-before-import.png`，导入后截图保留在 `/tmp/coreone-b224-project-import-bom-guard.png`。
+
+**后续风险**
+
+- 本批关闭检测服务导入/绑定的空 BOM 风险；下一步基础数据 P0 应继续检查物料状态、BOM 状态与出库/导入之间是否还存在绕过路径。
+- 若后续新增批量导入 BOM 本体，需要同样做“导入前预检 + 后端强约束”，不能只依赖页面表单规则。
+
+## 一百八十、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及退库/报废/供应商退货/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；退库、报废、供应商退货和库存盘点均已把总库存与批次剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

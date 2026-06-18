@@ -2,11 +2,13 @@ import { useMemo, useRef, useState, type ChangeEvent } from 'react'
 import { Download, X, Upload } from 'lucide-react'
 import { toast } from 'sonner'
 import type { ProjectImportRow } from '../hooks/useProjectsPage'
+import type { BOM } from '@/types'
 
 interface Props {
   open: boolean
   onClose: () => void
   importing: boolean
+  boms?: BOM[]
   onImport: (rows: ProjectImportRow[]) => Promise<{ success: number; failed: number }>
 }
 
@@ -58,7 +60,9 @@ const normalizeProjectType = (value: string) => {
   return serviceTypeAliases[normalized] || ''
 }
 
-export function parseProjectImportRows(rawRows: Record<string, unknown>[]) {
+const getBomMaterialCount = (bom: BOM) => bom.materials?.length ?? bom.materialCount ?? 0
+
+export function parseProjectImportRows(rawRows: Record<string, unknown>[], boms?: BOM[]) {
   const parsedRows: ParsedRow[] = []
   const errors: string[] = []
 
@@ -86,6 +90,21 @@ export function parseProjectImportRows(rawRows: Record<string, unknown>[]) {
       errors.push(`第 ${rowNumber} 行服务类型无效：${rawType}`)
       return
     }
+    if (parsed.bomId && boms) {
+      const bom = boms.find(item => item.id === parsed.bomId)
+      if (!bom) {
+        errors.push(`第 ${rowNumber} 行BOM ID不存在或未启用：${parsed.bomId}`)
+        return
+      }
+      if (bom.type !== type && bom.type !== 'project') {
+        errors.push(`第 ${rowNumber} 行BOM类型与服务类型不一致：${parsed.bomId}`)
+        return
+      }
+      if (getBomMaterialCount(bom) <= 0) {
+        errors.push(`第 ${rowNumber} 行BOM缺少核心物料：${parsed.bomId}`)
+        return
+      }
+    }
 
     parsedRows.push({ ...parsed, type })
   })
@@ -93,7 +112,7 @@ export function parseProjectImportRows(rawRows: Record<string, unknown>[]) {
   return { rows: parsedRows, errors }
 }
 
-export function ProjectImportModal({ open, onClose, importing, onImport }: Props) {
+export function ProjectImportModal({ open, onClose, importing, boms, onImport }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [fileName, setFileName] = useState('')
   const [rows, setRows] = useState<ParsedRow[]>([])
@@ -112,7 +131,7 @@ export function ProjectImportModal({ open, onClose, importing, onImport }: Props
     const workbook = XLSX.read(buffer, { type: 'array' })
     const sheet = workbook.Sheets[workbook.SheetNames[0]]
     const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' })
-    const { rows: parsedRows, errors: nextErrors } = parseProjectImportRows(rawRows)
+    const { rows: parsedRows, errors: nextErrors } = parseProjectImportRows(rawRows, boms)
 
     setRows(parsedRows)
     setErrors(nextErrors.slice(0, 20))
