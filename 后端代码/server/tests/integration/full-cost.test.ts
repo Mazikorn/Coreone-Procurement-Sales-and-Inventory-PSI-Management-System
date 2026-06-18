@@ -19,6 +19,43 @@ async function loginAdmin(app: any): Promise<string> {
 }
 
 describe('集成测试：全成本计算端到端', () => {
+  it('REPORT-STRUCTURE-001: 成本结构不因项目后续软删除而丢失历史材料成本', async () => {
+    const { app, db } = await getApp()
+    const token = await loginAdmin(app)
+    const suffix = Date.now()
+    const projectId = `structure-deleted-project-${suffix}`
+    const outboundId = `structure-deleted-out-${suffix}`
+
+    db.prepare(`
+      INSERT INTO projects (id, code, name, type, is_deleted)
+      VALUES (?, ?, '已删除但有成本结构历史项目', 'ihc', 0)
+    `).run(projectId, `STRUCT-PROJECT-${suffix}`)
+    db.prepare(`
+      INSERT INTO outbound_records (
+        id, outbound_no, type, project_id, total_cost, sample_count,
+        operator, status, created_at, is_deleted
+      )
+      VALUES (?, ?, 'project', ?, 220, 2, 'admin', 'completed', '2031-08-10T09:00:00', 0)
+    `).run(outboundId, `STRUCT-OUT-${suffix}`, projectId)
+    db.prepare('UPDATE projects SET is_deleted = 1 WHERE id = ?').run(projectId)
+
+    const res = await request(app)
+      .get('/api/v1/reports/cost-structure?startDate=2031-08-01&endDate=2031-08-31')
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(200)
+    expect(res.body.success).toBe(true)
+    const material = res.body.data.structure.find((item: any) => item.costType === 'material')
+    expect(material).toMatchObject({
+      costType: 'material',
+      amount: 220,
+    })
+    expect(res.body.data.totalCost).toBeGreaterThanOrEqual(220)
+
+    db.prepare('UPDATE outbound_records SET is_deleted = 1 WHERE id = ?').run(outboundId)
+    db.prepare('UPDATE projects SET is_deleted = 1 WHERE id = ?').run(projectId)
+  })
+
   it('完整流程：BOM扩展配额 → 设备/工时/间接成本 → 出库 → 全成本报表验证', async () => {
     const { app, db } = await getApp()
     const token = await loginAdmin(app)
