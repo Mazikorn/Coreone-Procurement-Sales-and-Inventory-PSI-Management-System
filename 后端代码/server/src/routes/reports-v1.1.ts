@@ -699,7 +699,7 @@ router.get('/cost-variance', (req, res) => {
       ? String(req.query.compareType)
       : 'project'
     const db = getDatabase()
-    let where = "r.status = 'completed' AND r.is_deleted = 0 AND (p.is_deleted = 0 OR p.id IS NULL)"
+    let where = "r.status = 'completed' AND r.is_deleted = 0"
     const params: any[] = []
     if (startDate) { where += ' AND r.created_at >= ?'; params.push(startDate) }
     if (endDate) { where += ' AND r.created_at <= ?'; params.push(`${endDate}T23:59:59`) }

@@ -10748,7 +10748,47 @@ git diff --check
 
 - 当前差异报表仍使用当前 `materials.name/unit/price` 解释历史记录；彻底历史快照化需要单独设计出库物料快照字段和兼容迁移。
 
-## 二百一十五、结论
+## 二百一十五、批次 260: 成本差异项目维度不得因项目软删除丢失历史成本行
+
+**发现的问题**
+
+- `/api/v1/reports/cost-variance` 按项目或月份维度汇总成本差异时，查询条件要求 `p.is_deleted = 0 OR p.id IS NULL`。
+- 如果某个项目已有历史出库，后续项目被软删除，旧差异报表会把该项目的历史出库整行排除。
+- 这会让成本差异分析少算实际成本和样本数，也会让项目软删除这一主数据维护动作污染历史成本复盘。
+- 当前 `outbound_records` 尚未保存项目名称/类型快照；本批先收口“历史成本差异行不得消失”这一最小不变量，不扩展 schema。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/reports-v1.1.ts`
+  - `cost-variance` 去掉对当前项目软删除状态的排除条件。
+  - 已完成且未删除的出库记录继续进入项目/月度成本差异汇总。
+  - 项目名称和类型仍按当前可关联项目读取；更完整的历史快照能力另行评估，不在本批扩大范围。
+- `后端代码/server/tests/integration/reports-cost-by-project.test.ts`
+  - 新增 `REPORT-PROJECT-003`，覆盖历史出库后项目被软删除，成本差异项目维度仍必须保留项目行、项目名、材料实际成本和样本数。
+
+**ABC 影响评估**
+
+- 本批不修改 ABC 本体、成本公式、成本池、收费映射、成本异常判定或废弃 `/cost-analysis` 代码。
+- 变更只影响非 ABC 成本差异报表的读取口径，不写库存、BOM、出库、成本异常或 ABC 明细。
+- 全成本、出库流程和精确 ABC 输入回归通过，说明成本差异项目维度修复没有破坏全成本项目报表、成本结构、成本差异三维度、出库删除后的报表扣除或 ABC 病例收费重排。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/reports-cost-by-project.test.ts -t "REPORT-PROJECT-003"` 修复前失败：项目软删除后 `cost-variance` 项目维度返回中找不到该项目成本差异行。
+- 修复后验证:
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/reports-cost-by-project.test.ts -t "REPORT-PROJECT-003"` 通过，1 file / 1 test passed / 2 skipped。
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/reports-cost-by-project.test.ts tests/integration/full-cost.test.ts tests/integration/outbound-flow.test.ts` 通过，3 files / 5 tests passed。
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/cost-exceptions.test.ts -t "同一病例多个BOM|取消非最新病例"` 通过，2 tests passed / 9 skipped，覆盖出库删除后 ABC 病例收费和重排链路。
+  - `后端代码/server npm run build` 通过。
+- 浏览器复核:
+  - 本批为后端成本差异报表读取口径修复，核心风险在 API 层是否保留历史项目成本行；已用接口级测试覆盖，不新增截图证据。
+
+**后续风险**
+
+- 当前差异报表仍使用当前 `projects.name/type/bom_id` 解释历史记录；彻底历史快照化需要单独设计出库项目快照字段和兼容迁移。
+
+## 二百一十六、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

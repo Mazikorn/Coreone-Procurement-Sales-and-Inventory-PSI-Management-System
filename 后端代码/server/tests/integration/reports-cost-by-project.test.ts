@@ -90,4 +90,35 @@ describe('集成测试：非ABC项目成本报表', () => {
     })
     expect(res.body.data.summary.materialCost).toBeGreaterThanOrEqual(480)
   })
+
+  it('REPORT-PROJECT-003: 成本差异按项目维度不因项目后续软删除而丢失历史成本行', async () => {
+    const suffix = Date.now()
+    const projectId = `report-variance-project-deleted-${suffix}`
+    const outboundId = `report-variance-project-outbound-${suffix}`
+
+    db.prepare(`
+      INSERT INTO projects (id, code, name, type, status, is_deleted)
+      VALUES (?, ?, '已删除但有成本差异项目', 'ihc', 1, 0)
+    `).run(projectId, `REPORT-VAR-PROJECT-${suffix}`)
+    db.prepare(`
+      INSERT INTO outbound_records (id, outbound_no, type, project_id, total_cost, sample_count, operator, status, created_at, is_deleted)
+      VALUES (?, ?, 'project', ?, 240, 2, 'admin', 'completed', '2026-06-14T09:00:00', 0)
+    `).run(outboundId, `REPORT-VAR-OUT-${suffix}`, projectId)
+    db.prepare('UPDATE projects SET is_deleted = 1 WHERE id = ?').run(projectId)
+
+    const res = await request(app)
+      .get('/api/v1/reports/cost-variance?compareType=project&startDate=2026-06-01&endDate=2026-06-30')
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(200)
+    const item = res.body.data.items.find((row: any) => row.projectId === projectId)
+    expect(item).toMatchObject({
+      projectId,
+      projectName: '已删除但有成本差异项目',
+      groupType: 'project',
+      materialActual: 240,
+      sampleCount: 2,
+    })
+    expect(item.totalActual).toBeGreaterThanOrEqual(240)
+  })
 })
