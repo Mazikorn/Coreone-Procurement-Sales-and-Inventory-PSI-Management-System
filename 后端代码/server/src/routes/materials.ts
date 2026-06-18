@@ -263,6 +263,39 @@ function validateMaterialReferences(db: any, refs: { categoryId?: unknown; suppl
   return { ok: true }
 }
 
+function validateMaterialIdentityUnique(db: any, refs: { id?: string; code?: unknown; barcode?: unknown }) {
+  const id = String(refs.id || '').trim()
+  const code = String(refs.code || '').trim()
+  const barcode = String(refs.barcode || '').trim()
+
+  if (code) {
+    const duplicateCode = db.prepare(`
+      SELECT id FROM materials
+      WHERE is_deleted = 0 AND code = ? AND id <> ?
+      LIMIT 1
+    `).get(code, id) as any
+    if (duplicateCode) {
+      return { ok: false, status: 409, message: '物料编码已存在', code: 'RESOURCE_CONFLICT' }
+    }
+  }
+
+  if (barcode) {
+    const duplicateBarcode = db.prepare(`
+      SELECT id FROM materials
+      WHERE is_deleted = 0
+        AND COALESCE(barcode, '') <> ''
+        AND LOWER(barcode) = LOWER(?)
+        AND id <> ?
+      LIMIT 1
+    `).get(barcode, id) as any
+    if (duplicateBarcode) {
+      return { ok: false, status: 409, message: '物料条码已存在', code: 'RESOURCE_CONFLICT' }
+    }
+  }
+
+  return { ok: true }
+}
+
 function getMaterialReferences(db: any, materialId: string) {
   const check = buildMaterialDeleteCheck(db, materialId)
   if (!check) return []
@@ -421,11 +454,18 @@ router.post('/', requireMaterialWrite, (req, res) => {
     const id = uuidv4()
     let finalCode: string
     if (codeText.value) {
-      const exists = db.prepare('SELECT 1 FROM materials WHERE code = ?').get(codeText.value)
-      if (exists) { error(res, 'Code already exists', 'RESOURCE_CONFLICT', 409); return }
       finalCode = codeText.value
     } else {
       finalCode = generateMaterialCode(db, categoryId)
+    }
+    const identityValidation = validateMaterialIdentityUnique(db, {
+      id,
+      code: finalCode,
+      barcode: barcodeText.value,
+    })
+    if (!identityValidation.ok) {
+      error(res, identityValidation.message, identityValidation.code, identityValidation.status)
+      return
     }
 
     db.prepare(`
@@ -538,6 +578,15 @@ router.put('/:id', requireMaterialWrite, (req, res) => {
     })
     if (!refValidation.ok) {
       error(res, refValidation.message, refValidation.code, refValidation.status)
+      return
+    }
+    const identityValidation = validateMaterialIdentityUnique(db, {
+      id,
+      code: data.code !== undefined ? data.code : undefined,
+      barcode: data.barcode !== undefined ? data.barcode : undefined,
+    })
+    if (!identityValidation.ok) {
+      error(res, identityValidation.message, identityValidation.code, identityValidation.status)
       return
     }
 

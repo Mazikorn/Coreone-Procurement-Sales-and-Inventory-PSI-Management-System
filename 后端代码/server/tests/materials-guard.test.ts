@@ -587,4 +587,73 @@ describe('物料删除与批量状态保护', () => {
       .get(created.body.data.id) as any
     expect(unchanged.name).toBe(`B195 安全物料 ${suffix}`)
   })
+
+  it('MAT-UNIQUE-001: 物料编码和条码必须唯一，避免扫码定位到错误物料', async () => {
+    const suffix = `unique-${Date.now()}`
+    const refs = seedRefs(db, suffix)
+
+    const first = await request(app)
+      .post('/api/v1/materials')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        code: `MAT-UNIQUE-${suffix}-A`,
+        barcode: `BAR-UNIQUE-${suffix}`,
+        name: `唯一物料A-${suffix}`,
+        unit: '瓶',
+        categoryId: refs.categoryId,
+        supplierId: refs.supplierId,
+        locationId: refs.locationId,
+      })
+    expect(first.status).toBe(201)
+
+    const duplicateBarcodeCreate = await request(app)
+      .post('/api/v1/materials')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        code: `MAT-UNIQUE-${suffix}-B`,
+        barcode: `bar-unique-${suffix}`,
+        name: `重复条码物料-${suffix}`,
+        unit: '瓶',
+        categoryId: refs.categoryId,
+        supplierId: refs.supplierId,
+        locationId: refs.locationId,
+      })
+    expect(duplicateBarcodeCreate.status).toBe(409)
+    expect(duplicateBarcodeCreate.body.error.message).toContain('条码')
+
+    const second = await request(app)
+      .post('/api/v1/materials')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        code: `MAT-UNIQUE-${suffix}-B`,
+        barcode: `BAR-UNIQUE-${suffix}-B`,
+        name: `唯一物料B-${suffix}`,
+        unit: '瓶',
+        categoryId: refs.categoryId,
+        supplierId: refs.supplierId,
+        locationId: refs.locationId,
+      })
+    expect(second.status).toBe(201)
+
+    const duplicateCodeUpdate = await request(app)
+      .put(`/api/v1/materials/${second.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ code: `MAT-UNIQUE-${suffix}-A` })
+    expect(duplicateCodeUpdate.status).toBe(409)
+    expect(duplicateCodeUpdate.body.error.message).toContain('编码')
+
+    const duplicateBarcodeUpdate = await request(app)
+      .put(`/api/v1/materials/${second.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ barcode: `BAR-UNIQUE-${suffix}` })
+    expect(duplicateBarcodeUpdate.status).toBe(409)
+    expect(duplicateBarcodeUpdate.body.error.message).toContain('条码')
+
+    const unchanged = db.prepare('SELECT code, barcode FROM materials WHERE id = ?')
+      .get(second.body.data.id) as any
+    expect(unchanged).toMatchObject({
+      code: `MAT-UNIQUE-${suffix}-B`,
+      barcode: `BAR-UNIQUE-${suffix}-B`,
+    })
+  })
 })
