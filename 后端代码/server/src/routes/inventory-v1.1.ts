@@ -251,6 +251,28 @@ function buildInventoryConsistencyIssues(db: any): ConsistencyIssue[] {
     },
   }))
 
+  const negativeBatches = db.prepare(`
+    SELECT b.id, b.batch_no, b.quantity, b.remaining, m.code, m.name
+    FROM batches b
+    JOIN materials m ON m.id = b.material_id AND m.is_deleted = 0
+    WHERE COALESCE(b.quantity, 0) < -0.0001
+       OR COALESCE(b.remaining, 0) < -0.0001
+  `).all() as any[]
+  negativeBatches.forEach(row => addIssue({
+    code: 'BATCH_NEGATIVE_QUANTITY_OR_REMAINING',
+    severity: 'critical',
+    entityType: 'batch',
+    entityId: row.id,
+    entityCode: row.batch_no,
+    entityName: row.name,
+    message: '批次数量或剩余量为负数',
+    impacts: {
+      materialCode: row.code,
+      quantity: Number(row.quantity) || 0,
+      remaining: Number(row.remaining) || 0,
+    },
+  }))
+
   const locationMismatches = db.prepare(`
     SELECT i.material_id, m.code, m.name, i.stock, COALESCE(SUM(il.stock), 0) as location_stock
     FROM inventory i

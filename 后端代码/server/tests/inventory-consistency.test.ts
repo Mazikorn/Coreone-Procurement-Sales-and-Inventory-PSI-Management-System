@@ -150,4 +150,39 @@ describe('库存与主数据一致性扫描', () => {
       },
     })
   })
+
+  it('INV-CONSISTENCY-003: 扫描批次数量或剩余量为负数的历史脏状态', async () => {
+    const suffix = `${Date.now()}`
+    const categoryId = `cat-consistency-batch-negative-${suffix}`
+    const materialId = `mat-consistency-batch-negative-${suffix}`
+    const negativeQuantityBatchId = `batch-consistency-negative-qty-${suffix}`
+    const negativeRemainingBatchId = `batch-consistency-negative-rem-${suffix}`
+
+    db.prepare('INSERT INTO material_categories (id, code, name, level) VALUES (?, ?, ?, 1)')
+      .run(categoryId, `CAT-CONS-BATCH-NEG-${suffix}`, '批次负数扫描分类')
+    db.prepare('INSERT INTO materials (id, code, name, unit, category_id, status) VALUES (?, ?, ?, ?, ?, 1)')
+      .run(materialId, `MAT-CONS-BATCH-NEG-${suffix}`, '批次负数物料', '瓶', categoryId)
+    db.prepare('INSERT INTO inventory (id, material_id, stock, locked_stock) VALUES (?, ?, ?, 0)')
+      .run(`inv-cons-batch-neg-${suffix}`, materialId, 0)
+    db.prepare(`
+      INSERT INTO batches (id, material_id, batch_no, quantity, remaining, expiry_date, inbound_id, inbound_price, status)
+      VALUES (?, ?, ?, -1, 0, ?, ?, 10, 1)
+    `).run(negativeQuantityBatchId, materialId, `BATCH-CONS-NEG-QTY-${suffix}`, '2028-12-31', `inbound-cons-neg-qty-${suffix}`)
+    db.prepare(`
+      INSERT INTO batches (id, material_id, batch_no, quantity, remaining, expiry_date, inbound_id, inbound_price, status)
+      VALUES (?, ?, ?, 5, -2, ?, ?, 10, 1)
+    `).run(negativeRemainingBatchId, materialId, `BATCH-CONS-NEG-REM-${suffix}`, '2028-12-31', `inbound-cons-neg-rem-${suffix}`)
+
+    const res = await request(app)
+      .get('/api/v1/inventory/consistency-check')
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(200)
+    const issues = res.body.data.issues.filter((item: any) => item.code === 'BATCH_NEGATIVE_QUANTITY_OR_REMAINING')
+    expect(issues.map((issue: any) => issue.entityId).sort()).toEqual([
+      negativeQuantityBatchId,
+      negativeRemainingBatchId,
+    ].sort())
+    expect(issues.every((issue: any) => issue.severity === 'critical')).toBe(true)
+  })
 })
