@@ -41,6 +41,28 @@ function validateDirectOutboundReferences(db: any, refs: { projectId?: unknown; 
   return { ok: true }
 }
 
+function validateOutboundItems(items: any) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return { ok: false, message: '缺少必填字段' }
+  }
+  for (const item of items) {
+    const quantity = Number(item?.quantity)
+    if (!item?.materialId || item.quantity === undefined || item.quantity === null || !Number.isFinite(quantity) || quantity <= 0) {
+      return { ok: false, message: 'Invalid quantity' }
+    }
+  }
+  return { ok: true }
+}
+
+function normalizeOptionalSampleCount(value: unknown) {
+  if (value === undefined || value === null || value === '') return { ok: true, sampleCount: 1 }
+  const sampleCount = Number(value)
+  if (!Number.isFinite(sampleCount) || sampleCount <= 0) {
+    return { ok: false, message: 'Invalid sampleCount' }
+  }
+  return { ok: true, sampleCount }
+}
+
 function validateBomOutboundMaterials(db: any, bomId: string) {
   const groups = [
     { table: 'bom_items', label: '特异性试剂' },
@@ -174,15 +196,23 @@ router.get('/stats', (req, res) => {
 router.post('/', requireWriteAccess, (req, res) => {
   try {
     const { type, projectId, items, remark } = req.body
-    if (!type || !Array.isArray(items) || items.length === 0) {
+    if (!type) {
       error(res, '缺少必填字段', 'INVALID_PARAMETER', 400); return
+    }
+    const itemValidation = validateOutboundItems(items)
+    if (!itemValidation.ok) {
+      error(res, itemValidation.message, 'INVALID_PARAMETER', 400); return
+    }
+    const sampleCountValidation = normalizeOptionalSampleCount(req.body.sampleCount)
+    if (!sampleCountValidation.ok) {
+      error(res, sampleCountValidation.message, 'INVALID_PARAMETER', 400); return
     }
 
     const db = getDatabase()
     const outboundNo = generateOutboundNo()
     const id = uuidv4()
     const operator = (req as any).user?.username || 'system'
-    const sc = Number(req.body.sampleCount) || 1
+    const sc = sampleCountValidation.sampleCount
 
     const refValidation = validateDirectOutboundReferences(db, { projectId, items })
     if (!refValidation.ok) {
@@ -208,10 +238,6 @@ router.post('/', requireWriteAccess, (req, res) => {
 
       for (const item of items) {
         const { materialId, quantity, batchId } = item
-        if (!materialId || quantity === undefined || quantity === null || isNaN(Number(quantity)) || Number(quantity) <= 0) {
-          db.exec('ROLLBACK')
-          error(res, 'Invalid quantity', 'INVALID_PARAMETER', 400); return
-        }
         const qty = Number(quantity)
         const allocations = allocateBatches(db, materialId, qty, typeof batchId === 'string' ? batchId.trim() : undefined)
         const itemTotalCost = allocations.reduce((sum, a) => sum + a.quantity * a.unitCost, 0)
@@ -302,7 +328,7 @@ router.post('/bom', (req, res) => {
       error(res, '缺少必填字段', 'INVALID_PARAMETER', 400); return
     }
     const sc = Number(sampleCount)
-    if (isNaN(sc) || sc <= 0) {
+    if (!Number.isFinite(sc) || sc <= 0) {
       error(res, 'Invalid sampleCount', 'INVALID_PARAMETER', 400); return
     }
 
@@ -880,6 +906,10 @@ router.put('/:id', requireWriteAccess, (req, res) => {
     if (!Array.isArray(newItems) || newItems.length === 0) {
       error(res, '缺少必填字段', 'INVALID_PARAMETER', 400); return
     }
+    const itemValidation = validateOutboundItems(newItems)
+    if (!itemValidation.ok) {
+      error(res, itemValidation.message, 'INVALID_PARAMETER', 400); return
+    }
 
     const db = getDatabase()
     const record = db.prepare('SELECT * FROM outbound_records WHERE id = ? AND is_deleted = 0').get(id) as any
@@ -938,10 +968,6 @@ router.put('/:id', requireWriteAccess, (req, res) => {
 
       for (const item of newItems) {
         const { materialId, quantity, batchId } = item
-        if (!materialId || quantity === undefined || quantity === null || isNaN(Number(quantity)) || Number(quantity) <= 0) {
-          db.exec('ROLLBACK')
-          error(res, 'Invalid quantity', 'INVALID_PARAMETER', 400); return
-        }
         const qty = Number(quantity)
         const allocations = allocateBatches(db, materialId, qty, typeof batchId === 'string' ? batchId.trim() : undefined)
         const itemCost = allocations.reduce((sum, a) => sum + a.quantity * a.unitCost, 0)

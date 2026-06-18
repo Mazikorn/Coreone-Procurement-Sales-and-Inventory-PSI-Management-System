@@ -242,6 +242,34 @@ describe('集成测试：出库管理', () => {
       expect(res.status).toBe(400)
     })
 
+    it('OUT-VALIDATION-001: 普通出库拒绝非有限数量和样本数且不扣库存', async () => {
+      const invalidPayloads = [
+        { items: [{ materialId, quantity: 'Infinity' }], message: 'quantity' },
+        { items: [{ materialId, quantity: 1 }], sampleCount: '1e309', message: 'sampleCount' },
+      ]
+
+      for (const payload of invalidPayloads) {
+        const beforeStock = (db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any).stock
+        const beforeCount = (db.prepare('SELECT COUNT(*) as count FROM outbound_records').get() as any).count
+
+        const res = await request(app)
+          .post('/api/v1/outbound')
+          .set('Authorization', `Bearer ${token}`)
+          .send({
+            type: 'project',
+            ...payload,
+          })
+
+        expect(res.status).toBe(400)
+        expect(res.body.error.message).toContain(payload.message)
+
+        const afterStock = (db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any).stock
+        const afterCount = (db.prepare('SELECT COUNT(*) as count FROM outbound_records').get() as any).count
+        expect(afterStock).toBe(beforeStock)
+        expect(afterCount).toBe(beforeCount)
+      }
+    })
+
     it('OUT-REF-001: 普通出库拒绝停用物料和停用检测项目', async () => {
       const suffix = `guard-${Date.now()}`
       const inactiveMaterialId = await createMaterial(app, token, `OB-INACTIVE-MAT-${suffix}`, 30)
@@ -356,6 +384,43 @@ describe('集成测试：出库管理', () => {
       expect(inactiveStock).toBe(beforeInactiveStock)
       expect(savedRecord.project_id).toBeNull()
       expect(savedRecord.remark).toBe('原始有效出库')
+      expect(savedItems).toHaveLength(1)
+      expect(savedItems[0]).toMatchObject({ material_id: materialId, quantity: 1 })
+    })
+
+    it('OUT-VALIDATION-002: 修改普通出库拒绝非有限数量且不回退原单库存', async () => {
+      const createRes = await request(app)
+        .post('/api/v1/outbound')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          type: 'project',
+          items: [{ materialId, quantity: 1 }],
+          remark: '非有限数量编辑前',
+        })
+      expect(createRes.status).toBe(201)
+      const outboundId = createRes.body.data.id
+      const beforeStock = (db.prepare('SELECT stock FROM inventory WHERE material_id = ?')
+        .get(materialId) as any).stock
+
+      const updateRes = await request(app)
+        .put(`/api/v1/outbound/${outboundId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          type: 'project',
+          items: [{ materialId, quantity: 'Infinity' }],
+          remark: '尝试非有限数量编辑',
+        })
+
+      expect(updateRes.status).toBe(400)
+      expect(updateRes.body.error.message).toContain('quantity')
+
+      const afterStock = (db.prepare('SELECT stock FROM inventory WHERE material_id = ?')
+        .get(materialId) as any).stock
+      const savedRecord = db.prepare('SELECT remark FROM outbound_records WHERE id = ?').get(outboundId) as any
+      const savedItems = db.prepare('SELECT material_id, quantity FROM outbound_items WHERE outbound_id = ?').all(outboundId) as any[]
+
+      expect(afterStock).toBe(beforeStock)
+      expect(savedRecord.remark).toBe('非有限数量编辑前')
       expect(savedItems).toHaveLength(1)
       expect(savedItems[0]).toMatchObject({ material_id: materialId, quantity: 1 })
     })
@@ -502,6 +567,28 @@ describe('集成测试：出库管理', () => {
       expect(Number(outbound.sample_count)).toBe(3)
       expect(abcDetail.bom_id).toBe(bomId)
       expect(abcDetail.project_id).toBe(projectId)
+    })
+
+    it('BOM-OUT-VALIDATION-001: BOM 出库拒绝非有限样本数且不写成本明细', async () => {
+      const beforeOutboundCount = (db.prepare('SELECT COUNT(*) as count FROM outbound_records').get() as any).count
+      const beforeAbcCount = (db.prepare('SELECT COUNT(*) as count FROM outbound_abc_details').get() as any).count
+
+      const res = await request(app)
+        .post('/api/v1/outbound/bom')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          projectId,
+          sampleCount: 'Infinity',
+          remark: '非有限样本数 BOM 出库',
+        })
+
+      expect(res.status).toBe(400)
+      expect(res.body.error.message).toContain('sampleCount')
+
+      const afterOutboundCount = (db.prepare('SELECT COUNT(*) as count FROM outbound_records').get() as any).count
+      const afterAbcCount = (db.prepare('SELECT COUNT(*) as count FROM outbound_abc_details').get() as any).count
+      expect(afterOutboundCount).toBe(beforeOutboundCount)
+      expect(afterAbcCount).toBe(beforeAbcCount)
     })
 
     it('项目已配置BOM时显式传入其他BOM会被拒绝', async () => {
