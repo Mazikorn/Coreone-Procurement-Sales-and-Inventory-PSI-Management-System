@@ -44,6 +44,15 @@ function seedStocktakingFixture(db: any, suffix: string, stock = 10) {
   return { materialId, recordId }
 }
 
+function getLocationStock(db: any, materialId: string): number {
+  const row = db.prepare(`
+    SELECT COALESCE(SUM(stock), 0) as stock
+    FROM inventory_locations
+    WHERE material_id = ?
+  `).get(materialId) as any
+  return Number(row?.stock || 0)
+}
+
 function seedStocktakingFixtureWithBatch(db: any, suffix: string, stock = 10) {
   const fixture = seedStocktakingFixture(db, suffix, stock)
   const batchId = `batch-stocktaking-${suffix}`
@@ -376,5 +385,45 @@ describe('库存盘点 API', () => {
     expect(record).toMatchObject({ is_deleted: 0, status: 'confirmed' })
     expect(inventory.stock).toBe(7)
     expect(batch.remaining).toBe(7)
+  })
+
+  it('ST-009: 盘点确认必须保持库存总账和库位明细一致', async () => {
+    const lossSuffix = `location-loss-${Date.now()}`
+    const lossFixture = seedStocktakingFixtureWithBatch(db, lossSuffix, 10)
+
+    const lossConfirmRes = await request(app)
+      .post(`/api/v1/stocktaking/${lossFixture.recordId}/confirm`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ reason: 'physical', remark: '盘亏库位明细一致性' })
+
+    expect(lossConfirmRes.status).toBe(200)
+    const lossInventory = db.prepare('SELECT stock FROM inventory WHERE material_id = ?')
+      .get(lossFixture.materialId) as any
+    expect(lossInventory.stock).toBe(8)
+    expect(getLocationStock(db, lossFixture.materialId)).toBe(8)
+
+    const surplusSuffix = `location-surplus-${Date.now()}`
+    const surplusFixture = seedStocktakingFixtureWithBatch(db, surplusSuffix, 10)
+
+    const surplusCreateRes = await request(app)
+      .post('/api/v1/stocktaking')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        materialId: surplusFixture.materialId,
+        actualStock: 12,
+        remark: '盘盈库位明细一致性',
+      })
+    expect(surplusCreateRes.status).toBe(200)
+
+    const surplusConfirmRes = await request(app)
+      .post(`/api/v1/stocktaking/${surplusCreateRes.body.data.id}/confirm`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ reason: 'physical', remark: '盘盈确认' })
+
+    expect(surplusConfirmRes.status).toBe(200)
+    const surplusInventory = db.prepare('SELECT stock FROM inventory WHERE material_id = ?')
+      .get(surplusFixture.materialId) as any
+    expect(surplusInventory.stock).toBe(12)
+    expect(getLocationStock(db, surplusFixture.materialId)).toBe(12)
   })
 })

@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
 import { generateNo } from '../utils/generateNo.js'
-import { consumeInventoryLocationStock, restoreInventoryLocationStock } from '../utils/inventory-locations.js'
+import { consumeInventoryLocationStock, ensureInventoryLocationRows, restoreInventoryLocationStock } from '../utils/inventory-locations.js'
 
 const router = Router()
 
@@ -272,6 +272,7 @@ router.post('/:id/confirm', (req, res) => {
           return
         }
 
+        ensureInventoryLocationRows(db, record.material_id)
         db.prepare('UPDATE inventory SET stock = ?, update_time = CURRENT_TIMESTAMP WHERE material_id = ?')
           .run(record.actual_stock, record.material_id)
         if (Number(record.difference) < 0) {
