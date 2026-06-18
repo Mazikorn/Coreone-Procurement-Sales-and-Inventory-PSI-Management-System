@@ -11332,7 +11332,46 @@ git diff --check
 
 - 当前项目物料对账仍依赖当前 BOM 用量和当前物料名称/规格/单位/价格解释历史 LIS/出库；彻底历史快照化需要单独设计 LIS、BOM 和出库对账快照字段及兼容迁移。
 
-## 二百三十、结论
+## 二百三十、批次 275: 物料汇总对账和导出不得因物料软删除丢失历史差异
+
+**发现的问题**
+
+- `/api/v1/reconciliation/materials` 和 `type=material` 的对账导出都从 `materials where is_deleted = 0 and status = 1` 起步。
+- 如果某物料已发生 LIS 理论消耗和实际出库，之后被软删除，按物料汇总页面会丢失该物料差异，CSV 导出也只剩表头或缺少对应行。
+- 这会让对账人员误以为物料维度没有异常，也让历史对账证据在导出归档时不完整。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/reconciliation-v1.1.ts`
+  - 抽出 `getMaterialReconciliationRows`，统一供 `/reconciliation/materials` 列表和 `type=material` 导出使用。
+  - 当前启用物料仍照常显示；软删除物料只有在当前日期范围内仍有 LIS 理论用量或已完成出库事实时，才作为历史解释补入汇总。
+  - 动态 `IN` 仅根据服务端已查询到的物料 ID 生成占位符，实际值仍走参数绑定；不恢复软删除物料的新业务候选资格。
+- `后端代码/server/tests/integration/reconciliation.test.ts`
+  - 新增“物料汇总对账不应因物料后续软删除而丢失历史差异”，覆盖列表返回理论 2、实际 4、差异 2、`danger`，并验证物料汇总 CSV 导出包含同一历史差异行。
+
+**ABC 影响评估**
+
+- 本批不修改 ABC 本体、成本公式、成本池、收费映射、成本异常判定或废弃 `/cost-analysis` 代码。
+- 变更只影响非 ABC 对账模块读取和导出历史汇总口径，不写库存、BOM、项目、出库、成本异常或 ABC 明细。
+- 对账完整集成测试和精确 ABC 输入回归通过，说明该历史解释补全没有破坏对账异常闭环或 ABC 病例收费重排。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/reconciliation.test.ts -t "物料汇总对账不应因物料后续软删除"` 第一次修复前失败：列表中目标物料行为 `undefined`。
+  - 补充导出断言后再次红灯：CSV 内容只包含表头，不包含 `汇总软删除物料`。
+- 修复后验证:
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/reconciliation.test.ts -t "物料汇总对账不应因物料后续软删除"` 通过，1 file / 1 test passed / 9 skipped。
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/reconciliation.test.ts tests/integration/cost-exceptions.test.ts -t "成本对账异常闭环|同一病例多个BOM|取消非最新病例"` 通过，2 files / 12 tests passed / 9 skipped。
+  - `后端代码/server npm run build` 通过。
+- 浏览器复核:
+  - 本批为后端对账读取和导出历史口径修复，核心风险在 API/CSV 是否保留历史差异；已用接口级测试覆盖，不新增截图证据。
+
+**后续风险**
+
+- 当前物料汇总对账仍依赖当前 BOM 用量和当前物料名称/规格/单位/价格解释历史 LIS/出库；彻底历史快照化需要单独设计 LIS、BOM 和出库对账快照字段及兼容迁移。
+
+## 二百三十一、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

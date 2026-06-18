@@ -186,6 +186,116 @@ function getProjectMaterialReconciliation(db: any, projectId: string, startDate?
   return { project, rows }
 }
 
+function getMaterialReconciliationRows(db: any, startDate?: string, endDate?: string) {
+  const hasDate = startDate && endDate
+  const endDateTime = hasDate ? `${endDate} 23:59:59` : ''
+
+  const allBomUsages = db.prepare(`
+    SELECT bi.material_id, bi.usage_per_sample, bi.unit, p.id as project_id
+    FROM bom_items bi
+    JOIN projects p ON bi.bom_id = p.bom_id
+    WHERE p.is_deleted = 0
+  `).all() as any[]
+
+  const bomUsagesByMaterial = new Map<string, any[]>()
+  for (const bu of allBomUsages) {
+    const existing = bomUsagesByMaterial.get(bu.material_id) || []
+    existing.push(bu)
+    bomUsagesByMaterial.set(bu.material_id, existing)
+  }
+
+  const caseCountsByProject = new Map<string, number>()
+  if (hasDate) {
+    const rows = db.prepare(`
+      SELECT project_id, COUNT(*) as count FROM lis_cases
+      WHERE operate_time >= ? AND operate_time <= ?
+      GROUP BY project_id
+    `).all(startDate, endDateTime) as any[]
+    for (const r of rows) caseCountsByProject.set(r.project_id, r.count)
+  } else {
+    const rows = db.prepare(`
+      SELECT project_id, COUNT(*) as count FROM lis_cases
+      GROUP BY project_id
+    `).all() as any[]
+    for (const r of rows) caseCountsByProject.set(r.project_id, r.count)
+  }
+
+  const actualOutboundRows = hasDate
+    ? (db.prepare(`
+        SELECT oi.material_id, SUM(oi.quantity) as total_qty
+        FROM outbound_items oi
+        JOIN outbound_records o ON oi.outbound_id = o.id
+        WHERE o.status = 'completed' AND o.is_deleted = 0 AND o.created_at >= ? AND o.created_at <= ?
+        GROUP BY oi.material_id
+      `).all(startDate, endDateTime) as any[])
+    : (db.prepare(`
+        SELECT oi.material_id, SUM(oi.quantity) as total_qty
+        FROM outbound_items oi
+        JOIN outbound_records o ON oi.outbound_id = o.id
+        WHERE o.status = 'completed' AND o.is_deleted = 0
+        GROUP BY oi.material_id
+      `).all() as any[])
+
+  const actualOutboundsByMaterial = new Map<string, number>()
+  for (const row of actualOutboundRows) actualOutboundsByMaterial.set(row.material_id, row.total_qty || 0)
+
+  const materialIdsToExplain = new Set<string>()
+  for (const usage of allBomUsages) {
+    if ((caseCountsByProject.get(usage.project_id) || 0) > 0) {
+      materialIdsToExplain.add(usage.material_id)
+    }
+  }
+  for (const row of actualOutboundRows) {
+    if (row.material_id) materialIdsToExplain.add(row.material_id)
+  }
+  const materialIds = Array.from(materialIdsToExplain)
+  const historicalFilter = materialIds.length > 0
+    ? ` OR m.id IN (${materialIds.map(() => '?').join(',')})`
+    : ''
+
+  const materials = db.prepare(`
+    SELECT m.id, m.name, m.spec, m.unit, m.price,
+      (SELECT COUNT(DISTINCT p.id) FROM projects p
+        JOIN bom_items bi ON bi.bom_id = p.bom_id
+        WHERE bi.material_id = m.id AND p.is_deleted = 0
+      ) as project_count
+    FROM materials m
+    WHERE (m.is_deleted = 0 AND m.status = 1)${historicalFilter}
+    ORDER BY m.name
+  `).all(...materialIds) as any[]
+
+  return materials.map((m: any) => {
+    const bomUsages = bomUsagesByMaterial.get(m.id) || []
+    let theoryTotal = 0
+    for (const bu of bomUsages) {
+      const caseCount = caseCountsByProject.get(bu.project_id) || 0
+      theoryTotal += caseCount * (bu.usage_per_sample || 0)
+    }
+
+    const actualTotal = actualOutboundsByMaterial.get(m.id) || 0
+    const diff = actualTotal - theoryTotal
+
+    let status = 'match'
+    if (diff > theoryTotal * 0.2) status = 'warn'
+    if (diff > theoryTotal * 0.5) status = 'danger'
+    if (diff < -theoryTotal * 0.2) status = 'warn'
+
+    return {
+      materialId: m.id,
+      materialName: m.name,
+      spec: m.spec,
+      unit: m.unit,
+      projectCount: m.project_count,
+      theoryTotal,
+      actualTotal,
+      diff,
+      diffRate: theoryTotal > 0 ? ((diff / theoryTotal) * 100).toFixed(1) : '0',
+      status,
+      price: m.price || 0,
+    }
+  })
+}
+
 /**
  * GET /api/v1/reconciliation/summary
  * 获取对账汇总数据（顶部统计卡片）
@@ -265,58 +375,18 @@ router.get('/export', (req, res) => {
     let filename = `reconciliation-${type}-${Date.now()}.csv`
 
     if (type === 'material') {
-      const materials = db.prepare(`
-        SELECT m.id, m.name, m.spec, m.unit, m.price,
-          (SELECT COUNT(DISTINCT p.id) FROM projects p
-            JOIN bom_items bi ON bi.bom_id = p.bom_id
-            WHERE bi.material_id = m.id AND p.is_deleted = 0
-          ) as project_count
-        FROM materials m
-        WHERE m.is_deleted = 0 AND m.status = 1
-        ORDER BY m.name
-      `).all() as any[]
-      const allBomUsages = db.prepare(`
-        SELECT bi.material_id, bi.usage_per_sample, p.id as project_id
-        FROM bom_items bi
-        JOIN projects p ON bi.bom_id = p.bom_id
-        WHERE p.is_deleted = 0
-      `).all() as any[]
-      const caseRows = hasDate
-        ? db.prepare(`
-          SELECT project_id, COUNT(*) as count FROM lis_cases
-          WHERE operate_time >= ? AND operate_time <= ?
-          GROUP BY project_id
-        `).all(startDate, endDateTime) as any[]
-        : db.prepare('SELECT project_id, COUNT(*) as count FROM lis_cases GROUP BY project_id').all() as any[]
-      const caseCounts = new Map(caseRows.map((row: any) => [row.project_id, Number(row.count) || 0]))
-      const outboundRows = hasDate
-        ? db.prepare(`
-          SELECT oi.material_id, SUM(oi.quantity) as total_qty
-          FROM outbound_items oi
-          JOIN outbound_records o ON oi.outbound_id = o.id
-          WHERE o.status = 'completed' AND o.is_deleted = 0 AND o.created_at >= ? AND o.created_at <= ?
-          GROUP BY oi.material_id
-        `).all(startDate, endDateTime) as any[]
-        : db.prepare(`
-          SELECT oi.material_id, SUM(oi.quantity) as total_qty
-          FROM outbound_items oi
-          JOIN outbound_records o ON oi.outbound_id = o.id
-          WHERE o.status = 'completed' AND o.is_deleted = 0
-          GROUP BY oi.material_id
-        `).all() as any[]
-      const outboundQty = new Map(outboundRows.map((row: any) => [row.material_id, Number(row.total_qty) || 0]))
-
       headers = ['物料', '规格', '单位', '关联项目数', '理论消耗', '实际出库', '差异', '差异率', '状态']
-      rows = materials.map((material: any) => {
-        const theoryTotal = allBomUsages
-          .filter((usage: any) => usage.material_id === material.id)
-          .reduce((sum: number, usage: any) => sum + (caseCounts.get(usage.project_id) || 0) * (Number(usage.usage_per_sample) || 0), 0)
-        const actualTotal = outboundQty.get(material.id) || 0
-        const diff = actualTotal - theoryTotal
-        const status = diff > theoryTotal * 0.5 ? 'danger' : Math.abs(diff) > theoryTotal * 0.2 ? 'warn' : 'match'
-        const diffRate = theoryTotal > 0 ? (diff / theoryTotal * 100).toFixed(1) : '0'
-        return [material.name, material.spec, material.unit, material.project_count, theoryTotal, actualTotal, diff, `${diffRate}%`, status]
-      })
+      rows = getMaterialReconciliationRows(db, startDate, endDate).map((row: any) => [
+        row.materialName,
+        row.spec,
+        row.unit,
+        row.projectCount,
+        row.theoryTotal,
+        row.actualTotal,
+        row.diff,
+        `${row.diffRate}%`,
+        row.status,
+      ])
     } else if (type === 'case') {
       const caseFilter = buildCaseFilterClause({ search, projectId, status, startDate, endDate }, 'lc')
       const caseRows = db.prepare(`
@@ -616,103 +686,7 @@ router.get('/materials', (req, res) => {
   try {
     const db = getDatabase()
     const { startDate, endDate } = req.query as Record<string, string>
-    const hasDate = startDate && endDate
-    const dateParams: any[] = hasDate ? [startDate, `${endDate} 23:59:59`] : []
-
-    const materials = db.prepare(`
-      SELECT m.id, m.name, m.spec, m.unit, m.price,
-        (SELECT COUNT(DISTINCT p.id) FROM projects p
-          JOIN bom_items bi ON bi.bom_id = p.bom_id
-          WHERE bi.material_id = m.id AND p.is_deleted = 0
-        ) as project_count
-      FROM materials m
-      WHERE m.is_deleted = 0 AND m.status = 1
-      ORDER BY m.name
-    `).all() as any[]
-
-    // Batch 1: All BOM usages for all materials (replaces per-material query)
-    const allBomUsages = db.prepare(`
-      SELECT bi.material_id, bi.usage_per_sample, bi.unit, p.id as project_id
-      FROM bom_items bi
-      JOIN projects p ON bi.bom_id = p.bom_id
-      WHERE p.is_deleted = 0
-    `).all() as any[]
-
-    // Group BOM usages by material_id
-    const bomUsagesByMaterial = new Map<string, any[]>()
-    for (const bu of allBomUsages) {
-      const existing = bomUsagesByMaterial.get(bu.material_id) || []
-      existing.push(bu)
-      bomUsagesByMaterial.set(bu.material_id, existing)
-    }
-
-    // Batch 2: All case counts by project (replaces per-project-per-material query)
-    const caseCountsByProject = new Map<string, number>()
-    if (hasDate) {
-      const rows = db.prepare(`
-        SELECT project_id, COUNT(*) as count FROM lis_cases
-        WHERE operate_time >= ? AND operate_time <= ?
-        GROUP BY project_id
-      `).all(startDate, `${endDate} 23:59:59`) as any[]
-      for (const r of rows) caseCountsByProject.set(r.project_id, r.count)
-    } else {
-      const rows = db.prepare(`
-        SELECT project_id, COUNT(*) as count FROM lis_cases
-        GROUP BY project_id
-      `).all() as any[]
-      for (const r of rows) caseCountsByProject.set(r.project_id, r.count)
-    }
-
-    // Batch 3: All actual outbound quantities by material (replaces per-material query)
-    const actualOutboundsByMaterial = new Map<string, number>()
-    const actualOutboundRows = hasDate
-      ? (db.prepare(`
-          SELECT oi.material_id, SUM(oi.quantity) as total_qty
-          FROM outbound_items oi
-          JOIN outbound_records o ON oi.outbound_id = o.id
-          WHERE o.status = 'completed' AND o.is_deleted = 0 AND o.created_at >= ? AND o.created_at <= ?
-          GROUP BY oi.material_id
-        `).all(startDate, `${endDate} 23:59:59`) as any[])
-      : (db.prepare(`
-          SELECT oi.material_id, SUM(oi.quantity) as total_qty
-          FROM outbound_items oi
-          JOIN outbound_records o ON oi.outbound_id = o.id
-          WHERE o.status = 'completed' AND o.is_deleted = 0
-          GROUP BY oi.material_id
-        `).all() as any[])
-    for (const r of actualOutboundRows) actualOutboundsByMaterial.set(r.material_id, r.total_qty || 0)
-
-    const result = materials.map((m: any) => {
-      const bomUsages = bomUsagesByMaterial.get(m.id) || []
-
-      let theoryTotal = 0
-      for (const bu of bomUsages) {
-        const caseCount = caseCountsByProject.get(bu.project_id) || 0
-        theoryTotal += caseCount * (bu.usage_per_sample || 0)
-      }
-
-      const actualTotal = actualOutboundsByMaterial.get(m.id) || 0
-      const diff = actualTotal - theoryTotal
-
-      let status = 'match'
-      if (diff > theoryTotal * 0.2) status = 'warn'
-      if (diff > theoryTotal * 0.5) status = 'danger'
-      if (diff < -theoryTotal * 0.2) status = 'warn'
-
-      return {
-        materialId: m.id,
-        materialName: m.name,
-        spec: m.spec,
-        unit: m.unit,
-        projectCount: m.project_count,
-        theoryTotal,
-        actualTotal,
-        diff,
-        diffRate: theoryTotal > 0 ? ((diff / theoryTotal) * 100).toFixed(1) : '0',
-        status,
-        price: m.price || 0,
-      }
-    })
+    const result = getMaterialReconciliationRows(db, startDate, endDate)
 
     successList(res, result, 1, result.length, result.length)
   } catch (e: any) {
