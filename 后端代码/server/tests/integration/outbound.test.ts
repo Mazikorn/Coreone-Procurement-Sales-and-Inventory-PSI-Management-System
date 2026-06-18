@@ -509,6 +509,58 @@ describe('集成测试：出库管理', () => {
       expect(Number(batchAfterDelete.remaining)).toBe(6)
       expect(Number(deleteLogs.count)).toBe(0)
     })
+
+    it('OUT-UPDATE-002: 批次数量后续下调后编辑旧出库必须拒绝，避免恢复旧明细污染批次剩余量', async () => {
+      const suffix = `stale-update-${Date.now()}`
+      const staleMaterialId = await createMaterial(app, token, `OB-UPD-STALE-${suffix}`, 91)
+      await inbound(app, token, staleMaterialId, `B-OB-UPD-STALE-${suffix}`, 10, 91)
+      const batch = db.prepare('SELECT id FROM batches WHERE material_id = ? AND batch_no = ?')
+        .get(staleMaterialId, `B-OB-UPD-STALE-${suffix}`) as any
+
+      const createRes = await request(app)
+        .post('/api/v1/outbound')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          type: 'project',
+          items: [{ materialId: staleMaterialId, batchId: batch.id, quantity: 4 }],
+          remark: '批次后续下调前出库',
+        })
+      expect(createRes.status).toBe(201)
+      db.prepare('UPDATE batches SET quantity = 6 WHERE id = ?').run(batch.id)
+      const logCountBefore = db.prepare('SELECT COUNT(*) as count FROM stock_logs WHERE related_id = ?')
+        .get(createRes.body.data.id) as any
+
+      const updateRes = await request(app)
+        .put(`/api/v1/outbound/${createRes.body.data.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          items: [{ materialId: staleMaterialId, batchId: batch.id, quantity: 3 }],
+          remark: '尝试编辑旧出库',
+        })
+
+      expect(updateRes.status).toBe(409)
+      expect(updateRes.body.error.code).toBe('BATCH_RESTORE_CONFLICT')
+
+      const record = db.prepare('SELECT remark FROM outbound_records WHERE id = ?').get(createRes.body.data.id) as any
+      const savedItems = db.prepare('SELECT material_id, batch_id, quantity FROM outbound_items WHERE outbound_id = ?')
+        .all(createRes.body.data.id) as any[]
+      const inventory = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(staleMaterialId) as any
+      const batchAfterUpdate = db.prepare('SELECT quantity, remaining FROM batches WHERE id = ?').get(batch.id) as any
+      const logCountAfter = db.prepare('SELECT COUNT(*) as count FROM stock_logs WHERE related_id = ?')
+        .get(createRes.body.data.id) as any
+
+      expect(record.remark).toBe('批次后续下调前出库')
+      expect(savedItems).toHaveLength(1)
+      expect(savedItems[0]).toMatchObject({
+        material_id: staleMaterialId,
+        batch_id: batch.id,
+        quantity: 4,
+      })
+      expect(Number(inventory.stock)).toBe(6)
+      expect(Number(batchAfterUpdate.quantity)).toBe(6)
+      expect(Number(batchAfterUpdate.remaining)).toBe(6)
+      expect(Number(logCountAfter.count)).toBe(Number(logCountBefore.count))
+    })
   })
 
   describe('多批次分配', () => {

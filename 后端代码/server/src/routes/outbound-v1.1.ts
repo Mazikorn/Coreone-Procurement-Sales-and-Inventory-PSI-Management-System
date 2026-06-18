@@ -17,7 +17,11 @@ function generateOutboundNo(): string {
   return generateNo('OB')
 }
 
-function validateOutboundBatchRestoreCapacity(db: any, items: any[]) {
+function validateOutboundBatchRestoreCapacity(
+  db: any,
+  items: any[],
+  conflictMessage = '批次数量已被后续业务调整，无法删除出库记录',
+) {
   const quantityByBatch = new Map<string, { batchId: string; materialId: string; quantity: number }>()
   for (const item of items) {
     if (!item.batch_id) continue
@@ -39,7 +43,7 @@ function validateOutboundBatchRestoreCapacity(db: any, items: any[]) {
     const nextRemaining = Number(batch.remaining || 0) + restore.quantity
     const batchQuantity = Number(batch.quantity || 0)
     if (nextRemaining - batchQuantity > BATCH_RESTORE_EPSILON) {
-      return { ok: false, status: 409, code: 'BATCH_RESTORE_CONFLICT', message: '批次数量已被后续业务调整，无法删除出库记录' }
+      return { ok: false, status: 409, code: 'BATCH_RESTORE_CONFLICT', message: conflictMessage }
     }
   }
 
@@ -964,6 +968,17 @@ router.put('/:id', requireWriteAccess, (req, res) => {
 
     db.exec('BEGIN IMMEDIATE')
     try {
+      const batchRestore = validateOutboundBatchRestoreCapacity(
+        db,
+        oldItems,
+        '批次数量已被后续业务调整，无法编辑出库记录',
+      )
+      if (!batchRestore.ok) {
+        db.exec('ROLLBACK')
+        error(res, batchRestore.message, batchRestore.code, batchRestore.status)
+        return
+      }
+
       // 1. 回退旧 items 库存
       const oldQuantityByMaterial = new Map<string, number>()
       for (const item of oldItems) {
