@@ -467,6 +467,48 @@ describe('集成测试：出库管理', () => {
         remark: '只改数量不改项目',
       })
     })
+
+    it('OUT-DELETE-001: 批次数量后续下调后删除旧出库必须拒绝，避免批次剩余量超过批次数量', async () => {
+      const suffix = `stale-delete-${Date.now()}`
+      const staleMaterialId = await createMaterial(app, token, `OB-STALE-${suffix}`, 88)
+      await inbound(app, token, staleMaterialId, `B-OB-STALE-${suffix}`, 10, 88)
+      const batch = db.prepare('SELECT id FROM batches WHERE material_id = ? AND batch_no = ?')
+        .get(staleMaterialId, `B-OB-STALE-${suffix}`) as any
+
+      const createRes = await request(app)
+        .post('/api/v1/outbound')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          type: 'project',
+          items: [{ materialId: staleMaterialId, batchId: batch.id, quantity: 4 }],
+          remark: '批次后续下调前出库',
+        })
+      expect(createRes.status).toBe(201)
+      db.prepare('UPDATE batches SET quantity = 6 WHERE id = ?').run(batch.id)
+
+      const deleteRes = await request(app)
+        .delete(`/api/v1/outbound/${createRes.body.data.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ reason: '撤销旧出库' })
+
+      expect(deleteRes.status).toBe(409)
+      expect(deleteRes.body.error.code).toBe('BATCH_RESTORE_CONFLICT')
+
+      const record = db.prepare('SELECT is_deleted FROM outbound_records WHERE id = ?').get(createRes.body.data.id) as any
+      const inventory = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(staleMaterialId) as any
+      const batchAfterDelete = db.prepare('SELECT quantity, remaining FROM batches WHERE id = ?').get(batch.id) as any
+      const deleteLogs = db.prepare(`
+        SELECT COUNT(*) as count
+        FROM stock_logs
+        WHERE related_id = ? AND related_type = 'outbound_delete'
+      `).get(createRes.body.data.id) as any
+
+      expect(record.is_deleted).toBe(0)
+      expect(Number(inventory.stock)).toBe(6)
+      expect(Number(batchAfterDelete.quantity)).toBe(6)
+      expect(Number(batchAfterDelete.remaining)).toBe(6)
+      expect(Number(deleteLogs.count)).toBe(0)
+    })
   })
 
   describe('多批次分配', () => {

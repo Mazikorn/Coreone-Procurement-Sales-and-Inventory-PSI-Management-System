@@ -6,6 +6,7 @@ import { allocateBatches, allocateGroupBatches, BatchAllocation, GroupBatchAlloc
 import { consumeInventoryLocationStock, restoreInventoryLocationStock } from '../utils/inventory-locations.js'
 
 const router = Router()
+const BATCH_RESTORE_EPSILON = 0.000001
 
 import { checkStockAlerts } from '../utils/alertChecker.js'
 import { generateNo } from '../utils/generateNo.js'
@@ -14,6 +15,35 @@ import { errorMessage, recordCostException } from '../utils/cost-exceptions.js'
 
 function generateOutboundNo(): string {
   return generateNo('OB')
+}
+
+function validateOutboundBatchRestoreCapacity(db: any, items: any[]) {
+  const quantityByBatch = new Map<string, { batchId: string; materialId: string; quantity: number }>()
+  for (const item of items) {
+    if (!item.batch_id) continue
+    const batchId = String(item.batch_id)
+    const materialId = String(item.material_id)
+    const key = `${batchId}:${materialId}`
+    const current = quantityByBatch.get(key) || { batchId, materialId, quantity: 0 }
+    current.quantity += Number(item.quantity || 0)
+    quantityByBatch.set(key, current)
+  }
+
+  for (const restore of quantityByBatch.values()) {
+    const batch = db.prepare('SELECT id, quantity, remaining FROM batches WHERE id = ? AND material_id = ?')
+      .get(restore.batchId, restore.materialId) as any
+    if (!batch) {
+      return { ok: false, status: 409, code: 'BATCH_NOT_FOUND', message: '出库批次不存在，无法恢复批次库存' }
+    }
+
+    const nextRemaining = Number(batch.remaining || 0) + restore.quantity
+    const batchQuantity = Number(batch.quantity || 0)
+    if (nextRemaining - batchQuantity > BATCH_RESTORE_EPSILON) {
+      return { ok: false, status: 409, code: 'BATCH_RESTORE_CONFLICT', message: '批次数量已被后续业务调整，无法删除出库记录' }
+    }
+  }
+
+  return { ok: true }
 }
 
 function validateDirectOutboundReferences(db: any, refs: { projectId?: unknown; items?: unknown }) {
@@ -1060,6 +1090,13 @@ router.delete('/:id', requireWriteAccess, (req, res) => {
 
     db.exec('BEGIN IMMEDIATE')
     try {
+      const batchRestore = validateOutboundBatchRestoreCapacity(db, items)
+      if (!batchRestore.ok) {
+        db.exec('ROLLBACK')
+        error(res, batchRestore.message, batchRestore.code, batchRestore.status)
+        return
+      }
+
       const replayKeys = caseChargeReplayKeysForOutbound(db, id)
 
       // 先读取 before_stock，再更新库存（修复 stock_logs 时序）
