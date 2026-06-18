@@ -135,7 +135,7 @@ function getProjectMaterialReconciliation(db: any, projectId: string, startDate?
     SELECT bi.*, m.name as material_name, m.spec, m.unit as material_unit, m.price
     FROM bom_items bi
     JOIN materials m ON bi.material_id = m.id
-    WHERE bi.bom_id = ? AND m.is_deleted = 0
+    WHERE bi.bom_id = ?
   `).all(project.bom_id || '') as any[]
 
   const caseCount = db.prepare(`

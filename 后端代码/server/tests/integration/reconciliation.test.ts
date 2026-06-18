@@ -464,4 +464,61 @@ describe('成本对账异常闭环', () => {
       status: 'warn',
     })
   })
+
+  it('项目物料对账不应因物料后续软删除而丢失历史BOM明细', async () => {
+    const suffix = Date.now()
+    const materialId = `mat-recon-deleted-${suffix}`
+    const bomId = `bom-recon-deleted-${suffix}`
+    const projectId = `proj-recon-deleted-${suffix}`
+    const outboundId = `out-recon-deleted-${suffix}`
+
+    db.prepare('INSERT INTO material_categories (id, code, name, level) VALUES (?, ?, ?, ?)')
+      .run(`cat-recon-deleted-${suffix}`, `RCD${suffix}`, '对账软删除试剂', 1)
+    db.prepare(`
+      INSERT INTO materials (id, code, name, spec, unit, category_id, price, status, is_deleted)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0)
+    `).run(materialId, `M-RECON-DELETED-${suffix}`, '对账软删除物料', '1ml', '支', `cat-recon-deleted-${suffix}`, 10)
+    db.prepare(`
+      INSERT INTO boms (id, code, name, version, type, status)
+      VALUES (?, ?, ?, 'v1.0', 'ihc', 1)
+    `).run(bomId, `BOM-RECON-DELETED-${suffix}`, '对账软删除BOM')
+    db.prepare(`
+      INSERT INTO bom_items (id, bom_id, material_id, usage_per_sample, unit)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(`bi-recon-deleted-${suffix}`, bomId, materialId, 1, '支')
+    db.prepare(`
+      INSERT INTO projects (id, code, name, type, bom_id, status)
+      VALUES (?, ?, ?, 'ihc', ?, 1)
+    `).run(projectId, `P-RECON-DELETED-${suffix}`, '对账软删除项目', bomId)
+    db.prepare(`
+      INSERT INTO lis_cases (id, case_no, project_id, project_name, operator, operate_time, import_batch)
+      VALUES (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      `case-recon-deleted-${suffix}-1`, `CASE-RECON-DELETED-${suffix}-1`, projectId, '对账软删除项目', 'lis', '2026-06-20 09:00:00', `batch-deleted-${suffix}`,
+      `case-recon-deleted-${suffix}-2`, `CASE-RECON-DELETED-${suffix}-2`, projectId, '对账软删除项目', 'lis', '2026-06-20 09:30:00', `batch-deleted-${suffix}`,
+    )
+    db.prepare(`
+      INSERT INTO outbound_records (id, outbound_no, type, project_id, total_cost, operator, status, created_at)
+      VALUES (?, ?, 'bom', ?, ?, 'admin', 'completed', ?)
+    `).run(outboundId, `OUT-RECON-DELETED-${suffix}`, projectId, 40, '2026-06-20 10:00:00')
+    db.prepare(`
+      INSERT INTO outbound_items (id, outbound_id, material_id, quantity, unit, unit_cost, total_cost)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(`oi-recon-deleted-${suffix}`, outboundId, materialId, 4, '支', 10, 40)
+    db.prepare('UPDATE materials SET is_deleted = 1 WHERE id = ?').run(materialId)
+
+    const res = await request(app)
+      .get(`/api/v1/reconciliation/projects/${projectId}/materials?startDate=2026-06-01&endDate=2026-06-30`)
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(200)
+    const row = res.body.data.list.find((item: any) => item.materialId === materialId)
+    expect(row).toMatchObject({
+      materialName: '对账软删除物料',
+      theoryQty: 2,
+      actualQty: 4,
+      diff: 2,
+      status: 'danger',
+    })
+  })
 })
