@@ -530,7 +530,7 @@ router.get('/full-cost-by-project', (req, res) => {
       const bomRows = db.prepare(`
         SELECT id, standard_labor_cost, standard_equipment_cost, standard_indirect_cost, standard_total_cost
         FROM boms
-        WHERE id IN (${bomPlaceholders}) AND is_deleted = 0
+        WHERE id IN (${bomPlaceholders})
       `).all(...bomIds) as any[]
       for (const b of bomRows) {
         const standardLaborCost = Number(b.standard_labor_cost) || 0

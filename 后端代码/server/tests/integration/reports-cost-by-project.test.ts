@@ -121,4 +121,51 @@ describe('集成测试：非ABC项目成本报表', () => {
     })
     expect(item.totalActual).toBeGreaterThanOrEqual(240)
   })
+
+  it('REPORT-PROJECT-004: 全成本项目报表不因BOM后续软删除而丢失历史标准成本', async () => {
+    const suffix = Date.now()
+    const bomId = `report-full-bom-deleted-${suffix}`
+    const projectId = `report-full-bom-project-${suffix}`
+    const outboundId = `report-full-bom-outbound-${suffix}`
+
+    db.prepare(`
+      INSERT INTO boms (
+        id, code, name, version, type,
+        standard_labor_cost, standard_equipment_cost, standard_indirect_cost, standard_total_cost,
+        status, is_deleted
+      )
+      VALUES (?, ?, '已删除但有标准成本历史BOM', 'v1', 'ihc', 10, 20, 5, 75, 1, 0)
+    `).run(bomId, `REPORT-FULL-BOM-${suffix}`)
+    db.prepare(`
+      INSERT INTO projects (id, code, name, type, bom_id, status, is_deleted)
+      VALUES (?, ?, 'BOM软删除全成本历史项目', 'ihc', ?, 1, 0)
+    `).run(projectId, `REPORT-FULL-BOM-PROJECT-${suffix}`, bomId)
+    db.prepare(`
+      INSERT INTO outbound_records (
+        id, outbound_no, type, project_id, total_cost, sample_count,
+        operator, status, created_at, is_deleted
+      )
+      VALUES (?, ?, 'bom', ?, 210, 3, 'admin', 'completed', '2031-11-10T09:00:00', 0)
+    `).run(outboundId, `REPORT-FULL-BOM-OUT-${suffix}`, projectId)
+    db.prepare('UPDATE boms SET is_deleted = 1 WHERE id = ?').run(bomId)
+
+    const res = await request(app)
+      .get('/api/v1/reports/full-cost-by-project?startDate=2031-11-01&endDate=2031-11-30')
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(200)
+    expect(res.body.success).toBe(true)
+    const projectCost = res.body.data.projects.find((row: any) => row.id === projectId)
+    expect(projectCost).toMatchObject({
+      id: projectId,
+      name: 'BOM软删除全成本历史项目',
+      materialCost: 210,
+      sampleCount: 3,
+      standardMaterialCost: 40,
+      standardLaborCost: 10,
+      standardEquipmentCost: 20,
+      standardIndirectCost: 5,
+      standardTotalCost: 75,
+    })
+  })
 })
