@@ -64,90 +64,34 @@ model: opus  # 推荐模型
 
 ---
 
-## 多 Agent 会话协调
+## 当前工作机制
 
-> **说明**: 本项目同时使用多个 Claude Code 会话，各自负责不同维度。
-> **创建**: 2026-05-22 | **会话A** (Roo): E2E + 后端修复 | **会话B** (当前): 交互规范 + 前端修复
+> **说明**: 项目当前按单设备、单会话方式推进；历史并行分工和旧边界不再作为执行规则。
 
-### 状态快照
+### 执行规则
 
-#### 会话A (Roo) — 已完成
-
-| 批次 | 内容 | 状态 |
-|:---|:---|:---:|
-| v1.19~v1.44 | 后端 P0/P1/P2 缺陷修复（权限/分页/SQL/参数绑定） | ✅ |
-| v1.45~v1.48 | P2 后端边界修复（categories/projects/bom/alerts） | ✅ |
-| v1.49 | 前端权限: `AppSidebar.tsx` `ROLE_MENU_MAP` + `AppLayout.tsx` 守卫 + `TopBar.tsx` | ✅ `a6167774` |
-| v1.50 | JWT base64url-safe 解码 + 角色权限 | ✅ `eb3249d5` |
-| v1.51 | BOM 一键出库 `POST /outbound/bom` | ✅ `9e6aa261` |
-| CI | GitHub Actions E2E 回归 | 🔄 |
-
-#### 会话B (当前) — 已完成
-
-| 交付物 | 内容 | 状态 |
-|:---|:---|:---:|
-| 交互规范总纲 | 共性标准（分页/筛选/URL/删除/表单/打印/导出） | ✅ |
-| 18 页面交互规范 | 439 个场景逐一定义 | ✅ |
-| 功能矩阵-严格评估 | 60.6%可用/31.2%缺陷/8.2%缺失 | ✅ |
-| 待办清单 | 按优先级和工时排序 | ✅ |
-
-### 分工边界（避免冲突）
-
-#### 会话A 不碰的文件
-- `前端代码/src/pages/inbound/Inbound.tsx`
-- `前端代码/src/pages/outbound/Outbound.tsx`
-- `前端代码/src/pages/inventory/InventoryList.tsx`
-- 任何前端分页/URL 同步/confirm 弹窗改动
-
-#### 会话B 不碰的文件
-- `后端代码/server/src/routes/*`（已由会话A 修复完毕）
-- `前端代码/e2e/*.spec.ts`
-- `.github/workflows/*`
-- `前端代码/src/components/layout/AppSidebar.tsx`
-- `前端代码/src/components/layout/AppLayout.tsx`
-- `前端代码/src/components/layout/TopBar.tsx`
-
-### 会话B 下一步计划
-
-| 批次 | 内容 | 预计 |
-|:---|:---|:---:|
-| 批次1 | 入库页面 P0（partial订单/remainingQty校验/confirm弹窗/恢复硬编码） | 1天 |
-| 批次2 | 跨页面共性（后端分页/URL同步/自定义confirm） | 3.5天 |
-| 批次3 | 前端假功能（扫码/导入/打印/导出） | 1.5天 |
-
-### 协调规则
-
-1. **提交前**: `git pull --rebase`
-2. **提交信息**: 会话B 用 `fix(frontend/xxx):` 前缀
-3. **冲突**: 先提交的为准，后提交方 rebase 解决
-4. **E2E**: 会话B 每批修复后运行对应 spec，不破坏已有绿测试
+1. **单一负责人**: 当前会话负责端到端检查、修改、验证和报告。
+2. **不设文件禁区**: 可按任务需要修改前端、后端、测试和文档，但必须避免回退无关改动。
+3. **先看现状再下结论**: 旧测试、旧工作日志和旧功能矩阵只能作为线索，不能作为完成证明。
+4. **ABC 隔离**: 非 ABC 修复不得直接改 ABC 本体；若会影响库存、出库、BOM、成本异常等 ABC 输入，必须补相应回归。
+5. **验收从严**: 页面/弹窗必须检查真实副作用，不能只看按钮存在或测试通过。
+6. **废弃范围**: 旧版物料成本分析 `/cost-analysis` 是 ABC 成本法之前的一版方案，已于 2026-06-17 废弃；源码仅保留在 `前端代码/deprecated/legacy-cost-analysis/` 作为历史参考，不再修复、扩展或纳入非 ABC 审计。
 
 ### 关键文件索引
 
-| 文件 | 用途 | 归属 |
-|:---|:---|:---:|
-| `V1.1设计稿/v1.1/交互规范总纲.md` | 共性标准 | 会话B |
-| `V1.1设计稿/v1.1/interaction-specs/pages/*.md` | 18页面规范 | 会话B |
-| `E2E-Next-Steps-2026-05-16.md` | E2E修复计划 | 会话A |
-| `待办清单.md` | 全局待办 | 会话B |
-| `AGENTS.md` | 本文件 | 共享 |
-| `.claude/SESSION-A-WORKLOG.md` | 会话A修改日志 | 会话A |
-| `.claude/SESSION-B-WORKLOG.md` | 会话B修改日志 | 会话B |
+| 文件 | 用途 |
+|:---|:---|
+| `V1.1设计稿/v1.1/交互规范总纲.md` | 共性交互标准 |
+| `V1.1设计稿/v1.1/interaction-specs/pages/*.md` | 页面交互规范 |
+| `V1.1设计稿/v1.1/功能矩阵-严格评估.md` | 历史缺口线索 |
+| `docs/non-abc-full-functional-audit-2026-06-16.md` | 当前非 ABC 全功能审计报告 |
+| `AGENTS.md` | 本文件 |
 
-### 会话协作机制
+## 历史工作日志摘录
 
-| 会话 | 标识 | 职责 | 工作日志 |
-|:---|:---|:---|:---|
-| A | Roo | E2E + 后端修复 | `.claude/SESSION-A-WORKLOG.md` + GitHub Actions 报告 |
-| B | 当前 | 交互规范 + 前端修复 | `.claude/SESSION-B-WORKLOG.md` |
+> 以下内容仅保留为历史线索，不再代表当前会话分工。
 
----
-
-## 会话B 工作日志
-
-> 本章节由会话B维护，记录每次修改的文件和具体变更，方便会话A（Roo）查阅。
-
-### 批次1 — 入库页面 P0 缺陷修复（2026-05-22）
+### 入库页面 P0 缺陷修复（2026-05-22）
 
 | 文件 | 修改类型 | 具体变更 | 对应场景 |
 |:---|:---|:---|:---|
@@ -167,12 +111,12 @@ model: opus  # 推荐模型
 | `前端代码/src/pages/inbound/Inbound.tsx` | 修改 | `handleRestoreInbound`：从空壳 toast 改为调用 `inboundApi.update` 尝试恢复 `status` | IN-26 |
 | `后端代码/server/src/routes/purchase-orders-v1.1.ts` | 修改 | `GET /`：单 status 匹配改为逗号分隔多 status 支持（`pending,partial`） | IN-35 |
 
-### 会话A 需注意的变更
+### 历史注意事项
 
 1. **采购订单查询**：`purchaseOrderApi.getList` 现在传 `status: 'pending,partial'`，后端已支持逗号分隔多状态。
 2. **恢复入库**：`handleRestoreInbound` 调用 `PUT /inbound/:id` 传 `{ status: 'completed' }`，若后端后续支持 `status` 字段更新则功能自动生效。
-3. **确认入库功能已移除**：入库记录本身无 `pending` 状态，此按钮和弹窗已删除。如需在采购订单页面实现"继续入库"，请会话A评估后端是否需要新增接口。
+3. **确认入库功能已移除**：入库记录本身无 `pending` 状态，此按钮和弹窗已删除。如需在采购订单页面实现"继续入库"，应重新评估后端是否需要新增接口。
 
 ---
 
-*本文档双方 Agent 均可编辑更新。*
+*本文档由当前单会话维护。*

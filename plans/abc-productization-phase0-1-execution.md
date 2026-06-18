@@ -314,11 +314,190 @@ API 建议：
 | 旧库兼容 | 已完成首版 | 补齐收费标准和成本池旧表迁移，成本池接口兼容直接成本/间接成本/动因率 |
 | 验证 | 已完成 | `npm run build`、新增异常台账测试、出库/ABC 相邻集成测试均通过 |
 
-仍未完成：
+历史未完成项（已由后续 9.1/9.2 闭环覆盖）：
 
-| 项目 | 后续批次 |
+| 项目 | 当前状态 |
 |---|---|
-| 成本期间与关账状态机 | Phase 1 下一批 |
-| 成本重算任务 | Phase 1 下一批 |
-| 异常处理动作：resolve/ignore/retry | Phase 1 下一批 |
-| 前端异常中心和出库成本状态展示 | 前端最小改造批次 |
+| 成本期间与关账状态机 | 已完成首版 |
+| 成本重算任务 | 已完成首版 |
+| 异常处理动作：resolve/ignore/retry | 已完成首版 |
+| 前端异常中心和出库成本状态展示 | 已完成首版 |
+
+### 9.1 后端闭环补充
+
+| 项目 | 状态 | 说明 |
+|---|---:|---|
+| 成本期间与关账状态机 | 已完成首版 | 新增期间 API；开放 error 异常会阻止关账；已关账期间禁止重算 |
+| 成本重算任务 | 已完成首版 | 新增 `cost_runs`，可对未关账期间重算并更新成本快照 |
+| 异常处理动作 | 已完成首版 | 支持 resolve、ignore、retry，并写入审计日志 |
+| 成本池真实动作 | 已完成首版 | sync/auto-collect/recalculate 已接入来源汇总、自动归集和重算 |
+| 成本快照标准字段 | 已完成首版 | 补齐 cost_status、cost_run_id、charge_group_id、calculation_version、source_snapshot |
+| 出库成本状态 | 已完成后端 | 出库记录返回 costStatus，BOM 出库成功/异常会同步状态 |
+
+### 9.2 前端闭环与前置模块补漏
+
+| 项目 | 状态 | 说明 |
+|---|---:|---|
+| 成本核算工作台 | 已完成首版 | 成本看板支持期间状态、开始归集、自动归集、执行重算、关账和最近任务展示 |
+| 成本异常中心 | 已完成首版 | `/abc/alerts` 改为异常台账，支持筛选、resolve、ignore、retry |
+| 出库成本状态 | 已完成前端 | 出库列表新增成本状态列，异常单可跳转到异常中心定位 |
+| 前置模块补漏 | 已完成首轮 | 补齐首页 QuickAction、库存预警表格/处理弹窗、供应商 hook、设备类型表单、标准工时 hook/表单、成本瀑布图、对账 API、首页角色配置 |
+| 验证 | 已完成 | 后端 build、前端 build、`cost-exceptions`、`outbound`、`abc-cost` 集成测试通过 |
+
+### 9.3 P0 空壳接口清理
+
+| 项目 | 状态 | 说明 |
+|---|---:|---|
+| ABC 基线决策记录 | 已完成 | `docs/13_Decision_Log.md` 新增 DEC-013，明确 `codex/abc-productization-phase0-1-2026-06-15` 为 ABC 产品化验收基线 |
+| `/abc/export` | 已完成首版 | 返回当前期间成本汇总、明细 rows、CSV content、文件名，并写入导出审计日志 |
+| `/abc/batch-trace/:batchId` | 已完成首版 | 串联批次、出库消耗、ABC 快照、库存流水和追溯汇总 |
+| `/abc/variance-analysis` | 已完成首版 | 基于 ABC 快照和出库实际材料成本生成项目/月/BOM 维度差异列表和汇总 |
+| 前端导出按钮 | 已完成首版 | 成本看板、切片成本、成本趋势、盈利分析、收费对照已接入 CSV 下载 |
+| 验证 | 已完成 | 后端 build、前端 build、`cost-exceptions`、`outbound`、`abc-cost` 集成测试通过，新增接口被专项测试覆盖 |
+
+### 9.4 成本池产品入口与旧库兼容
+
+| 项目 | 状态 | 说明 |
+|---|---:|---|
+| 成本池页面 | 已完成首版 | 新增 `/abc/cost-pools`，展示作业中心、来源、直接/间接/总成本、动因量、动因费率、计算公式和说明 |
+| 成本池导航 | 已完成 | 财务和管理员可在成本管理侧栏直接进入“成本池” |
+| 成本池筛选 | 已完成 | 前端支持期间、来源、关键字筛选；后端 `GET /abc/cost-pools` 支持 `yearMonth/source/activityCenterId/keyword` |
+| 成本池动作 | 已完成 | 页面支持同步来源、自动归集、重算快照；非财务/管理员不展示写操作 |
+| 旧库兼容 | 已完成 | 自动归集兼容旧库 `abc_activity_centers.status = 1`，新建作业中心显式写入 `active` |
+| 看板工作台指标 | 已完成 | 摘要区补齐出库数、成本快照、开放异常、未补算 |
+| 看板作业结构 | 已完成 | `costByActivity` 按当月成本池汇总作业中心成本与占比，不再返回空数组 |
+| 看板环比 | 已完成 | `costChange/feeChange/profitChange` 按当前月与上月 ABC 快照计算，不再固定为 0 |
+
+### 9.5 端到端验收补齐
+
+| 场景 | 用户 | 状态 |
+|---|---|---:|
+| 财务查看核算工作台 | finance | 通过 |
+| 财务处理成本异常 | finance | 通过 |
+| 财务归集成本池并查看动因费率公式 | finance | 通过 |
+| 财务配置 BOM 收费映射并触发完整性检查 | finance | 通过 |
+| 仓管出库后查看成本状态 | warehouse_manager | 通过 |
+| 仓管 BOM 出库填写病例号并在详情回显 | warehouse_manager | 通过 |
+| 主任查看可信成本看板且无写操作 | pathologist | 通过 |
+
+验证命令：
+
+| 命令 | 结果 |
+|---|---:|
+| `npm run build`（前端） | 通过，保留 Vite chunk size warning |
+| `npm run build`（后端） | 通过 |
+| `npm run test:node -- tests/integration/cost-exceptions.test.ts` | 通过，7 tests |
+| `npm run test:node -- tests/integration/outbound.test.ts` | 通过，12 tests |
+| `npm run test:node -- tests/integration/abc-cost.test.ts` | 通过，15 tests |
+| `PLAYWRIGHT_CHROMIUM_PATH="$HOME/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/abc-productization.spec.ts --project=chromium --reporter=list` | 通过，7 tests |
+
+2026-06-16 收口验证补充：
+
+| 命令 | 结果 |
+|---|---:|
+| `npm run build`（后端） | 通过 |
+| `npm run build`（前端） | 通过，保留 Vite chunk size warning |
+| `npm run test:node -- tests/integration/bom.test.ts tests/integration/outbound.test.ts tests/integration/cost-exceptions.test.ts tests/integration/abc-cost.test.ts tests/integration/reconciliation.test.ts` | 通过，52 tests |
+| `npm run test:node -- tests/integration/cost-exceptions.test.ts` | 通过，9 tests |
+| `PLAYWRIGHT_CHROMIUM_PATH="$HOME/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/abc-productization.spec.ts --project=chromium --reporter=list` | 通过，7 tests |
+| `git diff --check` | 通过 |
+
+### 9.6 Phase 2 收费映射与病例聚合首批
+
+| 项目 | 状态 | 说明 |
+|---|---:|---|
+| BOM 多收费项映射 | 已完成后端首版 | 新增 `bom_fee_mappings`，支持一 BOM 对多收费标准、数量倍率、按出库/病例聚合 |
+| 映射配置 API | 已完成 | `GET/PUT /api/v1/abc/bom-fee-mappings/:bomId` |
+| 映射规则预览 | 已完成 | `POST /api/v1/abc/bom-fee-mappings/:bomId/preview` 返回收费拆分、总收费、利润 |
+| 病例级收费聚合 | 已完成后端首版 | 新增 `case_charge_groups`，按病例/月/收费标准累计数量并计算阶梯/封顶总额 |
+| 出库成本快照 | 已完成补充 | BOM 出库支持 `caseNo`，快照保存 `case_no`、`charge_group_id`、`feeBreakdown` |
+| 验证 | 已完成 | `cost-exceptions` 新增病例聚合阶梯收费测试，后端/前端 build 和相邻集成/E2E 均通过 |
+
+### 9.7 Phase 2 收费映射配置与完整性检查
+
+| 项目 | 状态 | 说明 |
+|---|---:|---|
+| 映射完整性审计 API | 已完成 | 新增 `GET /api/v1/abc/bom-fee-mappings/audit`，支持关键字、状态、分页和汇总 |
+| 未映射 BOM 异常入库 | 已完成 | 新增 `POST /api/v1/abc/bom-fee-mappings/audit`，缺映射 BOM 写入 `missing_fee_mapping` 成本异常，补齐后再次审计自动关闭 |
+| 出库即时缺映射异常 | 已完成 | BOM 出库遇到无收费映射时仍成功出库，但成本状态为 `cost_exception`，并写入 `missing_fee_mapping` 待处理异常 |
+| 收费映射配置页 | 已完成首版 | 新增 `/abc/fee-mappings`，财务可查看映射状态、触发完整性检查、编辑多收费项和预览收费拆分 |
+| 草稿规则预览 | 已完成 | `/preview` 支持传入未保存映射草稿，前端可在保存前验证收费构成 |
+| 角色与导航 | 已完成 | 成本管理侧栏新增“收费映射”，管理员、财务及只读成本角色路径已补齐 |
+| 验证 | 已完成 | 后端 build、前端 build、`cost-exceptions` 7 tests、`outbound + abc-cost` 26 tests、ABC E2E 6 tests |
+
+### 9.8 病例号前端采集与仓管只读主数据
+
+| 项目 | 状态 | 说明 |
+|---|---:|---|
+| BOM 出库病例号采集 | 已完成 | 出库登记选择 BOM 后显示病例号输入框，提交 `/outbound/bom` 时传递 `caseNo` |
+| 出库详情病例回显 | 已完成 | 出库详情展示病例号和样本数，便于核对病例级收费聚合依据 |
+| 仓管主数据只读权限 | 已完成 | `warehouse_manager` 可读取项目/BOM 供出库选择，BOM/项目写入仍仅 admin |
+| 权限文档 | 已完成 | 更新 `docs/05_Role_Permission_Matrix.md` 的仓管职责和项目/BOM API 读权限 |
+| 验证 | 已完成 | 后端 build、前端 build、`outbound` 12 tests、`abc-cost` 15 tests、`cost-exceptions` 7 tests、ABC E2E 7 tests |
+
+### 9.9 BOM 来源快照首版
+
+| 项目 | 状态 | 说明 |
+|---|---:|---|
+| BOM 来源快照 | 已完成首版 | BOM 出库与重算写入 `source_snapshot.bomSnapshot`，保存当时 BOM code/name/version/type、支持样本数、服务/收费字段和更新时间 |
+| 用量来源快照 | 已完成首版 | 快照包含 `bom_items`、通用试剂、通用耗材、质控品的物料编码、规格、单位、用量、分组和分摊方式 |
+| 收费映射来源 | 已完成首版 | 快照包含当前多收费项映射或旧字段 fallback，便于解释当次收费拆分的规则来源 |
+| 回归覆盖 | 已完成 | `outbound.test.ts` 断言 BOM 出库后的 ABC 快照保留 BOM 版本和用量来源 |
+
+### 9.10 BOM 版本表与版本差异首版
+
+| 项目 | 状态 | 说明 |
+|---|---:|---|
+| BOM 版本表 | 已完成首版 | 新增 `bom_versions`，创建 BOM 写入 v1.0 快照，更新 BOM 写入自增版本快照 |
+| 版本快照 | 已完成首版 | 快照保存 BOM 基本字段、标准成本、物料明细、通用试剂/耗材、质控品、设备模板 |
+| 版本差异摘要 | 已完成首版 | 后端生成字段变更、物料新增/移除、物料用量调整的结构化 diff 和中文摘要 |
+| 生效范围选择 | 已完成后端首版 | BOM 更新支持 `future_only` / `retroactive`，版本历史保存选择结果 |
+| 历史影响统计 | 已完成后端首版 | 更新 BOM 时返回受影响历史出库数、月份、期间状态和可重算月份数 |
+| 追溯自动重算 | 已完成首版 | 选择 `retroactive` 后自动对未关账受影响月份创建 `bom_retroactive_recalculate` 任务，并把相关 ABC 快照标记为 `recalculated` |
+| 前端历史展示 | 已完成首版 | BOM 详情的版本历史显示当前版本、变更摘要、操作人、生效范围、关键物料用量变化和影响出库数 |
+| 回归覆盖 | 已完成 | `bom.test.ts` 覆盖 v1.0/v1.1/v1.2 快照、名称变更、物料用量差异、追溯选择、自动重算任务和历史影响返回 |
+| 关账后调整单 | 已完成首版 | 已关账期间继续禁止重算，但可创建调整单；审核通过后进入看板调整额、调整后利润和 ABC 导出 |
+| 病例阶梯历史回放 | 已完成首版 | 取消非最新历史出库后，会按病例、月份、收费标准重排剩余 ABC 明细 |
+
+### 9.11 病例聚合取消回退
+
+| 项目 | 状态 | 说明 |
+|---|---:|---|
+| 出库取消回退病例聚合 | 已完成首版 | 删除/取消 BOM 出库时，先根据该出库 ABC 快照里的病例级收费项回退 `case_charge_groups`，再清理 ABC 明细 |
+| 阶梯收费回算 | 已完成首版 | 回退后按病例收费组的历史规则快照重新计算 `total_fee`，避免只按本次增量金额相减导致阶梯收费失真 |
+| 非最新历史单重排 | 已完成首版 | 取消中间出库后，剩余同病例明细会重算 `fee_amount`、`profit`、`profit_rate` 和来源快照里的收费拆分 |
+| 回归覆盖 | 已完成 | `cost-exceptions.test.ts` 覆盖无映射出库即时异常、同病例两笔取消最新一笔，以及三笔取消中间一笔后的阶梯金额重排 |
+
+### 9.12 对账差异异常化首版
+
+| 项目 | 状态 | 说明 |
+|---|---:|---|
+| 项目物料差异审计 | 已完成后端首版 | 新增 `POST /reconciliation/projects/:id/materials/audit`，复用理论用量和实际出库差异计算 |
+| 成本异常联动 | 已完成首版 | warn/danger 差异写入 `cost_exceptions` 的 `reconciliation_variance`；danger 作为 error 级异常参与关账阻断 |
+| 异常恢复 | 已完成首版 | 差异恢复为 match 后再次审计会自动关闭对应开放异常 |
+| 前端入口 | 已完成首版 | `/reconciliation` 页面恢复路由，项目展开后可触发“审计差异” |
+| 对账导出 | 已完成首版 | 新增 `/reconciliation/export`，按项目/物料/病例/日志导出 CSV；页面“导出报表”按当前 Tab 下载 |
+| 前端 API | 已完成 | `reconciliationApi.auditProjectMaterials`、`reconciliationApi.exportData` 已封装 |
+| 回归覆盖 | 已完成 | `reconciliation.test.ts` 覆盖差异写入异常、恢复后自动关闭和导出非空 CSV |
+| LIS 病例进入标准出库 | 已完成首版 | BOM 出库支持只传 `caseNo` 反查 LIS 病例并自动带出项目/BOM；出库表单可选择 LIS 病例自动填入病例号、项目、BOM 和样本数 |
+
+### 9.13 关账后调整单首版
+
+| 项目 | 状态 | 说明 |
+|---|---:|---|
+| 调整单表 | 已完成首版 | 新增 `abc_cost_adjustments`，与既有季度间接成本调整表隔离 |
+| 关账约束 | 已完成 | 已关账期间继续禁止重算；只有已关账期间可以创建调整单 |
+| 审核流 | 已完成首版 | 调整单支持 pending / approved / rejected，审核动作写入审计日志 |
+| 看板联动 | 已完成首版 | 成本看板显示调整额、待审调整、调整后利润，并提供创建和审核入口 |
+| 导出联动 | 已完成首版 | ABC 导出包含调整单区段和调整后汇总 |
+| 回归覆盖 | 已完成 | `cost-exceptions.test.ts` 覆盖已关账禁止重算、调整单创建/审核、看板汇总、导出和审计日志 |
+
+### 9.14 LIS 病例进入标准出库流程首版
+
+| 项目 | 状态 | 说明 |
+|---|---:|---|
+| 后端病例反查 | 已完成首版 | `POST /outbound/bom` 支持 `caseNo + sampleCount`，从 `lis_cases` 反查项目并使用项目 BOM |
+| 防错校验 | 已完成 | 显式传入 BOM 时校验 BOM 与项目配置一致 |
+| 来源留痕 | 已完成首版 | 出库记录、ABC 明细和 `source_snapshot.lisCaseId` 保留病例链路 |
+| 前端入口 | 已完成首版 | 出库表单新增 LIS 病例选择器，自动带入病例号、项目、BOM 和样本数 |
+| 回归覆盖 | 已完成 | `outbound.test.ts` 覆盖只传 LIS 病例号进入标准 BOM 出库流程 |

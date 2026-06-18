@@ -1,343 +1,352 @@
-/**
- * Supplier Returns 退货给供应商 — 测试场景
- * 运行: cd 后端代码/server && npx tsx tests/supplier-returns.test.ts
- */
+process.env.DATABASE_PATH = ':memory:'
 
-import { getJSON, postJSON, putJSON, delJSON, login, generateUnique } from './setup.js'
+import { describe, it, expect, beforeAll } from 'vitest'
+import request from 'supertest'
 
-function assertEqual(actual: any, expected: any, msg: string) {
-  if (actual !== expected) throw new Error(`${msg}: expected ${expected}, got ${actual}`)
+const getApp = async () => {
+  const { default: app } = await import('../src/app.js')
+  const { getDatabase } = await import('../src/database/DatabaseManager.js')
+  return { app, db: getDatabase() }
 }
 
-function assertTrue(value: any, msg: string) {
-  if (!value) throw new Error(`${msg}: got ${value}`)
+async function loginAdmin(app: any): Promise<string> {
+  const res = await request(app)
+    .post('/api/v1/auth/login')
+    .send({ username: 'admin', password: 'admin123' })
+  expect(res.status).toBe(200)
+  return res.body.data.token
 }
 
-async function run() {
-  let passed = 0
-  let failed = 0
-
-  async function test(name: string, fn: () => Promise<void>) {
-    try {
-      await fn()
-      console.log(`✅ ${name}`)
-      passed++
-    } catch (e: any) {
-      console.log(`❌ ${name}: ${e.message}`)
-      failed++
-    }
-  }
-
-  const adminToken = await login('admin', 'admin123')
-  const whmToken = await login('wangkq', 'CoreOne2026!')
-  const proToken = await login('zhaohp', 'CoreOne2026!')
-  const techToken = await login('zhangwei', 'CoreOne2026!')
-
-  // 获取一个有库存的物料（>=2，允许创建+删除恢复）
-  let testMaterialId = ''
-  try {
-    const inv = await getJSON('/inventory?page=1&pageSize=50', adminToken)
-    const item = inv.data?.list?.find((m: any) => m.stock >= 2)
-    if (item) testMaterialId = item.materialId
-  } catch { /* ignore */ }
-
-  let createdId = ''
-  let createdNo = ''
-
-  // ── 列表查询 ──
-  await test('SR-01 admin查询列表成功', async () => {
-    const res = await getJSON('/supplier-returns?page=1&pageSize=10', adminToken)
-    assertTrue(res.success, 'should succeed')
-    assertTrue(Array.isArray(res.data?.list), 'should be list')
-  })
-
-  await test('SR-02 warehouse_manager查询列表成功', async () => {
-    const res = await getJSON('/supplier-returns?page=1&pageSize=10', whmToken)
-    assertTrue(res.success, 'should succeed')
-  })
-
-  await test('SR-03 procurement查询列表成功', async () => {
-    const res = await getJSON('/supplier-returns?page=1&pageSize=10', proToken)
-    assertTrue(res.success, 'should succeed')
-  })
-
-  await test('SR-04 technician查询返回403', async () => {
-    try {
-      await getJSON('/supplier-returns?page=1&pageSize=10', techToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('403') || e.message.includes('Forbidden'), 'should be 403')
-    }
-  })
-
-  await test('SR-05 无Token返回401', async () => {
-    try {
-      await getJSON('/supplier-returns?page=1&pageSize=10')
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('401') || e.message.includes('Unauthorized'), 'should be 401')
-    }
-  })
-
-  await test('SR-06 列表关键词筛选', async () => {
-    const res = await getJSON('/supplier-returns?keyword=SR&page=1&pageSize=10', adminToken)
-    assertTrue(res.success, 'should succeed')
-    assertTrue(Array.isArray(res.data?.list), 'should be list')
-  })
-
-  await test('SR-07 列表状态筛选', async () => {
-    const res = await getJSON('/supplier-returns?status=pending&page=1&pageSize=10', adminToken)
-    assertTrue(res.success, 'should succeed')
-    if (res.data?.list?.length > 0) {
-      assertEqual(res.data.list[0].status, 'pending', 'status should be pending')
-    }
-  })
-
-  // ── 创建 ──
-  await test('SR-08 admin创建退货成功', async () => {
-    if (!testMaterialId) { console.log('  ⏭️ skip: no material with stock'); return }
-    const res = await postJSON('/supplier-returns', {
-      materialId: testMaterialId,
-      quantity: 1,
-      reason: 'quality_issue',
-      remark: `TEST_${generateUnique('SR')}`,
-    }, adminToken)
-    assertTrue(res.success, 'should succeed')
-    assertTrue(res.data?.id, 'should have id')
-    assertTrue(res.data?.returnNo?.startsWith('SR-'), 'returnNo should start with SR-')
-    createdId = res.data.id
-    createdNo = res.data.returnNo
-  })
-
-  await test('SR-09 warehouse_manager创建退货成功', async () => {
-    if (!testMaterialId) { console.log('  ⏭️ skip: no material with stock'); return }
-    const res = await postJSON('/supplier-returns', {
-      materialId: testMaterialId,
-      quantity: 1,
-      reason: 'damaged',
-      remark: `TEST_${generateUnique('SR')}`,
-    }, whmToken)
-    assertTrue(res.success, 'should succeed')
-    // 立即删除恢复库存
-    if (res.data?.id) {
-      await delJSON(`/supplier-returns/${res.data.id}`, whmToken).catch(() => {})
-    }
-  })
-
-  await test('SR-10 procurement创建退货成功', async () => {
-    if (!testMaterialId) { console.log('  ⏭️ skip: no material with stock'); return }
-    const res = await postJSON('/supplier-returns', {
-      materialId: testMaterialId,
-      quantity: 1,
-      reason: 'quantity_mismatch',
-      remark: `TEST_${generateUnique('SR')}`,
-    }, proToken)
-    assertTrue(res.success, 'should succeed')
-    // 立即删除恢复库存
-    if (res.data?.id) {
-      await delJSON(`/supplier-returns/${res.data.id}`, proToken).catch(() => {})
-    }
-  })
-
-  await test('SR-11 缺少materialId返回400', async () => {
-    try {
-      await postJSON('/supplier-returns', { quantity: 1, reason: 'quality_issue' }, adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('400') || e.message.includes('Invalid'), 'should be 400')
-    }
-  })
-
-  await test('SR-12 缺少quantity返回400', async () => {
-    if (!testMaterialId) { console.log('  ⏭️ skip: no material'); return }
-    try {
-      await postJSON('/supplier-returns', { materialId: testMaterialId, reason: 'quality_issue' }, adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('400') || e.message.includes('Invalid'), 'should be 400')
-    }
-  })
-
-  await test('SR-13 缺少reason返回400', async () => {
-    if (!testMaterialId) { console.log('  ⏭️ skip: no material'); return }
-    try {
-      await postJSON('/supplier-returns', { materialId: testMaterialId, quantity: 1 }, adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('400') || e.message.includes('Invalid'), 'should be 400')
-    }
-  })
-
-  await test('SR-14 quantity=0返回400', async () => {
-    if (!testMaterialId) { console.log('  ⏭️ skip: no material'); return }
-    try {
-      await postJSON('/supplier-returns', { materialId: testMaterialId, quantity: 0, reason: 'quality_issue' }, adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('400') || e.message.includes('Invalid'), 'should be 400')
-    }
-  })
-
-  await test('SR-15 负数quantity返回400', async () => {
-    if (!testMaterialId) { console.log('  ⏭️ skip: no material'); return }
-    try {
-      await postJSON('/supplier-returns', { materialId: testMaterialId, quantity: -1, reason: 'quality_issue' }, adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('400') || e.message.includes('Invalid'), 'should be 400')
-    }
-  })
-
-  await test('SR-16 库存不足返回422', async () => {
-    if (!testMaterialId) { console.log('  ⏭️ skip: no material'); return }
-    try {
-      await postJSON('/supplier-returns', { materialId: testMaterialId, quantity: 999999, reason: 'quality_issue' }, adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('422') || e.message.includes('Insufficient') || e.message.includes('库存'), 'should be 422')
-    }
-  })
-
-  await test('SR-17 物料不存在返回404', async () => {
-    try {
-      await postJSON('/supplier-returns', { materialId: 'non-existent-id', quantity: 1, reason: 'quality_issue' }, adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('404') || e.message.includes('Not Found') || e.message.includes('不存在'), 'should be 404')
-    }
-  })
-
-  await test('SR-18 technician创建返回403', async () => {
-    if (!testMaterialId) { console.log('  ⏭️ skip: no material'); return }
-    try {
-      await postJSON('/supplier-returns', { materialId: testMaterialId, quantity: 1, reason: 'quality_issue' }, techToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('403') || e.message.includes('Forbidden'), 'should be 403')
-    }
-  })
-
-  // ── 详情 ──
-  await test('SR-19 查询详情成功', async () => {
-    if (!createdId) { console.log('  ⏭️ skip: no created record'); return }
-    const res = await getJSON(`/supplier-returns/${createdId}`, adminToken)
-    assertTrue(res.success, 'should succeed')
-    assertEqual(res.data?.id, createdId, 'id should match')
-    assertEqual(res.data?.returnNo, createdNo, 'returnNo should match')
-  })
-
-  await test('SR-20 查询不存在的详情返回404', async () => {
-    try {
-      await getJSON('/supplier-returns/non-existent-id', adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('404') || e.message.includes('Not Found'), 'should be 404')
-    }
-  })
-
-  // ── 状态流转 ──
-  await test('SR-21 pending→shipped', async () => {
-    if (!createdId) { console.log('  ⏭️ skip: no created record'); return }
-    const res = await putJSON(`/supplier-returns/${createdId}/status`, { status: 'shipped' }, adminToken)
-    assertTrue(res.success, 'should succeed')
-    assertEqual(res.data?.status, 'shipped', 'status should be shipped')
-  })
-
-  await test('SR-22 shipped→received', async () => {
-    if (!createdId) { console.log('  ⏭️ skip: no created record'); return }
-    const res = await putJSON(`/supplier-returns/${createdId}/status`, { status: 'received' }, adminToken)
-    assertTrue(res.success, 'should succeed')
-    assertEqual(res.data?.status, 'received', 'status should be received')
-  })
-
-  await test('SR-23 received→refunded', async () => {
-    if (!createdId) { console.log('  ⏭️ skip: no created record'); return }
-    const res = await putJSON(`/supplier-returns/${createdId}/status`, { status: 'refunded' }, adminToken)
-    assertTrue(res.success, 'should succeed')
-    assertEqual(res.data?.status, 'refunded', 'status should be refunded')
-  })
-
-  await test('SR-24 refunded→shipped非法流转返回400', async () => {
-    if (!createdId) { console.log('  ⏭️ skip: no created record'); return }
-    try {
-      await putJSON(`/supplier-returns/${createdId}/status`, { status: 'shipped' }, adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('400') || e.message.includes('Invalid'), 'should be 400')
-    }
-  })
-
-  await test('SR-25 无效状态值返回400', async () => {
-    if (!createdId) { console.log('  ⏭️ skip: no created record'); return }
-    try {
-      await putJSON(`/supplier-returns/${createdId}/status`, { status: 'invalid_status' }, adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('400') || e.message.includes('Invalid'), 'should be 400')
-    }
-  })
-
-  await test('SR-26 更新不存在的记录返回404', async () => {
-    try {
-      await putJSON('/supplier-returns/non-existent-id/status', { status: 'shipped' }, adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('404') || e.message.includes('Not Found'), 'should be 404')
-    }
-  })
-
-  // ── 删除 ──
-  // 先创建一个新的 pending 记录用于删除测试
-  let deleteTestId = ''
-  await test('SR-27 创建待删除的pending记录', async () => {
-    if (!testMaterialId) { console.log('  ⏭️ skip: no material'); return }
-    const res = await postJSON('/supplier-returns', {
-      materialId: testMaterialId,
-      quantity: 1,
-      reason: 'quality_issue',
-      remark: `TEST_DELETE_${generateUnique('SR')}`,
-    }, adminToken)
-    assertTrue(res.success, 'should succeed')
-    deleteTestId = res.data.id
-  })
-
-  await test('SR-28 admin删除pending记录成功', async () => {
-    if (!deleteTestId) { console.log('  ⏭️ skip: no record to delete'); return }
-    const res = await delJSON(`/supplier-returns/${deleteTestId}`, adminToken)
-    assertTrue(res.success, 'should succeed')
-  })
-
-  await test('SR-29 删除已refunded记录返回400', async () => {
-    if (!createdId) { console.log('  ⏭️ skip: no created record'); return }
-    try {
-      await delJSON(`/supplier-returns/${createdId}`, adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('400') || e.message.includes('pending'), 'should be 400')
-    }
-  })
-
-  await test('SR-30 删除不存在的记录返回404', async () => {
-    try {
-      await delJSON('/supplier-returns/non-existent-id', adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('404') || e.message.includes('Not Found'), 'should be 404')
-    }
-  })
-
-  await test('SR-31 warehouse_manager删除返回403（因为记录已refunded）', async () => {
-    if (!createdId) { console.log('  ⏭️ skip: no created record'); return }
-    try {
-      await delJSON(`/supplier-returns/${createdId}`, whmToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('400') || e.message.includes('403') || e.message.includes('pending'), 'should fail')
-    }
-  })
-
-  console.log(`\n📊 Supplier Returns Test Results: ${passed} passed, ${failed} failed`)
-  process.exit(failed > 0 ? 1 : 0)
+async function loginRole(app: any, username: string): Promise<string> {
+  const res = await request(app)
+    .post('/api/v1/auth/login')
+    .send({ username, password: 'CoreOne2026!' })
+  expect(res.status).toBe(200)
+  return res.body.data.token
 }
 
-run()
+function seedSupplierReturnMaterial(db: any, suffix: string) {
+  const categoryId = `cat-sr-${suffix}`
+  const materialId = `mat-sr-${suffix}`
+  const supplierId = `sup-sr-${suffix}`
+  const locationId = `loc-sr-${suffix}`
+
+  db.prepare('INSERT INTO material_categories (id, code, name, level) VALUES (?, ?, ?, ?)')
+    .run(categoryId, `CAT-SR-${suffix}`, '供应商退货测试分类', 1)
+  db.prepare('INSERT INTO suppliers (id, code, name) VALUES (?, ?, ?)')
+    .run(supplierId, `SUP-SR-${suffix}`, '供应商退货测试供应商')
+  db.prepare('INSERT INTO locations (id, code, name, type, zone) VALUES (?, ?, ?, ?, ?)')
+    .run(locationId, `LOC-SR-${suffix}`, '供应商退货测试库位', 'shelf', 'A区')
+  db.prepare(`
+    INSERT INTO materials (id, code, name, spec, unit, category_id, supplier_id, price, location_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(materialId, `MAT-SR-${suffix}`, '供应商退货测试物料', '1ml', '瓶', categoryId, supplierId, 12, locationId)
+  db.prepare('INSERT INTO inventory (id, material_id, stock, locked_stock, location_id) VALUES (?, ?, ?, 0, ?)')
+    .run(`inv-sr-${suffix}`, materialId, 10, locationId)
+
+  return { materialId, supplierId }
+}
+
+function seedSupplierReturnMaterialWithBatch(db: any, suffix: string, batchRemaining = 10) {
+  const seeded = seedSupplierReturnMaterial(db, suffix)
+  const batchId = `batch-sr-${suffix}`
+  const batchNo = `BATCH-SR-${suffix}`
+  db.prepare(`
+    INSERT INTO batches (id, material_id, batch_no, quantity, remaining, inbound_id, inbound_price, supplier_id, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+  `).run(batchId, seeded.materialId, batchNo, 10, batchRemaining, `inbound-sr-${suffix}`, 12, seeded.supplierId)
+
+  return { ...seeded, batchId, batchNo }
+}
+
+describe('供应商退货', () => {
+  let app: any
+  let db: any
+  let token: string
+
+  beforeAll(async () => {
+    ;({ app, db } = await getApp())
+    token = await loginAdmin(app)
+  })
+
+  it('SR-001: 创建供应商退货时忽略请求体伪造operator，使用登录用户', async () => {
+    const { materialId, supplierId } = seedSupplierReturnMaterial(db, `op-${Date.now()}`)
+
+    const res = await request(app)
+      .post('/api/v1/supplier-returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId,
+        supplierId,
+        quantity: 1,
+        reason: '测试退货给供应商',
+        operator: 'forged-user',
+      })
+
+    expect(res.status).toBe(200)
+    expect(res.body.success).toBe(true)
+    const record = db.prepare('SELECT operator FROM supplier_returns WHERE id = ?').get(res.body.data.id) as any
+    const log = db.prepare('SELECT operator FROM stock_logs WHERE related_id = ? AND related_type = ?')
+      .get(res.body.data.id, 'supplier_return') as any
+    expect(record.operator).toBe('admin')
+    expect(log.operator).toBe('admin')
+  })
+
+  it('SR-002: 删除供应商退货时忽略请求体伪造operator，使用登录用户', async () => {
+    const { materialId, supplierId } = seedSupplierReturnMaterial(db, `cancel-${Date.now()}`)
+    const createRes = await request(app)
+      .post('/api/v1/supplier-returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ materialId, supplierId, quantity: 1, reason: '测试退货给供应商' })
+    expect(createRes.status).toBe(200)
+
+    const res = await request(app)
+      .delete(`/api/v1/supplier-returns/${createRes.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ operator: 'forged-user' })
+
+    expect(res.status).toBe(200)
+    const log = db.prepare('SELECT operator FROM stock_logs WHERE related_id = ? AND related_type = ?')
+      .get(createRes.body.data.id, 'supplier_return_cancel') as any
+    expect(log.operator).toBe('admin')
+  })
+
+  it('SR-003: 状态流转写入操作日志，保留审计线索', async () => {
+    const { materialId, supplierId } = seedSupplierReturnMaterial(db, `status-${Date.now()}`)
+    const createRes = await request(app)
+      .post('/api/v1/supplier-returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ materialId, supplierId, quantity: 1, reason: '测试退货给供应商' })
+    expect(createRes.status).toBe(200)
+
+    const res = await request(app)
+      .put(`/api/v1/supplier-returns/${createRes.body.data.id}/status`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ status: 'shipped' })
+
+    expect(res.status).toBe(200)
+    const log = db.prepare(`
+      SELECT * FROM operation_logs
+      WHERE operation = ? AND description LIKE ?
+      ORDER BY created_at DESC LIMIT 1
+    `).get('supplier_return_status_update', `%${createRes.body.data.id}%`) as any
+    expect(log?.username).toBe('admin')
+  })
+
+  it('SR-004: 创建供应商退货时扣减所选批次并保留批次线索', async () => {
+    const { materialId, supplierId, batchId, batchNo } = seedSupplierReturnMaterialWithBatch(db, `batch-${Date.now()}`)
+
+    const res = await request(app)
+      .post('/api/v1/supplier-returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId,
+        supplierId,
+        batchId,
+        quantity: 3,
+        reason: '批次退货给供应商',
+      })
+
+    expect(res.status).toBe(200)
+    const record = db.prepare('SELECT batch_id, batch_no, quantity FROM supplier_returns WHERE id = ?')
+      .get(res.body.data.id) as any
+    const batch = db.prepare('SELECT remaining, status FROM batches WHERE id = ?').get(batchId) as any
+    const inv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+
+    expect(record.batch_id).toBe(batchId)
+    expect(record.batch_no).toBe(batchNo)
+    expect(Number(record.quantity)).toBe(3)
+    expect(Number(batch.remaining)).toBe(7)
+    expect(Number(batch.status)).toBe(1)
+    expect(Number(inv.stock)).toBe(7)
+  })
+
+  it('SR-005: 删除待发货供应商退货时恢复对应批次和库存', async () => {
+    const { materialId, supplierId, batchId } = seedSupplierReturnMaterialWithBatch(db, `restore-${Date.now()}`)
+    const createRes = await request(app)
+      .post('/api/v1/supplier-returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId,
+        supplierId,
+        batchId,
+        quantity: 4,
+        reason: '批次退货后撤销',
+      })
+    expect(createRes.status).toBe(200)
+
+    const beforeDeleteBatch = db.prepare('SELECT remaining FROM batches WHERE id = ?').get(batchId) as any
+    expect(Number(beforeDeleteBatch.remaining)).toBe(6)
+
+    const deleteRes = await request(app)
+      .delete(`/api/v1/supplier-returns/${createRes.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(deleteRes.status).toBe(200)
+    const batch = db.prepare('SELECT remaining, status FROM batches WHERE id = ?').get(batchId) as any
+    const inv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+
+    expect(Number(batch.remaining)).toBe(10)
+    expect(Number(batch.status)).toBe(1)
+    expect(Number(inv.stock)).toBe(10)
+  })
+
+  it('SR-006: 所选批次库存不足时拒绝退货且不扣总库存', async () => {
+    const { materialId, supplierId, batchId } = seedSupplierReturnMaterialWithBatch(db, `insufficient-${Date.now()}`, 2)
+
+    const res = await request(app)
+      .post('/api/v1/supplier-returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId,
+        supplierId,
+        batchId,
+        quantity: 3,
+        reason: '超过批次余额',
+      })
+
+    expect(res.status).toBe(422)
+    const batch = db.prepare('SELECT remaining FROM batches WHERE id = ?').get(batchId) as any
+    const inv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+    const records = db.prepare('SELECT COUNT(*) as count FROM supplier_returns WHERE material_id = ?')
+      .get(materialId) as any
+
+    expect(Number(batch.remaining)).toBe(2)
+    expect(Number(inv.stock)).toBe(10)
+    expect(Number(records.count)).toBe(0)
+  })
+
+  it('SR-007: 状态流转取消退货时恢复库存和批次', async () => {
+    const { materialId, supplierId, batchId } = seedSupplierReturnMaterialWithBatch(db, `status-cancel-${Date.now()}`)
+    const createRes = await request(app)
+      .post('/api/v1/supplier-returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId,
+        supplierId,
+        batchId,
+        quantity: 4,
+        reason: '状态取消退货',
+      })
+    expect(createRes.status).toBe(200)
+
+    const shippedRes = await request(app)
+      .put(`/api/v1/supplier-returns/${createRes.body.data.id}/status`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ status: 'shipped' })
+    expect(shippedRes.status).toBe(200)
+
+    const cancelRes = await request(app)
+      .put(`/api/v1/supplier-returns/${createRes.body.data.id}/status`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ status: 'cancelled' })
+    expect(cancelRes.status).toBe(200)
+
+    const record = db.prepare('SELECT status FROM supplier_returns WHERE id = ?').get(createRes.body.data.id) as any
+    const batch = db.prepare('SELECT remaining, status FROM batches WHERE id = ?').get(batchId) as any
+    const inv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+    const cancelLog = db.prepare(`
+      SELECT quantity, before_stock, after_stock, operator
+      FROM stock_logs
+      WHERE related_id = ? AND related_type = 'supplier_return_cancel'
+      ORDER BY created_at DESC
+      LIMIT 1
+    `).get(createRes.body.data.id) as any
+
+    expect(record.status).toBe('cancelled')
+    expect(Number(batch.remaining)).toBe(10)
+    expect(Number(batch.status)).toBe(1)
+    expect(Number(inv.stock)).toBe(10)
+    expect(Number(cancelLog.quantity)).toBe(4)
+    expect(Number(cancelLog.before_stock)).toBe(6)
+    expect(Number(cancelLog.after_stock)).toBe(10)
+    expect(cancelLog.operator).toBe('admin')
+  })
+
+  it('SR-008: 默认仓管和采购角色可访问并创建供应商退货', async () => {
+    const warehouseToken = await loginRole(app, 'wangkq')
+    const procurementToken = await loginRole(app, 'zhaohp')
+    const warehouseSeed = seedSupplierReturnMaterialWithBatch(db, `whm-role-${Date.now()}`)
+    const procurementSeed = seedSupplierReturnMaterialWithBatch(db, `pro-role-${Date.now()}`)
+
+    const warehouseList = await request(app)
+      .get('/api/v1/supplier-returns')
+      .set('Authorization', `Bearer ${warehouseToken}`)
+    expect(warehouseList.status).toBe(200)
+
+    const procurementList = await request(app)
+      .get('/api/v1/supplier-returns')
+      .set('Authorization', `Bearer ${procurementToken}`)
+    expect(procurementList.status).toBe(200)
+
+    const warehouseCreate = await request(app)
+      .post('/api/v1/supplier-returns')
+      .set('Authorization', `Bearer ${warehouseToken}`)
+      .send({
+        materialId: warehouseSeed.materialId,
+        supplierId: warehouseSeed.supplierId,
+        batchId: warehouseSeed.batchId,
+        quantity: 1,
+        reason: '仓管角色退货',
+      })
+    expect(warehouseCreate.status).toBe(200)
+
+    const procurementCreate = await request(app)
+      .post('/api/v1/supplier-returns')
+      .set('Authorization', `Bearer ${procurementToken}`)
+      .send({
+        materialId: procurementSeed.materialId,
+        supplierId: procurementSeed.supplierId,
+        batchId: procurementSeed.batchId,
+        quantity: 1,
+        reason: '采购角色退货',
+      })
+    expect(procurementCreate.status).toBe(200)
+  })
+
+  it('SR-REF-001: 创建供应商退货拒绝停用物料和停用供应商', async () => {
+    const inactiveMaterialSeed = seedSupplierReturnMaterialWithBatch(db, `inactive-material-${Date.now()}`)
+    const inactiveSupplierSeed = seedSupplierReturnMaterialWithBatch(db, `inactive-supplier-${Date.now()}`)
+    db.prepare('UPDATE materials SET status = 0 WHERE id = ?').run(inactiveMaterialSeed.materialId)
+    db.prepare('UPDATE suppliers SET status = 0 WHERE id = ?').run(inactiveSupplierSeed.supplierId)
+
+    const inactiveMaterialRes = await request(app)
+      .post('/api/v1/supplier-returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId: inactiveMaterialSeed.materialId,
+        supplierId: inactiveMaterialSeed.supplierId,
+        batchId: inactiveMaterialSeed.batchId,
+        quantity: 2,
+        reason: '停用物料退货给供应商',
+      })
+
+    expect(inactiveMaterialRes.status).toBe(409)
+    expect(inactiveMaterialRes.body.error.message).toContain('物料已停用')
+
+    const inactiveSupplierRes = await request(app)
+      .post('/api/v1/supplier-returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId: inactiveSupplierSeed.materialId,
+        supplierId: inactiveSupplierSeed.supplierId,
+        batchId: inactiveSupplierSeed.batchId,
+        quantity: 2,
+        reason: '停用供应商退货',
+      })
+
+    expect(inactiveSupplierRes.status).toBe(409)
+    expect(inactiveSupplierRes.body.error.message).toContain('供应商已停用')
+
+    const materialInventory = db.prepare('SELECT stock FROM inventory WHERE material_id = ?')
+      .get(inactiveMaterialSeed.materialId) as any
+    const supplierInventory = db.prepare('SELECT stock FROM inventory WHERE material_id = ?')
+      .get(inactiveSupplierSeed.materialId) as any
+    const records = db.prepare('SELECT COUNT(*) as count FROM supplier_returns WHERE material_id IN (?, ?)')
+      .get(inactiveMaterialSeed.materialId, inactiveSupplierSeed.materialId) as any
+
+    expect(materialInventory.stock).toBe(10)
+    expect(supplierInventory.stock).toBe(10)
+    expect(records.count).toBe(0)
+  })
+})

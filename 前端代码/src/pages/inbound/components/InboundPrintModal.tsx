@@ -7,14 +7,13 @@ import type { ReactNode } from 'react'
 interface InboundPrintModalProps {
   open: boolean
   data: InboundRecord[]
-  selectedRecord: InboundRecord | null
   onClose: () => void
 }
 
-export default function InboundPrintModal({ open, data, selectedRecord, onClose }: InboundPrintModalProps) {
+export default function InboundPrintModal({ open, data, onClose }: InboundPrintModalProps) {
   if (!open) return null
 
-  const rows = selectedRecord ? [selectedRecord] : data
+  const rows = data
 
   const handlePrint = () => {
     window.print()

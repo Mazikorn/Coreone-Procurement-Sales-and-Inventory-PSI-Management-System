@@ -1,20 +1,26 @@
 import request from './request'
-import type { PaginationData, InventoryItem, InventoryStats, InboundRecord, InboundFormData, OutboundRecord, OutboundFormData, PageParams, SupplierReturnRecord, SupplierReturnFormData } from '@/types'
+import type { PaginationData, InventoryItem, InventoryStats, InventoryConsistencyCheck, InboundRecord, InboundFormData, OutboundRecord, OutboundFormData, PageParams, SupplierReturnRecord, SupplierReturnFormData, ReturnRecord } from '@/types'
 
 export const inventoryApi = {
-  getList: (params?: PageParams & { status?: string; categoryId?: string; locationId?: string }) =>
+  getList: (params?: PageParams & { status?: string; categoryId?: string; locationId?: string; keyword?: string; materialId?: string }) =>
     request.get<PaginationData<InventoryItem>>('/inventory', { params }),
 
-  getStats: () =>
-    request.get<InventoryStats>('/inventory/stats'),
+  getStats: (params?: { keyword?: string; categoryId?: string; locationId?: string; materialId?: string }) =>
+    request.get<InventoryStats>('/inventory/stats', { params }),
+
+  getConsistencyCheck: () =>
+    request.get<InventoryConsistencyCheck>('/inventory/consistency-check'),
 }
 
 export const inboundApi = {
-  getList: (params?: PageParams & { status?: string; type?: string; materialId?: string; startDate?: string; endDate?: string }) =>
+  getList: (params?: PageParams & { status?: string; type?: string; materialId?: string; keyword?: string; startDate?: string; endDate?: string }) =>
     request.get<PaginationData<InboundRecord>>('/inbound', { params }),
 
   create: (data: InboundFormData) =>
     request.post<InboundRecord>('/inbound', data),
+
+  batchCreate: (records: InboundFormData[]) =>
+    request.post<{ createdCount: number; ids: string[] }>('/inbound/batch', { records }),
 
   update: (id: string, data: Partial<InboundFormData>) =>
     request.put<InboundRecord>(`/inbound/${id}`, data),
@@ -23,7 +29,16 @@ export const inboundApi = {
     request.delete(`/inbound/${id}`),
 
   getStats: () =>
-    request.get<{ total: number; completed: number; cancelled: number; amount: number; supplierCount: number; pendingOrders: number }>('/inbound/stats'),
+    request.get<{
+      total: number
+      monthTotal: number
+      completed: number
+      cancelled: number
+      amount: number
+      supplierCount: number
+      pendingOrders: number
+      quickCounts: { all: number; today: number; week: number; month: number }
+    }>('/inbound/stats'),
 
   checkDeletable: (id: string) =>
     request.get<{ canDelete: boolean; reasons: string[]; record: any }>(`/inbound/${id}/check-deletable`),
@@ -53,12 +68,20 @@ export const outboundApi = {
     request.get<PaginationData<OutboundRecord>>('/outbound', { params }),
 
   getStats: () =>
-    request.get<{ total: number; completed: number; pending: number; cancelled: number; totalCost: number }>('/outbound/stats'),
+    request.get<{
+      total: number
+      monthTotal: number
+      completed: number
+      pending: number
+      cancelled: number
+      totalCost: number
+      quickCounts: { all: number; today: number; week: number; month: number }
+    }>('/outbound/stats'),
 
   create: (data: OutboundFormData) =>
     request.post<OutboundRecord>('/outbound', data),
 
-  createBom: (data: { bomId: string; projectId?: string; sampleCount: number; remark?: string }) =>
+  createBom: (data: { bomId?: string; projectId?: string; sampleCount: number; caseNo?: string; remark?: string }) =>
     request.post<OutboundRecord>('/outbound/bom', data),
 
   update: (id: string, data: Partial<OutboundFormData>) =>
@@ -71,17 +94,19 @@ export const outboundApi = {
 export const scrapApi = {
   getList: (params?: PageParams) =>
     request.get<PaginationData<Record<string, unknown>>>('/scraps', { params }),
-  create: (data: { materialId: string; quantity: number; reason: string; operator?: string; remark?: string }) =>
+  create: (data: { materialId: string; batchId?: string; quantity: number; reason: string; operator?: string; remark?: string }) =>
     request.post<Record<string, unknown>>('/scraps', data),
+  batchCreate: (records: Array<{ materialId: string; batchId?: string; quantity: number; reason: string; remark?: string }>) =>
+    request.post<{ createdCount: number; ids: string[] }>('/scraps/batch', { records }),
   delete: (id: string) =>
     request.delete(`/scraps/${id}`),
 }
 
 export const returnApi = {
-  getList: (params?: PageParams) =>
-    request.get<PaginationData<Record<string, unknown>>>('/returns', { params }),
-  create: (data: { materialId: string; quantity: number; reason: string; operator?: string; remark?: string }) =>
-    request.post<Record<string, unknown>>('/returns', data),
+  getList: (params?: PageParams & { keyword?: string }) =>
+    request.get<PaginationData<ReturnRecord>>('/returns', { params }),
+  create: (data: { materialId: string; batchId?: string; quantity: number; reason: string; remark?: string }) =>
+    request.post<{ id: string }>('/returns', data),
   delete: (id: string) =>
     request.delete(`/returns/${id}`),
 }
@@ -113,4 +138,8 @@ export const depletionApi = {
     request.get<{ list: Record<string, unknown>[] }>('/depletion/tracking', { params }),
   getDepletion: () =>
     request.get<{ list: Record<string, unknown>[] }>('/depletion/depletion'),
+  updateRemain: (id: string, data: { remaining: number; reason?: string }) =>
+    request.put<{ id: string; remaining: number }>(`/depletion/tracking/${id}/remain`, data),
+  deplete: (id: string, data: { remain_qty: number; deplete_type: string; deplete_reason?: string }) =>
+    request.post<{ id: string }>(`/depletion/tracking/${id}/deplete`, data),
 }

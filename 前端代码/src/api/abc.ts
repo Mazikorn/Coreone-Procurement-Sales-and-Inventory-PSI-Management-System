@@ -40,12 +40,77 @@ export const abcApi = {
   recalculateCostPools: (yearMonth: string) =>
     request.post('/abc/cost-pools/recalculate', { yearMonth }),
 
+  // ===== 成本期间 =====
+  getPeriods: (params?: any) =>
+    request.get('/abc/periods', { params }),
+
+  createPeriod: (data: any) =>
+    request.post('/abc/periods', data),
+
+  startPeriodCollection: (id: string, data?: any) =>
+    request.post(`/abc/periods/${id}/start-collection`, data || {}),
+
+  closePeriod: (id: string, data?: any) =>
+    request.post(`/abc/periods/${id}/close`, data || {}),
+
+  // ===== 成本异常 =====
+  getExceptions: (params?: any) =>
+    request.get('/abc/exceptions', { params }),
+
+  resolveException: (id: string, data?: any) =>
+    request.post(`/abc/exceptions/${id}/resolve`, data || {}),
+
+  ignoreException: (id: string, data?: any) =>
+    request.post(`/abc/exceptions/${id}/ignore`, data || {}),
+
+  retryException: (id: string) =>
+    request.post(`/abc/exceptions/${id}/retry`, {}),
+
+  // ===== 成本重算任务 =====
+  getCostRuns: (params?: any) =>
+    request.get('/abc/cost-runs', { params }),
+
+  getCostRun: (id: string) =>
+    request.get(`/abc/cost-runs/${id}`),
+
+  createCostRun: (data: any) =>
+    request.post('/abc/cost-runs', data),
+
+  // ===== 关账后调整单 =====
+  getAdjustments: (params?: any) =>
+    request.get('/abc/adjustments', { params }),
+
+  createAdjustment: (data: any) =>
+    request.post('/abc/adjustments', data),
+
+  approveAdjustment: (id: string, data?: any) =>
+    request.post(`/abc/adjustments/${id}/approve`, data || {}),
+
+  rejectAdjustment: (id: string, data?: any) =>
+    request.post(`/abc/adjustments/${id}/reject`, data || {}),
+
   // ===== BOM 作业关联 =====
   getBomLinks: (bomId: string) =>
     request.get(`/abc/bom-links/${bomId}`),
 
   updateBomLinks: (bomId: string, links: any[]) =>
     request.put(`/abc/bom-links/${bomId}`, { links }),
+
+  // ===== BOM 收费映射 =====
+  getBomFeeMappingAudit: (params?: any) =>
+    request.get('/abc/bom-fee-mappings/audit', { params }),
+
+  runBomFeeMappingAudit: (data?: any) =>
+    request.post('/abc/bom-fee-mappings/audit', data || {}),
+
+  getBomFeeMappings: (bomId: string) =>
+    request.get(`/abc/bom-fee-mappings/${bomId}`),
+
+  updateBomFeeMappings: (bomId: string, mappings: any[]) =>
+    request.put(`/abc/bom-fee-mappings/${bomId}`, { mappings }),
+
+  previewBomFeeMapping: (bomId: string, data: any) =>
+    request.post(`/abc/bom-fee-mappings/${bomId}/preview`, data),
 
   // ===== 收费标准 =====
   getFeeStandards: (params?: any) =>

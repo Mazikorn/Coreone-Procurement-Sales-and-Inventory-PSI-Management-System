@@ -25,6 +25,8 @@ interface Props {
   keyword: string
   category: string
   location: string
+  categoryOptions: Array<{ value: string; label: string }>
+  locationOptions: Array<{ value: string; label: string }>
   quickFilter: QuickFilterType
   sortField: SortField
   sortDirection: SortDirection
@@ -87,6 +89,8 @@ export function InventoryTable({
   keyword,
   category,
   location,
+  categoryOptions,
+  locationOptions,
   quickFilter,
   sortField,
   sortDirection,
@@ -205,24 +209,14 @@ export function InventoryTable({
             <SearchableSelect
               value={category}
               onChange={val => onCategoryChange(val)}
-              options={[
-                { value: '全部分类', label: '全部分类' },
-                { value: '试剂', label: '试剂' },
-                { value: '耗材', label: '耗材' },
-                { value: '设备', label: '设备' },
-              ]}
+              options={categoryOptions}
               placeholder="全部分类"
               className="w-36"
             />
             <SearchableSelect
               value={location}
               onChange={val => onLocationChange(val)}
-              options={[
-                { value: '全部库位', label: '全部库位' },
-                { value: 'A区-试剂冷藏', label: 'A区-试剂冷藏' },
-                { value: 'B区-常温耗材', label: 'B区-常温耗材' },
-                { value: 'C区-设备配件', label: 'C区-设备配件' },
-              ]}
+              options={locationOptions}
               placeholder="全部库位"
               className="w-36"
             />

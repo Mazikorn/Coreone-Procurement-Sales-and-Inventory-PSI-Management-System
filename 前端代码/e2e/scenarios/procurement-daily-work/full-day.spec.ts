@@ -34,6 +34,8 @@ let adminToken = ''
 let procurementToken = ''
 let supplierId = ''
 let materialId = ''
+let createdOrderId = ''
+let createdOrderNo = ''
 
 test.beforeAll(async () => {
   adminToken = await apiLogin('admin')
@@ -80,46 +82,50 @@ test.describe('采购员一天的工作 - 完整流程', () => {
 
     const res = await apiFetch(procurementToken, 'POST', '/purchase-orders', {
       supplierId,
-      items: [{ materialId, quantity: 100, price: 10.00 }],
+      materialId,
+      materialName: `E2E采购物料-${Date.now()}`,
+      orderedQty: 100,
+      unitPrice: 10.00,
+      unit: '个',
       remark: 'E2E采购员一天工作-创建PO',
     })
 
-    expect([201, 400]).toContain(res.status)
+    expect([200, 201]).toContain(res.status)
+    createdOrderId = res.data?.data?.id || ''
+    createdOrderNo = res.data?.data?.orderNo || ''
+    expect(createdOrderId).toBeTruthy()
+    expect(createdOrderNo).toMatch(/^PO/)
   })
 
   test('步骤5: 验证采购订单已创建', async ({ page }) => {
+    expect(createdOrderNo).toBeTruthy()
     await loginAs(page, 'procurement')
     await page.goto(`${FE_BASE}/purchase-orders`)
-    await page.waitForTimeout(1000)
+    await page.getByPlaceholder('搜索订单号/物料名称...').fill(createdOrderNo)
 
-    // 验证采购订单列表可见
-    const rows = page.locator('table tbody tr')
-    await expect(rows.first()).toBeVisible({ timeout: 5000 })
+    const row = page.locator('table tbody tr').filter({ hasText: createdOrderNo })
+    await expect(row).toBeVisible({ timeout: 10000 })
   })
 
   test('步骤6: 查看采购订单状态', async ({ page }) => {
+    expect(createdOrderNo).toBeTruthy()
     await loginAs(page, 'procurement')
     await page.goto(`${FE_BASE}/purchase-orders`)
-    await page.waitForTimeout(1000)
+    await page.getByPlaceholder('搜索订单号/物料名称...').fill(createdOrderNo)
 
-    // 验证订单状态显示
-    const statusCell = page.locator('text=待处理, text=pending, text=待收货, text=已完成')
-    await expect(statusCell.first()).toBeVisible({ timeout: 5000 })
+    const row = page.locator('table tbody tr').filter({ hasText: createdOrderNo })
+    await expect(row).toContainText('待收货', { timeout: 10000 })
+    await expect(row).toContainText('收货')
   })
 
   test('步骤7: 查看采购订单详情', async ({ page }) => {
+    expect(createdOrderNo).toBeTruthy()
     await loginAs(page, 'procurement')
     await page.goto(`${FE_BASE}/purchase-orders`)
-    await page.waitForTimeout(1000)
+    await page.getByPlaceholder('搜索订单号/物料名称...').fill(createdOrderNo)
 
-    // 点击第一条记录查看详情
-    const firstRow = page.locator('table tbody tr').first()
-    if (await firstRow.isVisible().catch(() => false)) {
-      await firstRow.click()
-      await page.waitForTimeout(500)
-
-      // 验证详情页显示
-      await expect(page.locator('body')).toBeVisible()
-    }
+    const row = page.locator('table tbody tr').filter({ hasText: createdOrderNo })
+    await row.getByRole('button', { name: '详情' }).click()
+    await expect(page.getByLabel('采购订单详情').getByText(createdOrderNo)).toBeVisible({ timeout: 10000 })
   })
 })

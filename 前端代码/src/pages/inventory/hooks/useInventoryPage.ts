@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
-import { bomApi, materialApi, projectApi, userApi } from '@/api/master'
+import { bomApi, categoryApi, locationApi, materialApi, projectApi, userApi } from '@/api/master'
 import { depletionApi, inventoryApi, outboundApi, scrapApi } from '@/api/inventory'
-import type { BOM, BOMMaterial, InventoryItem, Material, Project } from '@/types'
+import type { BOM, BOMMaterial, Category, InventoryConsistencyCheck, InventoryItem, InventoryStats, Location, Material, Project } from '@/types'
+import { getUserRole } from '@/lib/permissions'
+import { useUrlParams } from '@/hooks/useUrlParams'
 
 type ActiveTab = 'in-stock' | 'in-use' | 'depleted'
 type SortField = 'quantity' | 'expiry' | null
@@ -20,6 +22,7 @@ type OutboundUsage = 'self' | 'external'
 type OutboundMaterial = {
   rowId: number
   materialId: string
+  batchId?: string
   name: string
   spec: string
   batch?: string
@@ -72,6 +75,29 @@ function readList<T>(res: unknown): T[] {
   return readPage<T>(res).list
 }
 
+function getCurrentUserOption() {
+  try {
+    const user = JSON.parse(localStorage.getItem('user') || '{}')
+    const name = user.realName || user.real_name || user.name || user.username || '当前用户'
+    return {
+      id: user.id || user.userId || user.username || 'current-user',
+      real_name: name,
+      realName: name,
+      username: user.username || '',
+    }
+  } catch {
+    return { id: 'current-user', real_name: '当前用户', realName: '当前用户', username: '' }
+  }
+}
+
+function canAccessProjects(role: string | null): boolean {
+  return role === 'admin' || role === 'warehouse_manager' || role === 'technician' || role === 'pathologist'
+}
+
+function canAccessLocations(role: string | null): boolean {
+  return role === 'admin' || role === 'warehouse_manager'
+}
+
 function toRowId(seed: unknown) {
   const text = String(seed ?? Date.now())
   return Math.abs(text.split('').reduce((sum, char) => ((sum << 5) - sum) + char.charCodeAt(0), 0))
@@ -81,10 +107,12 @@ function toInventoryRow(item: any): InventoryRow {
   return {
     ...item,
     stock: Number(item.stock ?? item.quantity ?? item.availableStock ?? 0),
+    totalStock: Number(item.totalStock ?? item.stock ?? item.quantity ?? item.availableStock ?? 0),
     availableStock: Number(item.availableStock ?? item.stock ?? item.quantity ?? 0),
     minStock: Number(item.minStock ?? 0),
     maxStock: Number(item.maxStock ?? 0),
     batch: item.batch ?? item.batchNo ?? item.batchCode ?? '-',
+    batchId: item.batchId ?? undefined,
     expiry: item.expiry ?? item.expiryDate ?? item.expiredAt ?? undefined,
   }
 }
@@ -105,6 +133,7 @@ function toOutboundMaterial(row: InventoryRow | Material | BOMMaterial, fallback
   return {
     rowId: toRowId(anyRow.rowId ?? anyRow.id ?? materialId),
     materialId,
+    batchId: anyRow.batchId ?? undefined,
     name: anyRow.name ?? anyRow.materialName ?? '-',
     spec: anyRow.spec ?? '-',
     batch: anyRow.batch ?? anyRow.batchNo,
@@ -154,6 +183,8 @@ function mapDepletedRecord(row: any): DepletedRecord {
 }
 
 export function useInventoryPage() {
+  const url = useUrlParams()
+  const filterMaterialId = url.get('materialId', '')
   const [activeTab, setActiveTab] = useState<ActiveTab>('in-stock')
   const [data, setData] = useState<InventoryRow[]>([])
   const [loading, setLoading] = useState(false)
@@ -162,9 +193,12 @@ export function useInventoryPage() {
   const [pageSize, setPageSize] = useState(20)
   const [keyword, setKeyword] = useState('')
   const [searchKeyword, setSearchKeyword] = useState('')
-  const [category, setCategory] = useState('全部分类')
-  const [location, setLocation] = useState('全部库位')
+  const [category, setCategory] = useState('')
+  const [location, setLocation] = useState('')
+  const [categoryOptions, setCategoryOptions] = useState<Array<{ value: string; label: string }>>([{ value: '', label: '全部分类' }])
+  const [locationOptions, setLocationOptions] = useState<Array<{ value: string; label: string }>>([{ value: '', label: '全部库位' }])
   const [quickFilter, setQuickFilter] = useState<QuickFilterType>('all')
+  const [inventoryStats, setInventoryStats] = useState<InventoryStats | null>(null)
   const [sortField, setSortField] = useState<SortField>(null)
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -202,6 +236,13 @@ export function useInventoryPage() {
   const [depleteRemainValue, setDepleteRemainValue] = useState('0')
   const [expiredReason, setExpiredReason] = useState('')
   const [expiredRemark, setExpiredRemark] = useState('')
+  const [consistencyModalOpen, setConsistencyModalOpen] = useState(false)
+  const [consistencyLoading, setConsistencyLoading] = useState(false)
+  const [consistencyResult, setConsistencyResult] = useState<InventoryConsistencyCheck | null>(null)
+  const canAccessDepletion = useMemo(() => {
+    const role = getUserRole()
+    return role === 'admin' || role === 'pathologist' || role === 'finance'
+  }, [])
 
   const loadInventory = useCallback(async () => {
     setLoading(true)
@@ -210,6 +251,10 @@ export function useInventoryPage() {
         page,
         pageSize,
         keyword: searchKeyword || undefined,
+        materialId: filterMaterialId || undefined,
+        categoryId: category || undefined,
+        locationId: location || undefined,
+        status: quickFilter !== 'all' ? quickFilter : undefined,
         sortField: sortField === 'quantity' ? 'stock' : sortField || undefined,
         sortOrder: sortDirection,
       } as any)
@@ -221,23 +266,58 @@ export function useInventoryPage() {
     } finally {
       setLoading(false)
     }
-  }, [page, pageSize, searchKeyword, sortDirection, sortField])
+  }, [category, filterMaterialId, location, page, pageSize, quickFilter, searchKeyword, sortDirection, sortField])
+
+  const loadInventoryStats = useCallback(async () => {
+    try {
+      const res = await inventoryApi.getStats({
+        keyword: searchKeyword || undefined,
+        materialId: filterMaterialId || undefined,
+        categoryId: category || undefined,
+        locationId: location || undefined,
+      })
+      setInventoryStats((res as any)?.data ?? res as InventoryStats)
+    } catch {
+      setInventoryStats(null)
+    }
+  }, [category, filterMaterialId, location, searchKeyword])
 
   const fetchRefs = useCallback(async () => {
-    try {
-      const [projectsRes, usersRes] = await Promise.all([
-        projectApi.getList({ page: 1, pageSize: 100, status: 'active' } as any),
-        userApi.getList({ page: 1, pageSize: 100 }),
-      ])
-      setProjectList(readList<Project>(projectsRes))
-      setUserList(readList<any>(usersRes).map(user => ({
-        ...user,
-        real_name: user.real_name ?? user.realName ?? user.name ?? user.username ?? '',
-      })))
-    } catch {
-      setProjectList([])
-      setUserList([])
+    const role = getUserRole()
+    const [projectsRes, categoriesRes, locationsRes] = await Promise.all([
+      canAccessProjects(role)
+        ? projectApi.getList({ page: 1, pageSize: 999, status: 'active' } as any).catch(() => null)
+        : Promise.resolve(null),
+      categoryApi.getList({ page: 1, pageSize: 999 }).catch(() => null),
+      canAccessLocations(role)
+        ? locationApi.getList({ page: 1, pageSize: 999, status: 'active' }).catch(() => null)
+        : Promise.resolve(null),
+    ])
+
+    setProjectList(projectsRes ? readList<Project>(projectsRes) : [])
+    setCategoryOptions([
+      { value: '', label: '全部分类' },
+      ...(categoriesRes ? readList<Category>(categoriesRes).map(category => ({ value: category.id, label: category.name })) : []),
+    ])
+    setLocationOptions([
+      { value: '', label: '全部库位' },
+      ...(locationsRes ? readList<Location>(locationsRes).map(location => ({ value: location.id, label: location.name })) : []),
+    ])
+
+    if (getUserRole() === 'admin') {
+      try {
+        const usersRes = await userApi.getList({ page: 1, pageSize: 100 })
+        setUserList(readList<any>(usersRes).map(user => ({
+          ...user,
+          real_name: user.real_name ?? user.realName ?? user.name ?? user.username ?? '',
+        })))
+      } catch {
+        setUserList([getCurrentUserOption()])
+      }
+      return
     }
+
+    setUserList([getCurrentUserOption()])
   }, [])
 
   const fetchMaterialList = useCallback(async () => {
@@ -286,7 +366,7 @@ export function useInventoryPage() {
   const loadDepletion = useCallback(async () => {
     try {
       const [trackingRes, depletedRes] = await Promise.all([
-        depletionApi.getTracking({ status: 'active' }),
+        depletionApi.getTracking({ status: 'in-use' }),
         depletionApi.getDepletion(),
       ])
       const trackingPayload = (trackingRes as any)?.data ?? trackingRes as any
@@ -299,49 +379,60 @@ export function useInventoryPage() {
     }
   }, [])
 
+  const runConsistencyCheck = useCallback(async () => {
+    setConsistencyModalOpen(true)
+    setConsistencyLoading(true)
+    try {
+      const res = await inventoryApi.getConsistencyCheck()
+      setConsistencyResult((res as any)?.data ?? res as InventoryConsistencyCheck)
+    } catch {
+      setConsistencyResult(null)
+      toast.error('数据诊断失败')
+    } finally {
+      setConsistencyLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     loadInventory()
   }, [loadInventory])
 
   useEffect(() => {
+    loadInventoryStats()
+  }, [loadInventoryStats])
+
+  useEffect(() => {
     fetchRefs()
-    loadDepletion()
-  }, [fetchRefs, loadDepletion])
+    if (canAccessDepletion) loadDepletion()
+  }, [canAccessDepletion, fetchRefs, loadDepletion])
+
+  useEffect(() => {
+    if (!canAccessDepletion && activeTab !== 'in-stock') {
+      setActiveTab('in-stock')
+    }
+  }, [activeTab, canAccessDepletion])
 
   useEffect(() => {
     if (materialSelectorOpen) fetchMaterialList()
   }, [fetchMaterialList, materialSelectorOpen])
 
-  const filteredData = useMemo(() => {
-    return data.filter(row => {
-      if (category !== '全部分类' && !(row as any).categoryName?.includes(category)) return false
-      if (location !== '全部库位' && !(row.locationName ?? row.locationId ?? '').includes(location)) return false
-      if (quickFilter === 'low-stock') return row.stock > 0 && row.stock <= row.minStock
-      if (quickFilter === 'expiring-soon') return daysUntilExpiry(row) >= 0 && daysUntilExpiry(row) <= 7
-      if (quickFilter === 'expiring-month') return daysUntilExpiry(row) >= 0 && daysUntilExpiry(row) <= 30
-      if (quickFilter === 'expired') return isExpired(row)
-      if (quickFilter === 'out-of-stock') return row.stock <= 0
-      return true
-    })
-  }, [category, data, location, quickFilter])
-
   const quickFilterCounts = useMemo<Record<QuickFilterType, number>>(() => ({
-    all: data.length,
-    'low-stock': data.filter(row => row.stock > 0 && row.stock <= row.minStock).length,
-    'expiring-soon': data.filter(row => daysUntilExpiry(row) >= 0 && daysUntilExpiry(row) <= 7).length,
-    'expiring-month': data.filter(row => daysUntilExpiry(row) >= 0 && daysUntilExpiry(row) <= 30).length,
-    expired: data.filter(isExpired).length,
-    'out-of-stock': data.filter(row => row.stock <= 0).length,
-  }), [data])
+    all: Number(inventoryStats?.totalStockCount || 0),
+    'low-stock': Number(inventoryStats?.lowStockCount || 0),
+    'expiring-soon': Number(inventoryStats?.expiringSoonCount || 0),
+    'expiring-month': Number(inventoryStats?.expiringCount || 0),
+    expired: Number(inventoryStats?.expiredCount || 0),
+    'out-of-stock': Number(inventoryStats?.outOfStockCount || 0),
+  }), [inventoryStats])
 
   const computedStats = useMemo(() => ({
-    total: data.reduce((sum, row) => sum + Number(row.stock || 0), 0),
-    normal: data.filter(row => row.stock > row.minStock && !isExpired(row)).length,
-    low: quickFilterCounts['low-stock'],
-    warning: quickFilterCounts['expiring-month'],
-    expired: quickFilterCounts.expired,
-    outOfStock: quickFilterCounts['out-of-stock'],
-  }), [data, quickFilterCounts])
+    total: Number(inventoryStats?.totalQuantity || 0),
+    normal: Number(inventoryStats?.normalCount || 0),
+    low: Number(inventoryStats?.lowStockCount || 0),
+    warning: Number(inventoryStats?.expiringCount || 0),
+    expired: Number(inventoryStats?.expiredCount || 0),
+    outOfStock: Number(inventoryStats?.outOfStockCount || 0),
+  }), [inventoryStats])
 
   const filteredMaterialList = useMemo(() => {
     const value = materialKeyword.trim().toLowerCase()
@@ -376,17 +467,17 @@ export function useInventoryPage() {
   const handleReset = () => {
     setKeyword('')
     setSearchKeyword('')
-    setCategory('全部分类')
-    setLocation('全部库位')
+    setCategory('')
+    setLocation('')
     setQuickFilter('all')
     setPage(1)
   }
 
   const toggleSelectAll = () => {
     setSelectedIds(prev => (
-      prev.size === filteredData.length
+      prev.size === data.length
         ? new Set()
-        : new Set(filteredData.map(item => item.id))
+        : new Set(data.map(item => item.id))
     ))
   }
 
@@ -472,11 +563,27 @@ export function useInventoryPage() {
       toast.error('出库数量必须大于 0 且不超过库存')
       return
     }
+    const missingUser = outboundMaterials.some(item => !item.user.trim())
+    if (missingUser) {
+      toast.error('请选择领用人')
+      return
+    }
+    const missingExternalReceiver = outboundMaterials.some(item => item.usage === 'external' && !item.receiver.trim())
+    if (missingExternalReceiver) {
+      toast.error('外给用途必须填写接收方')
+      return
+    }
     try {
       await outboundApi.create({
         type: 'project',
         projectId: projectList.find(project => project.name === outboundMaterials.find(item => item.project)?.project)?.id,
-        items: outboundMaterials.map(item => ({ materialId: item.materialId, quantity: item.quantity })),
+        items: outboundMaterials.map(item => ({
+          materialId: item.materialId,
+          batchId: item.batchId,
+          quantity: item.quantity,
+          usage: item.usage,
+          receiver: item.usage === 'external' ? item.receiver.trim() : item.user.trim(),
+        })),
         remark: outboundRemark || undefined,
       })
       toast.success('出库登记成功')
@@ -485,6 +592,7 @@ export function useInventoryPage() {
       setOutboundRemark('')
       clearSelection()
       loadInventory()
+      loadInventoryStats()
     } catch {
       toast.error('出库登记失败')
     }
@@ -545,27 +653,98 @@ export function useInventoryPage() {
       return
     }
     try {
-      await Promise.all(items.map(item => scrapApi.create({
+      const result = await scrapApi.batchCreate(items.map(item => ({
         materialId: item.materialId,
+        batchId: item.batchId,
         quantity: item.stock,
         reason: scrapReason,
         remark: scrapRemark || undefined,
       })))
-      toast.success('报废登记成功')
+      toast.success('报废登记成功', { description: `已报废 ${result.createdCount} 项物料` })
       setBatchScrapModalOpen(false)
       setScrapReason('')
       setScrapRemark('')
       clearSelection()
       loadInventory()
+      loadInventoryStats()
     } catch {
       toast.error('报废登记失败')
+    }
+  }
+
+  const confirmEditRemain = async () => {
+    if (!selectedDepletionItem) return
+    const remaining = Number(editRemainValue)
+    if (!Number.isFinite(remaining) || remaining < 0) {
+      toast.error('剩余量必须为非负数')
+      return
+    }
+    if (remaining > selectedDepletionItem.totalQty) {
+      toast.error('剩余量不能大于领用总量')
+      return
+    }
+    if (!editRemainReason.trim()) {
+      toast.error('请填写调整原因')
+      return
+    }
+    try {
+      await depletionApi.updateRemain(selectedDepletionItem.id, {
+        remaining,
+        reason: editRemainReason.trim(),
+      })
+      toast.success('剩余量已更新')
+      setEditRemainModalOpen(false)
+      setSelectedDepletionItem(null)
+      setEditRemainValue('')
+      setEditRemainReason('')
+      loadDepletion()
+    } catch {
+      toast.error('剩余量更新失败')
+    }
+  }
+
+  const confirmDeplete = async () => {
+    if (!selectedDepletionItem) return
+    const remainQty = Number(depleteRemainValue)
+    if (!Number.isFinite(remainQty) || remainQty < 0) {
+      toast.error('实际剩余量必须为非负数')
+      return
+    }
+    if (remainQty > selectedDepletionItem.totalQty) {
+      toast.error('实际剩余量不能大于领用总量')
+      return
+    }
+    const reason = expiredReason.trim() || expiredRemark.trim()
+    if (depleteType !== 'normal' && !reason) {
+      toast.error('请填写耗尽原因')
+      return
+    }
+    try {
+      await depletionApi.deplete(selectedDepletionItem.id, {
+        remain_qty: remainQty,
+        deplete_type: depleteType,
+        deplete_reason: reason || undefined,
+      })
+      toast.success('已确认耗尽')
+      setConfirmDepleteModalOpen(false)
+      setSelectedDepletionItem(null)
+      setDepleteType('normal')
+      setDepleteRemainValue('0')
+      setExpiredReason('')
+      setExpiredRemark('')
+      loadDepletion()
+      loadInventory()
+      loadInventoryStats()
+    } catch {
+      toast.error('确认耗尽失败')
     }
   }
 
   return {
     activeTab,
     setActiveTab,
-    data: filteredData,
+    canAccessDepletion,
+    data,
     loading,
     total,
     page,
@@ -578,6 +757,8 @@ export function useInventoryPage() {
     setCategory,
     location,
     setLocation,
+    categoryOptions,
+    locationOptions,
     quickFilter,
     sortField,
     sortDirection,
@@ -657,6 +838,7 @@ export function useInventoryPage() {
     editRemainValue,
     editRemainReason,
     editRemainModalOpen,
+    confirmEditRemain,
     setConfirmDepleteModalOpen,
     setDepleteType,
     setDepleteRemainValue,
@@ -667,5 +849,11 @@ export function useInventoryPage() {
     depleteRemainValue,
     expiredReason,
     expiredRemark,
+    confirmDeplete,
+    consistencyModalOpen,
+    setConsistencyModalOpen,
+    consistencyLoading,
+    consistencyResult,
+    runConsistencyCheck,
   }
 }

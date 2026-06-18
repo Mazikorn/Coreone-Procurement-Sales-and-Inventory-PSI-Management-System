@@ -118,6 +118,61 @@ describe('集成测试：库存管理', () => {
       // 分类筛选已通过后端WHERE条件保证，验证返回数据非空即可
     })
 
+    it('按分类和库位筛选库存时分页总数与统计使用后端全量口径', async () => {
+      const suffix = Date.now()
+      const categoryId = `cat-inv-filter-${suffix}`
+      const otherCategoryId = `cat-inv-filter-other-${suffix}`
+      const locationId = `loc-inv-filter-${suffix}`
+      const otherLocationId = `loc-inv-filter-other-${suffix}`
+      db.prepare('INSERT INTO material_categories (id, code, name, level) VALUES (?, ?, ?, ?)')
+        .run(categoryId, `C-INV-F-${suffix}`, '库存筛选分类', 1)
+      db.prepare('INSERT INTO material_categories (id, code, name, level) VALUES (?, ?, ?, ?)')
+        .run(otherCategoryId, `C-INV-FO-${suffix}`, '库存筛选其他分类', 1)
+      db.prepare('INSERT INTO locations (id, code, name, type, zone) VALUES (?, ?, ?, ?, ?)')
+        .run(locationId, `L-INV-F-${suffix}`, '库存筛选库位', 'shelf', 'A区')
+      db.prepare('INSERT INTO locations (id, code, name, type, zone) VALUES (?, ?, ?, ?, ?)')
+        .run(otherLocationId, `L-INV-FO-${suffix}`, '库存筛选其他库位', 'shelf', 'B区')
+
+      const materialInsert = db.prepare(`
+        INSERT INTO materials (id, code, name, spec, unit, category_id, price, location_id)
+        VALUES (?, ?, ?, '1ml', '瓶', ?, 10, ?)
+      `)
+      const inventoryInsert = db.prepare(`
+        INSERT INTO inventory (id, material_id, stock, locked_stock, location_id)
+        VALUES (?, ?, ?, 0, ?)
+      `)
+      for (let i = 1; i <= 2; i += 1) {
+        const materialId = `mat-inv-filter-${suffix}-${i}`
+        materialInsert.run(materialId, `INV-F-${suffix}-${i}`, `库存筛选物料-${i}`, categoryId, locationId)
+        inventoryInsert.run(`inv-filter-${suffix}-${i}`, materialId, i * 5, locationId)
+      }
+      const otherMaterialId = `mat-inv-filter-other-${suffix}`
+      materialInsert.run(otherMaterialId, `INV-FO-${suffix}`, '库存筛选其他物料', otherCategoryId, otherLocationId)
+      inventoryInsert.run(`inv-filter-other-${suffix}`, otherMaterialId, 99, otherLocationId)
+
+      const listRes = await request(app)
+        .get('/api/v1/inventory')
+        .query({ categoryId, locationId, page: 1, pageSize: 1 })
+        .set('Authorization', `Bearer ${token}`)
+
+      expect(listRes.status).toBe(200)
+      expect(listRes.body.data.total).toBe(2)
+      expect(listRes.body.data.pagination.total).toBe(2)
+      expect(listRes.body.data.list).toHaveLength(1)
+      expect(listRes.body.data.list[0].categoryId).toBe(categoryId)
+      expect(listRes.body.data.list[0].locationId).toBe(locationId)
+
+      const statsRes = await request(app)
+        .get('/api/v1/inventory/stats')
+        .query({ categoryId, locationId })
+        .set('Authorization', `Bearer ${token}`)
+
+      expect(statsRes.status).toBe(200)
+      expect(statsRes.body.data.totalMaterials).toBe(2)
+      expect(statsRes.body.data.totalStockCount).toBe(2)
+      expect(statsRes.body.data.totalQuantity).toBe(15)
+    })
+
     it('按关键词搜索库存', async () => {
       const res = await request(app)
         .get('/api/v1/inventory?page=1&pageSize=20&keyword=INV-L1')
@@ -126,6 +181,22 @@ describe('集成测试：库存管理', () => {
       expect(res.status).toBe(200)
       const found = res.body.data.list.find((i: any) => i.code === 'INV-L1')
       expect(found).toBeDefined()
+    })
+
+    it('按批号和供应商关键词搜索库存', async () => {
+      const batchRes = await request(app)
+        .get('/api/v1/inventory?page=1&pageSize=20&keyword=B-INV-1')
+        .set('Authorization', `Bearer ${token}`)
+
+      expect(batchRes.status).toBe(200)
+      expect(batchRes.body.data.list.some((i: any) => i.materialId === materialId)).toBe(true)
+
+      const supplierRes = await request(app)
+        .get('/api/v1/inventory?page=1&pageSize=20&keyword=Dako')
+        .set('Authorization', `Bearer ${token}`)
+
+      expect(supplierRes.status).toBe(200)
+      expect(supplierRes.body.data.list.some((i: any) => i.supplierName === 'Dako')).toBe(true)
     })
   })
 
@@ -153,12 +224,37 @@ describe('集成测试：库存管理', () => {
     })
 
     it('库存预警列表', async () => {
-      const res = await request(app)
-        .get('/api/v1/inventory?page=1&pageSize=20&lowStock=true')
+      const suffix = Date.now()
+      const lowId = await createMaterial(app, token, `LOW-${suffix}`, 10)
+      const zeroId = await createMaterial(app, token, `ZERO-${suffix}`, 10)
+      await inbound(app, token, lowId, `B-LOW-${suffix}`, 2, 10)
+
+      const lowRes = await request(app)
+        .get(`/api/v1/inventory?page=1&pageSize=20&keyword=LOW-${suffix}&status=low-stock`)
         .set('Authorization', `Bearer ${token}`)
 
-      expect(res.status).toBe(200)
-      expect(Array.isArray(res.body.data.list)).toBe(true)
+      expect(lowRes.status).toBe(200)
+      expect(lowRes.body.data.total).toBe(1)
+      expect(lowRes.body.data.list[0].materialId).toBe(lowId)
+      expect(lowRes.body.data.list[0].status).toBe('low-stock')
+
+      const outRes = await request(app)
+        .get(`/api/v1/inventory?page=1&pageSize=20&keyword=ZERO-${suffix}&status=out-of-stock`)
+        .set('Authorization', `Bearer ${token}`)
+
+      expect(outRes.status).toBe(200)
+      expect(outRes.body.data.total).toBe(1)
+      expect(outRes.body.data.list[0].materialId).toBe(zeroId)
+      expect(outRes.body.data.list[0].stock).toBe(0)
+      expect(outRes.body.data.list[0].status).toBe('out-of-stock')
+
+      const statsRes = await request(app)
+        .get('/api/v1/inventory/stats')
+        .set('Authorization', `Bearer ${token}`)
+
+      expect(statsRes.status).toBe(200)
+      expect(statsRes.body.data.lowStockCount).toBeGreaterThanOrEqual(1)
+      expect(statsRes.body.data.outOfStockCount).toBeGreaterThanOrEqual(1)
     })
   })
 
@@ -177,9 +273,10 @@ describe('集成测试：库存管理', () => {
         .get('/api/v1/inventory?page=1&pageSize=50')
         .set('Authorization', `Bearer ${token}`)
 
-      const item = invRes.body.data.list.find((i: any) => i.materialId === materialId)
-      expect(item).toBeDefined()
-      expect(item.stock).toBe(60) // 10 + 20 + 30
+      const items = invRes.body.data.list.filter((i: any) => i.materialId === materialId)
+      expect(items).toHaveLength(3)
+      expect(items.reduce((sum: number, item: any) => sum + Number(item.stock), 0)).toBe(60) // 10 + 20 + 30
+      expect(items.every((item: any) => Number(item.totalStock) === 60)).toBe(true)
     })
 
     it('数据库批次记录正确', () => {

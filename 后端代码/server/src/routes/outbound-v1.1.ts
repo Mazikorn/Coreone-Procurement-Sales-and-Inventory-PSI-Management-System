@@ -3,16 +3,71 @@ import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
 import { allocateBatches, allocateGroupBatches, BatchAllocation, GroupBatchAllocation } from '../utils/allocation.js'
+import { consumeInventoryLocationStock, restoreInventoryLocationStock } from '../utils/inventory-locations.js'
 
 const router = Router()
 
 import { checkStockAlerts } from '../utils/alertChecker.js'
 import { generateNo } from '../utils/generateNo.js'
-import { calculateSlideCostWithFee } from '../utils/cost-calculator.js'
+import { buildBomSourceSnapshot, calculateFeeAmountFromStandard, calculateSlideCostWithFee } from '../utils/cost-calculator.js'
 import { errorMessage, recordCostException } from '../utils/cost-exceptions.js'
 
 function generateOutboundNo(): string {
   return generateNo('OB')
+}
+
+function validateDirectOutboundReferences(db: any, refs: { projectId?: unknown; items?: unknown }) {
+  const projectId = String(refs.projectId || '').trim()
+  if (projectId) {
+    const project = db.prepare('SELECT id, status FROM projects WHERE id = ? AND is_deleted = 0').get(projectId) as any
+    if (!project) return { ok: false, status: 404, message: '检测项目不存在', code: 'NOT_FOUND' }
+    if (Number(project.status) !== 1) {
+      return { ok: false, status: 409, message: '停用检测项目不能用于出库', code: 'CONFLICT' }
+    }
+  }
+
+  const items = Array.isArray(refs.items) ? refs.items : []
+  for (const item of items) {
+    const materialId = String(item?.materialId || '').trim()
+    if (!materialId) return { ok: false, status: 400, message: '出库物料不能为空', code: 'INVALID_PARAMETER' }
+
+    const material = db.prepare('SELECT id, status FROM materials WHERE id = ? AND is_deleted = 0').get(materialId) as any
+    if (!material) return { ok: false, status: 404, message: '出库物料不存在', code: 'NOT_FOUND' }
+    if (Number(material.status) !== 1) {
+      return { ok: false, status: 409, message: '停用物料不能用于出库', code: 'CONFLICT' }
+    }
+  }
+
+  return { ok: true }
+}
+
+function validateBomOutboundMaterials(db: any, bomId: string) {
+  const groups = [
+    { table: 'bom_items', label: '特异性试剂' },
+    { table: 'bom_general_reagents', label: '通用试剂' },
+    { table: 'bom_general_consumables', label: '通用耗材' },
+    { table: 'bom_quality_controls', label: '质控品' },
+  ]
+
+  for (const group of groups) {
+    const rows = db.prepare(`
+      SELECT bi.material_id, m.status, m.is_deleted
+      FROM ${group.table} bi
+      LEFT JOIN materials m ON bi.material_id = m.id
+      WHERE bi.bom_id = ?
+    `).all(bomId) as any[]
+
+    for (const row of rows) {
+      if (!row.material_id || row.is_deleted === null || row.is_deleted === undefined || Number(row.is_deleted) !== 0) {
+        return { ok: false, status: 409, message: `${group.label}包含不存在或已删除物料，不能执行BOM出库`, code: 'CONFLICT' }
+      }
+      if (Number(row.status) !== 1) {
+        return { ok: false, status: 409, message: `${group.label}包含已停用物料，不能执行BOM出库`, code: 'CONFLICT' }
+      }
+    }
+  }
+
+  return { ok: true }
 }
 
 router.get('/', (req, res) => {
@@ -81,6 +136,8 @@ router.get('/', (req, res) => {
           unitCost: i.unit_cost, totalCost: i.total_cost,
         })),
         totalCost: r.total_cost, operator: r.operator, status: r.status,
+        costStatus: r.cost_status || 'pending_cost',
+        caseNo: r.case_no || null,
         remark: r.remark, createdAt: r.created_at,
         abcTotalCost: r.abc_total_cost || 0, abcActivityCost: r.abc_activity_cost || 0,
         feeAmount: r.fee_amount || 0, profit: r.profit || 0,
@@ -94,12 +151,23 @@ router.get('/', (req, res) => {
 router.get('/stats', (req, res) => {
   try {
     const db = getDatabase()
+    const today = new Date().toISOString().slice(0, 10)
+    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+    const now = new Date()
+    const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
     const total = (db.prepare("SELECT COUNT(*) as c FROM outbound_records WHERE is_deleted = 0").get() as any)?.c || 0
+    const monthTotal = (db.prepare("SELECT COUNT(*) as c FROM outbound_records WHERE is_deleted = 0 AND created_at >= ?").get(monthStart) as any)?.c || 0
     const completed = (db.prepare("SELECT COUNT(*) as c FROM outbound_records WHERE is_deleted = 0 AND status = 'completed'").get() as any)?.c || 0
     const pending = (db.prepare("SELECT COUNT(*) as c FROM outbound_records WHERE is_deleted = 0 AND status = 'pending'").get() as any)?.c || 0
     const cancelled = (db.prepare("SELECT COUNT(*) as c FROM outbound_records WHERE is_deleted = 0 AND status = 'cancelled'").get() as any)?.c || 0
     const totalCost = (db.prepare("SELECT COALESCE(SUM(total_cost),0) as c FROM outbound_records WHERE is_deleted = 0 AND status = 'completed'").get() as any)?.c || 0
-    success(res, { total, completed, pending, cancelled, totalCost })
+    const quickCounts = {
+      all: total,
+      today: (db.prepare("SELECT COUNT(*) as c FROM outbound_records WHERE is_deleted = 0 AND created_at >= ?").get(today) as any)?.c || 0,
+      week: (db.prepare("SELECT COUNT(*) as c FROM outbound_records WHERE is_deleted = 0 AND created_at >= ?").get(weekAgo) as any)?.c || 0,
+      month: monthTotal,
+    }
+    success(res, { total, monthTotal, completed, pending, cancelled, totalCost, quickCounts })
   } catch (err: any) { error(res, err.message) }
 })
 
@@ -116,7 +184,13 @@ router.post('/', requireWriteAccess, (req, res) => {
     const operator = (req as any).user?.username || 'system'
     const sc = Number(req.body.sampleCount) || 1
 
-    const materialUnits = db.prepare('SELECT id, unit FROM materials WHERE id IN (' + items.map(() => '?').join(',') + ')').all(...items.map((i: any) => i.materialId)) as any[]
+    const refValidation = validateDirectOutboundReferences(db, { projectId, items })
+    if (!refValidation.ok) {
+      error(res, refValidation.message, refValidation.code, refValidation.status)
+      return
+    }
+
+    const materialUnits = db.prepare('SELECT id, unit FROM materials WHERE status = 1 AND is_deleted = 0 AND id IN (' + items.map(() => '?').join(',') + ')').all(...items.map((i: any) => i.materialId)) as any[]
     const unitMap = new Map(materialUnits.map((m: any) => [m.id, m.unit]))
 
     let totalCost = 0
@@ -133,13 +207,13 @@ router.post('/', requireWriteAccess, (req, res) => {
       }> = []
 
       for (const item of items) {
-        const { materialId, quantity } = item
+        const { materialId, quantity, batchId } = item
         if (!materialId || quantity === undefined || quantity === null || isNaN(Number(quantity)) || Number(quantity) <= 0) {
           db.exec('ROLLBACK')
           error(res, 'Invalid quantity', 'INVALID_PARAMETER', 400); return
         }
         const qty = Number(quantity)
-        const allocations = allocateBatches(db, materialId, qty)
+        const allocations = allocateBatches(db, materialId, qty, typeof batchId === 'string' ? batchId.trim() : undefined)
         const itemTotalCost = allocations.reduce((sum, a) => sum + a.quantity * a.unitCost, 0)
         totalCost += itemTotalCost
 
@@ -172,6 +246,7 @@ router.post('/', requireWriteAccess, (req, res) => {
           `).run(itemId, id, ia.materialId, alloc.batchId, alloc.batchNo, alloc.quantity, unitMap.get(ia.materialId) || 'pcs', alloc.unitCost, subtotal, ia.usage, ia.receiver)
 
           db.prepare('UPDATE inventory SET stock = stock - ? WHERE material_id = ?').run(alloc.quantity, ia.materialId)
+          consumeInventoryLocationStock(db, ia.materialId, alloc.quantity, { relatedType: 'outbound', relatedId: id })
 
           if (alloc.batchId) {
             db.prepare('UPDATE batches SET remaining = remaining - ? WHERE id = ?').run(alloc.quantity, alloc.batchId)
@@ -183,13 +258,13 @@ router.post('/', requireWriteAccess, (req, res) => {
 
           if (ia.usage === 'self' && alloc.batchId) {
             const mat = db.prepare('SELECT name, spec FROM materials WHERE id = ? AND is_deleted = 0').get(ia.materialId) as any
-            const trkId = `TRK-${Date.now()}-${Math.floor(Math.random() * 1000)}`
+            const trkId = uuidv4()
             const today = new Date().toISOString().split('T')[0]
             db.prepare(`
               INSERT INTO batch_usage_tracking
               (id, material_id, material_name, batch, spec, total_qty, remaining, unit, start_date, days_used, expected_days, progress, usage, receiver, status, created_at, updated_at)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, ?, ?, 'in-use', datetime('now'), datetime('now'))
-            `).run(trkId, ia.materialId, mat?.name || '', alloc.batchNo || '', mat?.spec || '', alloc.quantity, alloc.quantity, unitMap.get(ia.materialId) || 'pcs', today, 30, 'self', null)
+            `).run(trkId, ia.materialId, mat?.name || '', alloc.batchNo || '', mat?.spec || '', alloc.quantity, alloc.quantity, unitMap.get(ia.materialId) || 'pcs', today, 30, 'self', ia.receiver)
           }
 
           const logId = uuidv4()
@@ -208,7 +283,7 @@ router.post('/', requireWriteAccess, (req, res) => {
       checkStockAlerts(db, [...new Set(outboundMaterialIds)])
     } catch (err: any) {
       db.exec('ROLLBACK')
-      if (err.message && err.message.includes('批次库存不足')) {
+      if (err.message && (err.message.includes('批次库存不足') || err.message.includes('指定出库批次'))) {
         error(res, err.message, 'STOCK_INSUFFICIENT', 422); return
       }
       throw err
@@ -220,8 +295,10 @@ router.post('/', requireWriteAccess, (req, res) => {
 
 router.post('/bom', (req, res) => {
   try {
-    const { projectId, bomId, sampleCount, remark } = req.body
-    if (!bomId || sampleCount === undefined || sampleCount === null) {
+    const { projectId, bomId, sampleCount, caseNo, remark } = req.body
+    const normalizedCaseNo = String(caseNo || '').trim()
+    const requestedBomId = String(bomId || '').trim()
+    if ((!projectId && !normalizedCaseNo) || sampleCount === undefined || sampleCount === null) {
       error(res, '缺少必填字段', 'INVALID_PARAMETER', 400); return
     }
     const sc = Number(sampleCount)
@@ -234,14 +311,46 @@ router.post('/bom', (req, res) => {
     const id = uuidv4()
     const operator = (req as any).user?.username || 'system'
 
-    const project = db.prepare('SELECT * FROM projects WHERE id = ? AND is_deleted = 0').get(projectId) as any
+    const lisCase = normalizedCaseNo
+      ? db.prepare(`
+        SELECT lc.*, p.name as joined_project_name, p.bom_id as joined_bom_id
+        FROM lis_cases lc
+        LEFT JOIN projects p ON lc.project_id = p.id AND p.is_deleted = 0
+        WHERE lc.case_no = ?
+      `).get(normalizedCaseNo) as any
+      : null
+    const effectiveProjectId = projectId || lisCase?.project_id || null
+    const project = db.prepare('SELECT * FROM projects WHERE id = ? AND is_deleted = 0').get(effectiveProjectId) as any
     if (!project) { error(res, 'Project not found', 'NOT_FOUND', 404); return }
+    if (Number(project.status) !== 1) {
+      error(res, '停用检测服务不能执行标准BOM出库', 'CONFLICT', 409); return
+    }
+    const configuredBomId = lisCase?.joined_bom_id || project.bom_id
+    const effectiveBomId = requestedBomId || configuredBomId
+    if (!effectiveBomId) { error(res, '该病例关联项目未配置BOM，不能执行标准BOM出库', 'MISSING_BOM', 422); return }
+    if (requestedBomId && configuredBomId && requestedBomId !== configuredBomId) {
+      error(res, '所选BOM与项目配置不一致', 'BOM_PROJECT_MISMATCH', 422); return
+    }
+    const bom = db.prepare('SELECT id, type, status FROM boms WHERE id = ? AND is_deleted = 0').get(effectiveBomId) as any
+    if (!bom) { error(res, 'BOM not found', 'NOT_FOUND', 404); return }
+    if (Number(bom.status) !== 1) {
+      error(res, '停用BOM不能执行标准BOM出库', 'CONFLICT', 409); return
+    }
+    if (bom.type !== project.type && bom.type !== 'project') {
+      error(res, '所选BOM类型与检测服务类型不一致', 'BOM_PROJECT_TYPE_MISMATCH', 422); return
+    }
+
+    const bomMaterialValidation = validateBomOutboundMaterials(db, effectiveBomId)
+    if (!bomMaterialValidation.ok) {
+      error(res, bomMaterialValidation.message, bomMaterialValidation.code, bomMaterialValidation.status)
+      return
+    }
 
     const bomItems = db.prepare(`
       SELECT bi.*, m.name, m.spec FROM bom_items bi
       JOIN materials m ON bi.material_id = m.id AND m.is_deleted = 0
       WHERE bi.bom_id = ?
-    `).all(bomId) as any[]
+    `).all(effectiveBomId) as any[]
     if (!bomItems || bomItems.length === 0) {
       error(res, 'BOM is empty', 'INVALID_PARAMETER', 400); return
     }
@@ -258,7 +367,6 @@ router.post('/bom', (req, res) => {
     const unitMap = new Map(materialUnits.map((m: any) => [m.id, m.unit]))
 
     let totalCost = 0
-    const skippedItems: Array<{ materialId: string; materialName: string; reason: string }> = []
 
     db.exec('BEGIN IMMEDIATE')
     try {
@@ -302,22 +410,17 @@ router.post('/bom', (req, res) => {
         SELECT gr.*, m.name, m.spec FROM bom_general_reagents gr
         JOIN materials m ON gr.material_id = m.id AND m.is_deleted = 0
         WHERE gr.bom_id = ?
-      `).all(bomId) as any[]
+      `).all(effectiveBomId) as any[]
       for (const gr of generalReagents) {
         const quantity = (gr.usage_per_sample || 0) * sc
         if (quantity <= 0) continue
-        try {
-          const allocations = allocateBatches(db, gr.material_id, quantity).map(a => ({
-            ...a,
-            materialId: gr.material_id,
-          }))
-          const itemTotalCost = allocations.reduce((sum, a) => sum + a.quantity * a.unitCost, 0)
-          totalCost += itemTotalCost
-          itemAllocations.push({ materialId: gr.material_id, quantity, allocations, itemTotalCost })
-        } catch (e: any) {
-          console.warn(`[BOM出库] 通用试剂 ${gr.material_id} 库存不足，跳过: ${e.message}`)
-          skippedItems.push({ materialId: gr.material_id, materialName: gr.name || gr.material_id, reason: e.message })
-        }
+        const allocations = allocateBatches(db, gr.material_id, quantity).map(a => ({
+          ...a,
+          materialId: gr.material_id,
+        }))
+        const itemTotalCost = allocations.reduce((sum, a) => sum + a.quantity * a.unitCost, 0)
+        totalCost += itemTotalCost
+        itemAllocations.push({ materialId: gr.material_id, quantity, allocations, itemTotalCost })
       }
 
       // 处理扩展配额：通用耗材
@@ -325,22 +428,17 @@ router.post('/bom', (req, res) => {
         SELECT gc.*, m.name, m.spec FROM bom_general_consumables gc
         JOIN materials m ON gc.material_id = m.id AND m.is_deleted = 0
         WHERE gc.bom_id = ?
-      `).all(bomId) as any[]
+      `).all(effectiveBomId) as any[]
       for (const gc of generalConsumables) {
         const quantity = (gc.usage_per_sample || 0) * sc
         if (quantity <= 0) continue
-        try {
-          const allocations = allocateBatches(db, gc.material_id, quantity).map(a => ({
-            ...a,
-            materialId: gc.material_id,
-          }))
-          const itemTotalCost = allocations.reduce((sum, a) => sum + a.quantity * a.unitCost, 0)
-          totalCost += itemTotalCost
-          itemAllocations.push({ materialId: gc.material_id, quantity, allocations, itemTotalCost })
-        } catch (e: any) {
-          console.warn(`[BOM出库] 通用耗材 ${gc.material_id} 库存不足，跳过: ${e.message}`)
-          skippedItems.push({ materialId: gc.material_id, materialName: gc.name || gc.material_id, reason: e.message })
-        }
+        const allocations = allocateBatches(db, gc.material_id, quantity).map(a => ({
+          ...a,
+          materialId: gc.material_id,
+        }))
+        const itemTotalCost = allocations.reduce((sum, a) => sum + a.quantity * a.unitCost, 0)
+        totalCost += itemTotalCost
+        itemAllocations.push({ materialId: gc.material_id, quantity, allocations, itemTotalCost })
       }
 
       // 处理扩展配额：质控品（按批次覆盖样本数计算）
@@ -348,31 +446,26 @@ router.post('/bom', (req, res) => {
         SELECT qc.*, m.name, m.spec FROM bom_quality_controls qc
         JOIN materials m ON qc.material_id = m.id AND m.is_deleted = 0
         WHERE qc.bom_id = ?
-      `).all(bomId) as any[]
+      `).all(effectiveBomId) as any[]
       for (const qc of qualityControls) {
         const coverage = qc.covers_samples || 1
         const usagePerBatch = qc.usage_per_batch || 1
         const batchesNeeded = Math.ceil(sc / coverage)
         const quantity = batchesNeeded * usagePerBatch
         if (quantity <= 0) continue
-        try {
-          const allocations = allocateBatches(db, qc.material_id, quantity).map(a => ({
-            ...a,
-            materialId: qc.material_id,
-          }))
-          const itemTotalCost = allocations.reduce((sum, a) => sum + a.quantity * a.unitCost, 0)
-          totalCost += itemTotalCost
-          itemAllocations.push({ materialId: qc.material_id, quantity, allocations, itemTotalCost })
-        } catch (e: any) {
-          console.warn(`[BOM出库] 质控品 ${qc.material_id} 库存不足，跳过: ${e.message}`)
-          skippedItems.push({ materialId: qc.material_id, materialName: qc.name || qc.material_id, reason: e.message })
-        }
+        const allocations = allocateBatches(db, qc.material_id, quantity).map(a => ({
+          ...a,
+          materialId: qc.material_id,
+        }))
+        const itemTotalCost = allocations.reduce((sum, a) => sum + a.quantity * a.unitCost, 0)
+        totalCost += itemTotalCost
+        itemAllocations.push({ materialId: qc.material_id, quantity, allocations, itemTotalCost })
       }
 
       db.prepare(`
-        INSERT INTO outbound_records (id, outbound_no, type, project_id, total_cost, sample_count, operator, status, remark)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'completed', ?)
-      `).run(id, outboundNo, 'bom', projectId || null, totalCost, sc, operator, remark || null)
+        INSERT INTO outbound_records (id, outbound_no, type, project_id, total_cost, sample_count, case_no, operator, status, remark)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?)
+      `).run(id, outboundNo, 'bom', effectiveProjectId || null, totalCost, sc, normalizedCaseNo || null, operator, remark || null)
 
       for (const ia of itemAllocations) {
         for (const alloc of ia.allocations) {
@@ -388,6 +481,7 @@ router.post('/bom', (req, res) => {
           `).run(itemId, id, alloc.materialId, alloc.batchId, alloc.batchNo, alloc.quantity, unitMap.get(alloc.materialId) || 'pcs', alloc.unitCost, subtotal, 'self', null)
 
           db.prepare('UPDATE inventory SET stock = stock - ? WHERE material_id = ?').run(alloc.quantity, alloc.materialId)
+          consumeInventoryLocationStock(db, alloc.materialId, alloc.quantity, { relatedType: 'outbound', relatedId: id })
 
           if (alloc.batchId) {
             db.prepare('UPDATE batches SET remaining = remaining - ? WHERE id = ?').run(alloc.quantity, alloc.batchId)
@@ -399,7 +493,7 @@ router.post('/bom', (req, res) => {
 
           if (alloc.batchId) {
             const mat = db.prepare('SELECT name, spec FROM materials WHERE id = ? AND is_deleted = 0').get(alloc.materialId) as any
-            const trkId = `TRK-${Date.now()}-${Math.floor(Math.random() * 1000)}`
+            const trkId = uuidv4()
             const today = new Date().toISOString().split('T')[0]
             db.prepare(`
               INSERT INTO batch_usage_tracking
@@ -418,35 +512,18 @@ router.post('/bom', (req, res) => {
       }
 
       const costMonth = new Date().toISOString().slice(0, 7)
-      if (skippedItems.length > 0) {
-        recordCostException(db, {
-          sourceModule: 'outbound',
-          sourceType: 'bom_outbound',
-          sourceId: id,
-          projectId: projectId || null,
-          bomId,
-          outboundId: id,
-          yearMonth: costMonth,
-          exceptionType: 'bom_material_skipped',
-          severity: 'warning',
-          message: 'BOM出库跳过了扩展物料，出库成本可能低估',
-          details: {
-            outboundNo,
-            sampleCount: sc,
-            skippedItems,
-          },
-        })
-      }
-
       // ===== ABC 成本计算（失败不阻断出库）=====
       try {
         const slideCostResult = calculateSlideCostWithFee(db, {
-          bomId,
+          bomId: effectiveBomId,
           slideCount: sc,
           blockCount: 1,
           month: costMonth,
           materialCost: totalCost,
+          caseNo: normalizedCaseNo || null,
+          applyCaseAggregation: true,
         })
+        const missingFeeMapping = slideCostResult.feeBreakdown.length === 0
 
         // 写入 outbound_abc_details
         const abcDetailId = uuidv4()
@@ -455,34 +532,82 @@ router.post('/bom', (req, res) => {
           (id, outbound_id, bom_id, project_id, sample_count, slide_count, block_count,
            material_cost, activity_cost, total_cost, cost_per_slide,
            fee_category, fee_standard_id, fee_amount, profit, profit_rate,
-           activity_details, cost_month)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           activity_details, cost_month, cost_status, case_no, charge_group_id, calculation_version, source_snapshot)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
-          abcDetailId, id, bomId, projectId || null,
+          abcDetailId, id, effectiveBomId, effectiveProjectId || null,
           sc, sc, 1,
           slideCostResult.materialCost, slideCostResult.totalActivityCost, slideCostResult.totalCost,
           sc > 0 ? slideCostResult.totalCost / sc : 0,
           slideCostResult.feeCategory, slideCostResult.feeStandardId,
           slideCostResult.feeAmount, slideCostResult.profit, slideCostResult.profitRate,
           JSON.stringify(slideCostResult.activityCosts),
-          costMonth
+          costMonth,
+          missingFeeMapping ? 'cost_exception' : 'costed',
+          normalizedCaseNo || null,
+          slideCostResult.chargeGroupId || (normalizedCaseNo ? `${normalizedCaseNo}-${costMonth}` : id),
+          'v1',
+          JSON.stringify({
+            outboundId: id,
+            outboundNo,
+            bomId: effectiveBomId,
+            projectId: effectiveProjectId || null,
+            caseNo: normalizedCaseNo || null,
+            lisCaseId: lisCase?.id || null,
+            sampleCount: sc,
+            materialCost: totalCost,
+            bomSnapshot: buildBomSourceSnapshot(db, effectiveBomId),
+            feeBreakdown: slideCostResult.feeBreakdown,
+            calculatedAt: new Date().toISOString(),
+          })
         )
 
         // 更新 outbound_records 的 ABC 字段
         db.prepare(`
           UPDATE outbound_records SET
-            abc_total_cost = ?, abc_activity_cost = ?, fee_amount = ?, profit = ?
+            abc_total_cost = ?, abc_activity_cost = ?, fee_amount = ?, profit = ?, cost_status = ?
           WHERE id = ?
-        `).run(slideCostResult.totalCost, slideCostResult.totalActivityCost, slideCostResult.feeAmount, slideCostResult.profit, id)
+        `).run(
+          slideCostResult.totalCost,
+          slideCostResult.totalActivityCost,
+            slideCostResult.feeAmount,
+            slideCostResult.profit,
+          missingFeeMapping ? 'cost_exception' : 'costed',
+          id,
+        )
+
+        if (missingFeeMapping) {
+          recordCostException(db, {
+            sourceModule: 'abc',
+            sourceType: 'bom_outbound',
+            sourceId: id,
+            projectId: effectiveProjectId || null,
+            bomId: effectiveBomId,
+            outboundId: id,
+            yearMonth: costMonth,
+            exceptionType: 'missing_fee_mapping',
+            severity: 'warning',
+            message: 'BOM未配置收费映射，出库收费与利润核算不可确认',
+            details: {
+              outboundNo,
+              bomId: effectiveBomId,
+              projectId: effectiveProjectId || null,
+              caseNo: normalizedCaseNo || null,
+              sampleCount: sc,
+              action: 'configure_bom_fee_mapping',
+            },
+          })
+        }
       } catch (abcErr) {
         const message = errorMessage(abcErr)
         console.error('ABC calculation failed, outbound continues:', abcErr)
+        db.prepare("UPDATE outbound_records SET cost_status = 'cost_exception' WHERE id = ?").run(id)
         recordCostException(db, {
           sourceModule: 'abc',
           sourceType: 'bom_outbound',
           sourceId: id,
-          projectId: projectId || null,
-          bomId,
+          projectId: effectiveProjectId || null,
+          bomId: effectiveBomId,
           outboundId: id,
           yearMonth: costMonth,
           exceptionType: 'abc_calculation_failed',
@@ -497,6 +622,16 @@ router.post('/bom', (req, res) => {
         })
       }
 
+      if (lisCase?.id) {
+        db.prepare(`
+          UPDATE lis_cases
+          SET project_id = COALESCE(project_id, ?),
+              project_name = COALESCE(NULLIF(project_name, ''), ?),
+              status = CASE WHEN status = 'unmatched' THEN 'normal' ELSE status END
+          WHERE id = ?
+        `).run(effectiveProjectId, project.name || lisCase.project_name || null, lisCase.id)
+      }
+
       db.exec('COMMIT')
 
       // 自动检查库存预警（BOM出库后库存可能不足）
@@ -504,13 +639,23 @@ router.post('/bom', (req, res) => {
       checkStockAlerts(db, [...new Set(bomMaterialIds)])
     } catch (err: any) {
       db.exec('ROLLBACK')
-      if (err.message && err.message.includes('批次库存不足')) {
+      if (err.message && (err.message.includes('批次库存不足') || err.message.includes('指定出库批次'))) {
         error(res, err.message, 'STOCK_INSUFFICIENT', 422); return
       }
       throw err
     }
 
-    success(res, { id, outboundNo, type: 'bom', projectId, totalCost, skippedItems, status: 'completed', createdAt: new Date().toISOString() }, 'BOM outbound created', 201)
+    success(res, {
+      id,
+      outboundNo,
+      type: 'bom',
+      projectId: effectiveProjectId,
+      bomId: effectiveBomId,
+      caseNo: normalizedCaseNo || null,
+      totalCost,
+      status: 'completed',
+      createdAt: new Date().toISOString(),
+    }, 'BOM outbound created', 201)
   } catch (err: any) { error(res, err.message) }
 })
 
@@ -522,6 +667,210 @@ function requireWriteAccess(req: any, res: any, next: any) {
     return
   }
   error(res, 'Forbidden: insufficient permissions', 'FORBIDDEN', 403)
+}
+
+function parseJsonOrNull(value: string | null | undefined) {
+  if (!value) return null
+  try {
+    return JSON.parse(value)
+  } catch (_e) {
+    return null
+  }
+}
+
+function feeStandardForCaseReplay(db: any, feeStandardId: string, ruleSnapshot: any, fallbackUnitPrice = 0) {
+  const current = db.prepare('SELECT * FROM fee_standards WHERE id = ?').get(feeStandardId) as any
+  return {
+    ...current,
+    fee_per_slide: current?.fee_per_slide ?? fallbackUnitPrice,
+    base_price: current?.base_price ?? fallbackUnitPrice,
+    tier_rules: Array.isArray(ruleSnapshot?.tierRules)
+      ? JSON.stringify(ruleSnapshot.tierRules)
+      : current?.tier_rules,
+    cap_amount: ruleSnapshot?.capAmount ?? current?.cap_amount ?? null,
+  }
+}
+
+function replayCaseChargeGroup(db: any, input: {
+  caseNo: string
+  yearMonth: string
+  feeStandardId: string
+}) {
+  if (!input.caseNo || !input.yearMonth || !input.feeStandardId) return
+
+  const existingGroup = db.prepare(`
+    SELECT *
+    FROM case_charge_groups
+    WHERE case_no = ? AND year_month = ? AND fee_standard_id = ?
+  `).get(input.caseNo, input.yearMonth, input.feeStandardId) as any
+  const ruleSnapshot = parseJsonOrNull(existingGroup?.rule_snapshot)
+
+  const details = db.prepare(`
+    SELECT d.*, r.created_at as outbound_created_at, r.outbound_no
+    FROM outbound_abc_details d
+    JOIN outbound_records r ON d.outbound_id = r.id
+    WHERE d.case_no = ?
+      AND d.cost_month = ?
+      AND r.is_deleted = 0
+    ORDER BY r.created_at ASC, r.outbound_no ASC, d.created_at ASC, d.id ASC
+  `).all(input.caseNo, input.yearMonth) as any[]
+
+  let totalQuantity = 0
+  let totalFee = 0
+  let outboundCount = 0
+  let latestRuleSnapshot = existingGroup?.rule_snapshot || null
+
+  for (const detail of details) {
+    const snapshot = parseJsonOrNull(detail.source_snapshot) || {}
+    const feeBreakdown = Array.isArray(snapshot.feeBreakdown) ? snapshot.feeBreakdown : []
+    let changed = false
+
+    for (const feeItem of feeBreakdown) {
+      if (
+        feeItem?.aggregationScope !== 'case'
+        || feeItem?.feeStandardId !== input.feeStandardId
+      ) continue
+
+      const quantity = Number(feeItem.quantity) || 0
+      const previousFee = totalFee
+      totalQuantity += quantity
+      const fallbackUnitPrice = quantity > 0 ? (Number(feeItem.feeAmount) || 0) / quantity : 0
+      const feeStandard = feeStandardForCaseReplay(db, input.feeStandardId, ruleSnapshot, fallbackUnitPrice)
+      totalFee = calculateFeeAmountFromStandard(feeStandard, totalQuantity)
+      feeItem.feeAmount = Math.round((totalFee - previousFee) * 100) / 100
+      feeItem.chargeGroupId = existingGroup?.id || `${input.caseNo}-${input.yearMonth}-${input.feeStandardId}`
+      latestRuleSnapshot = JSON.stringify({
+        feeStandardId: input.feeStandardId,
+        feeStandardName: feeItem.feeStandardName || feeStandard?.name || feeStandard?.fee_standard_name || null,
+        tierRules: feeStandard?.tier_rules ? parseJsonOrNull(feeStandard.tier_rules) : null,
+        capAmount: feeStandard?.cap_amount ?? null,
+      })
+      outboundCount += 1
+      changed = true
+    }
+
+    if (!changed) continue
+
+    const nextFeeAmount = feeBreakdown.reduce((sum: number, item: any) => sum + (Number(item.feeAmount) || 0), 0)
+    const totalCost = Number(detail.total_cost) || 0
+    const nextProfit = Math.round((nextFeeAmount - totalCost) * 100) / 100
+    const nextProfitRate = nextFeeAmount > 0 ? nextProfit / nextFeeAmount : 0
+    db.prepare(`
+      UPDATE outbound_abc_details
+      SET fee_amount = ?, profit = ?, profit_rate = ?, source_snapshot = ?
+      WHERE id = ?
+    `).run(
+      nextFeeAmount,
+      nextProfit,
+      nextProfitRate,
+      JSON.stringify({ ...snapshot, feeBreakdown, replayedAt: new Date().toISOString() }),
+      detail.id,
+    )
+    db.prepare(`
+      UPDATE outbound_records
+      SET fee_amount = ?, profit = ?
+      WHERE id = ?
+    `).run(nextFeeAmount, nextProfit, detail.outbound_id)
+  }
+
+  if (totalQuantity <= 0 || outboundCount <= 0) {
+    if (existingGroup?.id) db.prepare('DELETE FROM case_charge_groups WHERE id = ?').run(existingGroup.id)
+    return
+  }
+
+  const groupId = existingGroup?.id || `${input.caseNo}-${input.yearMonth}-${input.feeStandardId}`
+  db.prepare(`
+    INSERT INTO case_charge_groups (
+      id, case_no, year_month, fee_standard_id,
+      total_quantity, total_fee, outbound_count, rule_snapshot
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(case_no, year_month, fee_standard_id) DO UPDATE SET
+      total_quantity = excluded.total_quantity,
+      total_fee = excluded.total_fee,
+      outbound_count = excluded.outbound_count,
+      rule_snapshot = excluded.rule_snapshot,
+      updated_at = CURRENT_TIMESTAMP
+  `).run(
+    groupId,
+    input.caseNo,
+    input.yearMonth,
+    input.feeStandardId,
+    totalQuantity,
+    totalFee,
+    outboundCount,
+    latestRuleSnapshot,
+  )
+}
+
+function caseChargeReplayKeysForOutbound(db: any, outboundId: string) {
+  const details = db.prepare(`
+    SELECT case_no, cost_month, source_snapshot
+    FROM outbound_abc_details
+    WHERE outbound_id = ?
+  `).all(outboundId) as any[]
+  const keys = new Map<string, { caseNo: string; yearMonth: string; feeStandardId: string }>()
+  for (const detail of details) {
+    const snapshot = parseJsonOrNull(detail.source_snapshot)
+    const feeBreakdown = Array.isArray(snapshot?.feeBreakdown) ? snapshot.feeBreakdown : []
+    for (const feeItem of feeBreakdown) {
+      if (feeItem?.aggregationScope !== 'case' || !feeItem?.feeStandardId) continue
+      const caseNo = detail.case_no || snapshot?.caseNo || ''
+      const yearMonth = detail.cost_month || snapshot?.yearMonth || ''
+      const feeStandardId = feeItem.feeStandardId
+      if (!caseNo || !yearMonth || !feeStandardId) continue
+      keys.set(`${caseNo}:${yearMonth}:${feeStandardId}`, { caseNo, yearMonth, feeStandardId })
+    }
+  }
+  return [...keys.values()]
+}
+
+function reverseCaseChargeGroupsForOutbound(db: any, outboundId: string) {
+  const details = db.prepare(`
+    SELECT id, case_no, cost_month, source_snapshot
+    FROM outbound_abc_details
+    WHERE outbound_id = ?
+  `).all(outboundId) as any[]
+
+  for (const detail of details) {
+    const snapshot = parseJsonOrNull(detail.source_snapshot)
+    const feeBreakdown = Array.isArray(snapshot?.feeBreakdown) ? snapshot.feeBreakdown : []
+    for (const feeItem of feeBreakdown) {
+      if (feeItem?.aggregationScope !== 'case' || !feeItem?.feeStandardId) continue
+
+      const group = db.prepare(`
+        SELECT *
+        FROM case_charge_groups
+        WHERE id = ?
+           OR (case_no = ? AND year_month = ? AND fee_standard_id = ?)
+      `).get(
+        feeItem.chargeGroupId || '',
+        detail.case_no || snapshot.caseNo || '',
+        detail.cost_month || snapshot.yearMonth || '',
+        feeItem.feeStandardId,
+      ) as any
+      if (!group) continue
+
+      const nextQuantity = Math.max(0, (Number(group.total_quantity) || 0) - (Number(feeItem.quantity) || 0))
+      const nextOutboundCount = Math.max(0, (Number(group.outbound_count) || 0) - 1)
+      if (nextQuantity <= 0 || nextOutboundCount <= 0) {
+        db.prepare('DELETE FROM case_charge_groups WHERE id = ?').run(group.id)
+        continue
+      }
+
+      const ruleSnapshot = parseJsonOrNull(group.rule_snapshot)
+      const fallbackUnitPrice = Number(feeItem.quantity) > 0
+        ? (Number(feeItem.feeAmount) || 0) / Number(feeItem.quantity)
+        : 0
+      const feeStandard = feeStandardForCaseReplay(db, feeItem.feeStandardId, ruleSnapshot, fallbackUnitPrice)
+      const nextFee = calculateFeeAmountFromStandard(feeStandard, nextQuantity)
+      db.prepare(`
+        UPDATE case_charge_groups
+        SET total_quantity = ?, total_fee = ?, outbound_count = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(nextQuantity, nextFee, nextOutboundCount, group.id)
+    }
+  }
 }
 
 router.put('/:id', requireWriteAccess, (req, res) => {
@@ -545,8 +894,22 @@ router.put('/:id', requireWriteAccess, (req, res) => {
     db.exec('BEGIN IMMEDIATE')
     try {
       // 1. 回退旧 items 库存
+      const oldQuantityByMaterial = new Map<string, number>()
+      for (const item of oldItems) {
+        oldQuantityByMaterial.set(item.material_id, (oldQuantityByMaterial.get(item.material_id) || 0) + Number(item.quantity || 0))
+      }
+      const restoredOldMaterials = new Set<string>()
       for (const item of oldItems) {
         db.prepare('UPDATE inventory SET stock = stock + ? WHERE material_id = ?').run(item.quantity, item.material_id)
+        if (!restoredOldMaterials.has(item.material_id)) {
+          restoreInventoryLocationStock(
+            db,
+            item.material_id,
+            oldQuantityByMaterial.get(item.material_id) || Number(item.quantity),
+            { relatedType: 'outbound', relatedId: id },
+          )
+          restoredOldMaterials.add(item.material_id)
+        }
         if (item.batch_id) {
           db.prepare('UPDATE batches SET remaining = remaining + ?, status = 1 WHERE id = ?').run(item.quantity, item.batch_id)
         }
@@ -568,13 +931,13 @@ router.put('/:id', requireWriteAccess, (req, res) => {
       }> = []
 
       for (const item of newItems) {
-        const { materialId, quantity } = item
+        const { materialId, quantity, batchId } = item
         if (!materialId || quantity === undefined || quantity === null || isNaN(Number(quantity)) || Number(quantity) <= 0) {
           db.exec('ROLLBACK')
           error(res, 'Invalid quantity', 'INVALID_PARAMETER', 400); return
         }
         const qty = Number(quantity)
-        const allocations = allocateBatches(db, materialId, qty)
+        const allocations = allocateBatches(db, materialId, qty, typeof batchId === 'string' ? batchId.trim() : undefined)
         const itemCost = allocations.reduce((sum, a) => sum + a.quantity * a.unitCost, 0)
         newTotalCost += itemCost
 
@@ -606,6 +969,7 @@ router.put('/:id', requireWriteAccess, (req, res) => {
           `).run(itemId, id, pi.materialId, alloc.batchId, alloc.batchNo, alloc.quantity, unitMap.get(pi.materialId) || 'pcs', alloc.unitCost, subtotal, pi.usage, pi.receiver)
 
           db.prepare('UPDATE inventory SET stock = stock - ? WHERE material_id = ?').run(alloc.quantity, pi.materialId)
+          consumeInventoryLocationStock(db, pi.materialId, alloc.quantity, { relatedType: 'outbound', relatedId: id })
           if (alloc.batchId) {
             db.prepare('UPDATE batches SET remaining = remaining - ? WHERE id = ?').run(alloc.quantity, alloc.batchId)
             const remaining = (db.prepare('SELECT remaining FROM batches WHERE id = ?').get(alloc.batchId) as any)?.remaining
@@ -616,13 +980,13 @@ router.put('/:id', requireWriteAccess, (req, res) => {
 
           if (pi.usage === 'self' && alloc.batchId) {
             const mat = db.prepare('SELECT name, spec FROM materials WHERE id = ? AND is_deleted = 0').get(pi.materialId) as any
-            const trkId = `TRK-${Date.now()}-${Math.floor(Math.random() * 1000)}`
+            const trkId = uuidv4()
             const today = new Date().toISOString().split('T')[0]
             db.prepare(`
               INSERT INTO batch_usage_tracking
               (id, material_id, material_name, batch, spec, total_qty, remaining, unit, start_date, days_used, expected_days, progress, usage, receiver, status, created_at, updated_at)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, ?, ?, 'in-use', datetime('now'), datetime('now'))
-            `).run(trkId, pi.materialId, mat?.name || '', alloc.batchNo || '', mat?.spec || '', alloc.quantity, alloc.quantity, unitMap.get(pi.materialId) || 'pcs', today, 30, 'self', null)
+            `).run(trkId, pi.materialId, mat?.name || '', alloc.batchNo || '', mat?.spec || '', alloc.quantity, alloc.quantity, unitMap.get(pi.materialId) || 'pcs', today, 30, 'self', pi.receiver)
           }
 
           const logId = uuidv4()
@@ -637,7 +1001,7 @@ router.put('/:id', requireWriteAccess, (req, res) => {
       db.exec('COMMIT')
     } catch (err: any) {
       db.exec('ROLLBACK')
-      if (err.message && err.message.includes('批次库存不足')) {
+      if (err.message && (err.message.includes('批次库存不足') || err.message.includes('指定出库批次'))) {
         error(res, err.message, 'STOCK_INSUFFICIENT', 422); return
       }
       throw err
@@ -659,14 +1023,30 @@ router.delete('/:id', requireWriteAccess, (req, res) => {
 
     db.exec('BEGIN IMMEDIATE')
     try {
+      const replayKeys = caseChargeReplayKeysForOutbound(db, id)
+
       // 先读取 before_stock，再更新库存（修复 stock_logs 时序）
       const beforeStocks: Record<string, number> = {}
       for (const item of items) {
         beforeStocks[item.material_id] = (db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(item.material_id) as any)?.stock || 0
       }
+      const quantityByMaterial = new Map<string, number>()
+      for (const item of items) {
+        quantityByMaterial.set(item.material_id, (quantityByMaterial.get(item.material_id) || 0) + Number(item.quantity || 0))
+      }
 
+      const restoredMaterials = new Set<string>()
       for (const item of items) {
         db.prepare('UPDATE inventory SET stock = stock + ? WHERE material_id = ?').run(item.quantity, item.material_id)
+        if (!restoredMaterials.has(item.material_id)) {
+          restoreInventoryLocationStock(
+            db,
+            item.material_id,
+            quantityByMaterial.get(item.material_id) || Number(item.quantity),
+            { relatedType: 'outbound', relatedId: id },
+          )
+          restoredMaterials.add(item.material_id)
+        }
         if (item.batch_id) {
           db.prepare('UPDATE batches SET remaining = remaining + ?, status = 1 WHERE id = ?').run(item.quantity, item.batch_id)
         }
@@ -689,7 +1069,11 @@ router.delete('/:id', requireWriteAccess, (req, res) => {
         `).run(logId, item.material_id, item.quantity, before, after, id, (req as any).user?.username || 'system', reason || '删除出库记录')
       }
 
-      // 同步清理 ABC 记录
+      // 同步回退病例级收费聚合，再清理 ABC 记录
+      reverseCaseChargeGroupsForOutbound(db, id)
+      for (const key of replayKeys) {
+        replayCaseChargeGroup(db, key)
+      }
       db.prepare('DELETE FROM outbound_abc_details WHERE outbound_id = ?').run(id)
 
       db.exec('COMMIT')

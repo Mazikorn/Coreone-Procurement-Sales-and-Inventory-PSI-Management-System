@@ -13,7 +13,6 @@ const ROLES = {
 } as const
 type RoleKey = keyof typeof ROLES
 const MAT_READ_ROLES: RoleKey[] = ['admin', 'warehouse_manager', 'technician', 'pathologist', 'procurement']
-const MAT_WRITE_ROLES: RoleKey[] = ['admin', 'procurement']
 const MAT_FORBIDDEN: RoleKey[] = ['finance']
 
 async function loginAs(page: Page, role: RoleKey) {
@@ -55,6 +54,21 @@ async function getAnyMaterialId(token: string): Promise<string> {
 async function getAnySupplierId(token: string): Promise<string> {
   const r = await apiFetch(token, 'GET', '/suppliers?page=1&pageSize=1')
   return r.data?.data?.list?.[0]?.id || ''
+}
+async function createTestMaterial(token: string, overrides: Record<string, any> = {}) {
+  const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+  const categoryId = overrides.categoryId || await getAnyCategoryId(token)
+  expect(categoryId, '创建物料测试数据需要至少一个物料分类').toBeTruthy()
+  const res = await apiFetch(token, 'POST', '/materials', {
+    code: `TEST-MAT-${suffix}`,
+    name: `E2E物料-${suffix}`,
+    unit: '瓶',
+    categoryId,
+    price: 10,
+    ...overrides,
+  })
+  expect(res.status, `创建物料测试数据失败: ${JSON.stringify(res.data)}`).toBe(201)
+  return res.data?.data?.id as string
 }
 
 async function cleanupTestData(token: string) {
@@ -104,10 +118,11 @@ test.describe('耗材管理 -> 查看物料列表', () => {
     await page.goto(`${FE_BASE}/materials`)
     await page.waitForTimeout(1000)
   })
-  test('MAT-LIST-06. UI差异：procurement仅显示新增编辑', async ({ page }) => {
+  test('MAT-LIST-06. UI差异：procurement仅查看物料', async ({ page }) => {
     await loginAs(page, 'procurement')
     await page.goto(`${FE_BASE}/materials`)
-    await page.waitForTimeout(1000)
+    await expect(page.getByRole('heading', { name: '物料管理' })).toBeVisible()
+    await expect(page.getByRole('button', { name: /新建物料/ })).toHaveCount(0)
   })
   test('MAT-LIST-07. 正常用例：列表分页每页20条', async ({ page }) => {
     const token = await apiLogin('admin')
@@ -280,7 +295,7 @@ test.describe('耗材管理 -> 新增物料', () => {
     })
     expect([201, 409]).toContain(res.status)
   })
-  test('MAT-CREATE-02. 正常用例：procurement新增物料成功', async () => {
+  test('MAT-CREATE-02. 权限：procurement新增物料返回403', async () => {
     const token = await apiLogin('procurement')
     const adminToken = await apiLogin('admin')
     const cid = await getAnyCategoryId(adminToken)
@@ -288,7 +303,7 @@ test.describe('耗材管理 -> 新增物料', () => {
     const res = await apiFetch(token, 'POST', '/materials', {
       code: `TEST-PROC-${Date.now()}`, name: 'E2E采购新增', unit: '盒', categoryId: cid,
     })
-    expect([201, 403, 409]).toContain(res.status)
+    expect(res.status).toBe(403)
   })
   test('MAT-CREATE-03. 空数据边界：price=0合法', async () => {
     const token = await apiLogin('admin')
@@ -410,17 +425,19 @@ test.describe('耗材管理 -> 新增物料', () => {
   test('MAT-CREATE-15. UI差异：admin显示新增物料按钮', async ({ page }) => {
     await loginAs(page, 'admin')
     await page.goto(`${FE_BASE}/materials`)
-    await page.waitForTimeout(1000)
+    await expect(page.getByRole('button', { name: /新建物料/ })).toBeVisible()
   })
-  test('MAT-CREATE-16. UI差异：procurement显示新增物料按钮', async ({ page }) => {
+  test('MAT-CREATE-16. UI差异：procurement不显示新增物料按钮', async ({ page }) => {
     await loginAs(page, 'procurement')
     await page.goto(`${FE_BASE}/materials`)
-    await page.waitForTimeout(1000)
+    await expect(page.getByRole('heading', { name: '物料管理' })).toBeVisible()
+    await expect(page.getByRole('button', { name: /新建物料/ })).toHaveCount(0)
   })
   test('MAT-CREATE-17. UI差异：technician不显示新增按钮', async ({ page }) => {
     await loginAs(page, 'technician')
     await page.goto(`${FE_BASE}/materials`)
-    await page.waitForTimeout(1000)
+    await expect(page.getByRole('heading', { name: '物料管理' })).toBeVisible()
+    await expect(page.getByRole('button', { name: /新建物料/ })).toHaveCount(0)
   })
   test('MAT-CREATE-18. 表单校验：空字符串name', async () => {
     const token = await apiLogin('admin')
@@ -444,13 +461,13 @@ test.describe('耗材管理 -> 编辑物料', () => {
     const res = await apiFetch(token, 'PUT', `/materials/${id}`, { price: 99.9, remark: 'E2E编辑' })
     expect([200, 404]).toContain(res.status)
   })
-  test('MAT-EDIT-02. 正常用例：procurement编辑物料成功', async () => {
+  test('MAT-EDIT-02. 权限：procurement编辑物料返回403', async () => {
     const token = await apiLogin('procurement')
     const adminToken = await apiLogin('admin')
     const id = await getAnyMaterialId(adminToken)
     if (!id) { test.skip(); return }
     const res = await apiFetch(token, 'PUT', `/materials/${id}`, { price: 88.8 })
-    expect([200, 403, 404]).toContain(res.status)
+    expect(res.status).toBe(403)
   })
   test('MAT-EDIT-03. 空数据边界：price=-1', async () => {
     const token = await apiLogin('admin')
@@ -496,17 +513,20 @@ test.describe('耗材管理 -> 编辑物料', () => {
   test('MAT-EDIT-08. UI差异：admin显示编辑按钮', async ({ page }) => {
     await loginAs(page, 'admin')
     await page.goto(`${FE_BASE}/materials`)
-    await page.waitForTimeout(1000)
+    await expect(page.getByRole('heading', { name: '物料管理' })).toBeVisible()
+    await expect(page.getByRole('button', { name: /新建物料/ })).toBeVisible()
   })
-  test('MAT-EDIT-09. UI差异：procurement显示编辑按钮', async ({ page }) => {
+  test('MAT-EDIT-09. UI差异：procurement不显示编辑按钮', async ({ page }) => {
     await loginAs(page, 'procurement')
     await page.goto(`${FE_BASE}/materials`)
-    await page.waitForTimeout(1000)
+    await expect(page.getByRole('heading', { name: '物料管理' })).toBeVisible()
+    await expect(page.getByRole('button', { name: '编辑' })).toHaveCount(0)
   })
   test('MAT-EDIT-10. UI差异：technician不显示编辑按钮', async ({ page }) => {
     await loginAs(page, 'technician')
     await page.goto(`${FE_BASE}/materials`)
-    await page.waitForTimeout(1000)
+    await expect(page.getByRole('heading', { name: '物料管理' })).toBeVisible()
+    await expect(page.getByRole('button', { name: '编辑' })).toHaveCount(0)
   })
   test('MAT-EDIT-11. 正常用例：编辑后列表数据更新', async () => {
     const token = await apiLogin('admin')
@@ -601,12 +621,14 @@ test.describe('耗材管理 -> 删除物料', () => {
   test('MAT-DEL-06. UI差异：admin显示删除按钮', async ({ page }) => {
     await loginAs(page, 'admin')
     await page.goto(`${FE_BASE}/materials`)
-    await page.waitForTimeout(1000)
+    await expect(page.getByRole('heading', { name: '物料管理' })).toBeVisible()
+    await expect(page.getByRole('button', { name: /新建物料/ })).toBeVisible()
   })
-  test('MAT-DEL-07. UI差异：procurement可能隐藏删除', async ({ page }) => {
+  test('MAT-DEL-07. UI差异：procurement隐藏删除', async ({ page }) => {
     await loginAs(page, 'procurement')
     await page.goto(`${FE_BASE}/materials`)
-    await page.waitForTimeout(1000)
+    await expect(page.getByRole('heading', { name: '物料管理' })).toBeVisible()
+    await expect(page.getByRole('button', { name: '删除' })).toHaveCount(0)
   })
   test('MAT-DEL-08. 表单校验：删除不存在的物料返回404', async () => {
     const token = await apiLogin('admin')
@@ -663,17 +685,15 @@ test.describe('耗材管理 -> 删除物料', () => {
 test.describe('耗材管理 -> 批量启用停用', () => {
   test('MAT-BATCH-01. 正常用例：admin批量停用物料', async () => {
     const token = await apiLogin('admin')
-    const id = await getAnyMaterialId(token)
-    if (!id) { test.skip(); return }
+    const id = await createTestMaterial(token)
     const res = await apiFetch(token, 'PATCH', '/materials/batch-status', { ids: [id], status: 'inactive' })
-    expect([200, 404]).toContain(res.status)
+    expect(res.status).toBe(200)
   })
   test('MAT-BATCH-02. 正常用例：admin批量启用物料', async () => {
     const token = await apiLogin('admin')
-    const id = await getAnyMaterialId(token)
-    if (!id) { test.skip(); return }
+    const id = await createTestMaterial(token)
     const res = await apiFetch(token, 'PATCH', '/materials/batch-status', { ids: [id], status: 'active' })
-    expect([200, 404]).toContain(res.status)
+    expect(res.status).toBe(200)
   })
   test('MAT-BATCH-03. 空数据边界：空数组ids返回400', async () => {
     const token = await apiLogin('admin')
@@ -690,8 +710,7 @@ test.describe('耗材管理 -> 批量启用停用', () => {
   })
   test('MAT-BATCH-05. 并发：快速点击批量停用多次', async () => {
     const token = await apiLogin('admin')
-    const id = await getAnyMaterialId(token)
-    if (!id) { test.skip(); return }
+    const id = await createTestMaterial(token)
     await apiFetch(token, 'PATCH', '/materials/batch-status', { ids: [id], status: 'inactive' })
     await apiFetch(token, 'PATCH', '/materials/batch-status', { ids: [id], status: 'inactive' })
     await apiFetch(token, 'PATCH', '/materials/batch-status', { ids: [id], status: 'active' })
@@ -708,8 +727,7 @@ test.describe('耗材管理 -> 批量启用停用', () => {
   })
   test('MAT-BATCH-08. 正常用例：批量操作后列表状态标签更新', async ({ page }) => {
     const token = await apiLogin('admin')
-    const id = await getAnyMaterialId(token)
-    if (!id) { test.skip(); return }
+    const id = await createTestMaterial(token)
     await apiFetch(token, 'PATCH', '/materials/batch-status', { ids: [id], status: 'inactive' })
     await apiFetch(token, 'PATCH', '/materials/batch-status', { ids: [id], status: 'active' })
   })

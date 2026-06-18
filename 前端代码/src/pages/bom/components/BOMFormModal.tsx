@@ -3,13 +3,14 @@ import { X, Plus, Trash2, ChevronDown, ChevronRight } from 'lucide-react'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import { TYPE_OPTIONS } from '../constants'
 import type { BOMForm } from '../hooks/useBOMPage'
-import type { Material } from '@/types'
+import type { Material, Project } from '@/types'
 
 interface Props {
   open: boolean
   type: 'create' | 'edit'
   form: BOMForm
   allMaterials: Material[]
+  allProjects: Project[]
   onClose: () => void
   onChange: (form: BOMForm) => void
   onSubmit: () => void
@@ -20,6 +21,7 @@ export function BOMFormModal({
   type,
   form,
   allMaterials,
+  allProjects,
   onClose,
   onChange,
   onSubmit,
@@ -27,6 +29,12 @@ export function BOMFormModal({
   if (!open) return null
 
   const [activeTab, setActiveTab] = useState<'materials' | 'reagents' | 'consumables' | 'qc'>('materials')
+  const serviceOptions = allProjects
+    .filter(project => project.type === form.type)
+    .map(project => ({
+      value: project.id,
+      label: `${project.code} - ${project.name}`,
+    }))
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -73,11 +81,14 @@ export function BOMFormModal({
               <label className="block text-sm font-medium text-gray-700 mb-1.5">
                 关联检测服务
               </label>
-              <input
+              <SearchableSelect
                 value={form.serviceId}
-                onChange={(e) => onChange({ ...form, serviceId: e.target.value })}
+                onChange={(val) => onChange({ ...form, serviceId: val })}
+                options={[
+                  { value: '', label: '不关联检测服务' },
+                  ...serviceOptions,
+                ]}
                 placeholder="请选择检测服务"
-                className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm text-gray-700 placeholder:text-gray-400 focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500 transition-colors"
               />
             </div>
             <div>
@@ -86,7 +97,14 @@ export function BOMFormModal({
               </label>
               <SearchableSelect
                 value={form.type}
-                onChange={(val) => onChange({ ...form, type: val })}
+                onChange={(val) => {
+                  const currentService = allProjects.find(project => project.id === form.serviceId)
+                  onChange({
+                    ...form,
+                    type: val,
+                    serviceId: currentService && currentService.type !== val ? '' : form.serviceId,
+                  })
+                }}
                 options={TYPE_OPTIONS.filter((o) => o.value).map((o) => ({ value: o.value, label: o.label }))}
                 placeholder="请选择"
               />
@@ -236,7 +254,7 @@ export function BOMFormModal({
                           <td className="px-3 py-2">
                             <input
                               type="number"
-                              min={0}
+                              min={0.01}
                               step="0.01"
                               value={m.usagePerSample}
                               onChange={(e) => {
@@ -290,7 +308,7 @@ export function BOMFormModal({
                     ...form,
                     materials: [
                       ...form.materials,
-                      { materialId: '', name: '', spec: '', usagePerSample: 0, unit: '', groupName: '' },
+                      { materialId: '', name: '', spec: '', usagePerSample: 1, unit: '', groupName: '' },
                     ],
                   })
                 }}
@@ -378,7 +396,7 @@ export function BOMFormModal({
                           <td className="px-3 py-2">
                             <input
                               type="number"
-                              min={0}
+                              min={0.01}
                               step="0.01"
                               value={m.usagePerBatch}
                               onChange={(e) => {
@@ -432,7 +450,7 @@ export function BOMFormModal({
                     ...form,
                     qualityControls: [
                       ...form.qualityControls,
-                      { materialId: '', name: '', spec: '', usagePerBatch: 0, unit: '片', coversSamples: 50 },
+                      { materialId: '', name: '', spec: '', usagePerBatch: 1, unit: '片', coversSamples: 50 },
                     ],
                   })
                 }}
@@ -520,7 +538,7 @@ function BOMExtTable({ title, items, allMaterials, onChange, defaultUnit }: ExtT
                   <td className="px-3 py-2">
                     <input
                       type="number"
-                      min={0}
+                      min={0.01}
                       step="0.01"
                       value={m.usagePerSample}
                       onChange={(e) => {
@@ -558,7 +576,7 @@ function BOMExtTable({ title, items, allMaterials, onChange, defaultUnit }: ExtT
         onClick={() => {
           onChange([
             ...items,
-            { materialId: '', name: '', spec: '', usagePerSample: 0, unit: defaultUnit },
+            { materialId: '', name: '', spec: '', usagePerSample: 1, unit: defaultUnit },
           ])
         }}
         className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-blue-600 hover:bg-blue-50 rounded-md border border-blue-200 transition-colors"

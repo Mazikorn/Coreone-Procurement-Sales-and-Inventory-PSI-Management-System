@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react'
 import { Download, TrendingUp, TrendingDown, Minus } from 'lucide-react'
 import { toast } from 'sonner'
-import { formatCurrency } from '@/lib/utils'
+import { abcApi } from '@/api/abc'
+import { downloadTextFile, formatCurrency } from '@/lib/utils'
 
 interface ProfitabilityData {
   projectId: string
   projectName: string
   projectType: string
+  caseCount: number
   sampleCount: number
   materialCost: number
   activityCost: number
@@ -16,30 +18,65 @@ interface ProfitabilityData {
   profitRate: number
 }
 
+export function aggregateProfitabilityRows(rows: any[], month: string, projectType: string): ProfitabilityData[] {
+  const projectMap = new Map<string, ProfitabilityData>()
+
+  for (const row of rows) {
+    if (row.costMonth && row.costMonth !== month) continue
+    if (projectType !== 'all' && row.projectType !== projectType) continue
+
+    const projectId = row.projectId || row.outboundId || `unknown-${projectMap.size}`
+    const existing = projectMap.get(projectId) || {
+      projectId,
+      projectName: row.projectName || '未关联项目',
+      projectType: row.projectType || '',
+      caseCount: 0,
+      sampleCount: 0,
+      materialCost: 0,
+      activityCost: 0,
+      totalCost: 0,
+      feeAmount: 0,
+      profit: 0,
+      profitRate: 0,
+    }
+
+    existing.caseCount += Number(row.caseCount) || 1
+    existing.sampleCount += Number(row.sampleCount) || 0
+    existing.materialCost += Number(row.materialCost) || 0
+    existing.activityCost += Number(row.activityCost) || 0
+    existing.totalCost += Number(row.totalCost) || 0
+    existing.feeAmount += Number(row.feeAmount) || 0
+    existing.profit += Number(row.profit) || 0
+    existing.profitRate = existing.feeAmount > 0 ? existing.profit / existing.feeAmount : 0
+    projectMap.set(projectId, existing)
+  }
+
+  return [...projectMap.values()]
+}
+
 export function ProfitabilityAnalysis() {
   const [data, setData] = useState<ProfitabilityData[]>([])
   const [loading, setLoading] = useState(true)
   const [projectType, setProjectType] = useState<string>('all')
+  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7))
+  const [exporting, setExporting] = useState(false)
 
   useEffect(() => {
     loadProfitabilityData()
-  }, [projectType])
+  }, [projectType, month])
 
   const loadProfitabilityData = async () => {
     try {
       setLoading(true)
-      const params = new URLSearchParams()
-      if (projectType !== 'all') params.append('projectType', projectType)
-
-      const response = await fetch(`/api/v1/abc/profitability?${params}`, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
+      const res = await abcApi.getProfitability({
+        startDate: month,
+        endDate: month,
+        projectType: projectType !== 'all' ? projectType : undefined,
       })
-      const result = await response.json()
-      if (result.success) {
-        setData(result.data?.list || result.data?.items || result.data || [])
-      }
-    } catch (error) {
-      console.error('Failed to load profitability data:', error)
+      const rows = Array.isArray(res) ? res : res?.list || res?.items || []
+      setData(aggregateProfitabilityRows(rows, month, projectType))
+    } catch {
+      toast.error('加载盈利性分析数据失败')
     } finally {
       setLoading(false)
     }
@@ -51,8 +88,8 @@ export function ProfitabilityAnalysis() {
     totalCost: data.reduce((sum, d) => sum + (d.totalCost || 0), 0),
     totalFee: data.reduce((sum, d) => sum + (d.feeAmount || 0), 0),
     totalProfit: data.reduce((sum, d) => sum + (d.profit || 0), 0),
-    avgProfitRate: data.length > 0 ? data.reduce((sum, d) => sum + (d.profitRate || 0), 0) / data.length : 0,
   }
+  const avgProfitRate = summary.totalFee > 0 ? summary.totalProfit / summary.totalFee : 0
 
   const sortedData = [...data].sort((a, b) => (b.profitRate || 0) - (a.profitRate || 0))
 
@@ -68,6 +105,21 @@ export function ProfitabilityAnalysis() {
     return <Minus className="h-4 w-4 text-gray-400" />
   }
 
+  const handleExport = async () => {
+    try {
+      setExporting(true)
+      const exported = await abcApi.exportData({
+        projectType: projectType !== 'all' ? projectType : undefined,
+      })
+      downloadTextFile(exported.filename || 'abc-profitability.csv', exported.content || '', exported.mimeType)
+      toast.success('导出完成')
+    } catch {
+      // 统一错误提示已在请求拦截器处理
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
@@ -75,7 +127,12 @@ export function ProfitabilityAnalysis() {
           <h1 className="text-2xl font-bold text-gray-900">盈利性分析</h1>
           <p className="text-sm text-gray-500 mt-1">分析各检测项目的成本与收费对比</p>
         </div>
-        <button className="h-10 px-4 bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors flex items-center gap-2">
+        <button
+          type="button"
+          onClick={handleExport}
+          disabled={exporting}
+          className="h-10 px-4 bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 disabled:opacity-50 transition-colors flex items-center gap-2"
+        >
           <Download className="h-4 w-4" /> 导出报表
         </button>
       </div>
@@ -102,7 +159,7 @@ export function ProfitabilityAnalysis() {
           <div className={`text-2xl font-bold mt-1 ${summary.totalProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
             {formatCurrency(summary.totalProfit)}
           </div>
-          <div className="text-xs text-gray-400 mt-1">平均利润率：{(summary.avgProfitRate * 100).toFixed(1)}%</div>
+          <div className="text-xs text-gray-400 mt-1">平均利润率：{(avgProfitRate * 100).toFixed(1)}%</div>
         </div>
       </div>
 
@@ -121,6 +178,12 @@ export function ProfitabilityAnalysis() {
             <option value="mp">分子病理</option>
             <option value="cyto">细胞病理</option>
           </select>
+          <input
+            type="month"
+            value={month}
+            onChange={(e) => setMonth(e.target.value)}
+            className="h-10 px-3 border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
+          />
         </div>
       </div>
 

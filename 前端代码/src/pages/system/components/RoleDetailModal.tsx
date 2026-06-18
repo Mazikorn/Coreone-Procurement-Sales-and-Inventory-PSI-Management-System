@@ -1,3 +1,4 @@
+import React from 'react'
 import { X, Shield } from 'lucide-react'
 import type { Role } from '@/types'
 import { PERMISSION_MODULES } from '../hooks/useRolesPage'
@@ -34,6 +35,8 @@ function getPermissionChips(role: Role) {
 }
 
 function getDataScopeLabel(role: Role) {
+  if (role.dataScope === 'all') return '全部数据'
+  if (role.dataScope === 'self') return '仅本人数据'
   if (role.code === 'admin') return '全部数据'
   return '本部门数据'
 }
@@ -91,7 +94,23 @@ export function RoleDetailModal({ open, role, onClose }: Props) {
           <div>
             <h4 className="text-sm font-semibold text-gray-900 mb-3">关联用户</h4>
             <div className="border border-gray-200 rounded-lg divide-y divide-gray-200">
-              <div className="px-4 py-3 text-sm text-gray-500">暂无关联用户数据</div>
+              {role.associatedUsers && role.associatedUsers.length > 0 ? (
+                role.associatedUsers.map(user => (
+                  <div key={user.id} className="px-4 py-3 flex items-center justify-between gap-4">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-gray-900 truncate">{user.realName}</div>
+                      <div className="text-xs text-gray-500 mt-0.5">
+                        {user.username}{user.department ? ` · ${user.department}` : ''}
+                      </div>
+                    </div>
+                    <span className={`shrink-0 inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${user.status === 'active' ? 'bg-green-50 text-green-500' : 'bg-gray-100 text-gray-500'}`}>
+                      {user.status === 'active' ? '正常' : '禁用'}
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <div className="px-4 py-3 text-sm text-gray-500">暂无关联用户数据</div>
+              )}
             </div>
           </div>
         </div>

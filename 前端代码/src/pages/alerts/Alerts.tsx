@@ -1,5 +1,5 @@
 import { Clock } from 'lucide-react'
-import { useAlertsPage } from './hooks/useAlertsPage'
+import { buildAlertHandleRemark, useAlertsPage } from './hooks/useAlertsPage'
 import { AlertTable } from './components/AlertTable'
 import { AlertHandleModal } from './components/AlertHandleModal'
 import { AlertConsumptionHandleModal } from './components/AlertConsumptionHandleModal'
@@ -22,7 +22,11 @@ export default function Alerts() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <button className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors duration-150 h-10">
+          <button
+            type="button"
+            onClick={page.openHistory}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors duration-150 h-10"
+          >
             <Clock className="w-4 h-4" />
             查看历史
           </button>
@@ -44,7 +48,7 @@ export default function Alerts() {
           <div className="mt-1 text-sm text-gray-500">今日预警</div>
         </div>
         <div className="bg-white rounded-lg p-5 shadow-sm border border-gray-200 border-l-4 border-l-blue-500">
-          <div className="text-2xl font-semibold text-gray-900">{page.stats.total}</div>
+          <div className="text-2xl font-semibold text-gray-900">{page.stats.month}</div>
           <div className="mt-1 text-sm text-gray-500">本月预警</div>
         </div>
       </div>
@@ -53,19 +57,21 @@ export default function Alerts() {
       <AlertTable
         data={page.data}
         loading={page.loading}
+        error={page.error}
         total={page.total}
         page={page.page}
         pageSize={page.pageSize}
         filter={page.filter}
         quickFilter={page.quickFilter}
         selectedIds={page.selectedIds}
-        onFilterChange={page.setFilter}
+        onFilterChange={(filter) => { page.setFilter(filter); page.setPage(1) }}
         onQuickFilterChange={(v) => { page.setQuickFilter(v); page.setPage(1) }}
         onSelect={page.handleSelect}
         onSelectAll={page.handleSelectAll}
         onClearSelection={page.clearSelection}
         onPageChange={page.setPage}
         onPageSizeChange={page.setPageSize}
+        onRetry={page.refresh}
         onBatchProcess={page.handleBatchProcess}
         onOpenModal={page.openModal}
         onIgnore={page.handleIgnore}
@@ -83,7 +89,7 @@ export default function Alerts() {
         onClose={page.closeModal}
         onChange={page.setHandleForm}
         onConfirm={() => {
-          if (page.modal.alert) page.handleProcess(page.modal.alert.id)
+          if (page.modal.alert) page.handleProcess(page.modal.alert.id, buildAlertHandleRemark(page.handleForm))
         }}
       />
 
@@ -94,7 +100,7 @@ export default function Alerts() {
         onClose={page.closeModal}
         onChange={page.setHandleForm}
         onConfirm={() => {
-          if (page.modal.alert) page.handleProcess(page.modal.alert.id)
+          if (page.modal.alert) page.handleProcess(page.modal.alert.id, buildAlertHandleRemark(page.handleForm))
         }}
       />
 
@@ -115,6 +121,7 @@ export default function Alerts() {
         onHandle={() => {
           if (page.modal.alert) page.openModal('consumption-handle', page.modal.alert)
         }}
+        formatDate={page.formatDate}
       />
     </div>
   )

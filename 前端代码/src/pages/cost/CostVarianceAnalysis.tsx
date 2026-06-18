@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { Fragment, useState, useEffect, useMemo } from 'react'
 import { Search, TrendingUp, TrendingDown, Minus, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -18,10 +18,16 @@ interface VarianceSummary {
 interface VarianceItem {
   projectId: string
   projectName: string
+  groupType?: 'project' | 'month' | 'material'
+  unit?: string
   materialActual: number
   materialStandard: number
+  laborActual: number
   laborStandard: number
+  equipmentActual: number
   equipmentStandard: number
+  qcActual: number
+  indirectActual: number
   indirectStandard: number
   totalActual: number
   totalStandard: number
@@ -100,6 +106,10 @@ export default function CostVarianceAnalysis() {
     if (!searchKeyword) return true
     return v.projectName?.includes(searchKeyword)
   })
+
+  const groupColumnLabel = compareType === 'month' ? '月份' : compareType === 'material' ? '物料名称' : '项目名称'
+  const quantityColumnLabel = compareType === 'material' ? '消耗数量' : '样本数'
+  const searchPlaceholder = compareType === 'month' ? '搜索月份...' : compareType === 'material' ? '搜索物料名称...' : '搜索项目名称...'
 
   // 趋势图数据
   const trendData = useMemo(() => {
@@ -279,7 +289,7 @@ export default function CostVarianceAnalysis() {
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
           <input
             type="text"
-            placeholder="搜索项目名称..."
+            placeholder={searchPlaceholder}
             value={searchKeyword}
             onChange={e => setSearchKeyword(e.target.value)}
             className="w-full h-10 pl-10 pr-4 border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
@@ -293,8 +303,8 @@ export default function CostVarianceAnalysis() {
           <thead className="bg-gray-50">
             <tr>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-8"></th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">项目名称</th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">样本数</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">{groupColumnLabel}</th>
+              <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">{quantityColumnLabel}</th>
               <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">标准成本</th>
               <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">实际成本</th>
               <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">差异</th>
@@ -315,7 +325,7 @@ export default function CostVarianceAnalysis() {
                 const isOverThreshold = Math.abs(item.varianceRate) > VARIANCE_THRESHOLD
                 const isExpanded = expandedRows.has(item.projectId)
                 return (
-                  <>
+                  <Fragment key={item.projectId}>
                     <tr
                       key={item.projectId}
                       className={`hover:bg-gray-50 cursor-pointer ${getVarianceBg(item.varianceRate)}`}
@@ -336,7 +346,9 @@ export default function CostVarianceAnalysis() {
                           )}
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-sm text-gray-600 text-right font-mono">{item.sampleCount}</td>
+                      <td className="px-4 py-3 text-sm text-gray-600 text-right font-mono">
+                        {item.sampleCount}{compareType === 'material' && item.unit ? ` ${item.unit}` : ''}
+                      </td>
                       <td className="px-4 py-3 text-sm text-gray-900 text-right font-mono">
                         {formatCurrency(item.totalStandard)}
                       </td>
@@ -354,28 +366,32 @@ export default function CostVarianceAnalysis() {
                     {isExpanded && (
                       <tr key={`${item.projectId}-detail`} className="bg-gray-50">
                         <td colSpan={7} className="px-8 py-3">
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+                          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-xs">
                             <div>
-                              <span className="text-gray-500">材料标准:</span>
-                              <span className="ml-1 font-mono text-gray-700">{formatCurrency(item.materialStandard)}</span>
+                              <span className="text-gray-500">材料:</span>
+                              <span className="ml-1 font-mono text-gray-700">{formatCurrency(item.materialActual)} / {formatCurrency(item.materialStandard)}</span>
                             </div>
                             <div>
-                              <span className="text-gray-500">人工标准:</span>
-                              <span className="ml-1 font-mono text-gray-700">{formatCurrency(item.laborStandard)}</span>
+                              <span className="text-gray-500">人工:</span>
+                              <span className="ml-1 font-mono text-gray-700">{formatCurrency(item.laborActual)} / {formatCurrency(item.laborStandard)}</span>
                             </div>
                             <div>
-                              <span className="text-gray-500">设备标准:</span>
-                              <span className="ml-1 font-mono text-gray-700">{formatCurrency(item.equipmentStandard)}</span>
+                              <span className="text-gray-500">设备:</span>
+                              <span className="ml-1 font-mono text-gray-700">{formatCurrency(item.equipmentActual)} / {formatCurrency(item.equipmentStandard)}</span>
                             </div>
                             <div>
-                              <span className="text-gray-500">间接标准:</span>
-                              <span className="ml-1 font-mono text-gray-700">{formatCurrency(item.indirectStandard)}</span>
+                              <span className="text-gray-500">质控实际:</span>
+                              <span className="ml-1 font-mono text-gray-700">{formatCurrency(item.qcActual)}</span>
+                            </div>
+                            <div>
+                              <span className="text-gray-500">间接:</span>
+                              <span className="ml-1 font-mono text-gray-700">{formatCurrency(item.indirectActual)} / {formatCurrency(item.indirectStandard)}</span>
                             </div>
                           </div>
                         </td>
                       </tr>
                     )}
-                  </>
+                  </Fragment>
                 )
               })
             )}

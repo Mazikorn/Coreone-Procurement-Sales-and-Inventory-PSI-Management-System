@@ -87,8 +87,9 @@ describe('集成测试：出库流程与成本核算', () => {
       .get('/api/v1/inventory')
       .set('Authorization', `Bearer ${token}`)
     expect(inventoryRes.status).toBe(200)
-    const invItem = inventoryRes.body.data.list.find((i: any) => i.materialId === materialId)
-    expect(invItem?.stock).toBe(30)
+    const inventoryRows = inventoryRes.body.data.list.filter((i: any) => i.materialId === materialId)
+    expect(inventoryRows).toHaveLength(2)
+    expect(inventoryRows.reduce((sum: number, row: any) => sum + Number(row.stock || 0), 0)).toBe(30)
 
     // 3. 创建 BOM
     const bomRes = await request(app)

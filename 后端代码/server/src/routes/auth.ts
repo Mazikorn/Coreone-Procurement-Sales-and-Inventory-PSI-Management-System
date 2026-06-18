@@ -3,13 +3,19 @@ import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import rateLimit from 'express-rate-limit'
 import { body, validationResult } from 'express-validator'
+import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../database/DatabaseManager.js'
 import { success, error } from '../utils/response.js'
-import { JWT_SECRET, ROLE_PERMISSIONS } from '../middleware/auth.js'
+import { JWT_SECRET, getRolePermissions } from '../middleware/auth.js'
 
 const router = Router()
 const JWT_EXPIRES = '8h'
 const REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || JWT_SECRET + '_refresh'
+
+const isRoleActive = (db: ReturnType<typeof getDatabase>, roleCode: string) => {
+  const role = db.prepare('SELECT status FROM roles WHERE code = ? AND is_deleted = 0').get(roleCode) as any
+  return !!role && Number(role.status) === 1
+}
 
 // 登录速率限制：1 分钟内最多 5 次（本地开发/E2E 测试跳过）
 const loginLimiter = rateLimit({
@@ -61,13 +67,14 @@ router.post('/login', loginLimiter, loginValidation, (req, res) => {
     const user = db.prepare('SELECT * FROM users WHERE username = ? AND status = 1 AND is_deleted = 0').get(username) as any
 
     const validPassword = user && bcrypt.compareSync(password, user.password)
+    const roleActive = validPassword ? isRoleActive(db, user.role) : false
 
     // 记录登录尝试
-    const attemptId = `LA-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const attemptId = uuidv4()
     db.prepare(`
       INSERT INTO login_attempts (id, username, ip_address, success, attempted_at)
       VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-    `).run(attemptId, username, ip, validPassword ? 1 : 0)
+    `).run(attemptId, username, ip, validPassword && roleActive ? 1 : 0)
 
     // 清理超过 24 小时的记录
     db.prepare("DELETE FROM login_attempts WHERE attempted_at < datetime('now', '-24 hours')").run()
@@ -76,6 +83,14 @@ router.post('/login', loginLimiter, loginValidation, (req, res) => {
       error(res, '用户名或密码错误', 'UNAUTHORIZED', 401)
       return
     }
+
+    if (!roleActive) {
+      error(res, '角色已停用，无法登录', 'ROLE_DISABLED', 401)
+      return
+    }
+
+    db.prepare('UPDATE users SET last_login = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .run(user.id)
 
     const token = jwt.sign(
       { userId: user.id, username: user.username, role: user.role },
@@ -98,7 +113,7 @@ router.post('/login', loginLimiter, loginValidation, (req, res) => {
         username: user.username,
         realName: user.real_name,
         role: user.role,
-        permissions: ROLE_PERMISSIONS[user.role] || [],
+        permissions: getRolePermissions(user.role),
       },
     }, 'Login success')
   } catch (err: any) {
@@ -125,6 +140,11 @@ router.post('/refresh', (req, res) => {
 
     if (!user || user.status !== 1) {
       error(res, 'User not found or disabled', 'UNAUTHORIZED', 401)
+      return
+    }
+
+    if (!isRoleActive(db, user.role)) {
+      error(res, 'User role disabled', 'ROLE_DISABLED', 401)
       return
     }
 

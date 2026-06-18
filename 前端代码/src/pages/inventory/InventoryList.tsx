@@ -1,8 +1,9 @@
-import { Upload } from 'lucide-react'
+import { ShieldCheck, Upload } from 'lucide-react'
 import { useInventoryPage } from './hooks/useInventoryPage'
 import { InventoryTable } from './components/InventoryTable'
 import { DepletionTab } from './components/DepletionTab'
 import { DepletedTab } from './components/DepletedTab'
+import { InventoryConsistencyModal } from './components/InventoryConsistencyModal'
 import { OutboundModal } from './components/OutboundModal'
 import { MaterialSelectorModal } from './components/MaterialSelectorModal'
 import { InventoryDetailModal } from './components/InventoryDetailModal'
@@ -22,21 +23,34 @@ export default function InventoryList() {
           <h1 className="text-[28px] font-semibold text-gray-900 tracking-tight">库存列表</h1>
           <p className="text-sm text-gray-500 mt-1">管理实验室耗材库存，实时监控库存状态和有效期</p>
         </div>
-        <button
-          onClick={() => page.setOutboundModalOpen(true)}
-          className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-all duration-150 ease text-sm font-medium shadow-sm"
-        >
-          <Upload className="w-4 h-4" />
-          出库登记
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={page.runConsistencyCheck}
+            className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 shadow-sm transition-all duration-150 ease hover:bg-gray-50"
+          >
+            <ShieldCheck className="w-4 h-4" />
+            数据诊断
+          </button>
+          <button
+            onClick={() => page.setOutboundModalOpen(true)}
+            className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-all duration-150 ease text-sm font-medium shadow-sm"
+          >
+            <Upload className="w-4 h-4" />
+            出库登记
+          </button>
+        </div>
       </div>
 
       {/* Tab 切换 */}
       <div className="flex items-center gap-0 border-b border-gray-200">
         {[
           { key: 'in-stock' as const, label: '在库' },
-          { key: 'in-use' as const, label: '使用中' },
-          { key: 'depleted' as const, label: '已耗尽' },
+          ...(page.canAccessDepletion
+            ? [
+                { key: 'in-use' as const, label: '使用中' },
+                { key: 'depleted' as const, label: '已耗尽' },
+              ]
+            : []),
         ].map(tab => (
           <button
             key={tab.key}
@@ -65,6 +79,8 @@ export default function InventoryList() {
           keyword={page.keyword}
           category={page.category}
           location={page.location}
+          categoryOptions={page.categoryOptions}
+          locationOptions={page.locationOptions}
           quickFilter={page.quickFilter}
           sortField={page.sortField}
           sortDirection={page.sortDirection}
@@ -134,6 +150,14 @@ export default function InventoryList() {
         onConfirm={page.confirmOutbound}
       />
 
+      <InventoryConsistencyModal
+        open={page.consistencyModalOpen}
+        loading={page.consistencyLoading}
+        result={page.consistencyResult}
+        onClose={() => page.setConsistencyModalOpen(false)}
+        onRefresh={page.runConsistencyCheck}
+      />
+
       <MaterialSelectorModal
         open={page.materialSelectorOpen}
         tab={page.materialSelectorTab}
@@ -197,6 +221,7 @@ export default function InventoryList() {
         onClose={() => page.setEditRemainModalOpen(false)}
         onChangeValue={page.setEditRemainValue}
         onChangeReason={page.setEditRemainReason}
+        onConfirm={page.confirmEditRemain}
       />
 
       <ConfirmDepleteModal
@@ -211,6 +236,7 @@ export default function InventoryList() {
         onChangeRemainValue={page.setDepleteRemainValue}
         onChangeExpiredReason={page.setExpiredReason}
         onChangeExpiredRemark={page.setExpiredRemark}
+        onConfirm={page.confirmDeplete}
       />
     </div>
   )

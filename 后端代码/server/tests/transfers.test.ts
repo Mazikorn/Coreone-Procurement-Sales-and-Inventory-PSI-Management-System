@@ -1,346 +1,456 @@
-/**
- * 调拨管理 API 测试
- * 运行: cd 后端代码/server && npx tsx tests/transfers.test.ts
- */
+process.env.DATABASE_PATH = ':memory:'
 
-import { getJSON, postJSON, delJSON, login, generateUnique } from './setup.js'
+import { describe, it, expect, beforeAll } from 'vitest'
+import request from 'supertest'
 
-function assertEqual(actual: any, expected: any, msg: string) {
-  if (actual !== expected) throw new Error(`${msg}: expected ${expected}, got ${actual}`)
+const getApp = async () => {
+  const { default: app } = await import('../src/app.js')
+  const { getDatabase } = await import('../src/database/DatabaseManager.js')
+  return { app, db: getDatabase() }
 }
 
-function assertTrue(value: any, msg: string) {
-  if (!value) throw new Error(`${msg}: got ${value}`)
+async function loginAdmin(app: any): Promise<string> {
+  const res = await request(app)
+    .post('/api/v1/auth/login')
+    .send({ username: 'admin', password: 'admin123' })
+  expect(res.status).toBe(200)
+  return res.body.data.token
 }
 
-async function run() {
-  let passed = 0
-  let failed = 0
+function seedTransferMaterial(db: any, suffix: string) {
+  const categoryId = `cat-transfer-${suffix}`
+  const materialId = `mat-transfer-${suffix}`
+  const fromLocationId = `loc-transfer-from-${suffix}`
+  const toLocationId = `loc-transfer-to-${suffix}`
 
-  async function test(name: string, fn: () => Promise<void>) {
-    try {
-      await fn()
-      console.log(`✅ ${name}`)
-      passed++
-    } catch (e: any) {
-      console.log(`❌ ${name}: ${e.message}`)
-      failed++
-    }
-  }
+  db.prepare('INSERT INTO material_categories (id, code, name, level) VALUES (?, ?, ?, ?)')
+    .run(categoryId, `CAT-TF-${suffix}`, '调拨测试分类', 1)
+  db.prepare('INSERT INTO locations (id, code, name, type, zone) VALUES (?, ?, ?, ?, ?)')
+    .run(fromLocationId, `LOC-TF-F-${suffix}`, '调拨来源库位', 'shelf', 'A区')
+  db.prepare('INSERT INTO locations (id, code, name, type, zone) VALUES (?, ?, ?, ?, ?)')
+    .run(toLocationId, `LOC-TF-T-${suffix}`, '调拨目标库位', 'shelf', 'B区')
+  db.prepare(`
+    INSERT INTO materials (id, code, name, spec, unit, category_id, price, location_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(materialId, `MAT-TF-${suffix}`, '调拨测试物料', '1ml', '瓶', categoryId, 12, fromLocationId)
+  db.prepare('INSERT INTO inventory (id, material_id, stock, locked_stock, location_id) VALUES (?, ?, ?, 0, ?)')
+    .run(`inv-transfer-${suffix}`, materialId, 10, fromLocationId)
+  db.prepare(`
+    INSERT INTO batches (id, material_id, batch_no, quantity, remaining, inbound_id, inbound_price, status)
+    VALUES (?, ?, ?, 10, 10, ?, 12, 1)
+  `).run(`batch-transfer-${suffix}`, materialId, `BATCH-TF-${suffix}`, `inbound-transfer-${suffix}`)
 
-  const adminToken = await login('admin', 'admin123')
-  const whmToken = await login('wangkq', 'CoreOne2026!')
-  const techToken = await login('zhangwei', 'CoreOne2026!')
-  const pathToken = await login('liuyf', 'CoreOne2026!')
-  const proToken = await login('zhaohp', 'CoreOne2026!')
-  const finToken = await login('sunli', 'CoreOne2026!')
-
-  // 获取有库存的物料和库位
-  let testMaterialId = ''
-  let testLocationId = ''
-  let testStock = 0
-  try {
-    const inv = await getJSON('/inventory?page=1&pageSize=50', adminToken)
-    const item = inv.data?.list?.find((m: any) => m.stock >= 5)
-    if (item) {
-      testMaterialId = item.materialId
-      testStock = item.stock
-    }
-    const locs = await getJSON('/locations?page=1&pageSize=2', adminToken)
-    if (locs.data?.list?.length >= 1) testLocationId = locs.data.list[0].id
-  } catch { /* ignore */ }
-
-  // ── 1. 列表查询 ──
-  await test('TR-01 admin查询调拨列表成功', async () => {
-    const res = await getJSON('/transfers?page=1&pageSize=10', adminToken)
-    assertTrue(res.success, 'should succeed')
-    assertTrue(Array.isArray(res.data?.list), 'should be list')
-  })
-
-  await test('TR-02 warehouse_manager查询调拨列表成功', async () => {
-    const res = await getJSON('/transfers?page=1&pageSize=10', whmToken)
-    assertTrue(res.success, 'should succeed')
-  })
-
-  await test('TR-03 technician查询调拨列表返回403', async () => {
-    try {
-      await getJSON('/transfers?page=1&pageSize=10', techToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('403') || e.message.includes('Forbidden'), 'should be 403')
-    }
-  })
-
-  await test('TR-04 pathologist查询调拨列表返回403', async () => {
-    try {
-      await getJSON('/transfers?page=1&pageSize=10', pathToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('403') || e.message.includes('Forbidden'), 'should be 403')
-    }
-  })
-
-  await test('TR-05 procurement查询调拨列表返回403', async () => {
-    try {
-      await getJSON('/transfers?page=1&pageSize=10', proToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('403') || e.message.includes('Forbidden'), 'should be 403')
-    }
-  })
-
-  await test('TR-06 finance查询调拨列表返回403', async () => {
-    try {
-      await getJSON('/transfers?page=1&pageSize=10', finToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('403') || e.message.includes('Forbidden'), 'should be 403')
-    }
-  })
-
-  await test('TR-07 无Token返回401', async () => {
-    try {
-      await getJSON('/transfers?page=1&pageSize=10')
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('401') || e.message.includes('Unauthorized'), 'should be 401')
-    }
-  })
-
-  // ── 2. 创建调拨 ──
-  await test('TR-08 admin创建调拨成功', async () => {
-    if (!testMaterialId || !testLocationId) { console.log('  (skip: no material/location)'); return }
-    const res = await postJSON('/transfers/inbound', {
-      materialId: testMaterialId,
-      quantity: 1,
-      fromLocationId: testLocationId,
-      fromLocationName: '测试来源库位',
-      toLocationId: testLocationId,
-      remark: generateUnique('E2E调拨'),
-    }, adminToken)
-    assertTrue(res.success, 'should succeed')
-    assertTrue(res.data?.inboundNo, 'should have inboundNo')
-  })
-
-  await test('TR-09 warehouse_manager创建调拨成功', async () => {
-    if (!testMaterialId || !testLocationId) { console.log('  (skip: no material/location)'); return }
-    const res = await postJSON('/transfers/inbound', {
-      materialId: testMaterialId,
-      quantity: 1,
-      fromLocationId: testLocationId,
-      fromLocationName: '测试来源',
-      toLocationId: testLocationId,
-      remark: generateUnique('E2E调拨WM'),
-    }, whmToken)
-    assertTrue(res.success, 'should succeed')
-  })
-
-  await test('TR-10 缺少materialId返回400', async () => {
-    try {
-      await postJSON('/transfers/inbound', {
-        quantity: 1,
-        fromLocationId: testLocationId,
-        toLocationId: testLocationId,
-      }, adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('400') || e.message.includes('必填'), 'should be 400')
-    }
-  })
-
-  await test('TR-11 缺少toLocationId返回400', async () => {
-    if (!testMaterialId) { console.log('  (skip: no material)'); return }
-    try {
-      await postJSON('/transfers/inbound', {
-        materialId: testMaterialId,
-        quantity: 1,
-        fromLocationId: testLocationId,
-      }, adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('400') || e.message.includes('必填'), 'should be 400')
-    }
-  })
-
-  await test('TR-12 缺少fromLocation返回400', async () => {
-    if (!testMaterialId || !testLocationId) { console.log('  (skip: no material/location)'); return }
-    try {
-      await postJSON('/transfers/inbound', {
-        materialId: testMaterialId,
-        quantity: 1,
-        toLocationId: testLocationId,
-      }, adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('400') || e.message.includes('必填'), 'should be 400')
-    }
-  })
-
-  await test('TR-13 quantity=0返回400', async () => {
-    if (!testMaterialId || !testLocationId) { console.log('  (skip: no material/location)'); return }
-    try {
-      await postJSON('/transfers/inbound', {
-        materialId: testMaterialId,
-        quantity: 0,
-        fromLocationId: testLocationId,
-        toLocationId: testLocationId,
-      }, adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('400') || e.message.includes('必填'), 'should be 400')
-    }
-  })
-
-  await test('TR-14 quantity为负数返回400', async () => {
-    if (!testMaterialId || !testLocationId) { console.log('  (skip: no material/location)'); return }
-    try {
-      await postJSON('/transfers/inbound', {
-        materialId: testMaterialId,
-        quantity: -5,
-        fromLocationId: testLocationId,
-        toLocationId: testLocationId,
-      }, adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('400') || e.message.includes('必填'), 'should be 400')
-    }
-  })
-
-  await test('TR-15 不存在的物料返回404', async () => {
-    if (!testLocationId) { console.log('  (skip: no location)'); return }
-    try {
-      await postJSON('/transfers/inbound', {
-        materialId: 'non-existent-material',
-        quantity: 1,
-        fromLocationId: testLocationId,
-        toLocationId: testLocationId,
-      }, adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('404') || e.message.includes('不存在'), 'should be 404')
-    }
-  })
-
-  await test('TR-16 不存在的目标库位返回404', async () => {
-    if (!testMaterialId || !testLocationId) { console.log('  (skip: no material/location)'); return }
-    try {
-      await postJSON('/transfers/inbound', {
-        materialId: testMaterialId,
-        quantity: 1,
-        fromLocationId: testLocationId,
-        toLocationId: 'non-existent-location',
-      }, adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('404') || e.message.includes('不存在'), 'should be 404')
-    }
-  })
-
-  await test('TR-17 technician创建调拨返回403', async () => {
-    if (!testMaterialId || !testLocationId) { console.log('  (skip: no material/location)'); return }
-    try {
-      await postJSON('/transfers/inbound', {
-        materialId: testMaterialId,
-        quantity: 1,
-        fromLocationId: testLocationId,
-        toLocationId: testLocationId,
-      }, techToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('403') || e.message.includes('Forbidden'), 'should be 403')
-    }
-  })
-
-  // ── 3. 删除/撤销调拨 ──
-  await test('TR-18 删除不存在的调拨记录返回404', async () => {
-    try {
-      await delJSON('/transfers/non-existent-id', adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('404') || e.message.includes('不存在'), 'should be 404')
-    }
-  })
-
-  await test('TR-19 admin删除调拨记录', async () => {
-    // 先创建再删除
-    if (!testMaterialId || !testLocationId) { console.log('  (skip: no material/location)'); return }
-    const create = await postJSON('/transfers/inbound', {
-      materialId: testMaterialId,
-      quantity: 1,
-      fromLocationId: testLocationId,
-      fromLocationName: '测试来源',
-      toLocationId: testLocationId,
-      remark: generateUnique('E2E调拨删除'),
-    }, adminToken)
-    if (!create.success) { console.log('  (skip: create failed)'); return }
-    const id = create.data?.id
-    if (!id) { console.log('  (skip: no id)'); return }
-    const res = await delJSON(`/transfers/${id}`, adminToken)
-    assertTrue(res.success, 'should succeed')
-  })
-
-  await test('TR-20 technician删除调拨记录返回403', async () => {
-    // 先创建一个
-    if (!testMaterialId || !testLocationId) { console.log('  (skip: no material/location)'); return }
-    const create = await postJSON('/transfers/inbound', {
-      materialId: testMaterialId,
-      quantity: 1,
-      fromLocationId: testLocationId,
-      fromLocationName: '测试',
-      toLocationId: testLocationId,
-      remark: generateUnique('E2E'),
-    }, adminToken)
-    if (!create.success) { console.log('  (skip: create failed)'); return }
-    const id = create.data?.id
-    if (!id) { console.log('  (skip: no id)'); return }
-    try {
-      await delJSON(`/transfers/${id}`, techToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('403') || e.message.includes('Forbidden'), 'should be 403')
-    }
-    // cleanup
-    await delJSON(`/transfers/${id}`, adminToken).catch(() => {})
-  })
-
-  // ── 4. 分页 ──
-  await test('TR-21 分页page=0修正为1', async () => {
-    const res = await getJSON('/transfers?page=0&pageSize=5', adminToken)
-    assertTrue(res.success, 'should succeed')
-  })
-
-  await test('TR-22 分页page=999返回空列表', async () => {
-    const res = await getJSON('/transfers?page=999&pageSize=5', adminToken)
-    assertTrue(res.success, 'should succeed')
-    assertTrue(Array.isArray(res.data?.list), 'should be list')
-  })
-
-  await test('TR-23 分页pageSize=1', async () => {
-    const res = await getJSON('/transfers?page=1&pageSize=1', adminToken)
-    assertTrue(res.success, 'should succeed')
-    assertTrue(res.data?.list?.length <= 1, 'should have at most 1 item')
-  })
-
-  // ── 5. 并发 ──
-  await test('TR-24 并发创建调拨不同物料', async () => {
-    if (!testMaterialId || !testLocationId) { console.log('  (skip: no material/location)'); return }
-    const body = {
-      materialId: testMaterialId,
-      quantity: 1,
-      fromLocationId: testLocationId,
-      fromLocationName: '并发测试',
-      toLocationId: testLocationId,
-      remark: generateUnique('E2E并发'),
-    }
-    const [r1, r2] = await Promise.all([
-      postJSON('/transfers/inbound', body, adminToken).catch(() => ({ success: false })),
-      postJSON('/transfers/inbound', { ...body, remark: generateUnique('E2E并发2') }, adminToken).catch(() => ({ success: false })),
-    ])
-    assertTrue(r1.success || r2.success, 'at least one should succeed')
-  })
-
-  console.log(`\n📊 Transfers API Test Results: ${passed} passed, ${failed} failed`)
-  process.exit(failed > 0 ? 1 : 0)
+  return { materialId, fromLocationId, toLocationId }
 }
 
-run()
+describe('调拨管理', () => {
+  let app: any
+  let db: any
+  let token: string
+
+  beforeAll(async () => {
+    ;({ app, db } = await getApp())
+    token = await loginAdmin(app)
+  })
+
+  it('TR-001: 撤销调拨时恢复原库位并保持库存数量不变', async () => {
+    const { materialId, fromLocationId, toLocationId } = seedTransferMaterial(db, `restore-${Date.now()}`)
+
+    const createRes = await request(app)
+      .post('/api/v1/transfers/inbound')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId,
+        quantity: 10,
+        fromLocationId,
+        toLocationId,
+        remark: '测试调拨',
+      })
+    expect(createRes.status).toBe(200)
+
+    const afterTransfer = db.prepare('SELECT stock, location_id FROM inventory WHERE material_id = ?').get(materialId) as any
+    expect(afterTransfer.stock).toBe(10)
+    expect(afterTransfer.location_id).toBe(toLocationId)
+
+    const listRes = await request(app)
+      .get('/api/v1/transfers')
+      .set('Authorization', `Bearer ${token}`)
+      .query({ page: 1, pageSize: 1000 })
+    expect(listRes.status).toBe(200)
+    const listedRecord = listRes.body.data.list.find((row: any) => row.id === createRes.body.data.id)
+    expect(listedRecord).toMatchObject({
+      fromLocationId,
+      fromLocationName: '调拨来源库位',
+      toLocationId,
+      toLocationName: '调拨目标库位',
+    })
+
+    const deleteRes = await request(app)
+      .delete(`/api/v1/transfers/${createRes.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+    expect(deleteRes.status).toBe(200)
+
+    const afterCancel = db.prepare('SELECT stock, location_id FROM inventory WHERE material_id = ?').get(materialId) as any
+    expect(afterCancel.stock).toBe(10)
+    expect(afterCancel.location_id).toBe(fromLocationId)
+  })
+
+  it('TR-002: 拒绝来源库位和目标库位相同的无效调拨', async () => {
+    const { materialId, fromLocationId } = seedTransferMaterial(db, `same-${Date.now()}`)
+
+    const res = await request(app)
+      .post('/api/v1/transfers/inbound')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId,
+        quantity: 1,
+        fromLocationId,
+        toLocationId: fromLocationId,
+        remark: '同库位调拨',
+      })
+
+    expect(res.status).toBe(400)
+    expect(res.body.error.message).toContain('来源库位和目标库位不能相同')
+
+    const afterRejected = db.prepare('SELECT stock, location_id FROM inventory WHERE material_id = ?').get(materialId) as any
+    expect(afterRejected.stock).toBe(10)
+    expect(afterRejected.location_id).toBe(fromLocationId)
+  })
+
+  it('TR-003: 调拨后物料列表返回库存当前库位而不是旧默认库位', async () => {
+    const suffix = `material-location-${Date.now()}`
+    const { materialId, fromLocationId, toLocationId } = seedTransferMaterial(db, suffix)
+
+    const createRes = await request(app)
+      .post('/api/v1/transfers/inbound')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId,
+        quantity: 10,
+        fromLocationId,
+        toLocationId,
+        remark: '物料当前库位联动测试',
+      })
+    expect(createRes.status).toBe(200)
+
+    const materialRes = await request(app)
+      .get('/api/v1/materials')
+      .query({ keyword: `MAT-TF-${suffix}`, page: 1, pageSize: 20 })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(materialRes.status).toBe(200)
+    const row = materialRes.body.data.list.find((item: any) => item.id === materialId)
+    expect(row).toMatchObject({
+      locationId: toLocationId,
+      locationName: '调拨目标库位',
+    })
+  })
+
+  it('TR-004: 部分调拨拆分来源和目标库位库存且撤销后还原', async () => {
+    const { materialId, fromLocationId, toLocationId } = seedTransferMaterial(db, `partial-${Date.now()}`)
+
+    const res = await request(app)
+      .post('/api/v1/transfers/inbound')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId,
+        quantity: 2,
+        fromLocationId,
+        toLocationId,
+        remark: '部分调拨不应整库位迁移',
+      })
+
+    expect(res.status).toBe(200)
+
+    const aggregateAfterTransfer = db.prepare('SELECT stock, location_id FROM inventory WHERE material_id = ?').get(materialId) as any
+    expect(aggregateAfterTransfer.stock).toBe(10)
+    expect(aggregateAfterTransfer.location_id).toBe(fromLocationId)
+
+    const sourceList = await request(app)
+      .get('/api/v1/inventory')
+      .set('Authorization', `Bearer ${token}`)
+      .query({ page: 1, pageSize: 20, locationId: fromLocationId })
+    expect(sourceList.status).toBe(200)
+    const sourceRow = sourceList.body.data.list.find((row: any) => row.materialId === materialId)
+    expect(sourceRow).toMatchObject({ locationId: fromLocationId, stock: 8, totalStock: 10 })
+
+    const targetList = await request(app)
+      .get('/api/v1/inventory')
+      .set('Authorization', `Bearer ${token}`)
+      .query({ page: 1, pageSize: 20, locationId: toLocationId })
+    expect(targetList.status).toBe(200)
+    const targetRow = targetList.body.data.list.find((row: any) => row.materialId === materialId)
+    expect(targetRow).toMatchObject({ locationId: toLocationId, stock: 2, totalStock: 10 })
+
+    const deleteRes = await request(app)
+      .delete(`/api/v1/transfers/${res.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+    expect(deleteRes.status).toBe(200)
+
+    const sourceAfterCancel = await request(app)
+      .get('/api/v1/inventory')
+      .set('Authorization', `Bearer ${token}`)
+      .query({ page: 1, pageSize: 20, locationId: fromLocationId })
+    expect(sourceAfterCancel.status).toBe(200)
+    const restoredSourceRow = sourceAfterCancel.body.data.list.find((row: any) => row.materialId === materialId)
+    expect(restoredSourceRow).toMatchObject({ locationId: fromLocationId, stock: 10, totalStock: 10 })
+
+    const targetAfterCancel = await request(app)
+      .get('/api/v1/inventory')
+      .set('Authorization', `Bearer ${token}`)
+      .query({ page: 1, pageSize: 20, locationId: toLocationId })
+    expect(targetAfterCancel.status).toBe(200)
+    expect(targetAfterCancel.body.data.list.some((row: any) => row.materialId === materialId)).toBe(false)
+  })
+
+  it('TR-005: 拒绝缺少来源库位ID的调拨请求', async () => {
+    const { materialId, fromLocationId, toLocationId } = seedTransferMaterial(db, `missing-source-id-${Date.now()}`)
+
+    const res = await request(app)
+      .post('/api/v1/transfers/inbound')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId,
+        quantity: 2,
+        fromLocationName: '来源库位文本',
+        toLocationId,
+        remark: '缺少来源库位ID',
+      })
+
+    expect(res.status).toBe(400)
+    expect(res.body.error.message).toContain('来源库位')
+
+    const afterRejected = db.prepare('SELECT stock, location_id FROM inventory WHERE material_id = ?').get(materialId) as any
+    expect(afterRejected.stock).toBe(10)
+    expect(afterRejected.location_id).toBe(fromLocationId)
+  })
+
+  it('TR-006: 部分调拨后报废同步扣减库位明细库存', async () => {
+    const { materialId, fromLocationId, toLocationId } = seedTransferMaterial(db, `scrap-after-partial-${Date.now()}`)
+
+    const transferRes = await request(app)
+      .post('/api/v1/transfers/inbound')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId,
+        quantity: 2,
+        fromLocationId,
+        toLocationId,
+        remark: '部分调拨后报废',
+      })
+    expect(transferRes.status).toBe(200)
+
+    const scrapRes = await request(app)
+      .post('/api/v1/scraps')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId,
+        quantity: 3,
+        reason: '调拨后库位明细同步测试',
+      })
+    expect(scrapRes.status).toBe(200)
+
+    const aggregate = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+    expect(aggregate.stock).toBe(7)
+
+    const sourceList = await request(app)
+      .get('/api/v1/inventory')
+      .set('Authorization', `Bearer ${token}`)
+      .query({ page: 1, pageSize: 20, locationId: fromLocationId })
+    expect(sourceList.status).toBe(200)
+    const sourceRow = sourceList.body.data.list.find((row: any) => row.materialId === materialId)
+    expect(sourceRow).toMatchObject({ locationId: fromLocationId, stock: 5, totalStock: 7 })
+
+    const targetList = await request(app)
+      .get('/api/v1/inventory')
+      .set('Authorization', `Bearer ${token}`)
+      .query({ page: 1, pageSize: 20, locationId: toLocationId })
+    expect(targetList.status).toBe(200)
+    const targetRow = targetList.body.data.list.find((row: any) => row.materialId === materialId)
+    expect(targetRow).toMatchObject({ locationId: toLocationId, stock: 2, totalStock: 7 })
+  })
+
+  it('TR-007: 部分调拨后出库撤销按原扣减库位恢复明细库存', async () => {
+    const { materialId, fromLocationId, toLocationId } = seedTransferMaterial(db, `outbound-cancel-${Date.now()}`)
+
+    const transferRes = await request(app)
+      .post('/api/v1/transfers/inbound')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId,
+        quantity: 2,
+        fromLocationId,
+        toLocationId,
+        remark: '部分调拨后出库撤销',
+      })
+    expect(transferRes.status).toBe(200)
+
+    const outboundRes = await request(app)
+      .post('/api/v1/outbound')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        type: 'project',
+        items: [{ materialId, quantity: 9, usage: 'self' }],
+        remark: '出库撤销库位恢复测试',
+      })
+    expect(outboundRes.status).toBe(201)
+
+    const sourceAfterOutbound = await request(app)
+      .get('/api/v1/inventory')
+      .set('Authorization', `Bearer ${token}`)
+      .query({ page: 1, pageSize: 20, locationId: fromLocationId })
+    expect(sourceAfterOutbound.status).toBe(200)
+    expect(sourceAfterOutbound.body.data.list.some((row: any) => row.materialId === materialId)).toBe(false)
+
+    const targetAfterOutbound = await request(app)
+      .get('/api/v1/inventory')
+      .set('Authorization', `Bearer ${token}`)
+      .query({ page: 1, pageSize: 20, locationId: toLocationId })
+    expect(targetAfterOutbound.status).toBe(200)
+    const remainingTargetRow = targetAfterOutbound.body.data.list.find((row: any) => row.materialId === materialId)
+    expect(remainingTargetRow).toMatchObject({ locationId: toLocationId, stock: 1, totalStock: 1 })
+
+    const deleteRes = await request(app)
+      .delete(`/api/v1/outbound/${outboundRes.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ reason: '撤销出库测试' })
+    expect(deleteRes.status).toBe(200)
+
+    const sourceAfterCancel = await request(app)
+      .get('/api/v1/inventory')
+      .set('Authorization', `Bearer ${token}`)
+      .query({ page: 1, pageSize: 20, locationId: fromLocationId })
+    expect(sourceAfterCancel.status).toBe(200)
+    const restoredSourceRow = sourceAfterCancel.body.data.list.find((row: any) => row.materialId === materialId)
+    expect(restoredSourceRow).toMatchObject({ locationId: fromLocationId, stock: 8, totalStock: 10 })
+
+    const targetAfterCancel = await request(app)
+      .get('/api/v1/inventory')
+      .set('Authorization', `Bearer ${token}`)
+      .query({ page: 1, pageSize: 20, locationId: toLocationId })
+    expect(targetAfterCancel.status).toBe(200)
+    const restoredTargetRow = targetAfterCancel.body.data.list.find((row: any) => row.materialId === materialId)
+    expect(restoredTargetRow).toMatchObject({ locationId: toLocationId, stock: 2, totalStock: 10 })
+  })
+
+  it('TR-REF-001: 创建调拨拒绝停用物料、来源库位和目标库位', async () => {
+    const inactiveMaterialSeed = seedTransferMaterial(db, `inactive-material-${Date.now()}`)
+    const inactiveSourceSeed = seedTransferMaterial(db, `inactive-source-${Date.now()}`)
+    const inactiveTargetSeed = seedTransferMaterial(db, `inactive-target-${Date.now()}`)
+    db.prepare('UPDATE materials SET status = 0 WHERE id = ?').run(inactiveMaterialSeed.materialId)
+    db.prepare('UPDATE locations SET status = 0 WHERE id = ?').run(inactiveSourceSeed.fromLocationId)
+    db.prepare('UPDATE locations SET status = 0 WHERE id = ?').run(inactiveTargetSeed.toLocationId)
+
+    const inactiveMaterialRes = await request(app)
+      .post('/api/v1/transfers/inbound')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId: inactiveMaterialSeed.materialId,
+        quantity: 2,
+        fromLocationId: inactiveMaterialSeed.fromLocationId,
+        toLocationId: inactiveMaterialSeed.toLocationId,
+        remark: '停用物料调拨',
+      })
+
+    expect(inactiveMaterialRes.status).toBe(409)
+    expect(inactiveMaterialRes.body.error.message).toContain('物料已停用')
+
+    const inactiveSourceRes = await request(app)
+      .post('/api/v1/transfers/inbound')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId: inactiveSourceSeed.materialId,
+        quantity: 2,
+        fromLocationId: inactiveSourceSeed.fromLocationId,
+        toLocationId: inactiveSourceSeed.toLocationId,
+        remark: '停用来源库位调拨',
+      })
+
+    expect(inactiveSourceRes.status).toBe(409)
+    expect(inactiveSourceRes.body.error.message).toContain('来源库位已停用')
+
+    const inactiveTargetRes = await request(app)
+      .post('/api/v1/transfers/inbound')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId: inactiveTargetSeed.materialId,
+        quantity: 2,
+        fromLocationId: inactiveTargetSeed.fromLocationId,
+        toLocationId: inactiveTargetSeed.toLocationId,
+        remark: '停用目标库位调拨',
+      })
+
+    expect(inactiveTargetRes.status).toBe(409)
+    expect(inactiveTargetRes.body.error.message).toContain('目标库位已停用')
+
+    const records = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM inbound_records
+      WHERE type = 'transfer' AND material_id IN (?, ?, ?)
+    `).get(inactiveMaterialSeed.materialId, inactiveSourceSeed.materialId, inactiveTargetSeed.materialId) as any
+
+    expect(records.count).toBe(0)
+  })
+
+  it('TR-008: 总库存足够但来源库位库存不足时拒绝调拨并保持库位明细不变', async () => {
+    const suffix = `source-insufficient-${Date.now()}`
+    const { materialId, fromLocationId, toLocationId } = seedTransferMaterial(db, suffix)
+    const extraLocationId = `loc-transfer-extra-${suffix}`
+    db.prepare('INSERT INTO locations (id, code, name, type, zone) VALUES (?, ?, ?, ?, ?)')
+      .run(extraLocationId, `LOC-TF-X-${suffix}`, '调拨额外目标库位', 'shelf', 'C区')
+
+    const firstTransferRes = await request(app)
+      .post('/api/v1/transfers/inbound')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId,
+        quantity: 8,
+        fromLocationId,
+        toLocationId,
+        remark: '先拆分来源库位库存',
+      })
+    expect(firstTransferRes.status).toBe(200)
+
+    const rejectRes = await request(app)
+      .post('/api/v1/transfers/inbound')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId,
+        quantity: 3,
+        fromLocationId,
+        toLocationId: extraLocationId,
+        remark: '来源库位不足但总库存足够',
+      })
+
+    expect(rejectRes.status).toBe(422)
+    expect(rejectRes.body.error.message).toContain('库存不足')
+
+    const sourceStock = db.prepare(`
+      SELECT stock
+      FROM inventory_locations
+      WHERE material_id = ? AND location_id = ?
+    `).get(materialId, fromLocationId) as any
+    const targetStock = db.prepare(`
+      SELECT stock
+      FROM inventory_locations
+      WHERE material_id = ? AND location_id = ?
+    `).get(materialId, toLocationId) as any
+    const extraStock = db.prepare(`
+      SELECT stock
+      FROM inventory_locations
+      WHERE material_id = ? AND location_id = ?
+    `).get(materialId, extraLocationId) as any
+    const aggregate = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+    const records = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM inbound_records
+      WHERE type = 'transfer' AND material_id = ? AND is_deleted = 0
+    `).get(materialId) as any
+
+    expect(Number(sourceStock.stock)).toBe(2)
+    expect(Number(targetStock.stock)).toBe(8)
+    expect(extraStock).toBeUndefined()
+    expect(Number(aggregate.stock)).toBe(10)
+    expect(Number(records.count)).toBe(1)
+  })
+})

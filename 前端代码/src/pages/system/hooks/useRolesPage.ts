@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { usePagination } from '@/hooks/usePagination'
 import { useUrlParams } from '@/hooks/useUrlParams'
 import { rolesApi } from '@/api/roles'
@@ -25,19 +25,24 @@ export const PERMISSION_MODULES: PermissionModule[] = [
   { key: 'inbound', label: '入库管理', actions: ['view', 'add', 'edit', 'delete'] },
   { key: 'outbound', label: '出库管理', actions: ['view', 'add', 'edit', 'delete'] },
   { key: 'stocktaking', label: '盘点管理', actions: ['view', 'add', 'edit', 'delete'] },
-  { key: 'scrap', label: '报废管理', actions: ['view', 'add', 'edit', 'delete'] },
-  { key: 'project', label: '检测服务', actions: ['view', 'add', 'edit', 'delete'] },
+  { key: 'returns', label: '退库管理', actions: ['view', 'add', 'edit', 'delete'] },
+  { key: 'scraps', label: '报废管理', actions: ['view', 'add', 'edit', 'delete'] },
+  { key: 'transfers', label: '调拨管理', actions: ['view', 'add', 'edit', 'delete'] },
+  { key: 'supplier_returns', label: '供应商退货', actions: ['view', 'add', 'edit', 'delete'] },
+  { key: 'purchase_orders', label: '采购订单', actions: ['view', 'add', 'edit', 'delete'] },
+  { key: 'projects', label: '检测服务', actions: ['view', 'add', 'edit', 'delete'] },
   { key: 'bom', label: 'BOM管理', actions: ['view', 'add', 'edit', 'delete'] },
-  { key: 'cost', label: '成本分析', actions: ['view'] },
-  { key: 'alert', label: '预警管理', actions: ['view'] },
-  { key: 'category', label: '物料分类', actions: ['view', 'add', 'edit', 'delete'] },
-  { key: 'consumable', label: '耗材配置', actions: ['view', 'add', 'edit', 'delete'] },
-  { key: 'rule', label: '规则配置', actions: ['view', 'add', 'edit', 'delete'] },
-  { key: 'supplier', label: '供应商管理', actions: ['view', 'add', 'edit', 'delete'] },
-  { key: 'location', label: '库位管理', actions: ['view', 'add', 'edit', 'delete'] },
-  { key: 'user', label: '用户管理', actions: ['view', 'add', 'edit', 'delete'] },
-  { key: 'role', label: '角色管理', actions: ['view', 'add', 'edit', 'delete'] },
-  { key: 'log', label: '操作日志', actions: ['view'] },
+  { key: 'categories', label: '物料分类', actions: ['view', 'add', 'edit', 'delete'] },
+  { key: 'materials', label: '耗材配置', actions: ['view', 'add', 'edit', 'delete'] },
+  { key: 'suppliers', label: '供应商管理', actions: ['view', 'add', 'edit', 'delete'] },
+  { key: 'locations', label: '库位管理', actions: ['view', 'add', 'edit', 'delete'] },
+  { key: 'equipment', label: '设备管理', actions: ['view', 'add', 'edit', 'delete'] },
+  { key: 'labor_times', label: '标准工时', actions: ['view', 'add', 'edit', 'delete'] },
+  { key: 'cost_analysis', label: '成本与对账', actions: ['view', 'add', 'edit', 'delete'] },
+  { key: 'alerts', label: '预警管理', actions: ['view', 'add', 'edit', 'delete'] },
+  { key: 'users', label: '用户管理', actions: ['view', 'add', 'edit', 'delete'] },
+  { key: 'roles', label: '角色管理', actions: ['view', 'add', 'edit', 'delete'] },
+  { key: 'logs', label: '操作日志', actions: ['view'] },
 ]
 
 export const DATA_SCOPE_OPTIONS = [
@@ -49,8 +54,9 @@ export const DATA_SCOPE_OPTIONS = [
 export function useRolesPage() {
   const { get, getNumber, setMultiple } = useUrlParams()
 
-  const [keyword, setKeyword] = useState('')
-  const [tabType, setTabType] = useState<'all' | 'system' | 'custom'>('all')
+  const [keyword, setKeyword] = useState(get('keyword') || '')
+  const [tabType, setTabType] = useState<'all' | 'system' | 'custom'>((get('tab') as 'system' | 'custom') || 'all')
+  const [stats, setStats] = useState({ totalRoles: 0, systemRoles: 0, customRoles: 0, assignedUsers: 0 })
 
   const urlPage = Math.max(1, getNumber('page', 1))
   const urlPageSize = [10, 20, 50, 100].includes(getNumber('pageSize', 20))
@@ -59,10 +65,15 @@ export function useRolesPage() {
 
   const fetchFn = useCallback(
     async ({ page, pageSize }: { page: number; pageSize: number }) => {
-      const res = await rolesApi.getList({ page, pageSize })
+      const res = await rolesApi.getList({
+        page,
+        pageSize,
+        ...(keyword && { keyword }),
+        ...(tabType !== 'all' && { type: tabType }),
+      })
       return { list: res?.list || [], pagination: res?.pagination }
     },
-    []
+    [keyword, tabType]
   )
 
   const {
@@ -78,7 +89,7 @@ export function useRolesPage() {
     fetchFn,
     initialPage: urlPage,
     initialPageSize: urlPageSize,
-    deps: [],
+    deps: [keyword, tabType],
   })
 
   useEffect(() => {
@@ -99,24 +110,21 @@ export function useRolesPage() {
     code: '', name: '', description: '', permissions: [], status: 'active', dataScope: 'dept'
   })
 
-  const stats = useMemo(() => {
-    const totalRoles = data.length
-    const systemRoles = data.filter(r => r.code === 'admin').length
-    const customRoles = totalRoles - systemRoles
-    const assignedUsers = data.reduce((sum, r) => sum + (r as any).userCount || 0, 0)
-    return { totalRoles, systemRoles, customRoles, assignedUsers }
-  }, [data])
-
-  const filteredData = useMemo(() => {
-    let list = [...data]
-    if (tabType === 'system') list = list.filter(r => r.code === 'admin')
-    if (tabType === 'custom') list = list.filter(r => r.code !== 'admin')
-    if (keyword.trim()) {
-      const kw = keyword.toLowerCase()
-      list = list.filter(r => r.name.toLowerCase().includes(kw) || r.code.toLowerCase().includes(kw))
-    }
-    return list
-  }, [data, tabType, keyword])
+  useEffect(() => {
+    rolesApi.getStats({
+      ...(keyword && { keyword }),
+      ...(tabType !== 'all' && { type: tabType }),
+    })
+      .then((res: any) => setStats({
+        totalRoles: Number(res?.totalRoles || 0),
+        systemRoles: Number(res?.systemRoles || 0),
+        customRoles: Number(res?.customRoles || 0),
+        assignedUsers: Number(res?.assignedUsers || 0),
+      }))
+      .catch(() => {
+        setStats({ totalRoles: total, systemRoles: 0, customRoles: 0, assignedUsers: 0 })
+      })
+  }, [keyword, tabType, total])
 
   const openCreate = () => {
     setEditingId(null)
@@ -132,7 +140,7 @@ export function useRolesPage() {
       description: row.description || '',
       permissions: row.permissions || [],
       status: row.status,
-      dataScope: 'dept'
+      dataScope: row.dataScope || (row.code === 'admin' ? 'all' : 'dept')
     })
     setModalType('edit')
   }
@@ -189,8 +197,7 @@ export function useRolesPage() {
   }
 
   const getDataScopeLabel = (role: Role) => {
-    if (role.code === 'admin') return '全部数据'
-    return '本部门数据'
+    return DATA_SCOPE_OPTIONS.find(opt => opt.value === (role.dataScope || (role.code === 'admin' ? 'all' : 'dept')))?.label || '本部门数据'
   }
 
   return {
@@ -203,9 +210,15 @@ export function useRolesPage() {
     setPageSize,
     refresh,
     keyword,
-    setKeyword,
+    setKeyword: (value: string) => {
+      setKeyword(value)
+      setPage(1)
+    },
     tabType,
-    setTabType,
+    setTabType: (value: 'all' | 'system' | 'custom') => {
+      setTabType(value)
+      setPage(1)
+    },
     modalType,
     setModalType,
     editingId,
@@ -217,7 +230,7 @@ export function useRolesPage() {
     form,
     setForm,
     stats,
-    filteredData,
+    filteredData: data,
     openCreate,
     openEdit,
     openDetail,

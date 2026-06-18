@@ -1,292 +1,345 @@
-/**
- * 标准工时 API 测试
- * 运行: cd 后端代码/server && npx tsx tests/labor-time.test.ts
- */
+process.env.DATABASE_PATH = ':memory:'
 
-import { getJSON, postJSON, putJSON, delJSON, login, generateUnique } from './setup.js'
+import { describe, it, expect, beforeAll } from 'vitest'
+import request from 'supertest'
 
-function assertTrue(value: any, msg: string) {
-  if (!value) throw new Error(`${msg}: got ${value}`)
+const getApp = async () => {
+  const { default: app } = await import('../src/app.js')
+  const { getDatabase } = await import('../src/database/DatabaseManager.js')
+  return { app, db: getDatabase() }
 }
 
-async function run() {
-  let passed = 0
-  let failed = 0
+async function login(app: any, username: string, password: string): Promise<string> {
+  const res = await request(app)
+    .post('/api/v1/auth/login')
+    .send({ username, password })
 
-  async function test(name: string, fn: () => Promise<void>) {
-    try {
-      await fn()
-      console.log(`✅ ${name}`)
-      passed++
-    } catch (e: any) {
-      console.log(`❌ ${name}: ${e.message}`)
-      failed++
-    }
-  }
-
-  const adminToken = await login('admin', 'admin123')
-  const techToken = await login('zhangwei', 'CoreOne2026!')
-  const pathToken = await login('liuyf', 'CoreOne2026!')
-  const whmToken = await login('wangkq', 'CoreOne2026!')
-  const proToken = await login('zhaohp', 'CoreOne2026!')
-  const finToken = await login('sunli', 'CoreOne2026!')
-
-  let createdId = ''
-
-  // ── 1. 列表查询 ──
-  await test('LT-01 admin查询工时列表成功', async () => {
-    const res = await getJSON('/labor-times?page=1&pageSize=10', adminToken)
-    assertTrue(res.success, 'should succeed')
-    assertTrue(Array.isArray(res.data?.list), 'should be list')
-  })
-
-  await test('LT-02 technician查询工时列表成功', async () => {
-    const res = await getJSON('/labor-times?page=1&pageSize=10', techToken)
-    assertTrue(res.success, 'should succeed')
-  })
-
-  await test('LT-03 pathologist查询工时列表成功', async () => {
-    const res = await getJSON('/labor-times?page=1&pageSize=10', pathToken)
-    assertTrue(res.success, 'should succeed')
-  })
-
-  await test('LT-04 warehouse_manager查询工时列表返回403', async () => {
-    try {
-      await getJSON('/labor-times?page=1&pageSize=10', whmToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('403') || e.message.includes('Forbidden'), 'should be 403')
-    }
-  })
-
-  await test('LT-05 procurement查询工时列表返回403', async () => {
-    try {
-      await getJSON('/labor-times?page=1&pageSize=10', proToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('403') || e.message.includes('Forbidden'), 'should be 403')
-    }
-  })
-
-  await test('LT-06 finance查询工时列表返回403', async () => {
-    try {
-      await getJSON('/labor-times?page=1&pageSize=10', finToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('403') || e.message.includes('Forbidden'), 'should be 403')
-    }
-  })
-
-  await test('LT-07 无Token返回401', async () => {
-    try {
-      await getJSON('/labor-times?page=1&pageSize=10')
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('401') || e.message.includes('Unauthorized'), 'should be 401')
-    }
-  })
-
-  // ── 2. 筛选 ──
-  await test('LT-08 按projectType筛选', async () => {
-    const res = await getJSON('/labor-times?page=1&pageSize=10&projectType=IHC', adminToken)
-    assertTrue(res.success, 'should succeed')
-  })
-
-  await test('LT-09 按keyword筛选', async () => {
-    const res = await getJSON('/labor-times?page=1&pageSize=10&keyword=切片', adminToken)
-    assertTrue(res.success, 'should succeed')
-  })
-
-  await test('LT-10 按referenceSource筛选', async () => {
-    const res = await getJSON('/labor-times?page=1&pageSize=10&referenceSource=system', adminToken)
-    assertTrue(res.success, 'should succeed')
-  })
-
-  // ── 3. 创建工时 ──
-  await test('LT-11 admin创建工时成功', async () => {
-    const stepCode = generateUnique('STEP')
-    const res = await postJSON('/labor-times', {
-      stepCode,
-      stepName: 'E2E测试步骤',
-      projectType: 'IHC',
-      standardMinutes: 15,
-      laborRatePerMinute: 2.5,
-      isEquipmentStep: false,
-      description: 'E2E测试工时',
-      sortOrder: 99,
-      referenceSource: 'system',
-    }, adminToken)
-    assertTrue(res.success, 'should succeed')
-    assertTrue(res.data?.id, 'should have id')
-    createdId = res.data.id
-  })
-
-  await test('LT-12 technician创建工时成功', async () => {
-    const stepCode = generateUnique('STEP-T')
-    const res = await postJSON('/labor-times', {
-      stepCode,
-      stepName: 'E2E技术员创建',
-      projectType: 'HE',
-      standardMinutes: 10,
-    }, techToken)
-    assertTrue(res.success, 'should succeed')
-  })
-
-  await test('LT-13 缺少stepCode返回400', async () => {
-    try {
-      await postJSON('/labor-times', {
-        stepName: 'test',
-        projectType: 'IHC',
-        standardMinutes: 10,
-      }, adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('400') || e.message.includes('缺少'), 'should be 400')
-    }
-  })
-
-  await test('LT-14 缺少stepName返回400', async () => {
-    try {
-      await postJSON('/labor-times', {
-        stepCode: generateUnique('STEP'),
-        projectType: 'IHC',
-        standardMinutes: 10,
-      }, adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('400') || e.message.includes('缺少'), 'should be 400')
-    }
-  })
-
-  await test('LT-15 缺少projectType返回400', async () => {
-    try {
-      await postJSON('/labor-times', {
-        stepCode: generateUnique('STEP'),
-        stepName: 'test',
-        standardMinutes: 10,
-      }, adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('400') || e.message.includes('缺少'), 'should be 400')
-    }
-  })
-
-  await test('LT-16 缺少standardMinutes返回400', async () => {
-    try {
-      await postJSON('/labor-times', {
-        stepCode: generateUnique('STEP'),
-        stepName: 'test',
-        projectType: 'IHC',
-      }, adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('400') || e.message.includes('缺少'), 'should be 400')
-    }
-  })
-
-  await test('LT-17 warehouse_manager创建工时返回403', async () => {
-    try {
-      await postJSON('/labor-times', {
-        stepCode: generateUnique('STEP'),
-        stepName: 'test',
-        projectType: 'IHC',
-        standardMinutes: 10,
-      }, whmToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('403') || e.message.includes('Forbidden'), 'should be 403')
-    }
-  })
-
-  // ── 4. 工时详情 ──
-  await test('LT-18 查看工时详情', async () => {
-    if (!createdId) { console.log('  (skip: no record)'); return }
-    const res = await getJSON(`/labor-times/${createdId}`, adminToken)
-    assertTrue(res.success, 'should succeed')
-    assertTrue(res.data?.stepCode, 'should have stepCode')
-    assertTrue(res.data?.referenceSourceLabel, 'should have referenceSourceLabel')
-  })
-
-  await test('LT-19 查看不存在的工时返回404', async () => {
-    try {
-      await getJSON('/labor-times/non-existent-id', adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('404') || e.message.includes('不存在'), 'should be 404')
-    }
-  })
-
-  // ── 5. 按项目类型获取模板 ──
-  await test('LT-20 按项目类型获取工时模板', async () => {
-    const res = await getJSON('/labor-times/project-type/IHC', adminToken)
-    assertTrue(res.success, 'should succeed')
-    assertTrue(Array.isArray(res.data), 'should be array')
-  })
-
-  // ── 6. 更新工时 ──
-  await test('LT-21 admin更新工时成功', async () => {
-    if (!createdId) { console.log('  (skip: no record)'); return }
-    const res = await putJSON(`/labor-times/${createdId}`, {
-      stepName: 'E2E更新后的步骤',
-      standardMinutes: 20,
-    }, adminToken)
-    assertTrue(res.success, 'should succeed')
-  })
-
-  await test('LT-22 更新不存在的工时返回404', async () => {
-    try {
-      await putJSON('/labor-times/non-existent-id', { stepName: 'test' }, adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('404') || e.message.includes('不存在'), 'should be 404')
-    }
-  })
-
-  // ── 7. 删除工时 ──
-  await test('LT-23 admin删除工时成功', async () => {
-    if (!createdId) { console.log('  (skip: no record)'); return }
-    const res = await delJSON(`/labor-times/${createdId}`, adminToken)
-    assertTrue(res.success, 'should succeed')
-  })
-
-  await test('LT-24 删除不存在的工时返回404', async () => {
-    try {
-      await delJSON('/labor-times/non-existent-id', adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('404') || e.message.includes('不存在'), 'should be 404')
-    }
-  })
-
-  await test('LT-25 technician删除工时返回403', async () => {
-    // 创建一个再尝试删除
-    const stepCode = generateUnique('STEP-DEL')
-    const create = await postJSON('/labor-times', {
-      stepCode,
-      stepName: '待删除',
-      projectType: 'IHC',
-      standardMinutes: 5,
-    }, adminToken)
-    if (!create.success) { console.log('  (skip: create failed)'); return }
-    const id = create.data?.id
-    if (!id) { console.log('  (skip: no id)'); return }
-    try {
-      await delJSON(`/labor-times/${id}`, techToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('403') || e.message.includes('Forbidden'), 'should be 403')
-    }
-    await delJSON(`/labor-times/${id}`, adminToken).catch(() => {})
-  })
-
-  // ── 8. 分页 ──
-  await test('LT-26 分页page=999返回空列表', async () => {
-    const res = await getJSON('/labor-times?page=999&pageSize=5', adminToken)
-    assertTrue(res.success, 'should succeed')
-  })
-
-  console.log(`\n📊 Labor Time API Test Results: ${passed} passed, ${failed} failed`)
-  process.exit(failed > 0 ? 1 : 0)
+  expect(res.status).toBe(200)
+  expect(res.body.success).toBe(true)
+  return res.body.data.token
 }
 
-run()
+describe('标准工时 API', () => {
+  let app: any
+  let db: any
+  let adminToken: string
+  let technicianToken: string
+  let warehouseToken: string
+
+  beforeAll(async () => {
+    ;({ app, db } = await getApp())
+    adminToken = await login(app, 'admin', 'admin123')
+    technicianToken = await login(app, 'zhangwei', 'CoreOne2026!')
+    warehouseToken = await login(app, 'wangkq', 'CoreOne2026!')
+  })
+
+  it('LT-001: admin/technician/pathologist 可查询，仓库角色不可查询', async () => {
+    const adminRes = await request(app)
+      .get('/api/v1/labor-times?page=1&pageSize=10')
+      .set('Authorization', `Bearer ${adminToken}`)
+
+    expect(adminRes.status).toBe(200)
+    expect(adminRes.body.success).toBe(true)
+    expect(Array.isArray(adminRes.body.data.list)).toBe(true)
+
+    const techRes = await request(app)
+      .get('/api/v1/labor-times?page=1&pageSize=10')
+      .set('Authorization', `Bearer ${technicianToken}`)
+    expect(techRes.status).toBe(200)
+
+    const forbiddenRes = await request(app)
+      .get('/api/v1/labor-times?page=1&pageSize=10')
+      .set('Authorization', `Bearer ${warehouseToken}`)
+    expect(forbiddenRes.status).toBe(403)
+
+    const noTokenRes = await request(app).get('/api/v1/labor-times?page=1&pageSize=10')
+    expect(noTokenRes.status).toBe(401)
+  })
+
+  it('LT-002: 支持创建、筛选、详情、更新和删除工时定义', async () => {
+    const suffix = Date.now()
+    const stepCode = `STEP-${suffix}`
+
+    const createRes = await request(app)
+      .post('/api/v1/labor-times')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        stepCode,
+        stepName: 'Vitest测试步骤',
+        projectType: 'IHC',
+        standardMinutes: 15,
+        laborRatePerMinute: 2.5,
+        referenceSource: 'system',
+      })
+
+    expect(createRes.status).toBe(201)
+    expect(createRes.body.success).toBe(true)
+    const id = createRes.body.data.id
+
+    const listRes = await request(app)
+      .get(`/api/v1/labor-times?page=1&pageSize=10&projectType=ihc&keyword=${stepCode}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+
+    expect(listRes.status).toBe(200)
+    expect(listRes.body.data.list.some((row: any) => row.id === id)).toBe(true)
+
+    const detailRes = await request(app)
+      .get(`/api/v1/labor-times/${id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+
+    expect(detailRes.status).toBe(200)
+    expect(detailRes.body.data.stepCode).toBe(stepCode)
+    expect(detailRes.body.data.projectType).toBe('ihc')
+    expect(detailRes.body.data.referenceSource).toBe('system')
+    expect(detailRes.body.data.referenceSourceLabel).toBe('系统预设')
+
+    const updateRes = await request(app)
+      .put(`/api/v1/labor-times/${id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ stepName: 'Vitest更新步骤', standardMinutes: 20 })
+
+    expect(updateRes.status).toBe(200)
+    const updated = db.prepare('SELECT step_name, standard_minutes FROM standard_labor_times WHERE id = ?').get(id) as any
+    expect(updated.step_name).toBe('Vitest更新步骤')
+    expect(updated.standard_minutes).toBe(20)
+
+    const templateRes = await request(app)
+      .get('/api/v1/labor-times/project-type/IHC')
+      .set('Authorization', `Bearer ${adminToken}`)
+
+    expect(templateRes.status).toBe(200)
+    expect(Array.isArray(templateRes.body.data)).toBe(true)
+    const templateRow = templateRes.body.data.find((row: any) => row.id === id)
+    expect(templateRow?.referenceSource).toBe('system')
+    expect(templateRow?.referenceSourceLabel).toBe('系统预设')
+
+    const deleteRes = await request(app)
+      .delete(`/api/v1/labor-times/${id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+
+    expect(deleteRes.status).toBe(200)
+    const removed = db.prepare('SELECT id FROM standard_labor_times WHERE id = ?').get(id)
+    expect(removed).toBeUndefined()
+  })
+
+  it('LT-003: 必填校验和不存在资源返回明确错误', async () => {
+    const missingRequiredRes = await request(app)
+      .post('/api/v1/labor-times')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ stepName: '缺少编码', projectType: 'IHC', standardMinutes: 10 })
+
+    expect(missingRequiredRes.status).toBe(400)
+
+    const invalidMinutesRes = await request(app)
+      .post('/api/v1/labor-times')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        stepCode: `INVALID-MINUTES-${Date.now()}`,
+        stepName: '非法时长',
+        projectType: 'ihc',
+        standardMinutes: 0,
+        laborRatePerMinute: 1,
+      })
+    expect(invalidMinutesRes.status).toBe(400)
+
+    const invalidRateRes = await request(app)
+      .post('/api/v1/labor-times')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        stepCode: `INVALID-RATE-${Date.now()}`,
+        stepName: '非法费率',
+        projectType: 'ihc',
+        standardMinutes: 10,
+        laborRatePerMinute: -1,
+      })
+    expect(invalidRateRes.status).toBe(400)
+
+    const invalidProjectTypeRes = await request(app)
+      .post('/api/v1/labor-times')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        stepCode: `INVALID-PROJECT-${Date.now()}`,
+        stepName: '非法项目类型',
+        projectType: 'unknown',
+        standardMinutes: 10,
+        laborRatePerMinute: 1,
+      })
+    expect(invalidProjectTypeRes.status).toBe(400)
+
+    const invalidSourceRes = await request(app)
+      .post('/api/v1/labor-times')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        stepCode: `INVALID-SOURCE-${Date.now()}`,
+        stepName: '非法来源',
+        projectType: 'ihc',
+        standardMinutes: 10,
+        laborRatePerMinute: 1,
+        referenceSource: 'manual',
+      })
+    expect(invalidSourceRes.status).toBe(400)
+
+    const detailRes = await request(app)
+      .get('/api/v1/labor-times/non-existent-id')
+      .set('Authorization', `Bearer ${adminToken}`)
+    expect(detailRes.status).toBe(404)
+
+    const updateRes = await request(app)
+      .put('/api/v1/labor-times/non-existent-id')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ stepName: '不存在' })
+    expect(updateRes.status).toBe(404)
+
+    const deleteRes = await request(app)
+      .delete('/api/v1/labor-times/non-existent-id')
+      .set('Authorization', `Bearer ${adminToken}`)
+    expect(deleteRes.status).toBe(404)
+  })
+
+  it('LT-004: 统计接口按筛选条件返回全量口径', async () => {
+    const suffix = Date.now()
+    await request(app)
+      .post('/api/v1/labor-times')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        stepCode: `STAT-IHC-${suffix}`,
+        stepName: '统计免疫步骤',
+        projectType: 'ihc',
+        standardMinutes: 10,
+        laborRatePerMinute: 2,
+        isEquipmentStep: true,
+        referenceSource: 'industry',
+      })
+    await request(app)
+      .post('/api/v1/labor-times')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        stepCode: `STAT-HE-${suffix}`,
+        stepName: '统计HE步骤',
+        projectType: 'he',
+        standardMinutes: 30,
+        laborRatePerMinute: 4,
+        isEquipmentStep: false,
+        referenceSource: 'industry',
+      })
+
+    const stats = await request(app)
+      .get('/api/v1/labor-times/stats')
+      .query({ keyword: `STAT-`, referenceSource: 'industry' })
+      .set('Authorization', `Bearer ${adminToken}`)
+
+    expect(stats.status).toBe(200)
+    expect(stats.body.data.total).toBeGreaterThanOrEqual(2)
+    expect(stats.body.data.totalMinutes).toBeGreaterThanOrEqual(40)
+    expect(stats.body.data.avgRate).toBeGreaterThanOrEqual(3)
+    expect(stats.body.data.equipmentSteps).toBeGreaterThanOrEqual(1)
+
+    const ihcStats = await request(app)
+      .get('/api/v1/labor-times/stats')
+      .query({ keyword: `STAT-IHC-${suffix}`, projectType: 'ihc' })
+      .set('Authorization', `Bearer ${adminToken}`)
+
+    expect(ihcStats.status).toBe(200)
+    expect(ihcStats.body.data.total).toBe(1)
+    expect(ihcStats.body.data.totalMinutes).toBe(10)
+    expect(ihcStats.body.data.equipmentSteps).toBe(1)
+  })
+
+  it('LT-AUTH-001: 技术员只能查看标准工时，不能维护成本参数', async () => {
+    const suffix = Date.now()
+
+    const createByTechnician = await request(app)
+      .post('/api/v1/labor-times')
+      .set('Authorization', `Bearer ${technicianToken}`)
+      .send({
+        stepCode: `TECH-LAB-${suffix}`,
+        stepName: '技术员越权创建',
+        projectType: 'ihc',
+        standardMinutes: 12,
+        laborRatePerMinute: 2,
+      })
+    expect(createByTechnician.status).toBe(403)
+
+    const createByAdmin = await request(app)
+      .post('/api/v1/labor-times')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        stepCode: `ADMIN-LAB-${suffix}`,
+        stepName: '管理员创建',
+        projectType: 'ihc',
+        standardMinutes: 12,
+        laborRatePerMinute: 2,
+      })
+    expect(createByAdmin.status).toBe(201)
+    const id = createByAdmin.body.data.id
+
+    const updateByTechnician = await request(app)
+      .put(`/api/v1/labor-times/${id}`)
+      .set('Authorization', `Bearer ${technicianToken}`)
+      .send({ laborRatePerMinute: 99 })
+    expect(updateByTechnician.status).toBe(403)
+
+    const deleteByTechnician = await request(app)
+      .delete(`/api/v1/labor-times/${id}`)
+      .set('Authorization', `Bearer ${technicianToken}`)
+    expect(deleteByTechnician.status).toBe(403)
+
+    const unchanged = db.prepare('SELECT labor_rate_per_minute FROM standard_labor_times WHERE id = ?').get(id) as any
+    expect(unchanged.labor_rate_per_minute).toBe(2)
+  })
+
+  it('LT-TEXT-001: 创建和更新标准工时时拦截危险文本并保存清理后的展示文本', async () => {
+    const suffix = Date.now()
+
+    const blockedCreate = await request(app)
+      .post('/api/v1/labor-times')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        stepCode: `LT-DIRTY-${suffix}`,
+        stepName: '<script>alert(1)</script>',
+        projectType: 'ihc',
+        standardMinutes: 12,
+        laborRatePerMinute: 2,
+      })
+
+    expect(blockedCreate.status).toBe(400)
+    expect(blockedCreate.body.error).toMatchObject({ code: 'INVALID_TEXT' })
+    const dirtyCount = (db.prepare('SELECT COUNT(*) as count FROM standard_labor_times WHERE step_code = ?')
+      .get(`LT-DIRTY-${suffix}`) as any)?.count || 0
+    expect(Number(dirtyCount)).toBe(0)
+
+    const safeCreate = await request(app)
+      .post('/api/v1/labor-times')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        stepCode: `  LT-SAFE-${suffix}  `,
+        stepName: '  安全 工时 步骤  ',
+        description: '  标准 操作 说明  ',
+        projectType: 'IHC',
+        standardMinutes: 12,
+        laborRatePerMinute: 2,
+        referenceSource: 'system',
+      })
+
+    expect(safeCreate.status).toBe(201)
+    const id = safeCreate.body.data.id
+    const persisted = db.prepare('SELECT step_code, step_name, description, project_type FROM standard_labor_times WHERE id = ?')
+      .get(id) as any
+    expect(persisted).toMatchObject({
+      step_code: `LT-SAFE-${suffix}`,
+      step_name: '安全 工时 步骤',
+      description: '标准 操作 说明',
+      project_type: 'ihc',
+    })
+
+    const blockedUpdate = await request(app)
+      .put(`/api/v1/labor-times/${id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ description: "' OR '1'='1" })
+
+    expect(blockedUpdate.status).toBe(400)
+    expect(blockedUpdate.body.error).toMatchObject({ code: 'INVALID_TEXT' })
+    const unchanged = db.prepare('SELECT description FROM standard_labor_times WHERE id = ?').get(id) as any
+    expect(unchanged.description).toBe('标准 操作 说明')
+  })
+})

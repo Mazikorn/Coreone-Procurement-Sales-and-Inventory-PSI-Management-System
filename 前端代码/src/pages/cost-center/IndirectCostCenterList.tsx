@@ -35,7 +35,7 @@ export default function IndirectCostCenterList() {
           { value: page.stats.total, label: '成本中心数' },
           { value: page.stats.active, label: '已启用', color: 'text-green-600' },
           { value: `¥${page.stats.totalMonthly.toFixed(2)}`, label: '月度费用合计', color: 'text-blue-600' },
-          { value: page.data.filter(c => c.status === 'active').length, label: '活跃分摊项', color: 'text-purple-600' },
+          { value: page.stats.allocationCount, label: '分摊记录数', color: 'text-purple-600' },
         ].map((stat, i) => (
           <div key={i} className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm">
             <div className={`text-2xl font-semibold ${stat.color || 'text-gray-900'}`}>
@@ -63,9 +63,9 @@ export default function IndirectCostCenterList() {
           </div>
           <SearchableSelect
             value={page.filterStatus}
-            onChange={(val) => page.setFilterStatus(val)}
+            onChange={page.handleStatusChange}
             options={[
-              { value: 'all', label: '全部状态' },
+              { value: '', label: '全部状态' },
               { value: 'active', label: '已启用' },
               { value: 'inactive', label: '已停用' },
             ]}

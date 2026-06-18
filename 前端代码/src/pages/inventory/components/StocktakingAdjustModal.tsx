@@ -1,4 +1,5 @@
-import { X, CheckCircle, AlertTriangle } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { X, CheckCircle, AlertTriangle, Loader2 } from 'lucide-react'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { StocktakingRecord } from '../hooks/useStocktakingPage'
 
@@ -6,9 +7,21 @@ interface Props {
   open: boolean
   row: StocktakingRecord | null
   onClose: () => void
+  onConfirm: (payload: { reason: string; remark?: string }) => void
+  submitting?: boolean
 }
 
-export function StocktakingAdjustModal({ open, row, onClose }: Props) {
+export function StocktakingAdjustModal({ open, row, onClose, onConfirm, submitting = false }: Props) {
+  const [reason, setReason] = useState('')
+  const [remark, setRemark] = useState('')
+
+  useEffect(() => {
+    if (open) {
+      setReason('')
+      setRemark('')
+    }
+  }, [open, row?.id])
+
   if (!open || !row) return null
 
   return (
@@ -27,7 +40,7 @@ export function StocktakingAdjustModal({ open, row, onClose }: Props) {
             <AlertTriangle className="w-5 h-5 text-amber-500 mt-0.5" />
             <div>
               <div className="text-sm font-medium text-amber-900">发现差异需要处理</div>
-              <div className="text-xs text-amber-700 mt-0.5">选择差异原因后确认调整，系统将自动更新库存并记录操作日志</div>
+              <div className="text-xs text-amber-700 mt-0.5">选择差异原因后确认调整，系统将记录处理人和库存日志</div>
             </div>
           </div>
           <div>
@@ -44,8 +57,8 @@ export function StocktakingAdjustModal({ open, row, onClose }: Props) {
                   </div>
                 </div>
                 <SearchableSelect
-                  value=""
-                  onChange={() => {}}
+                  value={reason}
+                  onChange={setReason}
                   options={[
                     { value: '', label: '选择原因' },
                     { value: 'normal', label: '正常损耗' },
@@ -56,7 +69,6 @@ export function StocktakingAdjustModal({ open, row, onClose }: Props) {
                   placeholder="选择原因"
                   className="w-32"
                 />
-                <input placeholder="备注（选填）" className="px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-28" />
               </div>
             </div>
           </div>
@@ -68,13 +80,17 @@ export function StocktakingAdjustModal({ open, row, onClose }: Props) {
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">处理说明</label>
-            <textarea rows={2} placeholder="请输入处理说明（选填）" className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
+            <textarea value={remark} onChange={e => setRemark(e.target.value)} rows={2} placeholder="请输入处理说明（选填）" className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
           </div>
         </div>
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 shrink-0">
           <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-md border border-gray-300">取消</button>
-          <button className="px-4 py-2 bg-blue-500 text-white text-sm rounded-md hover:bg-blue-600 flex items-center gap-1">
-            <CheckCircle className="w-4 h-4" />确认调整
+          <button
+            onClick={() => onConfirm({ reason, remark: remark.trim() || undefined })}
+            disabled={submitting || !reason}
+            className="px-4 py-2 bg-blue-500 text-white text-sm rounded-md hover:bg-blue-600 disabled:opacity-50 flex items-center gap-1"
+          >
+            {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}确认调整
           </button>
         </div>
       </div>

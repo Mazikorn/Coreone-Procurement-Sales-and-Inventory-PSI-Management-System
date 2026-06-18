@@ -1,10 +1,28 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Download, TrendingUp, TrendingDown, Minus, AlertTriangle, ArrowUp, ArrowDown } from 'lucide-react'
+import {
+  Download,
+  TrendingUp,
+  TrendingDown,
+  Minus,
+  AlertTriangle,
+  ArrowUp,
+  ArrowDown,
+  Database,
+  Play,
+  RefreshCw,
+  Lock,
+  Clock,
+  FilePlus,
+  Check,
+  X,
+} from 'lucide-react'
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 import { toast } from 'sonner'
+import { Link } from 'react-router-dom'
 import { abcApi } from '@/api/abc'
 import { reportsApi } from '@/api/reports'
-import { formatCurrency } from '@/lib/utils'
+import { getUserRole } from '@/lib/permissions'
+import { downloadTextFile, formatCurrency } from '@/lib/utils'
 import { ProfitBadge } from '@/components/ui/ProfitBadge'
 
 interface DashboardSummary {
@@ -14,8 +32,17 @@ interface DashboardSummary {
   profitRate: number
   caseCount: number
   sampleCount: number
+  outboundCount?: number
+  abcSnapshotCount?: number
+  openExceptionCount?: number
+  pendingCostCount?: number
   materialCost: number
   activityCost: number
+  adjustmentAmount?: number
+  pendingAdjustmentCount?: number
+  adjustedTotalCost?: number
+  adjustedTotalProfit?: number
+  adjustedProfitRate?: number
   costChange: number
   feeChange: number
   profitChange: number
@@ -41,12 +68,60 @@ interface CostByActivity {
   ratio: number
 }
 
-interface Alert {
-  type: 'loss' | 'no_mapping'
+interface CostException {
+  id: string
+  exceptionNo: string
+  exceptionType: string
+  severity: 'info' | 'warning' | 'error'
+  status: 'open' | 'resolved' | 'ignored'
+  outboundId?: string
+  outboundNo?: string
   projectName: string
-  profitRate?: number
   message: string
+  createdAt: string
 }
+
+interface CostPeriod {
+  id: string
+  yearMonth: string
+  status: 'open' | 'collecting' | 'calculated' | 'closed'
+  closedAt?: string
+}
+
+interface CostRun {
+  id: string
+  yearMonth: string
+  runType: string
+  status: 'running' | 'success' | 'failed'
+  summary?: {
+    total?: number
+    success?: number
+    failed?: number
+    sourceTotals?: {
+      materialCost?: number
+      outboundCount?: number
+    }
+  }
+  startedAt: string
+  finishedAt?: string
+}
+
+interface CostAdjustment {
+  id: string
+  adjustmentNo: string
+  yearMonth: string
+  adjustmentType: string
+  amount: number
+  reason: string
+  status: 'pending' | 'approved' | 'rejected'
+  submittedBy?: string
+  submittedAt?: string
+  reviewedBy?: string
+  reviewedAt?: string
+  reviewRemark?: string
+}
+
+type ComparisonDirection = 'up' | 'down' | 'flat'
 
 interface MonthlyComparison {
   currentMonth: {
@@ -68,7 +143,7 @@ interface MonthlyComparison {
   changes: {
     totalChange: number
     totalChangeRate: number
-    direction: 'up' | 'down'
+    direction: ComparisonDirection
     note: string
   }
 }
@@ -86,14 +161,100 @@ const PROJECT_TYPE_LABELS: Record<string, string> = {
   cyto: '细胞病理',
 }
 
+const PERIOD_STATUS: Record<string, { label: string; className: string }> = {
+  open: { label: '已开启', className: 'bg-blue-50 text-blue-700' },
+  collecting: { label: '归集中', className: 'bg-amber-50 text-amber-700' },
+  calculated: { label: '已核算', className: 'bg-emerald-50 text-emerald-700' },
+  closed: { label: '已关账', className: 'bg-gray-100 text-gray-600' },
+}
+
+const RUN_STATUS: Record<string, { label: string; className: string }> = {
+  running: { label: '运行中', className: 'bg-blue-50 text-blue-700' },
+  success: { label: '成功', className: 'bg-emerald-50 text-emerald-700' },
+  completed: { label: '成功', className: 'bg-emerald-50 text-emerald-700' },
+  failed: { label: '失败', className: 'bg-red-50 text-red-700' },
+}
+
+const ADJUSTMENT_STATUS: Record<string, { label: string; className: string }> = {
+  pending: { label: '待审核', className: 'bg-amber-50 text-amber-700' },
+  approved: { label: '已通过', className: 'bg-emerald-50 text-emerald-700' },
+  rejected: { label: '已驳回', className: 'bg-red-50 text-red-700' },
+}
+
+const listPayload = <T,>(data: any): T[] => data?.list || data?.items || data || []
+
+export function getComparisonDirectionMeta(direction?: ComparisonDirection) {
+  if (direction === 'up') {
+    return {
+      cardClassName: 'bg-red-50',
+      labelClassName: 'text-red-600',
+      valueClassName: 'text-red-600',
+      icon: 'up' as const,
+    }
+  }
+  if (direction === 'down') {
+    return {
+      cardClassName: 'bg-green-50',
+      labelClassName: 'text-green-600',
+      valueClassName: 'text-green-600',
+      icon: 'down' as const,
+    }
+  }
+  return {
+    cardClassName: 'bg-gray-50',
+    labelClassName: 'text-gray-600',
+    valueClassName: 'text-gray-700',
+    icon: 'flat' as const,
+  }
+}
+
+export function getDashboardOpenExceptionCount(summaryCount: number | undefined, visibleAlertsCount: number) {
+  return Number.isFinite(summaryCount) ? Number(summaryCount) : visibleAlertsCount
+}
+
+export function buildCostAlertsOverviewLink(month: string) {
+  const params = new URLSearchParams({
+    yearMonth: month,
+    status: 'open',
+    includeUnassigned: '1',
+  })
+  return `/abc/alerts?${params.toString()}`
+}
+
+export function getClosePeriodBlockReason(
+  periodStatus: CostPeriod['status'] | undefined,
+  openExceptionCount: number,
+  pendingCostCount: number,
+) {
+  if (!periodStatus) return '请先开启成本期间'
+  if (periodStatus === 'closed') return '成本期间已关账'
+  if (openExceptionCount > 0) return `仍有 ${openExceptionCount} 条开放成本异常`
+  if (pendingCostCount > 0) return `仍有 ${pendingCostCount} 单未补算或成本异常`
+  return ''
+}
+
+export function buildDashboardComparisonParams(month: string) {
+  return { month, source: 'abc' as const }
+}
+
 export default function CostDashboard() {
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7))
+  const [role] = useState(() => getUserRole())
   const [loading, setLoading] = useState(true)
   const [summary, setSummary] = useState<DashboardSummary | null>(null)
   const [profitByProject, setProfitByProject] = useState<ProjectProfit[]>([])
   const [costByActivity, setCostByActivity] = useState<CostByActivity[]>([])
-  const [alerts, setAlerts] = useState<Alert[]>([])
+  const [alerts, setAlerts] = useState<CostException[]>([])
   const [comparison, setComparison] = useState<MonthlyComparison | null>(null)
+  const [currentPeriod, setCurrentPeriod] = useState<CostPeriod | null>(null)
+  const [costRuns, setCostRuns] = useState<CostRun[]>([])
+  const [adjustments, setAdjustments] = useState<CostAdjustment[]>([])
+  const [workbenchLoading, setWorkbenchLoading] = useState(false)
+  const [exporting, setExporting] = useState(false)
+  const [adjustmentModalOpen, setAdjustmentModalOpen] = useState(false)
+  const [adjustmentAmount, setAdjustmentAmount] = useState('')
+  const [adjustmentReason, setAdjustmentReason] = useState('')
+  const [adjustmentSubmitting, setAdjustmentSubmitting] = useState(false)
 
   useEffect(() => {
     loadDashboard()
@@ -108,6 +269,14 @@ export default function CostDashboard() {
       setProfitByProject(data.profitByProject || [])
       setCostByActivity(data.costByActivity || [])
       setAlerts(data.alerts || [])
+      const [periodData, runData, adjustmentData] = await Promise.all([
+        abcApi.getPeriods({ yearMonth: month, pageSize: 1 }),
+        abcApi.getCostRuns({ yearMonth: month, pageSize: 5 }),
+        abcApi.getAdjustments({ yearMonth: month, pageSize: 5 }),
+      ])
+      setCurrentPeriod(listPayload<CostPeriod>(periodData)[0] || null)
+      setCostRuns(listPayload<CostRun>(runData))
+      setAdjustments(listPayload<CostAdjustment>(adjustmentData))
     } catch {
       toast.error('加载看板数据失败')
     } finally {
@@ -117,7 +286,7 @@ export default function CostDashboard() {
 
   const loadComparison = async () => {
     try {
-      const data = await reportsApi.getCostMonthlyComparison()
+      const data = await reportsApi.getCostMonthlyComparison(buildDashboardComparisonParams(month))
       setComparison(data)
     } catch {
       // 月度环比加载失败不影响主看板
@@ -143,6 +312,112 @@ export default function CostDashboard() {
     const sign = change > 0 ? '+' : ''
     return `${sign}${(change * 100).toFixed(1)}%`
   }
+
+  const ensureCurrentPeriod = async () => {
+    if (currentPeriod) return currentPeriod
+    const created = await abcApi.createPeriod({ yearMonth: month })
+    setCurrentPeriod(created)
+    return created as CostPeriod
+  }
+
+  const runWorkbenchAction = async (action: 'start' | 'collect' | 'recalculate' | 'close') => {
+    try {
+      setWorkbenchLoading(true)
+      const period = await ensureCurrentPeriod()
+      if (action === 'start') {
+        await abcApi.startPeriodCollection(period.id)
+        toast.success('已开始成本归集')
+      }
+      if (action === 'collect') {
+        await abcApi.autoCollectCostPools(month)
+        toast.success('成本池已自动归集')
+      }
+      if (action === 'recalculate') {
+        await abcApi.recalculateCostPools(month)
+        toast.success('重算任务已完成')
+      }
+      if (action === 'close') {
+        await abcApi.closePeriod(period.id)
+        toast.success('成本期间已关账')
+      }
+      await loadDashboard()
+    } catch {
+      // 统一错误提示已在请求拦截器处理
+    } finally {
+      setWorkbenchLoading(false)
+    }
+  }
+
+  const handleExport = async () => {
+    try {
+      setExporting(true)
+      const data = await abcApi.exportData({ month })
+      downloadTextFile(data.filename || `abc-cost-export-${month}.csv`, data.content || '', data.mimeType)
+      toast.success('导出完成')
+    } catch {
+      // 统一错误提示已在请求拦截器处理
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  const handleCreateAdjustment = async () => {
+    const amount = Number(adjustmentAmount)
+    if (!Number.isFinite(amount) || amount === 0) {
+      toast.error('调整金额不能为 0')
+      return
+    }
+    if (!adjustmentReason.trim()) {
+      toast.error('请填写调整原因')
+      return
+    }
+    try {
+      setAdjustmentSubmitting(true)
+      await abcApi.createAdjustment({
+        yearMonth: month,
+        adjustmentType: 'closed_period_adjustment',
+        amount,
+        reason: adjustmentReason.trim(),
+      })
+      toast.success('调整单已创建，待审核')
+      setAdjustmentModalOpen(false)
+      setAdjustmentAmount('')
+      setAdjustmentReason('')
+      await loadDashboard()
+    } catch {
+      // 统一错误提示已在请求拦截器处理
+    } finally {
+      setAdjustmentSubmitting(false)
+    }
+  }
+
+  const handleReviewAdjustment = async (id: string, action: 'approve' | 'reject') => {
+    try {
+      setWorkbenchLoading(true)
+      if (action === 'approve') {
+        await abcApi.approveAdjustment(id, { remark: '成本看板审核' })
+        toast.success('调整单已通过')
+      } else {
+        await abcApi.rejectAdjustment(id, { remark: '成本看板驳回' })
+        toast.success('调整单已驳回')
+      }
+      await loadDashboard()
+    } catch {
+      // 统一错误提示已在请求拦截器处理
+    } finally {
+      setWorkbenchLoading(false)
+    }
+  }
+
+  const periodStatus = currentPeriod ? PERIOD_STATUS[currentPeriod.status] || PERIOD_STATUS.open : null
+  const canManageCostPeriod = role === 'admin' || role === 'finance'
+  const comparisonDirectionMeta = getComparisonDirectionMeta(comparison?.changes?.direction)
+  const openAlertCount = getDashboardOpenExceptionCount(summary?.openExceptionCount, alerts.length)
+  const closeBlockReason = getClosePeriodBlockReason(
+    currentPeriod?.status,
+    openAlertCount,
+    summary?.pendingCostCount ?? 0,
+  )
 
   if (loading && !summary) {
     return (
@@ -172,10 +447,236 @@ export default function CostDashboard() {
             onChange={e => setMonth(e.target.value)}
             className="h-10 px-3 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
           />
-          <button className="h-10 px-4 bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleExport}
+            disabled={exporting}
+            className="h-10 px-4 bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 disabled:opacity-50 transition-colors flex items-center gap-2"
+          >
             <Download className="h-4 w-4" /> 导出报表
           </button>
         </div>
+      </div>
+
+      {/* 核算工作台 */}
+      <div className="bg-white rounded-lg border border-gray-200 p-4">
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 2xl:grid-cols-7 gap-3">
+            <div className="min-h-[72px] rounded-md border border-gray-100 bg-gray-50 px-3 py-2">
+              <div className="flex items-center gap-2 text-xs text-gray-500">
+                <Clock className="h-3.5 w-3.5" />
+                成本期间
+              </div>
+              <div className="mt-1 flex items-center gap-2">
+                <span className="whitespace-nowrap text-sm font-semibold text-gray-900">{month}</span>
+                {periodStatus ? (
+                  <span className={`whitespace-nowrap px-2 py-0.5 rounded-full text-xs ${periodStatus.className}`}>
+                    {periodStatus.label}
+                  </span>
+                ) : (
+                  <span className="whitespace-nowrap px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-500">未开启</span>
+                )}
+              </div>
+            </div>
+            <div className="min-h-[72px] rounded-md border border-gray-100 bg-gray-50 px-3 py-2">
+              <div className="text-xs text-gray-500">出库数</div>
+              <div className="mt-1 text-sm font-semibold text-gray-900">
+                {summary?.outboundCount ?? 0} 单
+              </div>
+            </div>
+            <div className="min-h-[72px] rounded-md border border-gray-100 bg-gray-50 px-3 py-2">
+              <div className="text-xs text-gray-500">成本快照</div>
+              <div className="mt-1 text-sm font-semibold text-gray-900">
+                {summary?.abcSnapshotCount ?? 0} 条
+              </div>
+            </div>
+            <div className="min-h-[72px] rounded-md border border-gray-100 bg-gray-50 px-3 py-2">
+              <div className="flex items-center gap-2 text-xs text-gray-500">
+                <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
+                开放异常
+              </div>
+              <div className="mt-1 text-sm font-semibold text-gray-900">
+                {summary?.openExceptionCount ?? alerts.length} 条
+              </div>
+            </div>
+            <div className="min-h-[72px] rounded-md border border-gray-100 bg-gray-50 px-3 py-2">
+              <div className="flex items-center gap-2 text-xs text-gray-500">
+                <RefreshCw className="h-3.5 w-3.5 text-blue-500" />
+                未补算
+              </div>
+              <div className="mt-1 text-sm font-semibold text-gray-900">
+                {summary?.pendingCostCount ?? 0} 单
+              </div>
+            </div>
+            <div className="min-h-[72px] rounded-md border border-gray-100 bg-gray-50 px-3 py-2">
+              <div className="text-xs text-gray-500">调整额 / 待审</div>
+              <div className="mt-1 text-sm font-semibold text-gray-900">
+                {formatCurrency(summary?.adjustmentAmount ?? 0)} / {summary?.pendingAdjustmentCount ?? 0}
+              </div>
+            </div>
+            <div className="min-h-[72px] rounded-md border border-gray-100 bg-gray-50 px-3 py-2">
+              <div className="text-xs text-gray-500">调整后利润</div>
+              <div className="mt-1 text-sm font-semibold text-gray-900">
+                {formatCurrency(summary?.adjustedTotalProfit ?? summary?.totalProfit ?? 0)}
+              </div>
+            </div>
+          </div>
+
+          {canManageCostPeriod && (
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setAdjustmentModalOpen(true)}
+                disabled={workbenchLoading || currentPeriod?.status !== 'closed'}
+                className="h-9 px-3 text-sm bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+              >
+                <FilePlus className="h-4 w-4" />
+                调整单
+              </button>
+              <button
+                type="button"
+                onClick={() => runWorkbenchAction('start')}
+                disabled={workbenchLoading || currentPeriod?.status === 'closed'}
+                className="h-9 px-3 text-sm bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+              >
+                <Play className="h-4 w-4" />
+                开始归集
+              </button>
+              <button
+                type="button"
+                onClick={() => runWorkbenchAction('collect')}
+                disabled={workbenchLoading || currentPeriod?.status === 'closed'}
+                className="h-9 px-3 text-sm bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+              >
+                <Database className="h-4 w-4" />
+                自动归集
+              </button>
+              <button
+                type="button"
+                onClick={() => runWorkbenchAction('recalculate')}
+                disabled={workbenchLoading || currentPeriod?.status === 'closed'}
+                className="h-9 px-3 text-sm bg-[#3b82f6] text-white rounded-md hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+              >
+                <RefreshCw className={`h-4 w-4 ${workbenchLoading ? 'animate-spin' : ''}`} />
+                执行重算
+              </button>
+              <button
+                type="button"
+                onClick={() => runWorkbenchAction('close')}
+                disabled={workbenchLoading || Boolean(closeBlockReason)}
+                title={closeBlockReason || undefined}
+                className="h-9 px-3 text-sm bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+              >
+                <Lock className="h-4 w-4" />
+                关账
+              </button>
+            </div>
+          )}
+          {canManageCostPeriod && closeBlockReason && currentPeriod?.status !== 'closed' && (
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+              {closeBlockReason}
+            </div>
+          )}
+        </div>
+
+        {costRuns.length > 0 && (
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-100 text-xs text-gray-500">
+                  <th className="py-2 text-left font-medium">任务</th>
+                  <th className="py-2 text-left font-medium">状态</th>
+                  <th className="py-2 text-left font-medium">出库单</th>
+                  <th className="py-2 text-left font-medium">成功</th>
+                  <th className="py-2 text-left font-medium">失败</th>
+                  <th className="py-2 text-left font-medium">完成时间</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {costRuns.map(run => {
+                  const runStatus = RUN_STATUS[run.status] || RUN_STATUS.running
+                  return (
+                    <tr key={run.id}>
+                      <td className="py-2 text-gray-900">{run.runType === 'recalculate' ? '重算' : run.runType}</td>
+                      <td className="py-2">
+                        <span className={`px-2 py-0.5 rounded-full text-xs ${runStatus.className}`}>
+                          {runStatus.label}
+                        </span>
+                      </td>
+                      <td className="py-2 text-gray-600">{run.summary?.total ?? 0}</td>
+                      <td className="py-2 text-emerald-600">{run.summary?.success ?? 0}</td>
+                      <td className="py-2 text-red-600">{run.summary?.failed ?? 0}</td>
+                      <td className="py-2 text-gray-500">{run.finishedAt || run.startedAt || '-'}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {adjustments.length > 0 && (
+          <div className="mt-4 overflow-x-auto border-t border-gray-100 pt-4">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-100 text-xs text-gray-500">
+                  <th className="py-2 text-left font-medium">调整单</th>
+                  <th className="py-2 text-left font-medium">金额</th>
+                  <th className="py-2 text-left font-medium">状态</th>
+                  <th className="py-2 text-left font-medium">原因</th>
+                  <th className="py-2 text-left font-medium">提交人</th>
+                  <th className="py-2 text-right font-medium">操作</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {adjustments.map(item => {
+                  const status = ADJUSTMENT_STATUS[item.status] || ADJUSTMENT_STATUS.pending
+                  return (
+                    <tr key={item.id}>
+                      <td className="py-2 text-gray-900">{item.adjustmentNo}</td>
+                      <td className={`py-2 font-medium ${item.amount >= 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                        {formatCurrency(item.amount)}
+                      </td>
+                      <td className="py-2">
+                        <span className={`px-2 py-0.5 rounded-full text-xs ${status.className}`}>
+                          {status.label}
+                        </span>
+                      </td>
+                      <td className="py-2 text-gray-600">{item.reason}</td>
+                      <td className="py-2 text-gray-500">{item.submittedBy || '-'}</td>
+                      <td className="py-2 text-right">
+                        {item.status === 'pending' ? (
+                          <div className="inline-flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleReviewAdjustment(item.id, 'approve')}
+                              disabled={workbenchLoading}
+                              className="inline-flex h-7 items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 text-xs font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+                            >
+                              <Check className="h-3.5 w-3.5" />
+                              通过
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleReviewAdjustment(item.id, 'reject')}
+                              disabled={workbenchLoading}
+                              className="inline-flex h-7 items-center gap-1 rounded-md border border-red-200 bg-red-50 px-2 text-xs font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                              驳回
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-gray-400">{item.reviewedBy || '-'}</span>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* 月度环比卡片 */}
@@ -214,23 +715,19 @@ export default function CostDashboard() {
               </div>
             </div>
             {/* 变化 */}
-            <div className={`p-3 rounded-lg ${
-              comparison.changes?.direction === 'up' ? 'bg-red-50' : 'bg-green-50'
-            }`}>
-              <div className={`text-xs font-medium mb-1 ${
-                comparison.changes?.direction === 'up' ? 'text-red-600' : 'text-green-600'
-              }`}>
+            <div className={`p-3 rounded-lg ${comparisonDirectionMeta.cardClassName}`}>
+              <div className={`text-xs font-medium mb-1 ${comparisonDirectionMeta.labelClassName}`}>
                 环比变化
               </div>
               <div className="flex items-center gap-2">
-                {comparison.changes?.direction === 'up' ? (
+                {comparisonDirectionMeta.icon === 'up' ? (
                   <ArrowUp className="h-5 w-5 text-red-500" />
-                ) : (
+                ) : comparisonDirectionMeta.icon === 'down' ? (
                   <ArrowDown className="h-5 w-5 text-green-500" />
+                ) : (
+                  <Minus className="h-5 w-5 text-gray-500" />
                 )}
-                <span className={`text-xl font-bold ${
-                  comparison.changes?.direction === 'up' ? 'text-red-600' : 'text-green-600'
-                }`}>
+                <span className={`text-xl font-bold ${comparisonDirectionMeta.valueClassName}`}>
                   {comparison.changes?.totalChangeRate?.toFixed(1) || 0}%
                 </span>
               </div>
@@ -359,24 +856,99 @@ export default function CostDashboard() {
       </div>
 
       {/* 异常提醒 */}
-      {alerts.length > 0 && (
+      {openAlertCount > 0 && (
         <div className="bg-white rounded-lg border border-gray-200">
-          <div className="px-4 py-3 border-b border-gray-200 flex items-center gap-2">
+          <div className="px-4 py-3 border-b border-gray-200 flex flex-wrap items-center gap-2">
             <AlertTriangle className="h-4 w-4 text-amber-500" />
             <h3 className="text-sm font-semibold text-gray-900">异常提醒</h3>
-            <span className="px-1.5 py-0.5 text-xs bg-amber-100 text-amber-700 rounded-full">{alerts.length}</span>
+            <span className="px-1.5 py-0.5 text-xs bg-amber-100 text-amber-700 rounded-full">{openAlertCount}</span>
+            {alerts.length > 0 && openAlertCount > alerts.length && (
+              <span className="text-xs text-gray-400">显示最近 {alerts.length} 条</span>
+            )}
+            <Link
+              to={buildCostAlertsOverviewLink(month)}
+              className="ml-auto text-xs text-blue-600 hover:text-blue-700"
+            >
+              查看全部
+            </Link>
           </div>
-          <div className="divide-y divide-gray-100">
-            {alerts.map((alert, index) => (
-              <div key={index} className="px-4 py-3 flex items-center gap-3">
+          {alerts.length > 0 ? (
+            <div className="divide-y divide-gray-100">
+              {alerts.map(alert => (
+              <div key={alert.id} className="px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
                 <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                  alert.type === 'loss' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
+                  alert.severity === 'error' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
                 }`}>
-                  {alert.type === 'loss' ? '亏损' : '未映射'}
+                  {alert.exceptionType}
                 </span>
-                <span className="text-sm text-gray-600">{alert.message}</span>
+                <span className="text-sm text-gray-600 flex-1">{alert.message}</span>
+                <Link
+                  to={alert.outboundId
+                    ? `/abc/alerts?outboundId=${encodeURIComponent(alert.outboundId)}`
+                    : `/abc/alerts?keyword=${encodeURIComponent(alert.exceptionNo)}`}
+                  className="text-xs text-blue-600 hover:text-blue-700"
+                >
+                  处理
+                </Link>
               </div>
-            ))}
+              ))}
+            </div>
+          ) : (
+            <div className="px-4 py-6 text-sm text-gray-500">
+              当前存在开放异常，请进入异常中心查看。
+            </div>
+          )}
+        </div>
+      )}
+
+      {adjustmentModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-lg bg-white shadow-xl">
+            <div className="border-b border-gray-200 px-5 py-4">
+              <h3 className="text-base font-semibold text-gray-900">创建关账后调整单</h3>
+            </div>
+            <div className="space-y-4 px-5 py-4">
+              <div className="rounded-md bg-gray-50 px-3 py-2 text-sm text-gray-600">
+                调整期间：<span className="font-medium text-gray-900">{month}</span>
+              </div>
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-gray-700">调整金额</label>
+                <input
+                  type="number"
+                  value={adjustmentAmount}
+                  onChange={event => setAdjustmentAmount(event.target.value)}
+                  className="h-10 w-full rounded-md border border-gray-300 px-3 text-sm focus:border-blue-500 focus:outline-none focus:ring-[3px] focus:ring-blue-500/10"
+                  placeholder="正数增加成本，负数冲减成本"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-gray-700">调整原因</label>
+                <textarea
+                  value={adjustmentReason}
+                  onChange={event => setAdjustmentReason(event.target.value)}
+                  rows={3}
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-[3px] focus:ring-blue-500/10"
+                  placeholder="例如：关账后发现设备折旧分摊差异，经财务复核调整"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-gray-200 px-5 py-4">
+              <button
+                type="button"
+                onClick={() => setAdjustmentModalOpen(false)}
+                className="h-9 rounded-md border border-gray-300 px-3 text-sm text-gray-700 hover:bg-gray-50"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={handleCreateAdjustment}
+                disabled={adjustmentSubmitting}
+                className="h-9 rounded-md bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+              >
+                {adjustmentSubmitting ? '提交中...' : '提交调整单'}
+              </button>
+            </div>
           </div>
         </div>
       )}

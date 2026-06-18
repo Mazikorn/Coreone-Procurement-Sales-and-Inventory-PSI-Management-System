@@ -140,7 +140,7 @@ export function CategoryTree({
   filterMatch,
 }: Props) {
   return (
-    <div className="w-[380px] flex-shrink-0 bg-white rounded-lg border border-gray-200 flex flex-col shadow-sm">
+    <div className="w-full xl:w-[380px] flex-shrink-0 bg-white rounded-lg border border-gray-200 flex flex-col shadow-sm">
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
         <h3 className="text-sm font-semibold text-gray-900">分类目录</h3>
       </div>

@@ -5,6 +5,8 @@ import { LocationTree } from './components/LocationTree'
 import { LocationCards } from './components/LocationCards'
 import { LocationFormModal } from './components/LocationFormModal'
 import { LevelConfigModal } from './components/LevelConfigModal'
+import { LocationDeleteModal } from './components/LocationDeleteModal'
+import { LocationStatusModal } from './components/LocationStatusModal'
 
 export default function Locations() {
   const page = useLocationsPage()
@@ -152,6 +154,27 @@ export default function Locations() {
         onChangeTab={page.setLevelTab}
         onChangeConfigs={page.setLevelConfigs}
         onSave={page.saveLevelConfigs}
+      />
+
+      <LocationDeleteModal
+        open={Boolean(page.deleteTarget)}
+        target={page.deleteTarget}
+        deleteCheck={page.deleteCheck}
+        checkingDelete={page.checkingDelete}
+        deleting={page.deleting}
+        onConfirm={page.confirmDelete}
+        onClose={page.closeDelete}
+      />
+
+      <LocationStatusModal
+        open={Boolean(page.statusTarget)}
+        target={page.statusTarget}
+        targetStatus={page.statusTargetStatus}
+        statusCheck={page.statusCheck}
+        checkingStatus={page.checkingStatus}
+        updatingStatus={page.updatingStatus}
+        onConfirm={page.confirmStatusChange}
+        onClose={page.closeStatusChange}
       />
     </div>
   )

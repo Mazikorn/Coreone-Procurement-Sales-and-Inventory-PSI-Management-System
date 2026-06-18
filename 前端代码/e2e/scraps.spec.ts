@@ -48,6 +48,42 @@ async function getAnyMaterialId(token: string): Promise<string> {
   return r.data?.data?.list?.[0]?.id || ''
 }
 
+async function getRefs(token: string) {
+  const [categories, locations] = await Promise.all([
+    apiFetch(token, 'GET', '/categories?page=1&pageSize=1'),
+    apiFetch(token, 'GET', '/locations?page=1&pageSize=1'),
+  ])
+  return {
+    category: categories.data?.data?.list?.[0],
+    location: locations.data?.data?.list?.[0],
+  }
+}
+
+async function createScrapTestMaterial(token: string, suffix: number, categoryId: string, locationId: string) {
+  const name = `报废E2E物料-${suffix}`
+  const res = await apiFetch(token, 'POST', '/materials', {
+    code: `E2E-SCRAP-MAT-${suffix}`,
+    name,
+    spec: '1ml',
+    unit: '瓶',
+    categoryId,
+    locationId,
+    price: 12,
+    minStock: 0,
+    maxStock: 1000,
+    safetyStock: 0,
+    remark: `E2E报废测试物料-${suffix}`,
+  })
+  expect(res.status).toBe(201)
+  return { id: res.data?.data?.id, name, price: 12 }
+}
+
+async function getInventoryRows(token: string, materialId: string) {
+  const inventory = await apiFetch(token, 'GET', `/inventory?page=1&pageSize=100&materialId=${encodeURIComponent(materialId)}`)
+  expect(inventory.status).toBe(200)
+  return inventory.data?.data?.list || []
+}
+
 // ────────────────────────────────────────────
 // 1. 查看报废列表 (10 tests)
 // ────────────────────────────────────────────
@@ -228,6 +264,84 @@ test.describe('报废管理 -> 删除报废', () => {
       await apiFetch(adminToken, 'DELETE', `/scraps/${id}`).catch(() => {})
     })
   }
+})
+
+test.describe('报废管理 -> 页面批次报废与撤销', () => {
+  test('SC-UI-BATCH-01. 页面选择具体批次报废并撤销后只恢复该批次', async ({ page }) => {
+    const token = await apiLogin('admin')
+    const suffix = Date.now()
+    const { category, location } = await getRefs(token)
+    expect(category?.id).toBeTruthy()
+    expect(location?.id).toBeTruthy()
+
+    const material = await createScrapTestMaterial(token, suffix, category.id, location.id)
+    expect(material.id).toBeTruthy()
+    const batchA = `E2E-SCRAP-A-${suffix}`
+    const batchB = `E2E-SCRAP-B-${suffix}`
+
+    for (const [batchNo, quantity] of [[batchA, 9], [batchB, 8]] as const) {
+      const inbound = await apiFetch(token, 'POST', '/inbound', {
+        type: 'direct',
+        materialId: material.id,
+        batchNo,
+        quantity,
+        price: material.price,
+        locationId: location.id,
+        expiryDate: '2028-12-31',
+        remark: `E2E报废页批次验证-${suffix}`,
+      })
+      expect(inbound.status).toBe(201)
+    }
+
+    const beforeRows = await getInventoryRows(token, material.id)
+    const rowA = beforeRows.find((row: any) => row.batchNo === batchA)
+    const rowB = beforeRows.find((row: any) => row.batchNo === batchB)
+    expect(rowA?.batchId).toBeTruthy()
+    expect(rowB?.batchId).toBeTruthy()
+    expect(Number(rowA.stock)).toBe(9)
+    expect(Number(rowB.stock)).toBe(8)
+
+    await loginAs(page, 'admin')
+    await page.goto(`${FE_BASE}/scraps`, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByRole('heading', { name: '报废管理' })).toBeVisible({ timeout: 15000 })
+
+    await page.getByRole('button', { name: '报废登记' }).click()
+    await page.getByTestId('scrap-material-select').click()
+    await page.getByTestId(`option-${material.id}`).click()
+    await page.getByTestId('scrap-batch-select').click()
+    await page.getByTestId(`option-${rowA.batchId}`).click()
+    await page.getByTestId('scrap-quantity-input').fill('3')
+    await page.getByTestId('scrap-reason-select').click()
+    await page.getByTestId('option-damaged').click()
+    await page.getByTestId('scrap-confirm-btn').click()
+
+    await expect(page.getByText('报废登记成功')).toBeVisible({ timeout: 15000 })
+    const createdRow = page.locator('tbody tr', { hasText: batchA }).first()
+    await expect(createdRow).toBeVisible({ timeout: 15000 })
+    await expect(createdRow).toContainText(material.name)
+    await expect(createdRow).toContainText('3')
+
+    const afterCreateRows = await getInventoryRows(token, material.id)
+    const afterCreateA = afterCreateRows.find((row: any) => row.batchNo === batchA)
+    const afterCreateB = afterCreateRows.find((row: any) => row.batchNo === batchB)
+    expect(Number(afterCreateA.stock)).toBe(6)
+    expect(Number(afterCreateB.stock)).toBe(8)
+
+    await createdRow.locator('[title="撤销"]').click()
+    await page.getByRole('button', { name: '确认撤销' }).click()
+    await expect(page.getByText('报废记录已撤销')).toBeVisible({ timeout: 15000 })
+    await expect(createdRow).toBeHidden({ timeout: 15000 })
+
+    const afterCancelRows = await getInventoryRows(token, material.id)
+    const afterCancelA = afterCancelRows.find((row: any) => row.batchNo === batchA)
+    const afterCancelB = afterCancelRows.find((row: any) => row.batchNo === batchB)
+    expect(Number(afterCancelA.stock)).toBe(9)
+    expect(Number(afterCancelB.stock)).toBe(8)
+
+    const scrapList = await apiFetch(token, 'GET', '/scraps?page=1&pageSize=100')
+    expect(scrapList.status).toBe(200)
+    expect((scrapList.data?.data?.list || []).some((row: any) => row.batchNo === batchA)).toBe(false)
+  })
 })
 
 // ────────────────────────────────────────────

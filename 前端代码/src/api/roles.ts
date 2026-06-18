@@ -4,7 +4,14 @@ export const rolesApi = {
   getList: (params?: {
     page?: number
     pageSize?: number
+    keyword?: string
+    type?: 'system' | 'custom'
   }) => request.get('/roles', { params }),
+
+  getStats: (params?: {
+    keyword?: string
+    type?: 'system' | 'custom'
+  }) => request.get('/roles/stats', { params }),
 
   create: (data: {
     code: string

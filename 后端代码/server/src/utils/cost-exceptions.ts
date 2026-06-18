@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from 'uuid'
+import { generateNo } from './generateNo.js'
 
 export interface CostExceptionInput {
   sourceModule: string
@@ -32,7 +33,7 @@ export function errorMessage(err: unknown): string {
 
 export function recordCostException(db: any, input: CostExceptionInput): CostExceptionRecord {
   const id = uuidv4()
-  const exceptionNo = `CE-${new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
+  const exceptionNo = generateNo('CE')
   const details = input.details === undefined ? null : JSON.stringify(input.details)
 
   db.prepare(`

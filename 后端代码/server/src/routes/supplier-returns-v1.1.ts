@@ -2,14 +2,13 @@ import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
+import { generateNo } from '../utils/generateNo.js'
+import { consumeInventoryLocationStock, restoreInventoryLocationStock } from '../utils/inventory-locations.js'
 
 const router = Router()
 
-function generateNo(): string {
-  const date = new Date().toISOString().slice(0, 10).replace(/-/g, '')
-  const timestamp = Date.now().toString().slice(-6)
-  const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0')
-  return `SR-${date}-${timestamp}-${random}`
+function generateSupplierReturnNo(): string {
+  return generateNo('SR')
 }
 
 // 列表查询
@@ -130,29 +129,92 @@ router.get('/:id', (req, res) => {
 // 创建退货记录
 router.post('/', (req, res) => {
   try {
-    const { materialId, quantity, supplierId, purchaseOrderId, inboundRecordId, reason, refundAmount, trackingNo, operator, remark } = req.body
-    if (!materialId || quantity === undefined || quantity === null || isNaN(Number(quantity)) || Number(quantity) <= 0 || !reason) {
+    const { materialId, batchId, quantity, supplierId, purchaseOrderId, inboundRecordId, reason, refundAmount, trackingNo, remark } = req.body
+    const qty = Number(quantity)
+    if (!materialId || quantity === undefined || quantity === null || isNaN(qty) || qty <= 0 || !reason) {
       error(res, '物料、数量和退货原因必填', 'INVALID_PARAMETER', 400); return
     }
     const db = getDatabase()
+    const operator = (req as any).user?.username || 'system'
     const material = db.prepare('SELECT * FROM materials WHERE id = ? AND is_deleted = 0').get(materialId) as any
     if (!material) { error(res, '物料不存在或已删除', 'NOT_FOUND', 404); return }
-    const inv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
-    if (!inv || inv.stock < quantity) { error(res, '库存不足', 'STOCK_INSUFFICIENT', 422); return }
+    if (Number(material.status) !== 1) { error(res, '物料已停用，不能创建供应商退货', 'CONFLICT', 409); return }
+    if (supplierId) {
+      const supplier = db.prepare('SELECT id, status FROM suppliers WHERE id = ? AND is_deleted = 0').get(supplierId) as any
+      if (!supplier) { error(res, '供应商不存在或已删除', 'NOT_FOUND', 404); return }
+      if (Number(supplier.status) !== 1) { error(res, '供应商已停用，不能创建供应商退货', 'CONFLICT', 409); return }
+    }
 
     db.exec('BEGIN IMMEDIATE')
     try {
+      const inv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+      if (!inv || Number(inv.stock) < qty) {
+        db.exec('ROLLBACK')
+        error(res, '库存不足', 'STOCK_INSUFFICIENT', 422)
+        return
+      }
+
+      let batch: any = null
+      if (batchId) {
+        batch = db.prepare(`
+          SELECT id, batch_no, remaining, status
+          FROM batches
+          WHERE id = ? AND material_id = ?
+        `).get(batchId, materialId) as any
+        if (!batch) {
+          db.exec('ROLLBACK')
+          error(res, '退货批次不存在或不属于该物料', 'BATCH_NOT_FOUND', 404)
+          return
+        }
+        if (Number(batch.status) !== 1 || Number(batch.remaining) < qty) {
+          db.exec('ROLLBACK')
+          error(res, '批次库存不足', 'BATCH_STOCK_INSUFFICIENT', 422)
+          return
+        }
+      } else {
+        batch = db.prepare(`
+          SELECT id, batch_no, remaining, status
+          FROM batches
+          WHERE material_id = ? AND status = 1 AND remaining >= ?
+          ORDER BY
+            CASE WHEN expiry_date IS NULL OR expiry_date = '' THEN 1 ELSE 0 END,
+            expiry_date ASC,
+            created_at ASC
+          LIMIT 1
+        `).get(materialId, qty) as any
+        const hasActiveBatch = (db.prepare(`
+          SELECT COUNT(*) as count
+          FROM batches
+          WHERE material_id = ? AND status = 1 AND remaining > 0
+        `).get(materialId) as any)?.count || 0
+        if (!batch && hasActiveBatch > 0) {
+          db.exec('ROLLBACK')
+          error(res, '请选择库存充足的退货批次', 'BATCH_REQUIRED', 422)
+          return
+        }
+      }
+
       const id = uuidv4()
-      const returnNo = generateNo()
+      const returnNo = generateSupplierReturnNo()
       db.prepare(`
         INSERT INTO supplier_returns (id, return_no, material_id, batch_id, batch_no, quantity, supplier_id, purchase_order_id, inbound_record_id, reason, refund_amount, tracking_no, status, operator, remark)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-      `).run(id, returnNo, materialId, null, null, quantity, supplierId || null, purchaseOrderId || null, inboundRecordId || null, reason, refundAmount || 0, trackingNo || null, operator || 'system', remark || null)
+      `).run(id, returnNo, materialId, batch?.id || null, batch?.batch_no || null, qty, supplierId || null, purchaseOrderId || null, inboundRecordId || null, reason, refundAmount || 0, trackingNo || null, operator, remark || null)
 
       // 扣减库存
       const beforeStock = Number(inv.stock)
-      const afterStock = beforeStock - Number(quantity)
+      const afterStock = beforeStock - qty
       db.prepare('UPDATE inventory SET stock = ?, update_time = CURRENT_TIMESTAMP WHERE material_id = ?').run(afterStock, materialId)
+      consumeInventoryLocationStock(db, materialId, qty, { relatedType: 'supplier_return', relatedId: id })
+
+      if (batch) {
+        const afterBatchRemaining = Number(batch.remaining) - qty
+        db.prepare(`
+          UPDATE batches
+          SET remaining = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(afterBatchRemaining, afterBatchRemaining <= 0 ? 0 : Number(batch.status), batch.id)
+      }
 
       // 负库存兜底
       const afterCheck = (db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any)?.stock
@@ -167,7 +229,7 @@ router.post('/', (req, res) => {
       db.prepare(`
         INSERT INTO stock_logs (id, type, material_id, quantity, before_stock, after_stock, related_id, related_type, operator, remark)
         VALUES (?, 'supplier_return', ?, ?, ?, ?, ?, 'supplier_return', ?, ?)
-      `).run(logId, materialId, -quantity, beforeStock, afterStock, id, operator || 'system', '退货给供应商')
+      `).run(logId, materialId, -qty, beforeStock, afterStock, id, operator, '退货给供应商')
 
       db.exec('COMMIT')
       success(res, { id, returnNo }, '退货记录创建成功')
@@ -187,6 +249,8 @@ router.put('/:id/status', (req, res) => {
       error(res, '无效的状态', 'INVALID_PARAMETER', 400); return
     }
     const db = getDatabase()
+    const operator = (req as any).user?.username || 'system'
+    const userId = (req as any).user?.userId || null
     const record = db.prepare('SELECT * FROM supplier_returns WHERE id = ? AND is_deleted = 0').get(req.params.id) as any
     if (!record) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
 
@@ -202,7 +266,60 @@ router.put('/:id/status', (req, res) => {
       error(res, `不能从 ${record.status} 变更为 ${status}`, 'INVALID_PARAMETER', 400); return
     }
 
-    db.prepare('UPDATE supplier_returns SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(status, req.params.id)
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      if (status === 'cancelled') {
+        const inv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(record.material_id) as any
+        if (!inv) {
+          db.exec('ROLLBACK')
+          error(res, '物料无库存记录，无法取消退货', 'NOT_FOUND', 404)
+          return
+        }
+        const beforeStock = Number(inv.stock || 0)
+        const afterStock = beforeStock + Number(record.quantity)
+        db.prepare('UPDATE inventory SET stock = ?, update_time = CURRENT_TIMESTAMP WHERE material_id = ?')
+          .run(afterStock, record.material_id)
+        restoreInventoryLocationStock(db, record.material_id, Number(record.quantity), { relatedType: 'supplier_return', relatedId: req.params.id })
+
+        if (record.batch_id) {
+          const batch = db.prepare('SELECT id FROM batches WHERE id = ? AND material_id = ?')
+            .get(record.batch_id, record.material_id) as any
+          if (!batch) {
+            db.exec('ROLLBACK')
+            error(res, '退货批次不存在，无法恢复批次库存', 'BATCH_NOT_FOUND', 409)
+            return
+          }
+          db.prepare(`
+            UPDATE batches
+            SET remaining = remaining + ?, status = 1, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+          `).run(Number(record.quantity), record.batch_id)
+        }
+
+        db.prepare(`
+          INSERT INTO stock_logs (id, type, material_id, quantity, before_stock, after_stock, related_id, related_type, operator, remark)
+          VALUES (?, 'cancel', ?, ?, ?, ?, ?, 'supplier_return_cancel', ?, ?)
+        `).run(uuidv4(), record.material_id, Number(record.quantity), beforeStock, afterStock, req.params.id, operator, '取消退货给供应商')
+      }
+
+      db.prepare('UPDATE supplier_returns SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(status, req.params.id)
+      db.prepare(`
+        INSERT INTO operation_logs (id, user_id, username, operation, description, request_data, response_data)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        uuidv4(),
+        userId,
+        operator,
+        'supplier_return_status_update',
+        `供应商退货 ${req.params.id} 状态由 ${record.status} 变更为 ${status}`,
+        JSON.stringify({ id: req.params.id, from: record.status, to: status }),
+        JSON.stringify({ id: req.params.id, status }),
+      )
+      db.exec('COMMIT')
+    } catch (e) {
+      db.exec('ROLLBACK')
+      throw e
+    }
     success(res, { id: req.params.id, status }, '状态更新成功')
   } catch (err: any) { error(res, err.message) }
 })
@@ -211,6 +328,7 @@ router.put('/:id/status', (req, res) => {
 router.delete('/:id', (req, res) => {
   try {
     const db = getDatabase()
+    const operator = (req as any).user?.username || 'system'
     const record = db.prepare('SELECT * FROM supplier_returns WHERE id = ? AND is_deleted = 0').get(req.params.id) as any
     if (!record) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
     if (record.status !== 'pending') {
@@ -226,13 +344,29 @@ router.delete('/:id', (req, res) => {
       const beforeStock = Number(inv?.stock || 0)
       const afterStock = beforeStock + Number(record.quantity)
       db.prepare('UPDATE inventory SET stock = ?, update_time = CURRENT_TIMESTAMP WHERE material_id = ?').run(afterStock, record.material_id)
+      restoreInventoryLocationStock(db, record.material_id, Number(record.quantity), { relatedType: 'supplier_return', relatedId: req.params.id })
+
+      if (record.batch_id) {
+        const batch = db.prepare('SELECT id, remaining FROM batches WHERE id = ? AND material_id = ?')
+          .get(record.batch_id, record.material_id) as any
+        if (!batch) {
+          db.exec('ROLLBACK')
+          error(res, '退货批次不存在，无法恢复批次库存', 'BATCH_NOT_FOUND', 409)
+          return
+        }
+        db.prepare(`
+          UPDATE batches
+          SET remaining = remaining + ?, status = 1, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(Number(record.quantity), record.batch_id)
+      }
 
       // 写库存流水
       const logId = uuidv4()
       db.prepare(`
         INSERT INTO stock_logs (id, type, material_id, quantity, before_stock, after_stock, related_id, related_type, operator, remark)
         VALUES (?, 'cancel', ?, ?, ?, ?, ?, 'supplier_return_cancel', ?, ?)
-      `).run(logId, record.material_id, record.quantity, beforeStock, afterStock, req.params.id, req.body.operator || 'system', '撤销退货给供应商')
+      `).run(logId, record.material_id, record.quantity, beforeStock, afterStock, req.params.id, operator, '撤销退货给供应商')
 
       db.exec('COMMIT')
       success(res, null, '退货记录已删除')

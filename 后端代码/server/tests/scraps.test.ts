@@ -1,297 +1,346 @@
-/**
- * 报废管理 API 测试
- * 运行: cd 后端代码/server && npx tsx tests/scraps.test.ts
- */
+process.env.DATABASE_PATH = ':memory:'
 
-import { getJSON, postJSON, delJSON, login, generateUnique } from './setup.js'
+import { describe, it, expect, beforeAll } from 'vitest'
+import request from 'supertest'
 
-function assertTrue(value: any, msg: string) {
-  if (!value) throw new Error(`${msg}: got ${value}`)
+const getApp = async () => {
+  const { default: app } = await import('../src/app.js')
+  const { getDatabase } = await import('../src/database/DatabaseManager.js')
+  return { app, db: getDatabase() }
 }
 
-async function run() {
-  let passed = 0
-  let failed = 0
+async function login(app: any, username: string, password: string): Promise<string> {
+  const res = await request(app)
+    .post('/api/v1/auth/login')
+    .send({ username, password })
 
-  async function test(name: string, fn: () => Promise<void>) {
-    try {
-      await fn()
-      console.log(`✅ ${name}`)
-      passed++
-    } catch (e: any) {
-      console.log(`❌ ${name}: ${e.message}`)
-      failed++
-    }
-  }
-
-  const adminToken = await login('admin', 'admin123')
-  const whmToken = await login('wangkq', 'CoreOne2026!')
-  const techToken = await login('zhangwei', 'CoreOne2026!')
-  const pathToken = await login('liuyf', 'CoreOne2026!')
-  const proToken = await login('zhaohp', 'CoreOne2026!')
-  const finToken = await login('sunli', 'CoreOne2026!')
-
-  let testMaterialId = ''
-  try {
-    const inv = await getJSON('/inventory?page=1&pageSize=50', adminToken)
-    const item = inv.data?.list?.find((m: any) => m.stock >= 3)
-    if (item) testMaterialId = item.materialId
-  } catch { /* ignore */ }
-
-  // ── 1. 列表查询 ──
-  await test('SC-01 admin查询报废列表成功', async () => {
-    const res = await getJSON('/scraps?page=1&pageSize=10', adminToken)
-    assertTrue(res.success, 'should succeed')
-    assertTrue(Array.isArray(res.data?.list), 'should be list')
-  })
-
-  await test('SC-02 warehouse_manager查询报废列表成功', async () => {
-    const res = await getJSON('/scraps?page=1&pageSize=10', whmToken)
-    assertTrue(res.success, 'should succeed')
-  })
-
-  await test('SC-03 technician查询报废列表返回403', async () => {
-    try {
-      await getJSON('/scraps?page=1&pageSize=10', techToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('403') || e.message.includes('Forbidden'), 'should be 403')
-    }
-  })
-
-  await test('SC-04 pathologist查询报废列表返回403', async () => {
-    try {
-      await getJSON('/scraps?page=1&pageSize=10', pathToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('403') || e.message.includes('Forbidden'), 'should be 403')
-    }
-  })
-
-  await test('SC-05 procurement查询报废列表返回403', async () => {
-    try {
-      await getJSON('/scraps?page=1&pageSize=10', proToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('403') || e.message.includes('Forbidden'), 'should be 403')
-    }
-  })
-
-  await test('SC-06 finance查询报废列表返回403', async () => {
-    try {
-      await getJSON('/scraps?page=1&pageSize=10', finToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('403') || e.message.includes('Forbidden'), 'should be 403')
-    }
-  })
-
-  await test('SC-07 无Token返回401', async () => {
-    try {
-      await getJSON('/scraps?page=1&pageSize=10')
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('401') || e.message.includes('Unauthorized'), 'should be 401')
-    }
-  })
-
-  // ── 2. 创建报废 ──
-  await test('SC-08 admin创建报废成功', async () => {
-    if (!testMaterialId) { console.log('  (skip: no material)'); return }
-    const res = await postJSON('/scraps', {
-      materialId: testMaterialId,
-      quantity: 1,
-      reason: generateUnique('E2E报废原因'),
-      remark: 'E2E报废测试',
-    }, adminToken)
-    assertTrue(res.success, 'should succeed')
-    assertTrue(res.data?.id, 'should have id')
-  })
-
-  await test('SC-09 warehouse_manager创建报废成功', async () => {
-    if (!testMaterialId) { console.log('  (skip: no material)'); return }
-    const res = await postJSON('/scraps', {
-      materialId: testMaterialId,
-      quantity: 1,
-      reason: generateUnique('E2E报废WM'),
-    }, whmToken)
-    assertTrue(res.success, 'should succeed')
-  })
-
-  await test('SC-10 缺少materialId返回400', async () => {
-    try {
-      await postJSON('/scraps', { quantity: 1, reason: 'test' }, adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('400') || e.message.includes('Missing'), 'should be 400')
-    }
-  })
-
-  await test('SC-11 缺少reason返回400', async () => {
-    if (!testMaterialId) { console.log('  (skip: no material)'); return }
-    try {
-      await postJSON('/scraps', { materialId: testMaterialId, quantity: 1 }, adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('400') || e.message.includes('Missing'), 'should be 400')
-    }
-  })
-
-  await test('SC-12 quantity=0返回400', async () => {
-    if (!testMaterialId) { console.log('  (skip: no material)'); return }
-    try {
-      await postJSON('/scraps', { materialId: testMaterialId, quantity: 0, reason: 'test' }, adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('400') || e.message.includes('Missing'), 'should be 400')
-    }
-  })
-
-  await test('SC-13 quantity为负数返回400', async () => {
-    if (!testMaterialId) { console.log('  (skip: no material)'); return }
-    try {
-      await postJSON('/scraps', { materialId: testMaterialId, quantity: -1, reason: 'test' }, adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('400') || e.message.includes('Missing'), 'should be 400')
-    }
-  })
-
-  await test('SC-14 不存在的物料返回404', async () => {
-    try {
-      await postJSON('/scraps', { materialId: 'non-existent', quantity: 1, reason: 'test' }, adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('404') || e.message.includes('不存在'), 'should be 404')
-    }
-  })
-
-  await test('SC-15 technician创建报废返回403', async () => {
-    if (!testMaterialId) { console.log('  (skip: no material)'); return }
-    try {
-      await postJSON('/scraps', { materialId: testMaterialId, quantity: 1, reason: 'test' }, techToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('403') || e.message.includes('Forbidden'), 'should be 403')
-    }
-  })
-
-  // ── 3. 报废后库存验证 ──
-  await test('SC-16 报废后库存减少', async () => {
-    if (!testMaterialId) { console.log('  (skip: no material)'); return }
-    const before = await getJSON(`/inventory?page=1&pageSize=1&materialId=${testMaterialId}`, adminToken)
-    const beforeStock = before.data?.list?.[0]?.stock || 0
-    if (beforeStock < 2) { console.log('  (skip: insufficient stock)'); return }
-    await postJSON('/scraps', {
-      materialId: testMaterialId,
-      quantity: 1,
-      reason: generateUnique('E2E库存验证'),
-    }, adminToken)
-    const after = await getJSON(`/inventory?page=1&pageSize=1&materialId=${testMaterialId}`, adminToken)
-    const afterStock = after.data?.list?.[0]?.stock || 0
-    assertTrue(afterStock <= beforeStock, `stock should decrease: ${beforeStock} -> ${afterStock}`)
-  })
-
-  // ── 4. 库存不足 ──
-  await test('SC-17 超量报废返回422', async () => {
-    if (!testMaterialId) { console.log('  (skip: no material)'); return }
-    try {
-      await postJSON('/scraps', {
-        materialId: testMaterialId,
-        quantity: 99999,
-        reason: 'E2E超量报废',
-      }, adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('422') || e.message.includes('库存不足') || e.message.includes('STOCK'), 'should be 422')
-    }
-  })
-
-  // ── 5. 删除/撤销报废 ──
-  await test('SC-18 删除不存在的报废记录返回404', async () => {
-    try {
-      await delJSON('/scraps/non-existent-id', adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('404') || e.message.includes('不存在'), 'should be 404')
-    }
-  })
-
-  await test('SC-19 admin删除报废记录成功', async () => {
-    if (!testMaterialId) { console.log('  (skip: no material)'); return }
-    const create = await postJSON('/scraps', {
-      materialId: testMaterialId,
-      quantity: 1,
-      reason: generateUnique('E2E删除'),
-    }, adminToken)
-    if (!create.success) { console.log('  (skip: create failed)'); return }
-    const id = create.data?.id
-    if (!id) { console.log('  (skip: no id)'); return }
-    const res = await delJSON(`/scraps/${id}`, adminToken)
-    assertTrue(res.success, 'should succeed')
-  })
-
-  await test('SC-20 technician删除报废记录返回403', async () => {
-    if (!testMaterialId) { console.log('  (skip: no material)'); return }
-    const create = await postJSON('/scraps', {
-      materialId: testMaterialId,
-      quantity: 1,
-      reason: generateUnique('E2E'),
-    }, adminToken)
-    if (!create.success) { console.log('  (skip: create failed)'); return }
-    const id = create.data?.id
-    if (!id) { console.log('  (skip: no id)'); return }
-    try {
-      await delJSON(`/scraps/${id}`, techToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('403') || e.message.includes('Forbidden'), 'should be 403')
-    }
-    await delJSON(`/scraps/${id}`, adminToken).catch(() => {})
-  })
-
-  // ── 6. 撤销后库存回退 ──
-  await test('SC-21 撤销报废后库存回退', async () => {
-    if (!testMaterialId) { console.log('  (skip: no material)'); return }
-    const before = await getJSON(`/inventory?page=1&pageSize=1&materialId=${testMaterialId}`, adminToken)
-    const beforeStock = before.data?.list?.[0]?.stock || 0
-    const create = await postJSON('/scraps', {
-      materialId: testMaterialId,
-      quantity: 1,
-      reason: generateUnique('E2E回退'),
-    }, adminToken)
-    if (!create.success) { console.log('  (skip: create failed)'); return }
-    const id = create.data?.id
-    if (!id) { console.log('  (skip: no id)'); return }
-    await delJSON(`/scraps/${id}`, adminToken)
-    const after = await getJSON(`/inventory?page=1&pageSize=1&materialId=${testMaterialId}`, adminToken)
-    const afterStock = after.data?.list?.[0]?.stock || 0
-    assertTrue(afterStock >= beforeStock - 1, `stock should revert: before=${beforeStock}, after=${afterStock}`)
-  })
-
-  // ── 7. 分页 ──
-  await test('SC-22 分页page=0修正为1', async () => {
-    const res = await getJSON('/scraps?page=0&pageSize=5', adminToken)
-    assertTrue(res.success, 'should succeed')
-  })
-
-  await test('SC-23 分页page=999返回空列表', async () => {
-    const res = await getJSON('/scraps?page=999&pageSize=5', adminToken)
-    assertTrue(res.success, 'should succeed')
-  })
-
-  // ── 8. 并发 ──
-  await test('SC-24 并发创建报废', async () => {
-    if (!testMaterialId) { console.log('  (skip: no material)'); return }
-    const [r1, r2] = await Promise.all([
-      postJSON('/scraps', { materialId: testMaterialId, quantity: 1, reason: generateUnique('E2E并发1') }, adminToken).catch(() => ({ success: false })),
-      postJSON('/scraps', { materialId: testMaterialId, quantity: 1, reason: generateUnique('E2E并发2') }, adminToken).catch(() => ({ success: false })),
-    ])
-    assertTrue(r1.success || r2.success, 'at least one should succeed')
-  })
-
-  console.log(`\n📊 Scraps API Test Results: ${passed} passed, ${failed} failed`)
-  process.exit(failed > 0 ? 1 : 0)
+  expect(res.status).toBe(200)
+  expect(res.body.success).toBe(true)
+  return res.body.data.token
 }
 
-run()
+function seedScrapMaterial(db: any, suffix: string, stock = 10) {
+  const categoryId = `cat-scrap-${suffix}`
+  const materialId = `mat-scrap-${suffix}`
+  const locationId = `loc-scrap-${suffix}`
+
+  db.prepare('INSERT INTO material_categories (id, code, name, level) VALUES (?, ?, ?, ?)')
+    .run(categoryId, `CAT-SC-${suffix}`, '报废测试分类', 1)
+  db.prepare('INSERT INTO locations (id, code, name, type, zone) VALUES (?, ?, ?, ?, ?)')
+    .run(locationId, `LOC-SC-${suffix}`, '报废测试库位', 'shelf', 'A区')
+  db.prepare(`
+    INSERT INTO materials (id, code, name, spec, unit, category_id, price, location_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(materialId, `MAT-SC-${suffix}`, '报废测试物料', '1ml', '瓶', categoryId, 12, locationId)
+  db.prepare('INSERT INTO inventory (id, material_id, stock, locked_stock, location_id) VALUES (?, ?, ?, 0, ?)')
+    .run(`inv-scrap-${suffix}`, materialId, stock, locationId)
+
+  return materialId
+}
+
+function seedScrapMaterialWithBatch(db: any, suffix: string, stock = 10) {
+  const materialId = seedScrapMaterial(db, suffix, stock)
+  const batchId = `batch-scrap-${suffix}`
+  db.prepare(`
+    INSERT INTO batches (id, material_id, batch_no, quantity, remaining, expiry_date, inbound_id, inbound_price, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+  `).run(batchId, materialId, `BATCH-SC-${suffix}`, stock, stock, '2028-12-31', `inbound-scrap-${suffix}`, 12)
+
+  return { materialId, batchId, batchNo: `BATCH-SC-${suffix}` }
+}
+
+describe('报废管理 API', () => {
+  let app: any
+  let db: any
+  let adminToken: string
+  let warehouseToken: string
+  let technicianToken: string
+
+  beforeAll(async () => {
+    ;({ app, db } = await getApp())
+    adminToken = await login(app, 'admin', 'admin123')
+    warehouseToken = await login(app, 'wangkq', 'CoreOne2026!')
+    technicianToken = await login(app, 'zhangwei', 'CoreOne2026!')
+  })
+
+  it('SC-001: admin/warehouse 可查询，技术员和匿名不可查询', async () => {
+    const adminRes = await request(app)
+      .get('/api/v1/scraps?page=1&pageSize=10')
+      .set('Authorization', `Bearer ${adminToken}`)
+    expect(adminRes.status).toBe(200)
+    expect(Array.isArray(adminRes.body.data.list)).toBe(true)
+
+    const warehouseRes = await request(app)
+      .get('/api/v1/scraps?page=1&pageSize=10')
+      .set('Authorization', `Bearer ${warehouseToken}`)
+    expect(warehouseRes.status).toBe(200)
+
+    const forbiddenRes = await request(app)
+      .get('/api/v1/scraps?page=1&pageSize=10')
+      .set('Authorization', `Bearer ${technicianToken}`)
+    expect(forbiddenRes.status).toBe(403)
+
+    const noTokenRes = await request(app).get('/api/v1/scraps?page=1&pageSize=10')
+    expect(noTokenRes.status).toBe(401)
+  })
+
+  it('SC-002: 创建报废会扣减库存并记录登录用户为操作人', async () => {
+    const materialId = seedScrapMaterial(db, `create-${Date.now()}`, 10)
+
+    const res = await request(app)
+      .post('/api/v1/scraps')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        materialId,
+        quantity: 2,
+        reason: '测试报废',
+        remark: 'Vitest报废测试',
+      })
+
+    expect(res.status).toBe(200)
+    expect(res.body.success).toBe(true)
+    const record = db.prepare('SELECT operator, quantity FROM scrap_records WHERE id = ?').get(res.body.data.id) as any
+    const inventory = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+    const log = db.prepare('SELECT operator, quantity, before_stock, after_stock FROM stock_logs WHERE related_id = ? AND related_type = ?')
+      .get(res.body.data.id, 'scrap') as any
+
+    expect(record.operator).toBe('admin')
+    expect(record.quantity).toBe(2)
+    expect(inventory.stock).toBe(8)
+    expect(log.operator).toBe('admin')
+    expect(log.quantity).toBe(-2)
+    expect(log.before_stock).toBe(10)
+    expect(log.after_stock).toBe(8)
+
+    const listRes = await request(app)
+      .get('/api/v1/scraps')
+      .query({ page: 1, pageSize: 1000 })
+      .set('Authorization', `Bearer ${adminToken}`)
+    expect(listRes.status).toBe(200)
+    const listedRecord = listRes.body.data.list.find((row: any) => row.id === res.body.data.id)
+    expect(listedRecord).toMatchObject({
+      materialId,
+      materialName: '报废测试物料',
+      unit: '瓶',
+    })
+  })
+
+  it('SC-003: 撤销报废会软删除记录、回退库存并写入撤销日志', async () => {
+    const materialId = seedScrapMaterial(db, `cancel-${Date.now()}`, 6)
+    const createRes = await request(app)
+      .post('/api/v1/scraps')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ materialId, quantity: 1, reason: '测试撤销报废' })
+
+    expect(createRes.status).toBe(200)
+
+    const cancelRes = await request(app)
+      .delete(`/api/v1/scraps/${createRes.body.data.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+
+    expect(cancelRes.status).toBe(200)
+    const record = db.prepare('SELECT is_deleted FROM scrap_records WHERE id = ?').get(createRes.body.data.id) as any
+    const inventory = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+    const cancelLog = db.prepare('SELECT operator, quantity, before_stock, after_stock FROM stock_logs WHERE related_id = ? AND related_type = ?')
+      .get(createRes.body.data.id, 'scrap_cancel') as any
+
+    expect(record.is_deleted).toBe(1)
+    expect(inventory.stock).toBe(6)
+    expect(cancelLog.operator).toBe('admin')
+    expect(cancelLog.quantity).toBe(1)
+    expect(cancelLog.before_stock).toBe(5)
+    expect(cancelLog.after_stock).toBe(6)
+  })
+
+  it('SC-004: 缺少字段、负数数量、库存不足和不存在资源返回明确错误', async () => {
+    const materialId = seedScrapMaterial(db, `invalid-${Date.now()}`, 1)
+
+    const missingMaterialRes = await request(app)
+      .post('/api/v1/scraps')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ quantity: 1, reason: '缺少物料' })
+    expect(missingMaterialRes.status).toBe(400)
+
+    const negativeQtyRes = await request(app)
+      .post('/api/v1/scraps')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ materialId, quantity: -1, reason: '数量非法' })
+    expect(negativeQtyRes.status).toBe(400)
+
+    const notFoundRes = await request(app)
+      .post('/api/v1/scraps')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ materialId: 'non-existent-id', quantity: 1, reason: '不存在物料' })
+    expect(notFoundRes.status).toBe(404)
+
+    const insufficientRes = await request(app)
+      .post('/api/v1/scraps')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ materialId, quantity: 2, reason: '库存不足' })
+    expect(insufficientRes.status).toBe(422)
+
+    const deleteNotFoundRes = await request(app)
+      .delete('/api/v1/scraps/non-existent-id')
+      .set('Authorization', `Bearer ${adminToken}`)
+    expect(deleteNotFoundRes.status).toBe(404)
+  })
+
+  it('SC-005: 批量报废在一个事务内扣减库存并写入流水', async () => {
+    const suffix = `batch-${Date.now()}`
+    const materialA = seedScrapMaterial(db, `${suffix}-a`, 10)
+    const materialB = seedScrapMaterial(db, `${suffix}-b`, 8)
+
+    const res = await request(app)
+      .post('/api/v1/scraps/batch')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        records: [
+          { materialId: materialA, quantity: 3, reason: 'expired', remark: '批量报废A' },
+          { materialId: materialB, quantity: 2, reason: 'damaged', remark: '批量报废B' },
+        ],
+      })
+
+    expect(res.status).toBe(200)
+    expect(res.body.success).toBe(true)
+    expect(res.body.data.createdCount).toBe(2)
+
+    const invA = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialA) as any
+    const invB = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialB) as any
+    expect(invA.stock).toBe(7)
+    expect(invB.stock).toBe(6)
+
+    const logs = db.prepare("SELECT operator, related_type FROM stock_logs WHERE related_type = 'scrap_batch' AND material_id IN (?, ?)")
+      .all(materialA, materialB) as any[]
+    expect(logs).toHaveLength(2)
+    expect(logs.every(log => log.operator === 'admin')).toBe(true)
+  })
+
+  it('SC-006: 批量报废校验失败时不写入任何有效行', async () => {
+    const suffix = `batch-invalid-${Date.now()}`
+    const materialA = seedScrapMaterial(db, `${suffix}-a`, 5)
+    const materialB = seedScrapMaterial(db, `${suffix}-b`, 1)
+
+    const res = await request(app)
+      .post('/api/v1/scraps/batch')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        records: [
+          { materialId: materialA, quantity: 2, reason: 'expired' },
+          { materialId: materialB, quantity: 2, reason: 'damaged' },
+        ],
+      })
+
+    expect(res.status).toBe(400)
+    expect(res.body.success).toBe(false)
+
+    const invA = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialA) as any
+    const invB = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialB) as any
+    const scraps = db.prepare('SELECT COUNT(*) as total FROM scrap_records WHERE material_id IN (?, ?)').get(materialA, materialB) as any
+
+    expect(invA.stock).toBe(5)
+    expect(invB.stock).toBe(1)
+    expect(scraps.total).toBe(0)
+  })
+
+  it('SC-007: 创建和撤销报废会同步扣减和恢复批次剩余量', async () => {
+    const suffix = `batch-single-${Date.now()}`
+    const { materialId, batchId, batchNo } = seedScrapMaterialWithBatch(db, suffix, 10)
+
+    const res = await request(app)
+      .post('/api/v1/scraps')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ materialId, batchId, quantity: 4, reason: 'damaged' })
+
+    expect(res.status).toBe(200)
+    const record = db.prepare('SELECT batch_id FROM scrap_records WHERE id = ?').get(res.body.data.id) as any
+    const inventoryAfterCreate = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+    const batchAfterCreate = db.prepare('SELECT remaining, status FROM batches WHERE id = ?').get(batchId) as any
+
+    expect(record.batch_id).toBe(batchId)
+    expect(inventoryAfterCreate.stock).toBe(6)
+    expect(batchAfterCreate.remaining).toBe(6)
+    expect(batchAfterCreate.status).toBe(1)
+
+    const listRes = await request(app)
+      .get('/api/v1/scraps')
+      .query({ page: 1, pageSize: 1000 })
+      .set('Authorization', `Bearer ${adminToken}`)
+    expect(listRes.status).toBe(200)
+    const listedRecord = listRes.body.data.list.find((row: any) => row.id === res.body.data.id)
+    expect(listedRecord).toMatchObject({ batchId, batchNo })
+
+    const cancelRes = await request(app)
+      .delete(`/api/v1/scraps/${res.body.data.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+    expect(cancelRes.status).toBe(200)
+
+    const inventoryAfterCancel = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+    const batchAfterCancel = db.prepare('SELECT remaining, status FROM batches WHERE id = ?').get(batchId) as any
+    expect(inventoryAfterCancel.stock).toBe(10)
+    expect(batchAfterCancel.remaining).toBe(10)
+    expect(batchAfterCancel.status).toBe(1)
+  })
+
+  it('SC-008: 批量报废会逐条同步扣减批次剩余量', async () => {
+    const suffix = `batch-with-batches-${Date.now()}`
+    const materialA = seedScrapMaterialWithBatch(db, `${suffix}-a`, 10)
+    const materialB = seedScrapMaterialWithBatch(db, `${suffix}-b`, 8)
+
+    const res = await request(app)
+      .post('/api/v1/scraps/batch')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        records: [
+          { materialId: materialA.materialId, batchId: materialA.batchId, quantity: 3, reason: 'expired' },
+          { materialId: materialB.materialId, batchId: materialB.batchId, quantity: 2, reason: 'damaged' },
+        ],
+      })
+
+    expect(res.status).toBe(200)
+    expect(res.body.data.createdCount).toBe(2)
+
+    const batchA = db.prepare('SELECT remaining FROM batches WHERE id = ?').get(materialA.batchId) as any
+    const batchB = db.prepare('SELECT remaining FROM batches WHERE id = ?').get(materialB.batchId) as any
+    const records = db.prepare('SELECT batch_id FROM scrap_records WHERE id IN (?, ?) ORDER BY batch_id')
+      .all(res.body.data.ids[0], res.body.data.ids[1]) as any[]
+
+    expect(batchA.remaining).toBe(7)
+    expect(batchB.remaining).toBe(6)
+    expect(records.map(record => record.batch_id).sort()).toEqual([materialA.batchId, materialB.batchId].sort())
+  })
+
+  it('SC-REF-001: 单条和批量报废拒绝停用物料且不扣库存', async () => {
+    const singleMaterialId = seedScrapMaterial(db, `inactive-single-${Date.now()}`, 10)
+    const batchMaterialId = seedScrapMaterial(db, `inactive-batch-${Date.now()}`, 8)
+    db.prepare('UPDATE materials SET status = 0 WHERE id IN (?, ?)').run(singleMaterialId, batchMaterialId)
+
+    const singleRes = await request(app)
+      .post('/api/v1/scraps')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ materialId: singleMaterialId, quantity: 2, reason: '停用物料报废' })
+
+    expect(singleRes.status).toBe(409)
+    expect(singleRes.body.error.message).toContain('物料已停用')
+
+    const batchRes = await request(app)
+      .post('/api/v1/scraps/batch')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        records: [
+          { materialId: batchMaterialId, quantity: 2, reason: '停用物料批量报废' },
+        ],
+      })
+
+    expect(batchRes.status).toBe(409)
+    expect(batchRes.body.error.message).toContain('物料已停用')
+
+    const singleInventory = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(singleMaterialId) as any
+    const batchInventory = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(batchMaterialId) as any
+    const scraps = db.prepare('SELECT COUNT(*) as count FROM scrap_records WHERE material_id IN (?, ?)')
+      .get(singleMaterialId, batchMaterialId) as any
+
+    expect(singleInventory.stock).toBe(10)
+    expect(batchInventory.stock).toBe(8)
+    expect(scraps.count).toBe(0)
+  })
+})

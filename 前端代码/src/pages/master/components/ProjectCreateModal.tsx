@@ -31,6 +31,14 @@ export function ProjectCreateModal({
   onClose, onChange, onSetCreateStep, onSetBomOption, onSubmit,
 }: Props) {
   if (!open) return null
+  const compatibleBoms = boms.filter(bom =>
+    bom.status === 'active' && (bom.type === form.type || bom.type === 'project')
+  )
+  const isBomCompatible = (bomId: string, nextType: string) => {
+    if (!bomId) return true
+    const selected = boms.find(bom => bom.id === bomId)
+    return Boolean(selected && selected.status === 'active' && (selected.type === nextType || selected.type === 'project'))
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
@@ -75,7 +83,11 @@ export function ProjectCreateModal({
                   </label>
                   <SearchableSelect
                     value={form.type}
-                    onChange={val => onChange({ ...form, type: val })}
+                    onChange={val => onChange({
+                      ...form,
+                      type: val,
+                      bomId: isBomCompatible(form.bomId, val) ? form.bomId : '',
+                    })}
                     options={serviceTypeOptions}
                     placeholder="请选择"
                   />
@@ -175,7 +187,7 @@ export function ProjectCreateModal({
                     onChange={val => onChange({ ...form, bomId: val })}
                     options={[
                       { value: '', label: '请选择BOM清单' },
-                      ...boms.map(b => ({
+                      ...compatibleBoms.map(b => ({
                         value: b.id,
                         label: `${b.code} - ${b.name} (${b.version})`,
                       })),
@@ -183,7 +195,7 @@ export function ProjectCreateModal({
                     placeholder="请选择BOM清单"
                   />
                   {(() => {
-                    const selectedBom = boms.find(b => b.id === form.bomId)
+                    const selectedBom = compatibleBoms.find(b => b.id === form.bomId)
                     return selectedBom ? (
                       <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
                         <div className="flex items-center justify-between mb-2">
@@ -213,7 +225,11 @@ export function ProjectCreateModal({
                 <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
                   <FileText className="w-10 h-10 mx-auto mb-3 text-gray-400" />
                   <p className="text-sm text-gray-500 mb-4">创建完成后，在编辑页面配置BOM清单</p>
-                  <button className="px-4 py-2 bg-white text-gray-700 border border-gray-300 rounded-md text-sm hover:bg-gray-50">
+                  <button
+                    type="button"
+                    onClick={() => { window.location.href = '/bom' }}
+                    className="px-4 py-2 bg-white text-gray-700 border border-gray-300 rounded-md text-sm hover:bg-gray-50"
+                  >
                     前往BOM管理
                   </button>
                 </div>
@@ -262,7 +278,6 @@ export function ProjectCreateModal({
                   onSetCreateStep(2)
                 } else if (createStep === 2) {
                   onSubmit()
-                  onSetCreateStep(3)
                 }
               }}
               disabled={isSubmitting}

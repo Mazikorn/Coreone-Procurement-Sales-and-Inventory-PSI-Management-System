@@ -1,6 +1,7 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { usePagination } from '@/hooks/usePagination'
 import { equipmentApi } from '@/api/master'
+import { getUserRole } from '@/lib/permissions'
 import type { Equipment, EquipmentType } from '@/types'
 import { toast } from 'sonner'
 
@@ -22,13 +23,15 @@ export interface EquipmentForm {
 }
 
 export function useEquipmentPage() {
+  const canManageEquipmentAssets = getUserRole() === 'admin'
   const [keyword, setKeyword] = useState('')
   const [searchInput, setSearchInput] = useState('')
   const [filterStatus, setFilterStatus] = useState('')
   const [filterTypeId, setFilterTypeId] = useState('')
   const [typeOptions, setTypeOptions] = useState<Array<{ value: string; label: string }>>([])
+  const [stats, setStats] = useState({ total: 0, active: 0, inactive: 0, scrapped: 0, totalValue: 0 })
 
-  const [modalType, setModalType] = useState<null | 'create' | 'edit' | 'detail' | 'delete'>('null' as any)
+  const [modalType, setModalType] = useState<null | 'create' | 'edit' | 'detail' | 'delete'>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [detailRow, setDetailRow] = useState<Equipment | null>(null)
 
@@ -51,7 +54,7 @@ export function useEquipmentPage() {
 
   // 加载设备类型选项
   useEffect(() => {
-    equipmentApi.getTypes({ pageSize: 100 }).then((res: any) => {
+    equipmentApi.getTypes({ page: 1, pageSize: 999, status: 'active' }).then((res: any) => {
       const options = (res?.list || []).map((t: EquipmentType) => ({ value: t.id, label: t.name }))
       setTypeOptions(options)
     }).catch(() => {})
@@ -73,14 +76,21 @@ export function useEquipmentPage() {
   const { data, loading, page, pageSize, total, setPage, setPageSize, refresh } =
     usePagination<Equipment>({ fetchFn, initialPage: 1, initialPageSize: 20, deps: [keyword, filterStatus, filterTypeId] })
 
-  const stats = useMemo(() => {
-    const all = data
-    const active = all.filter((e) => e.status === 'active').length
-    const inactive = all.filter((e) => e.status === 'inactive').length
-    const scrapped = all.filter((e) => e.status === 'scrapped').length
-    const totalValue = all.reduce((sum, e) => sum + (e.purchasePrice || 0), 0)
-    return { total: all.length, active, inactive, scrapped, totalValue }
-  }, [data])
+  useEffect(() => {
+    equipmentApi.getStats({
+      keyword: keyword || undefined,
+      status: filterStatus || undefined,
+      typeId: filterTypeId || undefined,
+    })
+      .then((res: any) => setStats({
+        total: Number(res?.total || 0),
+        active: Number(res?.active || 0),
+        inactive: Number(res?.inactive || 0),
+        scrapped: Number(res?.scrapped || 0),
+        totalValue: Number(res?.totalValue || 0),
+      }))
+      .catch(() => setStats({ total, active: 0, inactive: 0, scrapped: 0, totalValue: 0 }))
+  }, [keyword, filterStatus, filterTypeId, total])
 
   const handleSearch = () => {
     setKeyword(searchInput)
@@ -94,6 +104,16 @@ export function useEquipmentPage() {
     setFilterTypeId('')
     setPage(1)
   }
+
+  const handleStatusChange = useCallback((value: string) => {
+    setFilterStatus(value)
+    setPage(1)
+  }, [setPage])
+
+  const handleTypeChange = useCallback((value: string) => {
+    setFilterTypeId(value)
+    setPage(1)
+  }, [setPage])
 
   const openCreate = () => {
     setEditingId(null)
@@ -153,6 +173,30 @@ export function useEquipmentPage() {
       toast.error('请填写必填项')
       return
     }
+    if (!Number.isFinite(form.purchasePrice) || form.purchasePrice < 0) {
+      toast.error('购置价格必须大于等于0')
+      return
+    }
+    if (!Number.isFinite(form.residualValue) || form.residualValue < 0) {
+      toast.error('残值必须大于等于0')
+      return
+    }
+    if (form.residualValue > form.purchasePrice) {
+      toast.error('残值不能大于购置价格')
+      return
+    }
+    if (!Number.isFinite(form.depreciableLifeYears) || form.depreciableLifeYears <= 0) {
+      toast.error('折旧年限必须大于0')
+      return
+    }
+    if (form.depreciationMethod === 'units_of_production' && (!Number.isFinite(form.totalCapacity) || form.totalCapacity <= 0)) {
+      toast.error('工作量法必须填写大于0的总工作量')
+      return
+    }
+    if (form.depreciationMethod === 'straight_line' && (!Number.isFinite(form.totalCapacity) || form.totalCapacity < 0)) {
+      toast.error('总工作量必须大于等于0')
+      return
+    }
     try {
       const payload = { ...form }
       if (editingId) {
@@ -183,6 +227,7 @@ export function useEquipmentPage() {
   }
 
   return {
+    canManageEquipmentAssets,
     data,
     loading,
     page,
@@ -199,6 +244,8 @@ export function useEquipmentPage() {
     setFilterStatus,
     filterTypeId,
     setFilterTypeId,
+    handleStatusChange,
+    handleTypeChange,
     typeOptions,
     modalType,
     setModalType,

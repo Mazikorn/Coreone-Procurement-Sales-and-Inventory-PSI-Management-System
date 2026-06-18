@@ -15,32 +15,30 @@ export default function EquipmentTypeList() {
           <h1 className="text-[28px] font-bold text-gray-900">设备类型管理</h1>
           <p className="text-sm text-gray-500 mt-1">管理设备分类，用于 BOM 成本计算和折旧统计</p>
         </div>
-        <button
-          onClick={page.openCreate}
-          className="h-10 px-4 text-sm font-medium text-white bg-blue-500 rounded-md hover:bg-blue-600 flex items-center gap-2 transition-colors"
-        >
-          <Plus className="w-4 h-4" />
-          新增类型
-        </button>
+        {page.canManageEquipmentTypes && (
+          <button
+            onClick={page.openCreate}
+            className="h-10 px-4 text-sm font-medium text-white bg-blue-500 rounded-md hover:bg-blue-600 flex items-center gap-2 transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            新增类型
+          </button>
+        )}
       </div>
 
       {/* Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-4">
           <div className="text-sm text-gray-500">类型总数</div>
-          <div className="text-2xl font-bold text-gray-900 mt-1">{page.total}</div>
+          <div className="text-2xl font-bold text-gray-900 mt-1">{page.stats.total}</div>
         </div>
         <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-4">
           <div className="text-sm text-gray-500">启用类型</div>
-          <div className="text-2xl font-bold text-green-600 mt-1">
-            {page.data?.filter((r: any) => r.status === 'active').length || 0}
-          </div>
+          <div className="text-2xl font-bold text-green-600 mt-1">{page.stats.active}</div>
         </div>
         <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-4">
           <div className="text-sm text-gray-500">设备总数</div>
-          <div className="text-2xl font-bold text-blue-600 mt-1">
-            {page.data?.reduce((sum: number, r: any) => sum + (r.equipmentCount || 0), 0) || 0}
-          </div>
+          <div className="text-2xl font-bold text-blue-600 mt-1">{page.stats.equipmentCount}</div>
         </div>
       </div>
 
@@ -67,7 +65,7 @@ export default function EquipmentTypeList() {
                 { value: 'inactive', label: '禁用' },
               ]}
               value={page.statusFilter}
-              onChange={(val) => { page.setStatusFilter(val); page.setPage(1) }}
+              onChange={page.handleStatusChange}
               placeholder="全部状态"
             />
           </div>
@@ -90,14 +88,16 @@ export default function EquipmentTypeList() {
                 <th className="px-4 py-3 text-right text-xs font-medium text-gray-500">设备数量</th>
                 <th className="px-4 py-3 text-center text-xs font-medium text-gray-500">折旧方法</th>
                 <th className="px-4 py-3 text-center text-xs font-medium text-gray-500">状态</th>
-                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500">操作</th>
+                {page.canManageEquipmentTypes && (
+                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-500">操作</th>
+                )}
               </tr>
             </thead>
             <tbody>
               {page.loading ? (
-                <tr><td colSpan={7} className="px-4 py-12 text-center text-gray-400">加载中...</td></tr>
+                <tr><td colSpan={page.canManageEquipmentTypes ? 7 : 6} className="px-4 py-12 text-center text-gray-400">加载中...</td></tr>
               ) : !page.data?.length ? (
-                <tr><td colSpan={7} className="px-4 py-12 text-center text-gray-400">暂无数据</td></tr>
+                <tr><td colSpan={page.canManageEquipmentTypes ? 7 : 6} className="px-4 py-12 text-center text-gray-400">暂无数据</td></tr>
               ) : (
                 page.data.map((row: any) => (
                   <tr key={row.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
@@ -120,22 +120,24 @@ export default function EquipmentTypeList() {
                         {row.status === 'active' ? '启用' : '禁用'}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-center">
-                      <div className="flex items-center justify-center gap-2">
-                        <button
-                          onClick={() => page.openEdit(row)}
-                          className="text-blue-600 hover:text-blue-800 text-sm transition-colors"
-                        >
-                          编辑
-                        </button>
-                        <button
-                          onClick={() => page.setDeleteTarget(row)}
-                          className="text-red-600 hover:text-red-800 text-sm transition-colors"
-                        >
-                          删除
-                        </button>
-                      </div>
-                    </td>
+                    {page.canManageEquipmentTypes && (
+                      <td className="px-4 py-3 text-center">
+                        <div className="flex items-center justify-center gap-2">
+                          <button
+                            onClick={() => page.openEdit(row)}
+                            className="text-blue-600 hover:text-blue-800 text-sm transition-colors"
+                          >
+                            编辑
+                          </button>
+                          <button
+                            onClick={() => page.setDeleteTarget(row)}
+                            className="text-red-600 hover:text-red-800 text-sm transition-colors"
+                          >
+                            删除
+                          </button>
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 ))
               )}

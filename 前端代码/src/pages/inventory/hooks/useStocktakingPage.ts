@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { stocktakingApi } from '@/api/stocktaking'
 import { materialApi } from '@/api/master'
 import type { Material } from '@/types'
@@ -11,6 +11,10 @@ export interface StocktakingRecord {
   stocktakingNo: string
   materialId: string
   materialName: string
+  materialCode?: string
+  materialUnit?: string
+  categoryName?: string
+  locationName?: string
   systemStock: number
   actualStock: number
   difference: number
@@ -23,26 +27,14 @@ export interface StocktakingRecord {
 export interface FormData {
   materialId: string
   systemStock: number
-  actualStock: number
+  actualStock: number | ''
   remark: string
-  name: string
-  type: 'full' | 'sample'
-  scope: string
-  manager: string
 }
-
-export const scopeOptions = [
-  { value: '', label: '全部范围' },
-  { value: 'all', label: '全部物料' },
-  { value: 'category', label: '指定分类' },
-  { value: 'location', label: '指定库位' },
-]
 
 export const statusOptions = [
   { value: '', label: '全部状态' },
-  { value: 'in_progress', label: '进行中' },
   { value: 'completed', label: '已完成' },
-  { value: 'cancelled', label: '已取消' },
+  { value: 'confirmed', label: '已确认' },
 ]
 
 export function useStocktakingPage() {
@@ -54,8 +46,14 @@ export function useStocktakingPage() {
     : 20
 
   const [keyword, setKeyword] = useState(url.get('keyword', ''))
-  const [statusFilter, setStatusFilter] = useState('')
-  const [scopeFilter, setScopeFilter] = useState('')
+  const [debouncedKeyword, setDebouncedKeyword] = useState(keyword)
+  const [statusFilter, setStatusFilter] = useState(url.get('status', ''))
+  const [stats, setStats] = useState({
+    completed: 0,
+    confirmed: 0,
+    diffCount: 0,
+    accuracy: '100.0',
+  })
 
   const [modalType, setModalType] = useState<'create' | 'detail' | 'adjust' | null>(null)
   const [detailRow, setDetailRow] = useState<StocktakingRecord | null>(null)
@@ -66,15 +64,15 @@ export function useStocktakingPage() {
 
   const [materials, setMaterials] = useState<Material[]>([])
   const [form, setForm] = useState<FormData>({
-    materialId: '', systemStock: 0, actualStock: 0, remark: '',
-    name: '', type: 'full', scope: 'all', manager: ''
+    materialId: '', systemStock: 0, actualStock: '', remark: '',
   })
 
   const fetchFn = useCallback(
     async (params: { page: number; pageSize: number }) => {
       const res: any = await stocktakingApi.getList({
         ...params,
-        keyword: keyword || undefined,
+        keyword: debouncedKeyword || undefined,
+        status: statusFilter || undefined,
       })
       const payload = res?.data ?? res
       return {
@@ -82,7 +80,7 @@ export function useStocktakingPage() {
         pagination: payload?.pagination,
       }
     },
-    [keyword]
+    [debouncedKeyword, statusFilter]
   )
 
   const {
@@ -92,7 +90,7 @@ export function useStocktakingPage() {
     fetchFn,
     initialPage,
     initialPageSize,
-    deps: [keyword],
+    deps: [debouncedKeyword, statusFilter],
   })
 
   useEffect(() => {
@@ -100,25 +98,41 @@ export function useStocktakingPage() {
       page: page > 1 ? page : null,
       pageSize: pageSize !== 20 ? pageSize : null,
       keyword: keyword || null,
+      status: statusFilter || null,
     })
-  }, [page, pageSize, keyword])
+  }, [page, pageSize, keyword, statusFilter])
 
-  const stats = useMemo(() => {
-    const inProgress = data.filter(d => d.status === 'in_progress').length
-    const completed = data.filter(d => d.status === 'completed').length
-    const diffCount = data.filter(d => d.difference !== 0).length
-    const accuracy = data.length > 0
-      ? ((data.filter(d => d.difference === 0).length / data.length) * 100).toFixed(1)
-      : '100.0'
-    return { inProgress, completed, diffCount, accuracy }
-  }, [data])
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedKeyword(keyword), 300)
+    return () => window.clearTimeout(timer)
+  }, [keyword])
+
+  const loadStats = useCallback(async () => {
+    try {
+      const res: any = await stocktakingApi.getStats({
+        keyword: debouncedKeyword || undefined,
+        status: statusFilter || undefined,
+      })
+      setStats({
+        completed: Number(res?.completed || 0),
+        confirmed: Number(res?.confirmed || 0),
+        diffCount: Number(res?.diffCount || 0),
+        accuracy: Number(res?.accuracy ?? 100).toFixed(1),
+      })
+    } catch {
+      setStats({ completed: 0, confirmed: 0, diffCount: 0, accuracy: '100.0' })
+    }
+  }, [debouncedKeyword, statusFilter])
+
+  useEffect(() => {
+    loadStats()
+  }, [loadStats])
 
   const openCreate = async () => {
     const res: any = await materialApi.getList({ page: 1, pageSize: 999, status: 'active' })
     setMaterials(res?.list || [])
     setForm({
-      materialId: '', systemStock: 0, actualStock: 0, remark: '',
-      name: '', type: 'full', scope: 'all', manager: ''
+      materialId: '', systemStock: 0, actualStock: '', remark: '',
     })
     setCreateStep(1)
     setModalType('create')
@@ -126,7 +140,7 @@ export function useStocktakingPage() {
 
   const handleSubmit = async () => {
     if (!form.materialId) { toast.error('请选择物料'); return }
-    if (form.actualStock === undefined || form.actualStock === null) {
+    if (form.actualStock === '') {
       toast.error('请输入实盘数量')
       return
     }
@@ -135,18 +149,19 @@ export function useStocktakingPage() {
       await stocktakingApi.create({
         materialId: form.materialId,
         systemStock: form.systemStock,
-        actualStock: form.actualStock,
+        actualStock: Number(form.actualStock),
         remark: form.remark
       })
       toast.success('盘点记录已创建')
       setModalType(null)
       refresh()
+      loadStats()
     } catch (e) { toast.error('操作失败') } finally { setIsSubmitting(false) }
   }
 
   const handleCreateSubmit = async () => {
     if (!form.materialId) { toast.error('请选择物料'); return }
-    if (form.actualStock === undefined || form.actualStock === null) {
+    if (form.actualStock === '') {
       toast.error('请输入实盘数量')
       return
     }
@@ -155,12 +170,13 @@ export function useStocktakingPage() {
       await stocktakingApi.create({
         materialId: form.materialId,
         systemStock: form.systemStock,
-        actualStock: form.actualStock,
+        actualStock: Number(form.actualStock),
         remark: form.remark,
       })
       toast.success('盘点任务已创建')
       setCreateStep(3)
       refresh()
+      loadStats()
     } catch (e) {
       toast.error('创建失败，请重试')
     } finally {
@@ -191,19 +207,41 @@ export function useStocktakingPage() {
       setDeleteConfirmOpen(false)
       setRecordToDelete(null)
       refresh()
+      loadStats()
     } catch (e) {
       toast.error('撤销失败')
     }
   }
 
+  const handleAdjustConfirm = async (payload: { reason: string; remark?: string }) => {
+    if (!detailRow) return
+    if (!payload.reason) {
+      toast.error('请选择差异原因')
+      return
+    }
+    setIsSubmitting(true)
+    try {
+      await stocktakingApi.confirm(detailRow.id, payload)
+      toast.success('盘点差异已确认')
+      setModalType(null)
+      setDetailRow(null)
+      refresh()
+      loadStats()
+    } catch (e) {
+      toast.error('确认失败')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
   const handleQuery = () => { setPage(1) }
-  const handleReset = () => { setKeyword(''); setStatusFilter(''); setScopeFilter(''); setPage(1) }
+  const handleReset = () => { setKeyword(''); setStatusFilter(''); setPage(1) }
 
   const selectedMaterial = materials.find(m => m.id === form.materialId)
 
   return {
     data, loading, page, pageSize, total, setPage, setPageSize, refresh,
-    keyword, setKeyword, statusFilter, setStatusFilter, scopeFilter, setScopeFilter,
+    keyword, setKeyword, statusFilter, setStatusFilter,
     modalType, setModalType,
     detailRow, setDetailRow,
     createStep, setCreateStep,
@@ -215,7 +253,7 @@ export function useStocktakingPage() {
     stats,
     handleQuery, handleReset,
     openCreate, openDetail, openAdjust, openDelete,
-    handleSubmit, handleCreateSubmit, handleDelete,
+    handleSubmit, handleCreateSubmit, handleDelete, handleAdjustConfirm,
     selectedMaterial,
   }
 }

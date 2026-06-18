@@ -1,5 +1,7 @@
+import React from 'react'
 import { X } from 'lucide-react'
 import type { User } from '@/types'
+import { formatDateTime } from '@/lib/utils'
 
 interface Props {
   open: boolean
@@ -12,6 +14,11 @@ export function UserDetailModal({ open, user, onClose, onEdit }: Props) {
   if (!open || !user) return null
 
   const getAvatarChar = (name: string) => name ? name.charAt(0) : '?'
+  const getDataScopeLabel = () => {
+    if (user.dataScope === 'all') return '全部数据'
+    if (user.dataScope === 'self') return '仅本人数据'
+    return '本部门数据'
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
@@ -42,14 +49,14 @@ export function UserDetailModal({ open, user, onClose, onEdit }: Props) {
             <Info label="部门" value={user.department || '-'} />
             <Info label="联系电话" value={user.phone || '-'} />
             <Info label="电子邮箱" value={user.email || '-'} />
-            <Info label="创建时间" value={user.createdAt ? new Date(user.createdAt).toLocaleString() : '-'} />
-            <Info label="最后登录" value="-" />
+            <Info label="创建时间" value={formatDateTime(user.createdAt)} />
+            <Info label="最后登录" value={formatDateTime(user.lastLogin || '')} />
           </div>
 
           <div className="mt-6">
             <div className="flex items-center justify-between mb-3">
               <h4 className="text-sm font-semibold text-gray-900">权限列表</h4>
-              <span className="text-xs text-gray-500">数据范围: 本部门数据</span>
+              <span className="text-xs text-gray-500">数据范围: {getDataScopeLabel()}</span>
             </div>
             {user.permissions && user.permissions.length > 0 ? (
               <div className="border border-gray-200 rounded-lg overflow-hidden">

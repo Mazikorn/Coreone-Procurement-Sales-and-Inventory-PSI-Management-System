@@ -136,7 +136,7 @@ export default function InboundTable({
                       {row.status === 'completed' && (
                         <>
                           <IconButton label="编辑" onClick={() => onEdit(row)}><Edit2 className="h-4 w-4" /></IconButton>
-                          <IconButton label="删除" onClick={() => onDelete(row)} danger><Trash2 className="h-4 w-4" /></IconButton>
+                          <IconButton label="取消" onClick={() => onDelete(row)} danger><Trash2 className="h-4 w-4" /></IconButton>
                         </>
                       )}
                       {row.status === 'cancelled' && (

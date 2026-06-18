@@ -30,6 +30,14 @@ export function ProjectEditModal({
   onClose, onChange, onSetEditTab, onSubmit, onOpenDelete,
 }: Props) {
   if (!open || !editingRow) return null
+  const compatibleBoms = boms.filter(bom =>
+    bom.status === 'active' && (bom.type === form.type || bom.type === 'project')
+  )
+  const isBomCompatible = (bomId: string, nextType: string) => {
+    if (!bomId) return true
+    const selected = boms.find(bom => bom.id === bomId)
+    return Boolean(selected && selected.status === 'active' && (selected.type === nextType || selected.type === 'project'))
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
@@ -70,7 +78,11 @@ export function ProjectEditModal({
                   <label className="block text-sm font-medium text-gray-700 mb-1">服务类型</label>
                   <SearchableSelect
                     value={form.type}
-                    onChange={val => onChange({ ...form, type: val })}
+                    onChange={val => onChange({
+                      ...form,
+                      type: val,
+                      bomId: isBomCompatible(form.bomId, val) ? form.bomId : '',
+                    })}
                     options={serviceTypeOptions}
                     placeholder="请选择"
                   />
@@ -156,7 +168,7 @@ export function ProjectEditModal({
                   onChange={val => onChange({ ...form, bomId: val })}
                   options={[
                     { value: '', label: '不关联BOM' },
-                    ...boms.map(b => ({
+                    ...compatibleBoms.map(b => ({
                       value: b.id,
                       label: `${b.code} - ${b.name} (${b.version})`,
                     })),
@@ -179,7 +191,7 @@ export function ProjectEditModal({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                      {boms.find(b => b.id === form.bomId)?.materials?.map((m, i) => (
+                      {compatibleBoms.find(b => b.id === form.bomId)?.materials?.map((m, i) => (
                         <tr key={m.id} className="hover:bg-gray-50">
                           <td className="px-3 py-2 text-gray-500">{i + 1}</td>
                           <td className="px-3 py-2 font-medium">{m.name}</td>

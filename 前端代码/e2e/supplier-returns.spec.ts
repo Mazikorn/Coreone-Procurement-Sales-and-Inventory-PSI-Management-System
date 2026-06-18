@@ -13,7 +13,7 @@ const ROLES = {
 } as const
 type RoleKey = keyof typeof ROLES
 const ROLE_KEYS: RoleKey[] = ['admin', 'warehouse_manager', 'technician', 'pathologist', 'procurement', 'finance']
-const WRITE_ROLES: RoleKey[] = ['admin', 'warehouse_manager']
+const WRITE_ROLES: RoleKey[] = ['admin', 'warehouse_manager', 'procurement']
 const READ_ROLES: RoleKey[] = ['admin', 'warehouse_manager', 'procurement']
 const NO_ACCESS_ROLES: RoleKey[] = ['technician', 'pathologist', 'finance']
 
@@ -25,7 +25,7 @@ async function loginAs(page: Page, role: RoleKey) {
   await page.fill('input[type="text"]', cred.username)
   await page.fill('input[type="password"]', cred.password)
   await page.click('button[type="submit"]')
-  await page.waitForURL(`${FE_BASE}/`, { timeout: 15000, waitUntil: 'domcontentloaded' })
+  await expect(page, `${role} 登录后应进入首页`).toHaveURL(`${FE_BASE}/`, { timeout: 15000 })
 }
 
 async function apiLogin(role: RoleKey): Promise<string> {
@@ -36,7 +36,10 @@ async function apiLogin(role: RoleKey): Promise<string> {
     body: JSON.stringify(cred),
   })
   const data = (await res.json()) as any
-  return data.data?.token || data.token
+  expect(res.status, `${role} API 登录失败: ${JSON.stringify(data)}`).toBe(200)
+  const token = data.data?.token || data.token
+  expect(token, `${role} API 登录未返回 token`).toBeTruthy()
+  return token
 }
 
 async function apiFetch(token: string, method: string, path: string, body?: any) {
@@ -56,6 +59,60 @@ async function getMaterialWithStock(token: string, minStock: number = 3): Promis
   const list = r.data?.data?.list || []
   const mat = list.find((m: any) => m.stock >= minStock)
   return mat?.materialId || ''
+}
+
+async function getRefs(token: string) {
+  const [categories, locations, suppliers] = await Promise.all([
+    apiFetch(token, 'GET', '/categories?page=1&pageSize=1'),
+    apiFetch(token, 'GET', '/locations?page=1&pageSize=1'),
+    apiFetch(token, 'GET', '/suppliers?page=1&pageSize=1&status=active'),
+  ])
+  return {
+    category: categories.data?.data?.list?.[0],
+    location: locations.data?.data?.list?.[0],
+    supplier: suppliers.data?.data?.list?.[0],
+  }
+}
+
+async function createSupplierReturnMaterial(token: string, suffix: number, categoryId: string, locationId: string, supplierId: string) {
+  const name = `供应商退货E2E物料-${suffix}`
+  const res = await apiFetch(token, 'POST', '/materials', {
+    code: `E2E-SR-MAT-${suffix}`,
+    name,
+    spec: '1ml',
+    unit: '瓶',
+    categoryId,
+    supplierId,
+    locationId,
+    price: 12,
+    minStock: 0,
+    maxStock: 1000,
+    safetyStock: 0,
+    remark: `E2E供应商退货测试物料-${suffix}`,
+  })
+  expect(res.status).toBe(201)
+  return { id: res.data?.data?.id, name, price: 12 }
+}
+
+async function createInboundBatch(token: string, materialId: string, batchNo: string, quantity: number, price: number, locationId: string, supplierId: string) {
+  const inbound = await apiFetch(token, 'POST', '/inbound', {
+    type: 'direct',
+    materialId,
+    batchNo,
+    quantity,
+    price,
+    supplierId,
+    locationId,
+    expiryDate: '2028-12-31',
+    remark: `E2E供应商退货批次验证-${batchNo}`,
+  })
+  expect(inbound.status).toBe(201)
+}
+
+async function getInventoryRows(token: string, materialId: string) {
+  const inventory = await apiFetch(token, 'GET', `/inventory?page=1&pageSize=100&materialId=${encodeURIComponent(materialId)}`)
+  expect(inventory.status).toBe(200)
+  return inventory.data?.data?.list || []
 }
 
 async function cleanupTestData(token: string) {
@@ -86,11 +143,11 @@ test.describe('退货给供应商 -> 查看列表', () => {
       await expect(page.getByRole('heading', { name: '退货给供应商' })).toBeVisible({ timeout: 30000 })
     })
   }
-  test('SR-LIST-02. 空数据边界：无退货记录显示空状态', async ({ page }) => {
+  test('SR-LIST-02. 边界：列表为空或已有数据均可稳定渲染', async ({ page }) => {
     await loginAs(page, 'admin')
     await page.goto(`${FE_BASE}/supplier-returns`)
     const empty = page.locator('text=/暂无退货|暂无数据|empty/i')
-    await expect(empty.or(page.locator('table tbody tr'))).toBeVisible({ timeout: 30000 })
+    await expect(empty.or(page.locator('table tbody tr').first())).toBeVisible({ timeout: 30000 })
   })
   for (const role of NO_ACCESS_ROLES) {
     test(`SR-LIST-03-${role}. 权限：${role}访问返回403`, async () => {
@@ -562,6 +619,127 @@ test.describe('退货给供应商 -> 删除退货记录', () => {
     await apiFetch(token, 'PUT', `/supplier-returns/${id}/status`, { status: 'cancelled' })
     const res = await apiFetch(token, 'DELETE', `/supplier-returns/${id}`)
     expect(res.status).toBe(400)
+  })
+})
+
+test.describe('退货给供应商 -> 页面批次退货与恢复', () => {
+  test('SR-UI-BATCH-01. 页面选择具体批次退货并删除后只恢复该批次', async ({ page }) => {
+    const token = await apiLogin('admin')
+    const suffix = Date.now()
+    const { category, location, supplier } = await getRefs(token)
+    expect(category?.id).toBeTruthy()
+    expect(location?.id).toBeTruthy()
+    expect(supplier?.id).toBeTruthy()
+
+    const material = await createSupplierReturnMaterial(token, suffix, category.id, location.id, supplier.id)
+    const batchA = `E2E-SR-DELETE-A-${suffix}`
+    const batchB = `E2E-SR-DELETE-B-${suffix}`
+    await createInboundBatch(token, material.id, batchA, 9, material.price, location.id, supplier.id)
+    await createInboundBatch(token, material.id, batchB, 8, material.price, location.id, supplier.id)
+
+    const beforeRows = await getInventoryRows(token, material.id)
+    const rowA = beforeRows.find((row: any) => row.batchNo === batchA)
+    const rowB = beforeRows.find((row: any) => row.batchNo === batchB)
+    expect(rowA?.batchId).toBeTruthy()
+    expect(rowB?.batchId).toBeTruthy()
+    expect(Number(rowA.stock)).toBe(9)
+    expect(Number(rowB.stock)).toBe(8)
+
+    await loginAs(page, 'admin')
+    await page.goto(`${FE_BASE}/supplier-returns`, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByRole('heading', { name: '退货给供应商' })).toBeVisible({ timeout: 15000 })
+
+    await page.getByRole('button', { name: '新建退货' }).click()
+    await page.getByTestId('supplier-return-material-select').click()
+    await page.getByTestId(`option-${material.id}`).click()
+    await page.getByTestId('supplier-return-batch-select').click()
+    await page.getByTestId(`option-${rowA.batchId}`).click()
+    await page.getByTestId('supplier-return-quantity-input').fill('3')
+    await page.getByTestId('supplier-return-supplier-select').click()
+    await page.getByTestId(`option-${supplier.id}`).click()
+    await page.getByTestId('supplier-return-reason-select').click()
+    await page.getByTestId('option-quality_issue').click()
+    await page.getByTestId('supplier-return-confirm-btn').click()
+
+    await expect(page.getByText('退货记录创建成功')).toBeVisible({ timeout: 15000 })
+    const createdRow = page.locator('tbody tr', { hasText: batchA }).first()
+    await expect(createdRow).toBeVisible({ timeout: 15000 })
+    await expect(createdRow).toContainText(material.name)
+    await expect(createdRow).toContainText('3')
+    await expect(createdRow).toContainText('待发货')
+
+    const afterCreateRows = await getInventoryRows(token, material.id)
+    expect(Number(afterCreateRows.find((row: any) => row.batchNo === batchA).stock)).toBe(6)
+    expect(Number(afterCreateRows.find((row: any) => row.batchNo === batchB).stock)).toBe(8)
+
+    await createdRow.getByRole('button', { name: '删除' }).click()
+    await page.getByRole('button', { name: '确认删除' }).click()
+    await expect(page.getByText('退货记录已删除')).toBeVisible({ timeout: 15000 })
+    await expect(createdRow).toBeHidden({ timeout: 15000 })
+
+    const afterDeleteRows = await getInventoryRows(token, material.id)
+    expect(Number(afterDeleteRows.find((row: any) => row.batchNo === batchA).stock)).toBe(9)
+    expect(Number(afterDeleteRows.find((row: any) => row.batchNo === batchB).stock)).toBe(8)
+  })
+
+  test('SR-UI-BATCH-02. 页面详情取消已发货退货后只恢复所选批次', async ({ page }) => {
+    const token = await apiLogin('admin')
+    const suffix = Date.now()
+    const { category, location, supplier } = await getRefs(token)
+    expect(category?.id).toBeTruthy()
+    expect(location?.id).toBeTruthy()
+    expect(supplier?.id).toBeTruthy()
+
+    const material = await createSupplierReturnMaterial(token, suffix, category.id, location.id, supplier.id)
+    const batchA = `E2E-SR-CANCEL-A-${suffix}`
+    const batchB = `E2E-SR-CANCEL-B-${suffix}`
+    await createInboundBatch(token, material.id, batchA, 9, material.price, location.id, supplier.id)
+    await createInboundBatch(token, material.id, batchB, 8, material.price, location.id, supplier.id)
+
+    const beforeRows = await getInventoryRows(token, material.id)
+    const rowA = beforeRows.find((row: any) => row.batchNo === batchA)
+    const rowB = beforeRows.find((row: any) => row.batchNo === batchB)
+    expect(rowA?.batchId).toBeTruthy()
+    expect(rowB?.batchId).toBeTruthy()
+
+    await loginAs(page, 'admin')
+    await page.goto(`${FE_BASE}/supplier-returns`, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByRole('heading', { name: '退货给供应商' })).toBeVisible({ timeout: 15000 })
+
+    await page.getByRole('button', { name: '新建退货' }).click()
+    await page.getByTestId('supplier-return-material-select').click()
+    await page.getByTestId(`option-${material.id}`).click()
+    await page.getByTestId('supplier-return-batch-select').click()
+    await page.getByTestId(`option-${rowA.batchId}`).click()
+    await page.getByTestId('supplier-return-quantity-input').fill('4')
+    await page.getByTestId('supplier-return-supplier-select').click()
+    await page.getByTestId(`option-${supplier.id}`).click()
+    await page.getByTestId('supplier-return-reason-select').click()
+    await page.getByTestId('option-damaged').click()
+    await page.getByTestId('supplier-return-confirm-btn').click()
+
+    await expect(page.getByText('退货记录创建成功')).toBeVisible({ timeout: 15000 })
+    const createdRow = page.locator('tbody tr', { hasText: batchA }).first()
+    await expect(createdRow).toBeVisible({ timeout: 15000 })
+
+    await createdRow.getByRole('button', { name: '详情' }).click()
+    const detailDialog = page.getByRole('dialog', { name: '退货详情' })
+    await expect(detailDialog).toBeVisible({ timeout: 15000 })
+    await page.getByRole('button', { name: '标记为已发货' }).click()
+    await expect(page.getByText('状态更新成功')).toBeVisible({ timeout: 15000 })
+    await expect(detailDialog.getByText('已发货', { exact: true })).toBeVisible({ timeout: 15000 })
+    await detailDialog.getByRole('button', { name: '取消退货' }).click()
+    await page.getByRole('button', { name: '确认取消' }).click()
+    await expect(page.getByText('状态更新成功')).toBeVisible({ timeout: 15000 })
+    await expect(detailDialog.getByText('已取消', { exact: true })).toBeVisible({ timeout: 15000 })
+
+    const afterCancelRows = await getInventoryRows(token, material.id)
+    expect(Number(afterCancelRows.find((row: any) => row.batchNo === batchA).stock)).toBe(9)
+    expect(Number(afterCancelRows.find((row: any) => row.batchNo === batchB).stock)).toBe(8)
+
+    const returnList = await apiFetch(token, 'GET', '/supplier-returns?page=1&pageSize=100&status=cancelled')
+    expect(returnList.status).toBe(200)
+    expect((returnList.data?.data?.list || []).some((row: any) => row.batchNo === batchA && row.status === 'cancelled')).toBe(true)
   })
 })
 

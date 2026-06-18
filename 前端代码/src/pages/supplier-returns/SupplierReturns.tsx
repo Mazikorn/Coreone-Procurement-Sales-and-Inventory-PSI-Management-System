@@ -24,6 +24,7 @@ import { supplierReturnApi, purchaseOrderApi, inboundApi } from '@/api/inventory
 import { materialApi, supplierApi } from '@/api/master'
 import type { SupplierReturnRecord, Material, Supplier, PurchaseOrder, InboundRecord, Batch } from '@/types'
 import { formatDate, formatCurrency } from '@/lib/utils'
+import { getUserRole } from '@/lib/permissions'
 import { toast } from 'sonner'
 
 const statusMap: Record<string, { label: string; color: string; bg: string; icon: React.ElementType }> = {
@@ -42,6 +43,55 @@ const reasonOptions = [
   { value: 'other', label: '其他' },
 ]
 
+export interface SupplierReturnFormState {
+  materialId: string
+  quantity: number
+  batchId: string
+  supplierId: string
+  purchaseOrderId: string
+  inboundRecordId: string
+  reason: string
+  refundAmount: string
+  trackingNo: string
+  remark: string
+}
+
+export function validateSupplierReturnForm(
+  form: SupplierReturnFormState,
+  selectedMaterial: Material | undefined,
+  availableBatches: Batch[]
+): string | null {
+  if (!form.materialId || form.quantity <= 0 || !form.reason) {
+    return '请填写物料、退货数量和退货原因'
+  }
+  if (!selectedMaterial) {
+    return '请选择有效物料'
+  }
+  if (form.quantity > selectedMaterial.stock) {
+    return '退货数量不能超过当前库存'
+  }
+  if (availableBatches.length === 0) {
+    return '该物料无可用批次，不能创建退货'
+  }
+  if (!form.batchId) {
+    return '请选择退货批次'
+  }
+
+  const selectedBatch = availableBatches.find(batch => batch.id === form.batchId)
+  if (!selectedBatch) {
+    return '请选择有效退货批次'
+  }
+  if (form.quantity > selectedBatch.remaining) {
+    return '退货数量不能超过所选批次剩余量'
+  }
+
+  return null
+}
+
+function canAccessPurchaseOrders(role: string | null): boolean {
+  return role === 'admin' || role === 'procurement'
+}
+
 export default function SupplierReturns() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [materials, setMaterials] = useState<Material[]>([])
@@ -59,9 +109,11 @@ export default function SupplierReturns() {
   const [detailRecord, setDetailRecord] = useState<SupplierReturnRecord | null>(null)
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [recordToDelete, setRecordToDelete] = useState<SupplierReturnRecord | null>(null)
+  const [statusCancelConfirmOpen, setStatusCancelConfirmOpen] = useState(false)
+  const [recordToCancelStatus, setRecordToCancelStatus] = useState<SupplierReturnRecord | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<SupplierReturnFormState>({
     materialId: '',
     quantity: 1,
     batchId: '',
@@ -76,10 +128,13 @@ export default function SupplierReturns() {
 
   const fetchRefs = async () => {
     try {
+      const allowPurchaseOrders = canAccessPurchaseOrders(getUserRole())
       const [mRes, sRes, poRes, inRes] = await Promise.all([
         materialApi.getList({ page: 1, pageSize: 999, status: 'active' }),
         supplierApi.getList({ page: 1, pageSize: 999, status: 'active' }),
-        purchaseOrderApi.getList({ page: 1, pageSize: 999 }),
+        allowPurchaseOrders
+          ? purchaseOrderApi.getList({ page: 1, pageSize: 999 })
+          : Promise.resolve({ list: [], pagination: { total: 0 } }),
         inboundApi.getList({ page: 1, pageSize: 999 }),
       ])
       setMaterials((mRes as any)?.list || [])
@@ -165,8 +220,9 @@ export default function SupplierReturns() {
   }
 
   const handleCreate = async () => {
-    if (!form.materialId || form.quantity <= 0 || !form.reason) {
-      toast.error('请填写物料、退货数量和退货原因')
+    const validationError = validateSupplierReturnForm(form, materials.find((m) => m.id === form.materialId), materialBatches)
+    if (validationError) {
+      toast.error(validationError)
       return
     }
     setIsSubmitting(true)
@@ -202,6 +258,8 @@ export default function SupplierReturns() {
     try {
       await supplierReturnApi.updateStatus(id, status)
       toast.success('状态更新成功')
+      setStatusCancelConfirmOpen(false)
+      setRecordToCancelStatus(null)
       refresh()
       if (detailRecord?.id === id) {
         setDetailRecord({ ...detailRecord, status: status as any })
@@ -214,6 +272,11 @@ export default function SupplierReturns() {
   const openDelete = (row: SupplierReturnRecord) => {
     setRecordToDelete(row)
     setDeleteConfirmOpen(true)
+  }
+
+  const openStatusCancelConfirm = (row: SupplierReturnRecord) => {
+    setRecordToCancelStatus(row)
+    setStatusCancelConfirmOpen(true)
   }
 
   const handleDelete = async () => {
@@ -235,6 +298,7 @@ export default function SupplierReturns() {
   }
 
   const selectedMaterial = materials.find((m) => m.id === form.materialId)
+  const selectedBatch = materialBatches.find((b) => b.id === form.batchId)
 
   return (
     <div className="space-y-6">
@@ -419,8 +483,9 @@ export default function SupplierReturns() {
                   物料 <span className="text-red-500">*</span>
                 </label>
                 <SearchableSelect
+                  testId="supplier-return-material-select"
                   value={form.materialId}
-                  onChange={(val) => setForm({ ...form, materialId: val })}
+                  onChange={(val) => setForm({ ...form, materialId: val, batchId: '', quantity: 1 })}
                   options={materials.map((m) => ({
                     value: m.id,
                     label: `${m.name} (${m.code}) - 库存 ${m.stock} ${m.unit}`,
@@ -435,15 +500,19 @@ export default function SupplierReturns() {
                     退货数量 <span className="text-red-500">*</span>
                   </label>
                   <input
+                    data-testid="supplier-return-quantity-input"
                     type="number"
                     min={1}
-                    max={selectedMaterial?.stock || undefined}
+                    max={selectedBatch?.remaining || selectedMaterial?.stock || undefined}
                     value={form.quantity}
                     onChange={(e) => setForm({ ...form, quantity: Number(e.target.value) })}
                     className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm text-gray-700 focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500 transition-colors"
                   />
                   {selectedMaterial && (
-                    <p className="text-xs text-gray-400 mt-1">最大可退: {selectedMaterial.stock}</p>
+                    <p className="text-xs text-gray-400 mt-1">
+                      最大可退: {selectedBatch?.remaining ?? selectedMaterial.stock}
+                      {selectedBatch ? '（按所选批次）' : '（按当前库存）'}
+                    </p>
                   )}
                 </div>
                 <div>
@@ -451,6 +520,7 @@ export default function SupplierReturns() {
                     退货批次 <span className="text-red-500">*</span>
                   </label>
                   <SearchableSelect
+                    testId="supplier-return-batch-select"
                     value={form.batchId}
                     onChange={(val) => setForm({ ...form, batchId: val })}
                     options={[
@@ -478,6 +548,7 @@ export default function SupplierReturns() {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1.5">供应商</label>
                   <SearchableSelect
+                    testId="supplier-return-supplier-select"
                     value={form.supplierId}
                     onChange={(val) => setForm({ ...form, supplierId: val })}
                     options={suppliers.map((s) => ({
@@ -531,6 +602,7 @@ export default function SupplierReturns() {
                   退货原因 <span className="text-red-500">*</span>
                 </label>
                 <SearchableSelect
+                  testId="supplier-return-reason-select"
                   value={form.reason}
                   onChange={(val) => setForm({ ...form, reason: val })}
                   options={[
@@ -584,6 +656,7 @@ export default function SupplierReturns() {
                 取消
               </button>
               <button
+                data-testid="supplier-return-confirm-btn"
                 onClick={handleCreate}
                 disabled={isSubmitting}
                 className="px-4 h-10 bg-blue-500 text-white text-sm rounded-md hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
@@ -691,7 +764,7 @@ export default function SupplierReturns() {
                     )}
                     {detailRecord.status !== 'cancelled' && (
                       <button
-                        onClick={() => handleStatusChange(detailRecord.id, 'cancelled')}
+                        onClick={() => openStatusCancelConfirm(detailRecord)}
                         className="px-3 py-1.5 bg-gray-100 text-gray-600 text-xs rounded-md hover:bg-gray-200 transition-colors"
                       >
                         取消退货
@@ -743,6 +816,16 @@ export default function SupplierReturns() {
         confirmVariant="danger"
         onConfirm={handleDelete}
         onCancel={() => { setDeleteConfirmOpen(false); setRecordToDelete(null) }}
+      />
+
+      <ConfirmDialog
+        open={statusCancelConfirmOpen && !!recordToCancelStatus}
+        title="确认取消退货"
+        description={`确定要取消退货记录 ${recordToCancelStatus?.returnNo} 吗？取消后将恢复对应库存和批次余额。`}
+        confirmText="确认取消"
+        confirmVariant="danger"
+        onConfirm={() => recordToCancelStatus && handleStatusChange(recordToCancelStatus.id, 'cancelled')}
+        onCancel={() => { setStatusCancelConfirmOpen(false); setRecordToCancelStatus(null) }}
       />
     </div>
   )

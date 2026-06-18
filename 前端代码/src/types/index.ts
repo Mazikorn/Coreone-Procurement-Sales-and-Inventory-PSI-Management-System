@@ -30,10 +30,12 @@ export interface User {
   realName: string
   role: string
   permissions: string[]
+  dataScope?: 'all' | 'dept' | 'self'
   department?: string
   phone?: string
   email?: string
   status: 'active' | 'inactive'
+  lastLogin?: string | null
   createdAt: string
 }
 
@@ -57,6 +59,7 @@ export interface Category {
   parentId?: string | null
   level: number
   sortOrder: number
+  status?: 'active' | 'inactive'
   children?: Category[]
   count?: number
   isLeaf?: boolean
@@ -68,6 +71,7 @@ export interface Category {
 export interface Material {
   id: string
   code: string
+  barcode?: string
   name: string
   spec: string
   unit: string
@@ -90,6 +94,37 @@ export interface Material {
   stockLogs?: StockLog[]
   createdAt: string
   updatedAt: string
+}
+
+export interface MaterialDeleteCheck {
+  material: Pick<Material, 'id' | 'code' | 'name'>
+  deletable: boolean
+  impacts: {
+    currentInventoryCount: number
+    inventoryLocationCount: number
+    batchCount: number
+    inboundCount: number
+    outboundCount: number
+    bomCount: number
+    returnCount: number
+    scrapCount: number
+    supplierReturnCount: number
+    stockLogCount: number
+    usageTrackingCount: number
+  }
+  reasons: string[]
+}
+
+export interface MaterialStatusCheck {
+  material: Pick<Material, 'id' | 'code' | 'name'>
+  targetStatus: 'active' | 'inactive'
+  canChange: boolean
+  impacts: {
+    currentInventoryCount: number
+    inventoryLocationCount: number
+    activeBomCount: number
+  }
+  reasons: string[]
 }
 
 // ===== 批次 =====
@@ -144,15 +179,45 @@ export interface Location {
   createdAt: string
 }
 
+export interface LocationDeleteCheck {
+  location: Pick<Location, 'id' | 'code' | 'name'>
+  deletable: boolean
+  impacts: {
+    childLocationCount: number
+    materialCount: number
+    inventoryCount: number
+    inventoryLocationCount: number
+    inboundCount: number
+    transferCount: number
+  }
+  reasons: string[]
+}
+
+export interface LocationStatusCheck {
+  location: Pick<Location, 'id' | 'code' | 'name'>
+  targetStatus: 'active' | 'inactive'
+  canChange: boolean
+  impacts: {
+    activeChildLocationCount: number
+    activeMaterialCount: number
+    inventoryCount: number
+    inventoryLocationCount: number
+  }
+  reasons: string[]
+}
+
 // ===== 库存 =====
 export interface InventoryItem {
   id: string
   materialId: string
+  batchId?: string | null
+  batchNo?: string | null
   code: string
   name: string
   spec: string
   unit: string
   stock: number
+  totalStock?: number
   minStock: number
   maxStock: number
   availableStock: number
@@ -160,7 +225,7 @@ export interface InventoryItem {
   locationName?: string
   supplierId?: string
   supplierName?: string
-  status: 'normal' | 'low-stock' | 'warning' | 'expired'
+  status: 'normal' | 'low-stock' | 'warning' | 'expired' | 'out-of-stock'
   lastInbound?: string
   lastOutbound?: string
 }
@@ -169,15 +234,38 @@ export interface InventoryStats {
   totalMaterials: number
   totalStockValue: number
   totalStockCount?: number
+  totalQuantity?: number
   normalCount?: number
   lowStockCount: number
+  expiringSoonCount?: number
   expiringCount: number
   expiredCount: number
+  outOfStockCount?: number
   categoryDistribution: Array<{
     categoryId: string
     categoryName: string
     count: number
   }>
+}
+
+export interface InventoryConsistencyIssue {
+  code: string
+  severity: 'critical' | 'warning'
+  entityType: string
+  entityId: string
+  entityCode?: string | null
+  entityName?: string | null
+  message: string
+  impacts: Record<string, unknown>
+}
+
+export interface InventoryConsistencyCheck {
+  summary: {
+    issueCount: number
+    criticalCount: number
+    warningCount: number
+  }
+  issues: InventoryConsistencyIssue[]
 }
 
 // ===== 入库 =====
@@ -228,6 +316,7 @@ export interface InboundFormData {
 
 // ===== 出库 =====
 export type OutboundType = 'project' | 'transfer' | 'scrap'
+export type OutboundCostStatus = 'pending_cost' | 'costed' | 'cost_exception' | 'recalculated'
 
 export interface OutboundItem {
   id: string
@@ -240,6 +329,8 @@ export interface OutboundItem {
   unit: string
   unitCost: number
   totalCost: number
+  usage?: 'self' | 'external'
+  receiver?: string | null
 }
 
 export interface OutboundRecord {
@@ -248,12 +339,15 @@ export interface OutboundRecord {
   type: OutboundType
   projectId?: string
   projectName?: string
+  caseNo?: string | null
+  sampleCount?: number
   items: OutboundItem[]
   totalCost: number
   abcTotalCost?: number
   abcActivityCost?: number
   feeAmount?: number
   profit?: number
+  costStatus?: OutboundCostStatus
   operator: string
   approver?: string
   approvedAt?: string
@@ -267,7 +361,10 @@ export interface OutboundFormData {
   projectId?: string
   items: Array<{
     materialId: string
+    batchId?: string
     quantity: number
+    usage?: 'self' | 'external'
+    receiver?: string
   }>
   remark?: string
 }
@@ -282,6 +379,7 @@ export interface Project {
   cycle?: string
   bomId?: string
   bomName?: string
+  bomVersion?: string
   supportableSamples?: number
   status: 'active' | 'inactive'
   manager?: string
@@ -294,7 +392,59 @@ export interface Project {
   createdAt: string
 }
 
+export interface ProjectDeleteCheck {
+  project: Pick<Project, 'id' | 'code' | 'name'>
+  deletable: boolean
+  impacts: {
+    bomCount: number
+    directBomCount: number
+    serviceBomCount: number
+    outboundCount: number
+    lisCaseCount: number
+  }
+  reasons: string[]
+}
+
+export interface ProjectStatusCheck {
+  project: Pick<Project, 'id' | 'code' | 'name'>
+  targetStatus: 'active' | 'inactive'
+  canChange: boolean
+  impacts: {
+    bomCount: number
+    directBomCount: number
+    serviceBomCount: number
+    outboundCount: number
+    lisCaseCount: number
+    invalidBomCount: number
+  }
+  reasons: string[]
+  warnings: string[]
+}
+
 // ===== BOM =====
+export interface BOMDeleteCheck {
+  bom: Pick<BOM, 'id' | 'code' | 'name'>
+  deletable: boolean
+  impacts: {
+    projectCount: number
+    outboundDetailCount: number
+  }
+  reasons: string[]
+}
+
+export interface BOMStatusCheck {
+  bom: Pick<BOM, 'id' | 'code' | 'name'>
+  targetStatus: 'active' | 'inactive'
+  canChange: boolean
+  impacts: {
+    activeProjectCount: number
+    inactiveMaterialCount: number
+    inactiveEquipmentCount: number
+    inactiveEquipmentTypeCount: number
+  }
+  reasons: string[]
+}
+
 export interface BOMMaterial {
   id: string
   name: string
@@ -311,6 +461,41 @@ export interface BOMVersion {
   version: string
   updatedAt: string
   changeLog: string
+  effectiveScope?: 'future_only' | 'retroactive'
+  impactSummary?: {
+    totalOutboundCount: number
+    affectedMonthCount: number
+    closedMonthCount: number
+    recalculableMonthCount: number
+    months?: Array<{
+      yearMonth: string
+      periodStatus: string
+      outboundCount: number
+      recalculable: boolean
+    }>
+  } | null
+  changedBy?: string | null
+  isCurrent?: boolean
+  snapshot?: {
+    materials?: Array<{
+      materialId: string
+      materialName?: string | null
+      usagePerSample?: number | null
+      unit?: string | null
+      groupName?: string | null
+    }>
+  }
+  diff?: {
+    changedFields?: Array<{ field: string; label: string; before: unknown; after: unknown }>
+    addedMaterials?: Array<{ materialId: string; materialName?: string | null }>
+    removedMaterials?: Array<{ materialId: string; materialName?: string | null }>
+    changedMaterials?: Array<{
+      materialId: string
+      materialName?: string | null
+      before?: { usagePerSample?: number | null; unit?: string | null; groupName?: string | null }
+      after?: { usagePerSample?: number | null; unit?: string | null; groupName?: string | null }
+    }>
+  }
 }
 
 export interface BOMGeneralReagent {
@@ -415,7 +600,10 @@ export interface Alert {
   currentStock?: number
   threshold?: number
   message: string
-  status: 'pending' | 'processed' | 'ignored'
+  status: 'pending' | 'processed' | 'ignored' | 'auto_resolved' | 'dismissed' | 'handled'
+  handledBy?: string
+  handledAt?: string
+  remark?: string
   createdAt: string
 }
 
@@ -492,6 +680,11 @@ export interface FullCostReport {
     indirectCost: number
     totalCost: number
     unitCost: number
+    standardMaterialCost: number
+    standardLaborCost: number
+    standardEquipmentCost: number
+    standardIndirectCost: number
+    standardTotalCost: number
   }>
 }
 
@@ -503,7 +696,19 @@ export interface Role {
   description?: string
   permissions: string[]
   status: 'active' | 'inactive'
+  dataScope?: 'all' | 'dept' | 'self'
+  userCount?: number
+  associatedUsers?: Array<{
+    id: string
+    username: string
+    realName: string
+    department?: string | null
+    status: 'active' | 'inactive'
+    lastLogin?: string | null
+    createdAt?: string
+  }>
   createdAt: string
+  updatedAt?: string
 }
 
 export interface OperationLog {
@@ -511,6 +716,8 @@ export interface OperationLog {
   userId: string
   username: string
   operation: string
+  operationType?: string
+  module?: string
   description: string
   requestData?: Record<string, unknown>
   responseData?: Record<string, unknown>
@@ -583,7 +790,9 @@ export interface ScrapRecord {
   scrapNo: string
   materialId: string
   materialName?: string
+  unit?: string
   batchId?: string
+  batchNo?: string
   quantity: number
   reason: string
   operator: string

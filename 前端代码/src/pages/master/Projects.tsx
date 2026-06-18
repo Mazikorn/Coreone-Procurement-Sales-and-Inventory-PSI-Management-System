@@ -5,6 +5,8 @@ import { ProjectCreateModal } from './components/ProjectCreateModal'
 import { ProjectEditModal } from './components/ProjectEditModal'
 import { ProjectCopyModal } from './components/ProjectCopyModal'
 import { ProjectDeleteModal } from './components/ProjectDeleteModal'
+import { ProjectStatusModal } from './components/ProjectStatusModal'
+import { ProjectBatchStatusModal } from './components/ProjectBatchStatusModal'
 import { ProjectImportModal } from './components/ProjectImportModal'
 
 export default function Projects() {
@@ -22,20 +24,22 @@ export default function Projects() {
             管理病理实验室检测服务类型和BOM清单关联，监控物料成本与库存支撑能力
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => page.setModalType('import')}
-            className="inline-flex items-center gap-2 px-4 py-2.5 bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 text-sm font-medium shadow-sm transition-colors"
-          >
-            <Upload className="w-4 h-4" />导入
-          </button>
-          <button
-            onClick={page.openCreate}
-            className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-500 text-white rounded-md hover:bg-blue-600 text-sm font-medium shadow-sm transition-colors"
-          >
-            <Plus className="w-4 h-4" />新建服务
-          </button>
-        </div>
+        {page.canWrite && (
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => page.setModalType('import')}
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 text-sm font-medium shadow-sm transition-colors"
+            >
+              <Upload className="w-4 h-4" />导入
+            </button>
+            <button
+              onClick={page.openCreate}
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-500 text-white rounded-md hover:bg-blue-600 text-sm font-medium shadow-sm transition-colors"
+            >
+              <Plus className="w-4 h-4" />新建服务
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Stats Grid */}
@@ -70,6 +74,7 @@ export default function Projects() {
         statusFilter={page.statusFilter}
         bomFilter={page.bomFilter}
         selectedIds={page.selectedIds}
+        canWrite={page.canWrite}
         onKeywordChange={page.setKeyword}
         onTypeFilterChange={(v) => { page.setTypeFilter(v); page.setPage(1) }}
         onStatusFilterChange={(v) => { page.setStatusFilter(v); page.setPage(1) }}
@@ -82,11 +87,11 @@ export default function Projects() {
         onPageSizeChange={page.setPageSize}
         onOpenEdit={page.openEdit}
         onOpenCopy={page.openCopy}
+        onToggleStatus={page.openStatus}
+        onOpenDelete={page.openDelete}
         onBatchEnable={page.batchEnable}
         onBatchDisable={page.batchDisable}
         onClearSelection={() => page.setSelectedIds(new Set())}
-        onSetEditingRow={page.setEditingRow}
-        onSetModalType={(t) => page.setModalType(t)}
       />
 
       {/* Modals */}
@@ -134,13 +139,40 @@ export default function Projects() {
       <ProjectDeleteModal
         open={page.modalType === 'delete'}
         editingRow={page.editingRow}
-        onClose={() => page.setModalType(null)}
+        deleteCheck={page.deleteCheck}
+        checkingDelete={page.checkingDelete}
+        isSubmitting={page.isSubmitting}
+        onClose={page.closeModal}
         onConfirm={page.handleDeleteConfirm}
+      />
+
+      <ProjectStatusModal
+        open={Boolean(page.statusTarget)}
+        target={page.statusTarget}
+        targetStatus={page.statusTargetStatus}
+        statusCheck={page.statusCheck}
+        checkingStatus={page.checkingStatus}
+        updatingStatus={page.updatingStatus}
+        onClose={page.closeStatusModal}
+        onConfirm={page.handleStatusConfirm}
+      />
+
+      <ProjectBatchStatusModal
+        open={Boolean(page.batchStatusAction)}
+        action={page.batchStatusAction}
+        targetsCount={page.batchStatusTargets.length}
+        results={page.batchStatusResults}
+        checking={page.checkingBatchStatus}
+        submitting={page.submittingBatchStatus}
+        onClose={page.closeBatchStatusModal}
+        onConfirm={page.confirmBatchStatus}
       />
 
       <ProjectImportModal
         open={page.modalType === 'import'}
         onClose={() => page.setModalType(null)}
+        importing={page.isSubmitting}
+        onImport={page.handleImportProjects}
       />
     </div>
   )

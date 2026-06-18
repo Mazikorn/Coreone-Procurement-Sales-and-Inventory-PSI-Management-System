@@ -1,15 +1,50 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, X, ArrowRightLeft, Trash2 } from 'lucide-react'
+import { ArrowRightLeft, Trash2 } from 'lucide-react'
 import { usePagination } from '@/hooks/usePagination'
 import { Pagination } from '@/components/ui/Pagination'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import { Modal } from '@/components/ui/Modal'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
-import { transferApi } from '@/api/inventory'
+import { inventoryApi, transferApi } from '@/api/inventory'
 import { materialApi, locationApi } from '@/api/master'
 import type { TransferRecord, Material, Location } from '@/types'
 import { formatDate } from '@/lib/utils'
 import { toast } from 'sonner'
+
+export interface TransferFormState {
+  materialId: string
+  batchNo: string
+  quantity: number
+  fromLocationId: string
+  toLocationId: string
+  remark: string
+}
+
+export function validateTransferForm(
+  form: TransferFormState,
+  selectedMaterial: Material | undefined,
+  sourceLocationStock: number | null
+): string | null {
+  if (!form.materialId || form.quantity <= 0 || !form.fromLocationId || !form.toLocationId) {
+    return '请填写物料、数量、来源库位和目标库位'
+  }
+  if (form.fromLocationId === form.toLocationId) {
+    return '来源库位和目标库位不能相同'
+  }
+  if (!selectedMaterial) {
+    return '请选择有效物料'
+  }
+
+  const stockLimit = sourceLocationStock ?? selectedMaterial.stock
+  if (form.quantity > stockLimit) {
+    return `调拨数量不能超过来源库位可用库存 ${stockLimit} ${selectedMaterial.unit}`
+  }
+  if (form.quantity > selectedMaterial.stock) {
+    return `调拨数量不能超过当前库存 ${selectedMaterial.stock} ${selectedMaterial.unit}`
+  }
+
+  return null
+}
 
 export default function Transfers() {
   const [materials, setMaterials] = useState<Material[]>([])
@@ -18,7 +53,9 @@ export default function Transfers() {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [recordToDelete, setRecordToDelete] = useState<TransferRecord | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [form, setForm] = useState({
+  const [sourceLocationStock, setSourceLocationStock] = useState<number | null>(null)
+  const [sourceStockLoading, setSourceStockLoading] = useState(false)
+  const [form, setForm] = useState<TransferFormState>({
     materialId: '',
     batchNo: '',
     quantity: 1,
@@ -62,9 +99,68 @@ export default function Transfers() {
     deps: [],
   })
 
+  const selectedMaterial = materials.find(m => m.id === form.materialId)
+  const locationNameById = new Map(locations.map(location => [location.id, location.name]))
+
+  const handleMaterialChange = (materialId: string) => {
+    const nextMaterial = materials.find(m => m.id === materialId)
+    const nextFromLocationId = nextMaterial?.locationId || ''
+    setForm(prev => ({
+      ...prev,
+      materialId,
+      quantity: 1,
+      fromLocationId: nextFromLocationId,
+      toLocationId: prev.toLocationId === nextFromLocationId ? '' : prev.toLocationId,
+    }))
+  }
+
+  const handleFromLocationChange = (fromLocationId: string) => {
+    setForm(prev => ({
+      ...prev,
+      fromLocationId,
+      toLocationId: prev.toLocationId === fromLocationId ? '' : prev.toLocationId,
+    }))
+  }
+
+  useEffect(() => {
+    let cancelled = false
+
+    const fetchSourceLocationStock = async () => {
+      if (!form.materialId || !form.fromLocationId) {
+        setSourceLocationStock(null)
+        return
+      }
+      setSourceStockLoading(true)
+      try {
+        const res: any = await inventoryApi.getList({
+          page: 1,
+          pageSize: 20,
+          materialId: form.materialId,
+          locationId: form.fromLocationId,
+        })
+        if (cancelled) return
+        const row = (res?.list || []).find((item: any) => item.materialId === form.materialId && item.locationId === form.fromLocationId)
+        setSourceLocationStock(Number(row?.stock || 0))
+      } catch (e) {
+        if (!cancelled) {
+          console.error(e)
+          setSourceLocationStock(null)
+        }
+      } finally {
+        if (!cancelled) setSourceStockLoading(false)
+      }
+    }
+
+    fetchSourceLocationStock()
+    return () => {
+      cancelled = true
+    }
+  }, [form.materialId, form.fromLocationId])
+
   const handleCreate = async () => {
-    if (!form.materialId || form.quantity <= 0 || !form.toLocationId) {
-      toast.error('请填写物料、数量和目标库位')
+    const validationError = validateTransferForm(form, selectedMaterial, sourceLocationStock)
+    if (validationError) {
+      toast.error(validationError)
       return
     }
     setIsSubmitting(true)
@@ -75,7 +171,7 @@ export default function Transfers() {
       setForm({ materialId: '', batchNo: '', quantity: 1, fromLocationId: '', toLocationId: '', remark: '' })
       refresh()
     } catch (e) {
-      toast.error('调拨登记失败')
+      toast.error((e as any)?.response?.data?.message || '调拨登记失败')
     } finally {
       setIsSubmitting(false)
     }
@@ -98,6 +194,8 @@ export default function Transfers() {
       toast.error('撤销失败')
     }
   }
+
+  const sourceStockLimit = sourceLocationStock ?? selectedMaterial?.stock
 
   return (
     <div className="space-y-6">
@@ -123,6 +221,7 @@ export default function Transfers() {
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">调拨单号</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">物料</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">数量</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">来源库位</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">目标库位</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作人</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">调拨时间</th>
@@ -132,19 +231,24 @@ export default function Transfers() {
             </thead>
             <tbody className="divide-y divide-gray-100">
               {loading ? (
-                <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-400">加载中...</td></tr>
+                <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-400">加载中...</td></tr>
               ) : data.length === 0 ? (
-                <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-400">暂无数据</td></tr>
+                <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-400">暂无数据</td></tr>
               ) : (
                 data.map(row => {
                   const mat = materials.find(m => m.id === row.materialId)
+                  const sourceLocationName = row.fromLocationName || (row.fromLocationId ? locationNameById.get(row.fromLocationId) : '') || '-'
+                  const targetLocationName = row.toLocationName || (row.toLocationId ? locationNameById.get(row.toLocationId) : '') || row.toLocationId
                   return (
                     <tr key={row.id} className="hover:bg-gray-50 transition-colors duration-150">
                       <td className="px-4 py-3 font-mono text-gray-600">{row.inboundNo}</td>
                       <td className="px-4 py-3 font-medium text-gray-900">{mat?.name || row.materialName || row.materialId}</td>
                       <td className="px-4 py-3 text-right">{row.quantity} {mat?.unit}</td>
                       <td className="px-4 py-3">
-                        <span className="px-2 py-0.5 rounded text-xs bg-blue-50 text-blue-700">{row.locationName || row.toLocationId}</span>
+                        <span className="px-2 py-0.5 rounded text-xs bg-gray-100 text-gray-700">{sourceLocationName}</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="px-2 py-0.5 rounded text-xs bg-blue-50 text-blue-700">{targetLocationName}</span>
                       </td>
                       <td className="px-4 py-3 text-gray-600">{row.operator}</td>
                       <td className="px-4 py-3 text-gray-500">{formatDate(row.createdAt)}</td>
@@ -179,11 +283,12 @@ export default function Transfers() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">物料 <span className="text-red-500">*</span></label>
               <SearchableSelect
+                testId="transfer-material-select"
                 value={form.materialId}
-                onChange={val => setForm({ ...form, materialId: val })}
+                onChange={handleMaterialChange}
                 options={materials.map(m => ({
                   value: m.id,
-                  label: `${m.name} (${m.code}) - 库存 ${m.stock} ${m.unit}`,
+                  label: `${m.name} (${m.code}) - 库存 ${m.stock} ${m.unit}${m.locationName ? ` / ${m.locationName}` : ''}`,
                 }))}
                 placeholder="请选择"
               />
@@ -192,16 +297,26 @@ export default function Transfers() {
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">数量 <span className="text-red-500">*</span></label>
                 <input
+                  data-testid="transfer-quantity-input"
                   type="number"
                   min={1}
+                  max={sourceStockLimit || undefined}
                   value={form.quantity}
                   onChange={e => setForm({ ...form, quantity: Number(e.target.value) })}
                   className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
+                {selectedMaterial && (
+                  <p className="mt-1 text-xs text-gray-400">
+                    {sourceStockLoading
+                      ? '正在读取来源库位库存...'
+                      : `来源库位可用：${sourceStockLimit ?? 0} ${selectedMaterial.unit} / 总库存：${selectedMaterial.stock} ${selectedMaterial.unit}`}
+                  </p>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">批号</label>
                 <input
+                  data-testid="transfer-batch-no-input"
                   type="text"
                   value={form.batchNo}
                   onChange={e => setForm({ ...form, batchNo: e.target.value })}
@@ -211,10 +326,11 @@ export default function Transfers() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">来源库位</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">来源库位 <span className="text-red-500">*</span></label>
                 <SearchableSelect
+                  testId="transfer-from-location-select"
                   value={form.fromLocationId}
-                  onChange={val => setForm({ ...form, fromLocationId: val })}
+                  onChange={handleFromLocationChange}
                   options={locations.map(l => ({
                     value: l.id,
                     label: l.name,
@@ -225,9 +341,10 @@ export default function Transfers() {
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">目标库位 <span className="text-red-500">*</span></label>
                 <SearchableSelect
+                  testId="transfer-to-location-select"
                   value={form.toLocationId}
                   onChange={val => setForm({ ...form, toLocationId: val })}
-                  options={locations.map(l => ({
+                  options={locations.filter(l => l.id !== form.fromLocationId).map(l => ({
                     value: l.id,
                     label: l.name,
                   }))}
@@ -238,6 +355,7 @@ export default function Transfers() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">备注</label>
               <textarea
+                data-testid="transfer-remark-input"
                 value={form.remark}
                 onChange={e => setForm({ ...form, remark: e.target.value })}
                 rows={2}
@@ -247,7 +365,7 @@ export default function Transfers() {
           </div>
           <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-gray-200">
             <button onClick={() => setModalOpen(false)} className="px-4 h-10 text-sm text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors">取消</button>
-            <button onClick={handleCreate} disabled={isSubmitting} className="px-4 h-10 text-sm text-white bg-blue-500 rounded-md hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">{isSubmitting ? '提交中...' : '确认调拨'}</button>
+            <button data-testid="transfer-confirm-btn" onClick={handleCreate} disabled={isSubmitting || sourceStockLoading} className="px-4 h-10 text-sm text-white bg-blue-500 rounded-md hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">{isSubmitting ? '提交中...' : '确认调拨'}</button>
           </div>
         </Modal>
       )}

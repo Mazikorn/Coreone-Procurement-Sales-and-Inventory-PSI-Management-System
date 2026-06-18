@@ -1,9 +1,10 @@
-import { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useMemo } from 'react'
 import { Bell, User, LogOut, Search, ChevronRight, Settings, FileText } from 'lucide-react'
 import { toast } from 'sonner'
-import { useLocation } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import { alertsApi } from '@/api/alerts'
+import { getAllowedPaths, getUserRole } from '@/lib/permissions'
 
 function formatTimeAgo(dateStr: string): string {
   if (!dateStr) return ''
@@ -28,7 +29,6 @@ const breadcrumbMap: Record<string, string> = {
   '/locations': '库位管理',
   '/projects': '检测项目',
   '/bom': 'BOM清单',
-  '/cost-analysis': '物料成本分析',
   '/reconciliation': '消耗对账',
   '/alerts': '预警中心',
   '/purchase-orders': '采购订单',
@@ -76,14 +76,70 @@ interface NotificationItem {
   level?: string
 }
 
+interface SearchRouteItem {
+  label: string
+  path: string
+  keywords: string
+}
+
+const globalSearchItems: SearchRouteItem[] = [
+  { label: '仪表盘', path: '/', keywords: '首页 概览 dashboard' },
+  { label: '预警中心', path: '/alerts', keywords: '通知 库存预警 效期预警 alerts' },
+  { label: '入库管理', path: '/inbound', keywords: '入库 采购入库 扫码 inbound' },
+  { label: '库存列表', path: '/inventory', keywords: '库存 批次 余量 inventory' },
+  { label: '出库管理', path: '/outbound', keywords: '出库 领用 BOM outbound' },
+  { label: '退库管理', path: '/returns', keywords: '退库 退回 returns' },
+  { label: '退货给供应商', path: '/supplier-returns', keywords: '供应商退货 采购退货 supplier returns' },
+  { label: '调拨管理', path: '/transfers', keywords: '调拨 移库 transfers' },
+  { label: '报废管理', path: '/scraps', keywords: '报废 scraps' },
+  { label: '库存盘点', path: '/stocktaking', keywords: '盘点 差异 stocktaking' },
+  { label: '采购订单', path: '/purchase-orders', keywords: '采购 PO purchase' },
+  { label: '供应商管理', path: '/suppliers', keywords: '供应商 suppliers' },
+  { label: '物料管理', path: '/materials', keywords: '耗材 试剂 materials' },
+  { label: '物料分类', path: '/categories', keywords: '分类 category' },
+  { label: '库位管理', path: '/locations', keywords: '库位 货架 locations' },
+  { label: '检测项目', path: '/projects', keywords: '项目 服务 project' },
+  { label: 'BOM清单', path: '/bom', keywords: 'BOM 配方 用量' },
+  { label: '消耗对账', path: '/reconciliation', keywords: 'LIS 对账 病例 reconciliation' },
+  { label: '设备管理', path: '/equipment', keywords: '设备 台账 equipment' },
+  { label: '设备类型', path: '/equipment/types', keywords: '设备类型 折旧默认值' },
+  { label: '折旧统计', path: '/equipment/depreciation', keywords: '设备折旧 depreciation' },
+  { label: '标准工时库', path: '/labor-times', keywords: '工时 人工 labor' },
+  { label: '间接成本中心', path: '/indirect-costs', keywords: '间接成本 公共成本' },
+  { label: '用户管理', path: '/users', keywords: '用户 账号 users' },
+  { label: '角色权限', path: '/roles', keywords: '角色 权限 roles' },
+  { label: '操作日志', path: '/logs', keywords: '日志 审计 logs' },
+  { label: '成本看板', path: '/abc/dashboard', keywords: 'ABC 成本 看板 dashboard' },
+  { label: '切片成本', path: '/abc/slide-cost', keywords: 'ABC 切片 单张成本' },
+  { label: '盈利分析', path: '/abc/profitability', keywords: 'ABC 盈利 毛利' },
+  { label: '收费对照', path: '/abc/fee-comparison', keywords: 'ABC 收费 对照' },
+  { label: '收费映射', path: '/abc/fee-mappings', keywords: 'ABC 收费 映射' },
+  { label: '成本趋势', path: '/abc/trend', keywords: 'ABC 趋势' },
+  { label: '作业中心', path: '/abc/activity-centers', keywords: 'ABC 作业中心 配置' },
+  { label: '成本动因', path: '/abc/cost-drivers', keywords: 'ABC 动因 driver' },
+  { label: '成本池', path: '/abc/cost-pools', keywords: 'ABC 成本池 pool' },
+  { label: '预算管理', path: '/abc/budgets', keywords: 'ABC 预算 budget' },
+  { label: '质量成本', path: '/abc/quality-costs', keywords: 'ABC 质量成本' },
+  { label: '差异分析', path: '/abc/variance', keywords: 'ABC 差异 variance' },
+  { label: '成本预警', path: '/abc/alerts', keywords: 'ABC 成本预警' },
+  { label: '审计追踪', path: '/abc/audit', keywords: 'ABC 审计 audit' },
+  { label: '季度调整', path: '/abc/quarterly-adjustment', keywords: 'ABC 季度调整' },
+  { label: '人员效率', path: '/abc/personnel-efficiency', keywords: 'ABC 人员效率' },
+  { label: '模型验证', path: '/abc/model-validation', keywords: 'ABC 模型验证' },
+]
+
 export default function TopBar() {
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [notificationOpen, setNotificationOpen] = useState(false)
   const [notifications, setNotifications] = useState<NotificationItem[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchOpen, setSearchOpen] = useState(false)
   const userMenuRef = useRef<HTMLDivElement>(null)
   const notificationRef = useRef<HTMLDivElement>(null)
+  const searchRef = useRef<HTMLDivElement>(null)
   const location = useLocation()
+  const navigate = useNavigate()
 
   // Fetch real alerts from API
   useEffect(() => {
@@ -121,15 +177,6 @@ export default function TopBar() {
 
   function getUserInfo() {
     try {
-      const token = localStorage.getItem('token')
-      if (token) {
-        const payload = JSON.parse(decodeBase64Url(token.split('.')[1]))
-        return {
-          realName: payload.realName || payload.username || '用户',
-          role: payload.role || '',
-          username: payload.username || '',
-        }
-      }
       const userStr = localStorage.getItem('user')
       if (userStr) {
         const user = JSON.parse(userStr)
@@ -137,6 +184,16 @@ export default function TopBar() {
           realName: user.realName || user.username || '用户',
           role: user.role || '',
           username: user.username || '',
+        }
+      }
+
+      const token = localStorage.getItem('token')
+      if (token) {
+        const payload = JSON.parse(decodeBase64Url(token.split('.')[1]))
+        return {
+          realName: payload.realName || payload.username || '用户',
+          role: payload.role || '',
+          username: payload.username || '',
         }
       }
     } catch { /* ignore */ }
@@ -165,15 +222,45 @@ export default function TopBar() {
       if (notificationRef.current && !notificationRef.current.contains(event.target as Node)) {
         setNotificationOpen(false)
       }
+      if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
+        setSearchOpen(false)
+      }
     }
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
+  const allowedSearchPaths = useMemo(() => {
+    const role = getUserRole()
+    if (!role) return new Set(globalSearchItems.map(item => item.path))
+    return new Set(getAllowedPaths(role))
+  }, [location.pathname])
+
+  const searchResults = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase()
+    if (!query) return []
+    return globalSearchItems
+      .filter(item => allowedSearchPaths.has(item.path))
+      .filter(item => `${item.label} ${item.path} ${item.keywords}`.toLowerCase().includes(query))
+      .slice(0, 8)
+  }, [allowedSearchPaths, searchQuery])
+
+  const userMenuLinks = useMemo(() => [
+    { label: '用户管理', path: '/users', icon: User },
+    { label: '角色权限', path: '/roles', icon: Settings },
+    { label: '操作日志', path: '/logs', icon: FileText },
+  ].filter(item => allowedSearchPaths.has(item.path)), [allowedSearchPaths])
+
   const handleLogout = () => {
     localStorage.removeItem('token')
     toast.success('已退出登录')
     window.location.href = '/login'
+  }
+
+  const goToSearchResult = (path: string) => {
+    navigate(path)
+    setSearchQuery('')
+    setSearchOpen(false)
   }
 
   // Generate breadcrumbs
@@ -232,19 +319,56 @@ export default function TopBar() {
       {/* Right section */}
       <div className="flex items-center gap-3">
         {/* Search */}
-        <div className="relative hidden sm:block">
+        <div className="relative hidden sm:block" ref={searchRef}>
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
           <input
             type="text"
+            value={searchQuery}
+            onChange={event => {
+              setSearchQuery(event.target.value)
+              setSearchOpen(true)
+            }}
+            onFocus={() => setSearchOpen(true)}
+            onKeyDown={event => {
+              if (event.key === 'Enter' && searchResults[0]) {
+                event.preventDefault()
+                goToSearchResult(searchResults[0].path)
+              }
+              if (event.key === 'Escape') {
+                setSearchOpen(false)
+              }
+            }}
             placeholder="全局搜索..."
             className="w-64 pl-10 pr-4 py-2 bg-[#f9fafb] border border-[#e5e7eb] rounded-md text-sm text-[#374151] placeholder:text-gray-400 focus:outline-none focus:border-[#3b82f6] focus:ring-3 focus:ring-[rgba(59,130,246,0.1)] transition-all duration-150"
           />
+          {searchOpen && searchQuery.trim() && (
+            <div className="absolute right-0 z-50 mt-2 w-80 overflow-hidden rounded-lg border border-[#e5e7eb] bg-white py-1 shadow-lg">
+              {searchResults.length > 0 ? (
+                searchResults.map(item => (
+                  <button
+                    key={item.path}
+                    type="button"
+                    onClick={() => goToSearchResult(item.path)}
+                    className="flex w-full items-center justify-between px-4 py-2.5 text-left text-sm hover:bg-gray-50"
+                  >
+                    <span className="font-medium text-gray-900">{item.label}</span>
+                    <span className="font-mono text-xs text-gray-400">{item.path}</span>
+                  </button>
+                ))
+              ) : (
+                <div className="px-4 py-4 text-center text-sm text-gray-400">
+                  无匹配功能
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Notifications */}
         <div className="relative" ref={notificationRef}>
           <button
             onClick={() => setNotificationOpen(!notificationOpen)}
+            aria-label="通知消息"
             className="relative p-2 text-[#6b7280] hover:text-[#374151] hover:bg-gray-50 rounded-md transition-all duration-150"
           >
             <Bell className="w-5 h-5" />
@@ -259,16 +383,12 @@ export default function TopBar() {
             <div className="absolute right-0 mt-2 w-80 bg-white rounded-lg shadow-lg border border-[#e5e7eb] py-2 z-50">
               <div className="px-4 py-2 border-b border-[#e5e7eb] flex items-center justify-between">
                 <span className="text-sm font-medium text-[#111827]">通知消息</span>
-                {unreadCount > 0 && (
-                  <span className="text-xs text-[#3b82f6] cursor-pointer hover:underline">
-                    标记全部已读
-                  </span>
-                )}
               </div>
               <div className="max-h-72 overflow-y-auto">
                 {notifications.map(notification => (
                   <div
                     key={notification.id}
+                    onClick={() => { setNotificationOpen(false); navigate('/alerts') }}
                     className={cn(
                       'px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors duration-150',
                       notification.unread && 'bg-blue-50/50'
@@ -291,6 +411,11 @@ export default function TopBar() {
               <div className="px-4 py-2 border-t border-[#e5e7eb]">
                 <a
                   href="/alerts"
+                  onClick={event => {
+                    event.preventDefault()
+                    setNotificationOpen(false)
+                    navigate('/alerts')
+                  }}
                   className="text-xs text-[#3b82f6] hover:underline flex items-center justify-center"
                 >
                   查看全部通知
@@ -321,30 +446,23 @@ export default function TopBar() {
                 <p className="text-sm font-medium text-[#111827]">{displayName}</p>
                 <p className="text-xs text-[#6b7280]">{userInfo.username || displayRole}</p>
               </div>
-              <a
-                href="/users"
-                className="flex items-center gap-2 px-4 py-2 text-sm text-[#374151] hover:bg-gray-50 transition-colors"
-                onClick={() => setUserMenuOpen(false)}
-              >
-                <User className="w-4 h-4 text-gray-400" />
-                个人信息
-              </a>
-              <a
-                href="/roles"
-                className="flex items-center gap-2 px-4 py-2 text-sm text-[#374151] hover:bg-gray-50 transition-colors"
-                onClick={() => setUserMenuOpen(false)}
-              >
-                <Settings className="w-4 h-4 text-gray-400" />
-                系统设置
-              </a>
-              <a
-                href="/logs"
-                className="flex items-center gap-2 px-4 py-2 text-sm text-[#374151] hover:bg-gray-50 transition-colors"
-                onClick={() => setUserMenuOpen(false)}
-              >
-                <FileText className="w-4 h-4 text-gray-400" />
-                操作日志
-              </a>
+              {userMenuLinks.map(item => {
+                const Icon = item.icon
+                return (
+                  <button
+                    key={item.path}
+                    type="button"
+                    className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-[#374151] transition-colors hover:bg-gray-50"
+                    onClick={() => {
+                      setUserMenuOpen(false)
+                      navigate(item.path)
+                    }}
+                  >
+                    <Icon className="w-4 h-4 text-gray-400" />
+                    {item.label}
+                  </button>
+                )
+              })}
               <div className="border-t border-[#e5e7eb] mt-1 pt-1">
                 <button
                   onClick={handleLogout}

@@ -251,9 +251,9 @@ test('技术员项目领用出库完整流程', async ({ page }) => {
   const inventoryRow = page.locator('table tbody tr').first()
   await expect(inventoryRow).toContainText('库存减少')
   
-  // 13. 查看项目成本
-  await page.goto(`${FE_BASE}/cost-analysis`)
-  await expect(page.locator('text=项目成本')).toBeVisible()
+  // 13. 查看ABC成本看板
+  await page.goto(`${FE_BASE}/abc/dashboard`)
+  await expect(page.locator('text=成本看板')).toBeVisible()
 })
 ```
 

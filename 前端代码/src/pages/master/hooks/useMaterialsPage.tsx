@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
 import { materialApi, categoryApi, supplierApi } from '@/api/master'
-import type { Material, Category, Supplier } from '@/types'
+import type { Material, MaterialDeleteCheck, MaterialStatusCheck, Category, Supplier } from '@/types'
 import { toast } from 'sonner'
 import { usePagination } from '@/hooks/usePagination'
 import { useUrlParams } from '@/hooks/useUrlParams'
+import { getUserRole } from '@/lib/permissions'
 
 export interface FormData {
   code: string
@@ -22,13 +23,51 @@ export interface FormData {
 
 export type QuickFilter = 'all' | 'active' | 'inactive' | 'low-stock'
 
+const QUICK_FILTERS: QuickFilter[] = ['all', 'active', 'inactive', 'low-stock']
+
+function canAccessSuppliers(role: string | null): boolean {
+  return role === 'admin' || role === 'warehouse_manager' || role === 'procurement'
+}
+
+interface MaterialStats {
+  total: number
+  active: number
+  inactive: number
+  lowStock: number
+}
+
+export type MaterialBatchAction = 'delete' | 'active' | 'inactive'
+
+export interface MaterialBatchDeleteResult {
+  material: Material
+  check: MaterialDeleteCheck | null
+  error?: string
+}
+
+export interface MaterialBatchStatusResult {
+  material: Material
+  check: MaterialStatusCheck | null
+  error?: string
+}
+
 export function useMaterialsPage() {
   const { get, getNumber, setMultiple } = useUrlParams()
+  const canWrite = getUserRole() === 'admin'
 
-  const [keyword, setKeyword] = useState('')
-  const [categoryId, setCategoryId] = useState('')
-  const [supplierId, setSupplierId] = useState('')
-  const [quickFilter, setQuickFilter] = useState<QuickFilter>('all')
+  const initialQuickFilter = QUICK_FILTERS.includes(get('status') as QuickFilter)
+    ? get('status') as QuickFilter
+    : 'all'
+
+  const [keyword, setKeyword] = useState(get('keyword') || '')
+  const [categoryId, setCategoryId] = useState(get('categoryId') || '')
+  const [supplierId, setSupplierId] = useState(get('supplierId') || '')
+  const [quickFilter, setQuickFilter] = useState<QuickFilter>(initialQuickFilter)
+  const [stats, setStats] = useState<MaterialStats>({
+    total: 0,
+    active: 0,
+    inactive: 0,
+    lowStock: 0,
+  })
 
   const urlPage = Math.max(1, getNumber('page', 1))
   const urlPageSize = [10, 20, 50, 100].includes(getNumber('pageSize', 20))
@@ -44,12 +83,11 @@ export function useMaterialsPage() {
       if (quickFilter === 'active' || quickFilter === 'inactive') {
         params.status = quickFilter
       }
-      const res: any = await materialApi.getList(params)
-      let list: Material[] = res.list || []
       if (quickFilter === 'low-stock') {
-        list = list.filter((m: Material) => m.stock <= m.minStock)
+        params.lowStock = true
       }
-      return { list, pagination: res.pagination }
+      const res: any = await materialApi.getList(params)
+      return { list: res.list || [], pagination: res.pagination }
     },
     [keyword, categoryId, supplierId, quickFilter]
   )
@@ -77,7 +115,8 @@ export function useMaterialsPage() {
 
   const [categories, setCategories] = useState<Category[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
-  const [allMaterials, setAllMaterials] = useState<Material[]>([])
+  const [formCategories, setFormCategories] = useState<Category[]>([])
+  const [formSuppliers, setFormSuppliers] = useState<Supplier[]>([])
 
   const [modalOpen, setModalOpen] = useState(false)
   const [detailModalOpen, setDetailModalOpen] = useState(false)
@@ -104,6 +143,22 @@ export function useMaterialsPage() {
     setConfirmOpen(true)
   }
 
+  const [deleteTarget, setDeleteTarget] = useState<Material | null>(null)
+  const [deleteCheck, setDeleteCheck] = useState<MaterialDeleteCheck | null>(null)
+  const [checkingDelete, setCheckingDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [statusTarget, setStatusTarget] = useState<Material | null>(null)
+  const [statusTargetStatus, setStatusTargetStatus] = useState<'active' | 'inactive'>('inactive')
+  const [statusCheck, setStatusCheck] = useState<MaterialStatusCheck | null>(null)
+  const [checkingStatus, setCheckingStatus] = useState(false)
+  const [updatingStatus, setUpdatingStatus] = useState(false)
+  const [batchAction, setBatchAction] = useState<MaterialBatchAction | null>(null)
+  const [batchTargets, setBatchTargets] = useState<Material[]>([])
+  const [batchDeleteResults, setBatchDeleteResults] = useState<MaterialBatchDeleteResult[]>([])
+  const [batchStatusResults, setBatchStatusResults] = useState<MaterialBatchStatusResult[]>([])
+  const [checkingBatch, setCheckingBatch] = useState(false)
+  const [submittingBatch, setSubmittingBatch] = useState(false)
+
   const [form, setForm] = useState<FormData>({
     code: '', name: '', spec: '', unit: '个', categoryId: '', supplierId: '',
     price: 0, minStock: 0, maxStock: 999999, safetyStock: 0, status: 'active', remark: ''
@@ -113,40 +168,57 @@ export function useMaterialsPage() {
   const [specPart, setSpecPart] = useState({ amount: '', unit: '' })
 
   const fetchRefs = async () => {
-    try {
-      const [catRes, supRes, matRes]: any = await Promise.all([
-        categoryApi.getList({ page: 1, pageSize: 999 }),
-        supplierApi.getList({ page: 1, pageSize: 999 }),
-        materialApi.getList({ page: 1, pageSize: 99999 }),
-      ])
-      setCategories(catRes?.list || [])
-      setSuppliers(supRes?.list || [])
-      setAllMaterials(matRes?.list || [])
-    } catch (e) { console.error(e) }
+    const role = getUserRole()
+    const [catRes, activeCatRes, supRes, activeSupRes]: any = await Promise.all([
+      categoryApi.getList({ page: 1, pageSize: 999 }).catch(() => null),
+      categoryApi.getList({ page: 1, pageSize: 999, status: 'active' }).catch(() => null),
+      canAccessSuppliers(role)
+        ? supplierApi.getList({ page: 1, pageSize: 999 }).catch(() => null)
+        : Promise.resolve(null),
+      canAccessSuppliers(role)
+        ? supplierApi.getList({ page: 1, pageSize: 999, status: 'active' }).catch(() => null)
+        : Promise.resolve(null),
+    ])
+    setCategories(catRes?.list || [])
+    setFormCategories(activeCatRes?.list || [])
+    setSuppliers(supRes?.list || [])
+    setFormSuppliers(activeSupRes?.list || [])
   }
 
   useEffect(() => { fetchRefs() }, [])
 
+  const loadStats = useCallback(async () => {
+    try {
+      const params: { keyword?: string; categoryId?: string; supplierId?: string } = {}
+      if (keyword) params.keyword = keyword
+      if (categoryId) params.categoryId = categoryId
+      if (supplierId) params.supplierId = supplierId
+      const res: any = await materialApi.getStats(params)
+      setStats({
+        total: Number(res?.total || 0),
+        active: Number(res?.active || 0),
+        inactive: Number(res?.inactive || 0),
+        lowStock: Number(res?.lowStock || 0),
+      })
+    } catch (e) { console.error(e) }
+  }, [keyword, categoryId, supplierId])
+
+  useEffect(() => { loadStats() }, [loadStats])
+
   useEffect(() => {
-    if (modalOpen && !editingId && categories.length > 0 && !form.code) {
-      const cat = form.categoryId || categories[0]?.id
+    if (modalOpen && !editingId && formCategories.length > 0 && !form.code) {
+      const cat = form.categoryId || formCategories[0]?.id
       if (cat) autoFillCode(cat)
     }
-  }, [categories, modalOpen])
-
-  const stats = {
-    total: allMaterials.length,
-    active: allMaterials.filter(m => m.status === 'active').length,
-    inactive: allMaterials.filter(m => m.status === 'inactive').length,
-    lowStock: allMaterials.filter(m => m.stock <= m.minStock).length,
-  }
+  }, [formCategories, modalOpen])
 
   const autoFillCode = useCallback(async (categoryId: string) => {
     if (!categoryId) return
     try {
       const res: any = await materialApi.getNextCode(categoryId)
-      if (res.data?.code) {
-        setForm(prev => ({ ...prev, code: res.data.code }))
+      const code = res?.code || res?.data?.code
+      if (code) {
+        setForm(prev => ({ ...prev, code }))
       }
     } catch (e) { /* ignore */ }
   }, [])
@@ -158,15 +230,23 @@ export function useMaterialsPage() {
   }
 
   const openCreate = () => {
+    if (!canWrite) {
+      toast.error('当前角色只能查看物料')
+      return
+    }
     setEditingId(null)
     setSpecPart({ amount: '', unit: '' })
-    const defaultCat = categories[0]?.id || ''
+    const defaultCat = formCategories[0]?.id || ''
     setForm({ code: '', name: '', spec: '', unit: '个', categoryId: defaultCat, supplierId: '', price: 0, minStock: 0, maxStock: 999999, safetyStock: 0, status: 'active', remark: '' })
     setModalOpen(true)
     if (defaultCat) autoFillCode(defaultCat)
   }
 
   const openEdit = (row: Material) => {
+    if (!canWrite) {
+      toast.error('当前角色只能查看物料')
+      return
+    }
     setEditingId(row.id)
     setSpecPart(parseSpec(row.spec))
     setForm({
@@ -184,6 +264,10 @@ export function useMaterialsPage() {
   }
 
   const handleSubmit = async () => {
+    if (!canWrite) {
+      toast.error('当前角色只能查看物料')
+      return
+    }
     if (!form.name.trim() || !form.unit.trim()) {
       toast.error('请填写必填字段')
       return
@@ -199,36 +283,105 @@ export function useMaterialsPage() {
       setModalOpen(false)
       refresh()
       fetchRefs()
+      loadStats()
     } catch (e) {
       toast.error('操作失败')
     }
   }
 
   const handleDelete = async (id: string) => {
-    openConfirm({
-      title: '确认删除',
-      description: '删除后不可恢复，是否继续？',
-      confirmText: '删除',
-      confirmVariant: 'danger',
-      onConfirm: async () => {
-        try {
-          await materialApi.delete(id)
-          toast.success('删除成功')
-          refresh()
-          fetchRefs()
-        } catch (e) { toast.error('删除失败') }
-      },
-    })
+    if (!canWrite) {
+      toast.error('当前角色只能查看物料')
+      return
+    }
+    const target = data.find(item => item.id === id) || null
+    if (!target) {
+      toast.error('未找到要删除的物料')
+      return
+    }
+    setDeleteTarget(target)
+    setDeleteCheck(null)
+    setCheckingDelete(true)
+    try {
+      const res: any = await materialApi.checkDeletable(id)
+      setDeleteCheck(res?.data || res)
+    } catch (e) {
+      setDeleteCheck(null)
+      toast.error('删除影响检查失败')
+    } finally {
+      setCheckingDelete(false)
+    }
+  }
+
+  const closeDeleteModal = () => {
+    if (deleting) return
+    setDeleteTarget(null)
+    setDeleteCheck(null)
+    setCheckingDelete(false)
+  }
+
+  const confirmDelete = async () => {
+    if (!deleteTarget || !deleteCheck?.deletable) return
+    setDeleting(true)
+    try {
+      await materialApi.delete(deleteTarget.id)
+      toast.success('删除成功')
+      setDeleteTarget(null)
+      setDeleteCheck(null)
+      refresh()
+      fetchRefs()
+      loadStats()
+    } catch (e) {
+      toast.error('删除失败')
+    } finally {
+      setDeleting(false)
+    }
   }
 
   const handleToggleStatus = async (row: Material) => {
+    if (!canWrite) {
+      toast.error('当前角色只能查看物料')
+      return
+    }
     const newStatus = row.status === 'active' ? 'inactive' : 'active'
+    setStatusTarget(row)
+    setStatusTargetStatus(newStatus)
+    setStatusCheck(null)
+    setCheckingStatus(true)
     try {
-      await materialApi.update(row.id, { status: newStatus })
-      toast.success(newStatus === 'active' ? '物料已启用' : '物料已停用')
+      const res: any = await materialApi.checkStatus(row.id, newStatus)
+      setStatusCheck(res?.data || res)
+    } catch (e) {
+      setStatusCheck(null)
+      toast.error('状态变更影响检查失败')
+    } finally {
+      setCheckingStatus(false)
+    }
+  }
+
+  const closeStatusModal = () => {
+    if (updatingStatus) return
+    setStatusTarget(null)
+    setStatusCheck(null)
+    setCheckingStatus(false)
+  }
+
+  const confirmStatusChange = async () => {
+    if (!statusTarget || !statusCheck?.canChange) return
+    setUpdatingStatus(true)
+    try {
+      await materialApi.update(statusTarget.id, { status: statusTargetStatus })
+      toast.success(statusTargetStatus === 'active' ? '物料已启用' : '物料已停用')
+      setStatusTarget(null)
+      setStatusCheck(null)
       refresh()
       fetchRefs()
-    } catch (e) { toast.error('操作失败') }
+      loadStats()
+    } catch (e) {
+      toast.error('操作失败')
+    } finally {
+      setUpdatingStatus(false)
+    }
   }
 
   const toggleSelectAll = () => {
@@ -250,36 +403,95 @@ export function useMaterialsPage() {
 
   const clearSelection = () => setSelectedIds(new Set())
 
-  const batchDelete = async () => {
-    openConfirm({
-      title: '确认批量删除',
-      description: `确认删除选中的 ${selectedIds.size} 个物料？删除后不可恢复。`,
-      confirmText: '删除',
-      confirmVariant: 'danger',
-      onConfirm: async () => {
-        try {
-          for (const id of selectedIds) {
-            await materialApi.delete(id)
+  const openBatchImpact = async (action: MaterialBatchAction) => {
+    if (!canWrite) {
+      toast.error('当前角色只能查看物料')
+      return
+    }
+    const targets = data.filter(item => selectedIds.has(item.id))
+    if (targets.length === 0) return
+    setBatchAction(action)
+    setBatchTargets(targets)
+    setBatchDeleteResults([])
+    setBatchStatusResults([])
+    setCheckingBatch(true)
+    try {
+      if (action === 'delete') {
+        const results = await Promise.all(targets.map(async material => {
+          try {
+            const res: any = await materialApi.checkDeletable(material.id)
+            return { material, check: res?.data || res }
+          } catch {
+            return { material, check: null, error: '删除影响检查失败' }
           }
-          toast.success('批量删除成功')
-          clearSelection()
-          refresh()
-          fetchRefs()
-        } catch (e) { toast.error('批量删除失败') }
-      },
-    })
+        }))
+        setBatchDeleteResults(results)
+      } else {
+        const results = await Promise.all(targets.map(async material => {
+          try {
+            const res: any = await materialApi.checkStatus(material.id, action)
+            return { material, check: res?.data || res }
+          } catch {
+            return { material, check: null, error: '状态影响检查失败' }
+          }
+        }))
+        setBatchStatusResults(results)
+      }
+    } finally {
+      setCheckingBatch(false)
+    }
+  }
+
+  const closeBatchImpactModal = () => {
+    if (submittingBatch) return
+    setBatchAction(null)
+    setBatchTargets([])
+    setBatchDeleteResults([])
+    setBatchStatusResults([])
+    setCheckingBatch(false)
+  }
+
+  const confirmBatchAction = async () => {
+    if (!batchAction || batchTargets.length === 0) return
+    setSubmittingBatch(true)
+    try {
+      const ids = batchTargets.map(item => item.id)
+      if (batchAction === 'delete') {
+        await materialApi.batchDelete(ids)
+        toast.success('批量删除成功')
+      } else {
+        await materialApi.batchStatus(ids, batchAction)
+        toast.success(batchAction === 'active' ? '批量启用成功' : '批量停用成功')
+      }
+      clearSelection()
+      setBatchAction(null)
+      setBatchTargets([])
+      setBatchDeleteResults([])
+      setBatchStatusResults([])
+      refresh()
+      fetchRefs()
+      loadStats()
+    } catch (e) {
+      toast.error(batchAction === 'delete' ? '批量删除失败' : '操作失败')
+    } finally {
+      setSubmittingBatch(false)
+    }
+  }
+
+  const batchDelete = async () => {
+    if (!canWrite) {
+      toast.error('当前角色只能查看物料')
+      return
+    }
+    await openBatchImpact('delete')
   }
 
   const batchToggleStatus = async (status: 'active' | 'inactive') => {
-    try {
-      for (const id of selectedIds) {
-        await materialApi.update(id, { status })
-      }
-      toast.success(status === 'active' ? '批量启用成功' : '批量停用成功')
-      clearSelection()
-      refresh()
-      fetchRefs()
-    } catch (e) { toast.error('操作失败') }
+    if (!canWrite) {
+      toast.error('当前角色只能查看物料')
+      return
+    }
+    await openBatchImpact(status)
   }
 
   const getCategoryName = (id?: string) => {
@@ -312,14 +524,21 @@ export function useMaterialsPage() {
 
   return {
     data, loading, page, pageSize, total, setPage, setPageSize, refresh,
+    canWrite,
     keyword, setKeyword, categoryId, setCategoryId, supplierId, setSupplierId,
     quickFilter, setQuickFilter,
-    categories, suppliers,
+    categories, suppliers, formCategories, formSuppliers,
     modalOpen, setModalOpen,
     detailModalOpen, setDetailModalOpen,
     editingId, setEditingId,
     detailMaterial, setDetailMaterial,
     confirmOpen, setConfirmOpen, confirmProps, setConfirmProps,
+    deleteTarget, deleteCheck, checkingDelete, deleting,
+    closeDeleteModal, confirmDelete,
+    statusTarget, statusTargetStatus, statusCheck, checkingStatus, updatingStatus,
+    closeStatusModal, confirmStatusChange,
+    batchAction, batchTargets, batchDeleteResults, batchStatusResults, checkingBatch, submittingBatch,
+    closeBatchImpactModal, confirmBatchAction,
     form, setForm,
     selectedIds, setSelectedIds,
     specPart, setSpecPart,

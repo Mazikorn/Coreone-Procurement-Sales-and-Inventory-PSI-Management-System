@@ -1,0 +1,171 @@
+import React from 'react'
+import { render, screen } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
+import { MaterialDeleteModal } from './MaterialDeleteModal'
+import { MaterialStatusModal } from './MaterialStatusModal'
+import { MaterialBatchImpactModal } from './MaterialBatchImpactModal'
+import type { Material, MaterialDeleteCheck, MaterialStatusCheck } from '@/types'
+
+const material: Material = {
+  id: 'mat-1',
+  code: 'MAT-001',
+  name: '测试物料',
+  spec: '1ml',
+  unit: '瓶',
+  price: 10,
+  stock: 3,
+  minStock: 1,
+  maxStock: 100,
+  safetyStock: 2,
+  categoryId: 'cat-1',
+  status: 'active',
+  createdAt: '2026-06-18',
+  updatedAt: '2026-06-18',
+}
+
+describe('Material impact modals', () => {
+  it('shows delete impacts and disables confirm when material is referenced', () => {
+    const deleteCheck: MaterialDeleteCheck = {
+      material: { id: 'mat-1', code: 'MAT-001', name: '测试物料' },
+      deletable: false,
+      impacts: {
+        currentInventoryCount: 1,
+        inventoryLocationCount: 1,
+        batchCount: 0,
+        inboundCount: 0,
+        outboundCount: 0,
+        bomCount: 1,
+        returnCount: 0,
+        scrapCount: 0,
+        supplierReturnCount: 0,
+        stockLogCount: 1,
+        usageTrackingCount: 0,
+      },
+      reasons: ['存在 1 条当前库存引用', '存在 1 条BOM明细引用'],
+    }
+
+    render(
+      <MaterialDeleteModal
+        open
+        target={material}
+        deleteCheck={deleteCheck}
+        checkingDelete={false}
+        deleting={false}
+        onClose={vi.fn()}
+        onConfirm={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('无法删除物料')).toBeInTheDocument()
+    expect(screen.getByText('BOM明细')).toBeInTheDocument()
+    expect(screen.getByText('库存流水')).toBeInTheDocument()
+    expect(screen.getByText('存在 1 条当前库存引用；存在 1 条BOM明细引用，请先解除引用后再删除。')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '确认删除' })).toBeDisabled()
+  })
+
+  it('shows status impacts and disables confirm when material has stock or active BOM', () => {
+    const statusCheck: MaterialStatusCheck = {
+      material: { id: 'mat-1', code: 'MAT-001', name: '测试物料' },
+      targetStatus: 'inactive',
+      canChange: false,
+      impacts: {
+        currentInventoryCount: 1,
+        inventoryLocationCount: 1,
+        activeBomCount: 1,
+      },
+      reasons: ['存在 1 条库位库存引用', '存在 1 条启用BOM明细引用'],
+    }
+
+    render(
+      <MaterialStatusModal
+        open
+        target={material}
+        targetStatus="inactive"
+        statusCheck={statusCheck}
+        checkingStatus={false}
+        updatingStatus={false}
+        onClose={vi.fn()}
+        onConfirm={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('无法停用物料')).toBeInTheDocument()
+    expect(screen.getByText('库位库存')).toBeInTheDocument()
+    expect(screen.getByText('启用BOM明细')).toBeInTheDocument()
+    expect(screen.getByText('存在 1 条库位库存引用；存在 1 条启用BOM明细引用，请先解除引用后再停用。')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '确认停用' })).toBeDisabled()
+  })
+
+  it('shows batch delete blockers and disables confirm when any selected material is referenced', () => {
+    const deleteCheck: MaterialDeleteCheck = {
+      material: { id: 'mat-1', code: 'MAT-001', name: '测试物料' },
+      deletable: false,
+      impacts: {
+        currentInventoryCount: 1,
+        inventoryLocationCount: 0,
+        batchCount: 0,
+        inboundCount: 0,
+        outboundCount: 0,
+        bomCount: 1,
+        returnCount: 0,
+        scrapCount: 0,
+        supplierReturnCount: 0,
+        stockLogCount: 0,
+        usageTrackingCount: 0,
+      },
+      reasons: ['存在 1 条当前库存引用', '存在 1 条BOM明细引用'],
+    }
+
+    render(
+      <MaterialBatchImpactModal
+        open
+        action="delete"
+        targetsCount={1}
+        deleteResults={[{ material, check: deleteCheck }]}
+        statusResults={[]}
+        checking={false}
+        submitting={false}
+        onClose={vi.fn()}
+        onConfirm={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('无法批量删除物料')).toBeInTheDocument()
+    expect(screen.getByText('已选择 1 个物料，1 个存在阻断影响')).toBeInTheDocument()
+    expect(screen.getByText('当前库存 1，BOM明细 1')).toBeInTheDocument()
+    expect(screen.getByText('存在阻断项，批量操作不会执行。请先处理对应库存、BOM 或业务记录引用。')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /确认删除/ })).toBeDisabled()
+  })
+
+  it('shows batch status blockers and disables confirm when any selected material cannot be disabled', () => {
+    const statusCheck: MaterialStatusCheck = {
+      material: { id: 'mat-1', code: 'MAT-001', name: '测试物料' },
+      targetStatus: 'inactive',
+      canChange: false,
+      impacts: {
+        currentInventoryCount: 1,
+        inventoryLocationCount: 1,
+        activeBomCount: 1,
+      },
+      reasons: ['存在 1 条当前库存引用'],
+    }
+
+    render(
+      <MaterialBatchImpactModal
+        open
+        action="inactive"
+        targetsCount={1}
+        deleteResults={[]}
+        statusResults={[{ material, check: statusCheck }]}
+        checking={false}
+        submitting={false}
+        onClose={vi.fn()}
+        onConfirm={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('无法批量停用物料')).toBeInTheDocument()
+    expect(screen.getByText('当前库存 1，库位库存 1，启用BOM明细 1')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /确认停用/ })).toBeDisabled()
+  })
+})

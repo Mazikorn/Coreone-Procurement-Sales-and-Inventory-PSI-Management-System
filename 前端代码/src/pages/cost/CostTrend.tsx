@@ -7,7 +7,7 @@ import {
 } from 'recharts'
 import { abcApi } from '@/api/abc'
 import { reportsApi } from '@/api/reports'
-import { formatCurrency } from '@/lib/utils'
+import { downloadTextFile, formatCurrency } from '@/lib/utils'
 
 interface TrendItem {
   month: string
@@ -25,6 +25,7 @@ interface ReportsTrendItem {
   period: string
   cost: number
   recordCount: number
+  sampleCount?: number
   isComplete?: boolean
 }
 
@@ -45,6 +46,40 @@ const MONTHS_OPTIONS = [
 
 const LINE_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444', '#06b6d4']
 
+export function normalizeSlideCostTrendRows(rows: any[]): TrendItem[] {
+  return rows
+    .map((row, index) => {
+      const sampleCount = Number(row.sampleCount ?? row.sample_count) || 0
+      const totalCost = Number(row.totalCost ?? row.total_cost) || 0
+      const feeAmount = Number(row.feeAmount ?? row.fee_amount) || 0
+      const profit = Number(row.profit) || 0
+      const marginRate = Number.isFinite(Number(row.marginRate))
+        ? Number(row.marginRate)
+        : feeAmount > 0
+          ? profit / feeAmount
+          : 0
+      const hasSeriesIdentity = Boolean(row.bomId || row.projectId || row.bomName || row.projectName)
+      const bomId = String(row.bomId || row.projectId || (hasSeriesIdentity ? `trend-${index}` : 'all'))
+
+      return {
+        month: String(row.month || row.period || ''),
+        bomId,
+        bomName: row.bomName || row.projectName || '全部BOM/项目',
+        projectType: row.projectType || 'all',
+        costPerSlide: Number.isFinite(Number(row.costPerSlide))
+          ? Number(row.costPerSlide)
+          : sampleCount > 0
+            ? totalCost / sampleCount
+            : 0,
+        materialCost: Number(row.materialCost ?? row.material_cost) || 0,
+        activityCost: Number(row.activityCost ?? row.activity_cost) || 0,
+        feeAmount,
+        marginRate,
+      }
+    })
+    .filter(row => row.month)
+}
+
 export default function CostTrend() {
   const [loading, setLoading] = useState(true)
   const [trend, setTrend] = useState<TrendItem[]>([])
@@ -52,6 +87,7 @@ export default function CostTrend() {
   const [months, setMonths] = useState(12)
   const [dimension, setDimension] = useState<'monthly' | 'quarterly'>('monthly')
   const [quarterlyData, setQuarterlyData] = useState<ReportsTrendItem[]>([])
+  const [exporting, setExporting] = useState(false)
 
   useEffect(() => {
     loadData()
@@ -61,7 +97,7 @@ export default function CostTrend() {
     if (dimension === 'quarterly') {
       loadQuarterlyData()
     }
-  }, [dimension])
+  }, [dimension, projectType])
 
   const loadData = async () => {
     try {
@@ -69,7 +105,8 @@ export default function CostTrend() {
       const params: Record<string, string | number> = { months }
       if (projectType !== 'all') params.projectType = projectType
       const res = await abcApi.getSlideCostTrend(params)
-      setTrend(res?.trend || [])
+      const rows = Array.isArray(res) ? res : res?.trend || []
+      setTrend(normalizeSlideCostTrendRows(rows))
     } catch {
       toast.error('加载趋势数据失败')
     } finally {
@@ -79,7 +116,10 @@ export default function CostTrend() {
 
   const loadQuarterlyData = async () => {
     try {
-      const res = await reportsApi.getCostTrend({ dimension: 'quarterly' })
+      const res = await reportsApi.getCostTrend({
+        dimension: 'quarterly',
+        projectType: projectType !== 'all' ? projectType : undefined,
+      })
       setQuarterlyData(res?.trend || [])
     } catch {
       toast.error('加载季度数据失败')
@@ -90,7 +130,7 @@ export default function CostTrend() {
   const bomGroups = useMemo(() => {
     const groups = new Map<string, TrendItem[]>()
     for (const item of trend) {
-      const key = item.bomId || item.bomName
+      const key = item.bomName || item.bomId
       if (!groups.has(key)) groups.set(key, [])
       groups.get(key)!.push(item)
     }
@@ -144,6 +184,26 @@ export default function CostTrend() {
 
   const bomKeys = useMemo(() => [...bomGroups.keys()], [bomGroups])
 
+  const handleExport = async () => {
+    try {
+      setExporting(true)
+      const end = new Date()
+      const start = new Date()
+      start.setMonth(start.getMonth() - months + 1)
+      const data = await abcApi.exportData({
+        startMonth: start.toISOString().slice(0, 7),
+        endMonth: end.toISOString().slice(0, 7),
+        projectType: projectType !== 'all' ? projectType : undefined,
+      })
+      downloadTextFile(data.filename || 'abc-cost-trend.csv', data.content || '', data.mimeType)
+      toast.success('导出完成')
+    } catch {
+      // 统一错误提示已在请求拦截器处理
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <div className="p-6 space-y-6">
       {/* 页面头部 */}
@@ -152,7 +212,13 @@ export default function CostTrend() {
           <h1 className="text-2xl font-bold text-gray-900">成本趋势</h1>
           <p className="text-sm text-gray-500 mt-1">切片成本与利润率的时间序列分析</p>
         </div>
-        <button data-testid="export-btn" className="h-10 px-4 bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors flex items-center gap-2 self-start">
+        <button
+          data-testid="export-btn"
+          type="button"
+          onClick={handleExport}
+          disabled={exporting}
+          className="h-10 px-4 bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 disabled:opacity-50 transition-colors flex items-center gap-2 self-start"
+        >
           <Download className="h-4 w-4" /> 导出
         </button>
       </div>

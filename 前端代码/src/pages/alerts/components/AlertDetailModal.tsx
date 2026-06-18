@@ -1,3 +1,4 @@
+import React from 'react'
 import { X } from 'lucide-react'
 import type { AlertItem } from '../hooks/useAlertsPage'
 import { ALERT_TYPE_MAP } from '../hooks/useAlertsPage'
@@ -58,6 +59,22 @@ export function AlertDetailModal({ open, alert, onClose, onHandle, formatDate }:
               {alert.triggerCondition || alert.message || '当前库存低于预警阈值'}
             </div>
           </div>
+          {alert.status !== 'pending' && (
+            <div className="bg-gray-50 rounded-lg p-4">
+              <div className="text-sm font-medium text-gray-700 mb-3">处理记录</div>
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                <div>
+                  <div className="text-xs text-gray-500 mb-1">处理人</div>
+                  <div className="text-sm font-medium text-gray-900">{alert.handledBy || '-'}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-gray-500 mb-1">处理时间</div>
+                  <div className="text-sm font-medium text-gray-900">{alert.handledAt ? formatDate(alert.handledAt) : '-'}</div>
+                </div>
+              </div>
+              <div className="whitespace-pre-wrap text-sm leading-6 text-gray-700">{alert.remark || '暂无处理意见'}</div>
+            </div>
+          )}
         </div>
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50">
           <button onClick={onClose} className="px-4 py-2 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-md hover:bg-gray-50 transition-colors">

@@ -37,19 +37,28 @@ const mockInboundRecord: InboundRecord = {
   createdAt: '2024-05-26T08:00:00Z',
 }
 
+const mockInboundRecord2: InboundRecord = {
+  ...mockInboundRecord,
+  id: 'inb-2',
+  inboundNo: 'IN-20240526-002',
+  batchNo: 'B002',
+}
+
 describe('useInboundPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     localStorage.clear()
+    localStorage.setItem('user', JSON.stringify({ id: 'USER-ADMIN', username: 'admin', realName: '管理员', role: 'admin' }))
     window.history.replaceState(null, '', '/')
 
     vi.mocked(inboundApi.getList).mockResolvedValue({
-      list: [mockInboundRecord],
-      pagination: { total: 1, page: 1, pageSize: 20 },
+      list: [mockInboundRecord, mockInboundRecord2],
+      pagination: { total: 2, page: 1, pageSize: 20 },
     } as any)
     vi.mocked(inboundApi.getStats).mockResolvedValue({ total: 1, completed: 1, cancelled: 0, amount: 5000, supplierCount: 1, pendingOrders: 0 } as any)
     vi.mocked(inboundApi.checkDeletable).mockResolvedValue({ data: { canDelete: true } } as any)
     vi.mocked(inboundApi.delete).mockResolvedValue({} as any)
+    vi.mocked(inboundApi.cancel).mockResolvedValue({} as any)
     vi.mocked(inboundApi.create).mockResolvedValue({} as any)
     vi.mocked(inboundApi.update).mockResolvedValue({} as any)
     vi.mocked(inboundApi.createTransfer).mockResolvedValue({} as any)
@@ -65,9 +74,40 @@ describe('useInboundPage', () => {
     renderHook(() => useInboundPage())
 
     await waitFor(() => {
-      expect(purchaseOrderApi.getList).toHaveBeenCalled()
+      expect(purchaseOrderApi.getList).toHaveBeenCalledWith({ status: 'pending,partial', page: 1, pageSize: 999 })
       expect(inboundApi.getStats).toHaveBeenCalled()
     })
+  })
+
+  it('should not fetch purchase orders or locations for warehouse inbound users', async () => {
+    localStorage.setItem('user', JSON.stringify({
+      id: 'USER-WHM',
+      username: 'wangkq',
+      realName: '王坤强',
+      role: 'warehouse_manager',
+    }))
+
+    renderHook(() => useInboundPage())
+
+    await waitFor(() => expect(inboundApi.getStats).toHaveBeenCalled())
+
+    expect(purchaseOrderApi.getList).not.toHaveBeenCalled()
+    expect(locationApi.getList).toHaveBeenCalled()
+  })
+
+  it('should not fetch locations for procurement inbound users', async () => {
+    localStorage.setItem('user', JSON.stringify({
+      id: 'USER-PROC',
+      username: 'caigou',
+      realName: '采购员',
+      role: 'procurement',
+    }))
+
+    renderHook(() => useInboundPage())
+
+    await waitFor(() => expect(purchaseOrderApi.getList).toHaveBeenCalled())
+
+    expect(locationApi.getList).not.toHaveBeenCalled()
   })
 
   it('should fetch inbound list on mount', async () => {
@@ -93,9 +133,7 @@ describe('useInboundPage', () => {
     })
   })
 
-  it('should block delete when pre-check fails', async () => {
-    vi.mocked(inboundApi.checkDeletable).mockResolvedValue({ data: { canDelete: false, reasons: ['已有出库记录'] } } as any)
-
+  it('should open cancel modal without delete pre-check', async () => {
     const { result } = renderHook(() => useInboundPage())
     await waitFor(() => expect(result.current.loading).toBe(false))
 
@@ -103,32 +141,10 @@ describe('useInboundPage', () => {
       await result.current.handleDelete(mockInboundRecord)
     })
 
-    expect(inboundApi.checkDeletable).toHaveBeenCalledWith('inb-1')
-    expect(inboundApi.delete).not.toHaveBeenCalled()
-    expect(result.current.confirmModal.open).toBe(true)
-    expect(result.current.confirmModal.title).toBe('不可删除')
-  })
-
-  it('should allow delete after pre-check passes', async () => {
-    const { result } = renderHook(() => useInboundPage())
-    await waitFor(() => expect(result.current.loading).toBe(false))
-
-    await act(async () => {
-      await result.current.handleDelete(mockInboundRecord)
-    })
-
-    expect(inboundApi.checkDeletable).toHaveBeenCalledWith('inb-1')
-    expect(result.current.confirmModal.open).toBe(true)
-    expect(result.current.confirmModal.title).toBe('删除确认')
-
-    // Simulate confirm
-    await act(async () => {
-      result.current.confirmModal.onConfirm?.()
-    })
-
-    await waitFor(() => {
-      expect(inboundApi.delete).toHaveBeenCalledWith('inb-1')
-    })
+    expect(inboundApi.checkDeletable).not.toHaveBeenCalled()
+    expect(result.current.modalType).toBe('cancel')
+    expect(result.current.selectedRecord?.id).toBe('inb-1')
+    expect(inboundApi.cancel).not.toHaveBeenCalled()
   })
 
   it('should validate form before submit — missing material', async () => {
@@ -190,6 +206,33 @@ describe('useInboundPage', () => {
     })
   })
 
+  it('should not call purchase order receive after purchase inbound create', async () => {
+    vi.mocked(purchaseOrderApi.getList).mockResolvedValue({
+      list: [{ id: 'po-1', orderNo: 'PO-001', materialName: '耗材A', remainingQty: 20 }],
+      pagination: { total: 1 },
+    } as any)
+    const { result } = renderHook(() => useInboundPage())
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    act(() => {
+      result.current.setSelectedOrderId('po-1')
+      result.current.setForm({
+        type: 'purchase', materialId: 'mat-1', batchNo: 'B001', quantity: 10, price: 50,
+        supplierId: 'sup-1', locationId: 'loc-1', fromLocationId: '', fromLocationName: '',
+        productionDate: '', expiryDate: '2027-12-31', remark: '', purchaseOrderId: 'po-1',
+      })
+    })
+
+    await act(async () => {
+      await result.current.handleSubmit()
+    })
+
+    await waitFor(() => {
+      expect(inboundApi.create).toHaveBeenCalled()
+    })
+    expect(purchaseOrderApi.receive).not.toHaveBeenCalled()
+  })
+
   it('should restore cancelled inbound', async () => {
     const { result } = renderHook(() => useInboundPage())
     await waitFor(() => expect(result.current.loading).toBe(false))
@@ -203,6 +246,45 @@ describe('useInboundPage', () => {
     })
 
     expect(inboundApi.update).toHaveBeenCalledWith('inb-1', { status: 'completed' })
+  })
+
+  it('should cancel inbound records instead of deleting them', async () => {
+    const { result } = renderHook(() => useInboundPage())
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    await act(async () => {
+      await result.current.handleDelete(mockInboundRecord)
+    })
+
+    await act(async () => {
+      await result.current.handleCancelInbound()
+    })
+
+    expect(inboundApi.cancel).toHaveBeenCalledWith('inb-1', '页面取消入库')
+    expect(inboundApi.delete).not.toHaveBeenCalled()
+  })
+
+  it('should print selected inbound rows instead of stale single record', async () => {
+    const { result } = renderHook(() => useInboundPage())
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    act(() => {
+      result.current.handlePrintRecord(mockInboundRecord)
+    })
+    expect(result.current.printRecords.map(r => r.id)).toEqual(['inb-1'])
+
+    act(() => {
+      result.current.toggleSelectOne('inb-2')
+    })
+    expect(Array.from(result.current.selectedIds)).toEqual(['inb-2'])
+
+    act(() => {
+      result.current.handleBatchPrint()
+    })
+
+    expect(result.current.selectedRecord).toBeNull()
+    expect(result.current.printRecords.map(r => r.id)).toEqual(['inb-2'])
+    expect(result.current.modalType).toBe('print')
   })
 
   it('should handle reset filters', async () => {

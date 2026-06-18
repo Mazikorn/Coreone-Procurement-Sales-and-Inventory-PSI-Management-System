@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { inboundApi, purchaseOrderApi } from '@/api/inventory'
 import { materialApi, supplierApi, locationApi } from '@/api/master'
 import type { InboundRecord, Material, Supplier, Location, PaginationData } from '@/types'
@@ -6,9 +6,10 @@ import { usePagination } from '@/hooks/usePagination'
 import { useUrlParams } from '@/hooks/useUrlParams'
 import { toast } from 'sonner'
 import { formatDateTime } from '@/lib/utils'
+import { getUserRole } from '@/lib/permissions'
 import type { FormData } from '../components/InboundFormModal'
 
-type ModalType = 'create' | 'edit' | 'detail' | 'restore' | 'scan' | 'import' | 'print' | null
+type ModalType = 'create' | 'edit' | 'detail' | 'cancel' | 'restore' | 'scan' | 'import' | 'print' | null
 
 interface PurchaseOrderOption {
   id: string
@@ -30,8 +31,20 @@ function getTypeLabel(type: string): string {
   return map[type] || type
 }
 
+function canAccessPurchaseOrders(role: string | null): boolean {
+  return role === 'admin' || role === 'procurement'
+}
+
+function canAccessLocations(role: string | null): boolean {
+  return role === 'admin' || role === 'warehouse_manager'
+}
+
 export function useInboundPage() {
   const url = useUrlParams()
+  const handledCreateFromQuery = useRef(false)
+  const role = getUserRole()
+  const canUsePurchaseOrders = canAccessPurchaseOrders(role)
+  const canUseLocations = canAccessLocations(role)
 
   const initialPage = Math.max(1, url.getNumber('page', 1))
   const initialPageSize = [10, 20, 50, 100].includes(url.getNumber('pageSize', 20))
@@ -58,6 +71,7 @@ export function useInboundPage() {
   // 弹窗状态
   const [modalType, setModalType] = useState<ModalType>(null)
   const [selectedRecord, setSelectedRecord] = useState<InboundRecord | null>(null)
+  const [printRecords, setPrintRecords] = useState<InboundRecord[]>([])
 
   // 自定义确认弹窗状态
   const [confirmModal, setConfirmModal] = useState<{
@@ -73,7 +87,7 @@ export function useInboundPage() {
   const [submitting, setSubmitting] = useState(false)
 
   const [form, setForm] = useState<FormData>({
-    type: 'purchase', materialId: '', batchNo: '', quantity: 0, price: 0,
+    type: canUsePurchaseOrders ? 'purchase' : 'direct', materialId: '', batchNo: '', quantity: 0, price: 0,
     supplierId: '', locationId: '', fromLocationId: '', fromLocationName: '',
     productionDate: '', expiryDate: '', remark: '', purchaseOrderId: ''
   })
@@ -175,13 +189,25 @@ export function useInboundPage() {
 
   // 统计数据（从后端获取，非当前页计算）
   const [stats, setStats] = useState({
-    total: 0, completed: 0, cancelled: 0, amount: 0, supplierCount: 0, pendingOrders: 0,
+    total: 0,
+    monthTotal: 0,
+    completed: 0,
+    cancelled: 0,
+    amount: 0,
+    supplierCount: 0,
+    pendingOrders: 0,
+    quickCounts: { all: 0, today: 0, week: 0, month: 0 },
   })
 
   const fetchStats = async () => {
     try {
       const res = await inboundApi.getStats()
-      setStats(res?.data || res)
+      const next = (res?.data || res) as Partial<typeof stats>
+      setStats(prev => ({
+        ...prev,
+        ...next,
+        quickCounts: next.quickCounts || prev.quickCounts,
+      }))
     } catch (e) { console.error(e) }
   }
 
@@ -189,27 +215,16 @@ export function useInboundPage() {
     fetchStats()
   }, [])
 
-  // 快速筛选计数（基于当前页）
-  const quickFilterCounts = useMemo(() => {
-    const today = new Date().toISOString().split('T')[0]
-    const now = new Date()
-    const weekStart = new Date(now.getTime() - now.getDay() * 86400000).toISOString().split('T')[0]
-    const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
-
-    return {
-      all: data.length,
-      today: data.filter(d => d.createdAt?.startsWith(today)).length,
-      week: data.filter(d => d.createdAt && d.createdAt >= weekStart).length,
-      month: data.filter(d => d.createdAt && d.createdAt >= monthStart).length,
-    }
-  }, [data])
+  const quickFilterCounts = stats.quickCounts
 
   const fetchRefs = async () => {
     try {
       const [mRes, sRes, lRes] = await Promise.all([
         materialApi.getList({ page: 1, pageSize: 999, status: 'active' }),
         supplierApi.getList({ page: 1, pageSize: 999, status: 'active' }),
-        locationApi.getList({ page: 1, pageSize: 999, status: 'active' }),
+        canUseLocations
+          ? locationApi.getList({ page: 1, pageSize: 999, status: 'active' })
+          : Promise.resolve({ list: [], pagination: { total: 0 } }),
       ])
       const materialRes = mRes as unknown as PaginationData<Material>
       const supplierRes = sRes as unknown as PaginationData<Supplier>
@@ -223,8 +238,12 @@ export function useInboundPage() {
   }
 
   const fetchPurchaseOrders = async () => {
+    if (!canUsePurchaseOrders) {
+      setPurchaseOrders([])
+      return
+    }
     try {
-      const res = await purchaseOrderApi.getList({ status: 'pending,partial', pageSize: 100 }) as unknown as PaginationData<PurchaseOrderOption>
+      const res = await purchaseOrderApi.getList({ status: 'pending,partial', page: 1, pageSize: 999 }) as unknown as PaginationData<PurchaseOrderOption>
       setPurchaseOrders(res?.list || [])
     } catch (e) {
       setPurchaseOrders([])
@@ -235,6 +254,40 @@ export function useInboundPage() {
     fetchRefs()
     fetchPurchaseOrders()
   }, [])
+
+  useEffect(() => {
+    if (handledCreateFromQuery.current) return
+    if (url.get('action', '') !== 'create') return
+
+    const type = url.get('type', 'purchase') as FormData['type']
+    const purchaseOrderId = url.get('purchaseOrderId', '')
+    const materialId = url.get('materialId', '')
+    const supplierId = url.get('supplierId', '')
+    const quantity = url.getNumber('quantity', 0)
+    const price = url.getNumber('price', 0)
+
+    handledCreateFromQuery.current = true
+    setSelectedOrderId(purchaseOrderId)
+    setForm(prev => ({
+      ...prev,
+      type,
+      purchaseOrderId,
+      materialId,
+      supplierId,
+      quantity,
+      price,
+      locationId: prev.locationId || locations[0]?.id || '',
+    }))
+    fetchRefs()
+    fetchPurchaseOrders()
+    setModalType('create')
+  }, [locations, url])
+
+  useEffect(() => {
+    if (modalType !== 'create') return
+    if (form.locationId || !locations[0]?.id) return
+    setForm(prev => ({ ...prev, locationId: prev.locationId || locations[0].id }))
+  }, [form.locationId, locations, modalType])
 
   // 选择操作
   const toggleSelectAll = () => {
@@ -272,7 +325,7 @@ export function useInboundPage() {
   // 弹窗操作
   const openCreate = () => {
     setForm({
-      type: 'purchase', materialId: materials[0]?.id || '', batchNo: '', quantity: 0,
+      type: canUsePurchaseOrders ? 'purchase' : 'direct', materialId: materials[0]?.id || '', batchNo: '', quantity: 0,
       price: 0, supplierId: '', locationId: locations[0]?.id || '', fromLocationId: '', fromLocationName: '',
       productionDate: '', expiryDate: '', remark: '', purchaseOrderId: ''
     })
@@ -305,28 +358,19 @@ export function useInboundPage() {
   }
 
   const handleDelete = async (record: InboundRecord) => {
+    setSelectedRecord(record)
+    setModalType('cancel')
+  }
+
+  const handleCancelInbound = async () => {
+    if (!selectedRecord) return
     try {
-      const check = await inboundApi.checkDeletable(record.id)
-      if (!check.data?.canDelete) {
-        const reasons = check.data?.reasons || ['该记录不可删除']
-        openConfirmModal('不可删除', reasons.join('；'), () => {})
-        return
-      }
-      openConfirmModal(
-        '删除确认',
-        `确定删除入库记录 ${record.inboundNo} 吗？删除后不可恢复。`,
-        async () => {
-          try {
-            await inboundApi.delete(record.id)
-            toast.success('删除成功')
-            refresh()
-          } catch (e) {
-            toast.error('删除失败')
-          }
-        }
-      )
+      await inboundApi.cancel(selectedRecord.id, '页面取消入库')
+      toast.success('取消成功')
+      closeModal()
+      refresh()
     } catch (e) {
-      toast.error('预检查失败')
+      toast.error('取消失败')
     }
   }
 
@@ -338,6 +382,7 @@ export function useInboundPage() {
   const closeModal = () => {
     setModalType(null)
     setSelectedRecord(null)
+    setPrintRecords([])
     setSelectedOrderId('')
   }
 
@@ -392,16 +437,7 @@ export function useInboundPage() {
         toast.success('入库成功')
       } else {
         await inboundApi.create(form)
-        if (selectedOrderId) {
-          try {
-            await purchaseOrderApi.receive(selectedOrderId, { quantity: form.quantity })
-            toast.success('入库成功，已更新采购订单收货数量')
-          } catch (e) {
-            toast.success('入库成功，但更新采购订单失败')
-          }
-        } else {
-          toast.success('入库成功')
-        }
+        toast.success(selectedOrderId ? '入库成功，已更新采购订单收货数量' : '入库成功')
       }
       closeModal()
       refresh()
@@ -460,11 +496,21 @@ export function useInboundPage() {
   }
 
   const handleBatchPrint = () => {
+    const records = selectedIds.size > 0
+      ? data.filter(d => selectedIds.has(d.id))
+      : data
+    if (records.length === 0) {
+      toast.error('没有可打印的数据')
+      return
+    }
+    setSelectedRecord(null)
+    setPrintRecords(records)
     setModalType('print')
   }
 
   const handlePrintRecord = (record: InboundRecord) => {
     setSelectedRecord(record)
+    setPrintRecords([record])
     setModalType('print')
   }
 
@@ -494,7 +540,7 @@ export function useInboundPage() {
     selectedIds, toggleSelectAll, toggleSelectOne, clearSelection,
     isAllSelected, isIndeterminate,
     // 弹窗
-    modalType, setModalType, selectedRecord, setSelectedRecord,
+    modalType, setModalType, selectedRecord, setSelectedRecord, printRecords,
     confirmModal, openConfirmModal, closeConfirmModal,
     // 表单
     purchaseOrders, selectedOrderId, setSelectedOrderId,
@@ -506,7 +552,7 @@ export function useInboundPage() {
     stats, quickFilterCounts,
     // 操作
     openCreate, openDetail, openEdit, handleDelete, openRestore, closeModal,
-    handleRestoreInbound, handleBatchExport, handleBatchPrint, handlePrintRecord,
+    handleCancelInbound, handleRestoreInbound, handleBatchExport, handleBatchPrint, handlePrintRecord,
     handleResetFilters,
   }
 }

@@ -41,6 +41,32 @@ async function apiFetch(token: string, method: string, path: string, body?: any)
   return { status: res.status, data: (await res.json().catch(() => null)) as any }
 }
 
+async function getMaterialWithStock(token: string, minStock: number = 2): Promise<string> {
+  const res = await apiFetch(token, 'GET', '/inventory?page=1&pageSize=200')
+  const list = res.data?.data?.list || []
+  const item = list.find((row: any) => Number(row.stock || 0) >= minStock)
+  return item?.materialId || ''
+}
+
+async function createSupplierReturnAuditLog(token: string) {
+  const materialId = await getMaterialWithStock(token)
+  expect(materialId).toBeTruthy()
+
+  const created = await apiFetch(token, 'POST', '/supplier-returns', {
+    materialId,
+    quantity: 1,
+    reason: 'quality_issue',
+    remark: 'E2E日志导出审计',
+  })
+  expect(created.status).toBe(200)
+  const id = created.data?.data?.id
+  expect(id).toBeTruthy()
+
+  const shipped = await apiFetch(token, 'PUT', `/supplier-returns/${id}/status`, { status: 'shipped' })
+  expect(shipped.status).toBe(200)
+  return id as string
+}
+
 test.beforeEach(async ({ page }) => {
   await page.goto(`${FE_BASE}/login`).catch(() => {})
   await page.evaluate(() => localStorage.clear()).catch(() => {})
@@ -169,9 +195,14 @@ test.describe('操作日志 -> 筛选功能', () => {
     if (await dates.count() >= 2) { await dates.nth(1).fill('2024-12-31'); await page.waitForTimeout(500) }
   })
   test('LOG-FILTER-10. 边界：开始日期大于结束日期', async ({ page }) => {
-    await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/logs`); await page.waitForTimeout(1500)
+    await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/logs`)
+    await expect(page.getByRole('heading', { name: '操作日志' })).toBeVisible({ timeout: 15000 })
     const dates = page.locator('input[type="date"]')
-    if (await dates.count() >= 2) { await dates.nth(0).fill('2024-12-31'); await dates.nth(1).fill('2024-01-01'); await page.waitForTimeout(500) }
+    await expect(dates).toHaveCount(2)
+    await dates.nth(0).fill('2024-12-31')
+    await dates.nth(1).fill('2024-01-01')
+    await page.getByRole('button', { name: '查询' }).click()
+    await expect(page.getByText('开始日期不能晚于结束日期')).toBeVisible()
   })
   test('LOG-FILTER-11. 并发：快速切换筛选条件', async ({ page }) => {
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/logs`); await page.waitForTimeout(1500)
@@ -395,6 +426,31 @@ test.describe('操作日志 -> 导出功能', () => {
       if (await confirm.isVisible().catch(() => false)) { await confirm.click(); await page.waitForTimeout(1000) }
     }
   })
+  test('LOG-EXPORT-10. 主路径：按筛选条件导出真实审计CSV', async ({ page }) => {
+    const token = await apiLogin('admin')
+    const supplierReturnId = await createSupplierReturnAuditLog(token)
+
+    await loginAs(page, 'admin')
+    await page.goto(`${FE_BASE}/logs?keyword=${encodeURIComponent(supplierReturnId)}&module=supplier_returns`)
+    await expect(page.locator('tbody')).toContainText(supplierReturnId, { timeout: 15000 })
+    await expect(page.locator('tbody')).toContainText('供应商退货')
+
+    await page.getByRole('button', { name: /导出日志|导出/i }).click()
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      page.locator('.fixed.z-50 button').filter({ hasText: /^导出$/ }).click(),
+    ])
+    const path = await download.path()
+    expect(path).toBeTruthy()
+    const csv = await (await import('node:fs/promises')).readFile(path!, 'utf8')
+    expect(csv).toContain(supplierReturnId)
+    expect(csv).toContain('供应商退货')
+    expect(csv).toContain('supplier_returns')
+    expect(csv).not.toContain('POST导出测试-出库')
+
+    const cancelled = await apiFetch(token, 'PUT', `/supplier-returns/${supplierReturnId}/status`, { status: 'cancelled' })
+    expect(cancelled.status).toBe(200)
+  })
   test('LOG-EXPORT-07. 正常用例：导出弹窗点击取消关闭', async ({ page }) => {
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/logs`); await page.waitForTimeout(1500)
     const exportBtn = page.locator('text=/导出日志|导出/i').first()
@@ -425,18 +481,39 @@ test.describe('操作日志 -> 导出功能', () => {
 })
 
 // ───────────────────────────────────────────────
-// 7. 角色权限矩阵补充
+// 7. 清理功能
+// ───────────────────────────────────────────────
+test.describe('操作日志 -> 清理功能', () => {
+  test('LOG-CLEAN-01. 防误删：清理全部日志需要输入确认语', async ({ page }) => {
+    await loginAs(page, 'admin')
+    await page.goto(`${FE_BASE}/logs`)
+    await expect(page.getByRole('heading', { name: '操作日志' })).toBeVisible({ timeout: 15000 })
+
+    await page.getByRole('button', { name: /清理日志/i }).click()
+    await expect(page.getByText('清理历史日志')).toBeVisible()
+    await page.getByRole('radio', { name: /全部日志/ }).check()
+
+    const confirm = page.getByRole('button', { name: /确认清理/i })
+    await expect(confirm).toBeDisabled()
+    await page.getByPlaceholder('清理全部日志').fill('清理全部日志')
+    await expect(confirm).toBeEnabled()
+  })
+})
+
+// ───────────────────────────────────────────────
+// 8. 角色权限矩阵补充
 // ───────────────────────────────────────────────
 test.describe('操作日志 -> 角色权限矩阵补充', () => {
   const permScenes = [
     { id: 'TC-PERM-LOG-01', role: 'technician' as RoleKey, method: 'GET', path: '/logs', expect: 403 },
     { id: 'TC-PERM-LOG-02', role: 'pathologist' as RoleKey, method: 'GET', path: '/logs', expect: 403 },
     { id: 'TC-PERM-LOG-03', role: 'procurement' as RoleKey, method: 'GET', path: '/logs', expect: 403 },
-    { id: 'TC-PERM-LOG-04', role: 'finance' as RoleKey, method: 'GET', path: '/logs', expect: 403 },
+    { id: 'TC-PERM-LOG-04', role: 'finance' as RoleKey, method: 'GET', path: '/logs', expect: 200 },
     { id: 'TC-PERM-LOG-05', role: 'warehouse_manager' as RoleKey, method: 'GET', path: '/logs', expect: 403 },
     { id: 'TC-PERM-LOG-06', role: 'admin' as RoleKey, method: 'GET', path: '/logs', expect: 200 },
     { id: 'TC-PERM-LOG-07', role: 'admin' as RoleKey, method: 'GET', path: '/logs/operation', expect: 200 },
     { id: 'TC-PERM-LOG-08', role: 'technician' as RoleKey, method: 'GET', path: '/logs/operation', expect: 403 },
+    { id: 'TC-PERM-LOG-09', role: 'finance' as RoleKey, method: 'GET', path: '/logs/operation', expect: 200 },
   ]
   for (const scene of permScenes) {
     test(`${scene.id}. ${scene.role} ${scene.method} ${scene.path} 返回${scene.expect}`, async () => {
@@ -445,10 +522,22 @@ test.describe('操作日志 -> 角色权限矩阵补充', () => {
       expect(res.status).toBe(scene.expect)
     })
   }
+
+  test('TC-PERM-LOG-10. finance可查看日志页面但不能清理日志', async ({ page }) => {
+    const token = await apiLogin('finance')
+    const cleanRes = await apiFetch(token, 'DELETE', '/logs?beforeDate=2026-01-01')
+    expect(cleanRes.status).toBe(403)
+
+    await loginAs(page, 'finance'); await page.goto(`${FE_BASE}/logs`)
+    await expect.poll(() => new URL(page.url()).pathname, { timeout: 5000 }).toBe('/logs')
+    await expect(page.getByRole('heading', { name: '操作日志' })).toBeVisible()
+    await expect(page.getByRole('button', { name: /导出日志|导出/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: /清理日志/i })).toHaveCount(0)
+  })
 })
 
 // ───────────────────────────────────────────────
-// 8. 业务流程树
+// 9. 业务流程树
 // ───────────────────────────────────────────────
 test.describe('操作日志 -> 业务流程树', () => {
   test('BF-LOG-01. 主路径：进入日志页→筛选操作类型→查看详情→导出', async ({ page }) => {
@@ -526,7 +615,7 @@ test.describe('操作日志 -> 业务流程树', () => {
 })
 
 // ───────────────────────────────────────────────
-// 9. 盲点分析补充
+// 10. 盲点分析补充
 // ───────────────────────────────────────────────
 test.describe('操作日志 -> 盲点分析补充', () => {
   test('BLIND-LOG-01. 操作类型标签颜色区分', async ({ page }) => {

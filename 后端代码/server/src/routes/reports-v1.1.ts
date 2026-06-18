@@ -1,9 +1,40 @@
 import { Router } from 'express'
 import { getDatabase } from '../database/DatabaseManager.js'
 import { success, error } from '../utils/response.js'
-import { getOrCalculateProjectFullCost, calculateEquipmentCostFromRows } from '../utils/cost-calculator.js'
+import {
+  getOrCalculateProjectFullCost,
+  calculateEquipmentCostFromRows,
+  calculateLaborCost,
+  calculateEquipmentCost,
+  calculateQCCost,
+  calculateIndirectCost,
+} from '../utils/cost-calculator.js'
 
 const router = Router()
+
+function round2(value: number) {
+  return Math.round(value * 100) / 100
+}
+
+function formatYearMonth(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+}
+
+function getDateRange(query: any) {
+  const timeRange = String(query.timeRange || '').trim()
+  const monthMatch = timeRange.match(/^(\d+)m$/)
+  const endDate = query.endDate ? String(query.endDate) : new Date().toISOString().slice(0, 10)
+  let startDate = query.startDate ? String(query.startDate) : ''
+
+  if (!startDate && monthMatch) {
+    const months = Math.max(1, Math.min(36, Number(monthMatch[1])))
+    const end = new Date(`${endDate}T00:00:00`)
+    const start = new Date(end.getFullYear(), end.getMonth() - months + 1, 1)
+    startDate = start.toISOString().slice(0, 10)
+  }
+
+  return { startDate, endDate }
+}
 
 router.get('/cost-by-project', (req, res) => {
   try {
@@ -129,27 +160,35 @@ router.get('/cost-by-supplier', (req, res) => {
 
 router.get('/cost-trend', (req, res) => {
   try {
-    const { startDate, endDate, dimension = 'monthly' } = req.query
+    const { startDate, endDate, dimension = 'monthly', projectType } = req.query
     const db = getDatabase()
-    let where = "status = 'completed' AND is_deleted = 0"
+    let where = "r.status = 'completed' AND r.is_deleted = 0"
     const params: any[] = []
-    if (startDate) { where += ' AND created_at >= ?'; params.push(startDate) }
-    if (endDate) { where += ' AND created_at <= ?'; params.push(`${endDate}T23:59:59`) }
+    if (startDate) { where += ' AND r.created_at >= ?'; params.push(startDate) }
+    if (endDate) { where += ' AND r.created_at <= ?'; params.push(`${endDate}T23:59:59`) }
+    if (projectType && projectType !== 'all') {
+      where += ' AND p.type = ?'
+      params.push(projectType)
+    }
 
     if (dimension === 'quarterly') {
       // 季度聚合
       const quarterExpr = `
-        strftime('%Y', created_at) || '-Q' ||
+        strftime('%Y', r.created_at) || '-Q' ||
         CASE
-          WHEN CAST(strftime('%m', created_at) AS INTEGER) BETWEEN 1 AND 3 THEN '1'
-          WHEN CAST(strftime('%m', created_at) AS INTEGER) BETWEEN 4 AND 6 THEN '2'
-          WHEN CAST(strftime('%m', created_at) AS INTEGER) BETWEEN 7 AND 9 THEN '3'
-          WHEN CAST(strftime('%m', created_at) AS INTEGER) BETWEEN 10 AND 12 THEN '4'
+          WHEN CAST(strftime('%m', r.created_at) AS INTEGER) BETWEEN 1 AND 3 THEN '1'
+          WHEN CAST(strftime('%m', r.created_at) AS INTEGER) BETWEEN 4 AND 6 THEN '2'
+          WHEN CAST(strftime('%m', r.created_at) AS INTEGER) BETWEEN 7 AND 9 THEN '3'
+          WHEN CAST(strftime('%m', r.created_at) AS INTEGER) BETWEEN 10 AND 12 THEN '4'
         END
       `
       const rows = db.prepare(`
-        SELECT ${quarterExpr} as period, SUM(total_cost) as cost, COUNT(*) as record_count
-        FROM outbound_records
+        SELECT ${quarterExpr} as period,
+          SUM(r.total_cost) as cost,
+          COUNT(*) as record_count,
+          SUM(COALESCE(r.sample_count, 1)) as sample_count
+        FROM outbound_records r
+        LEFT JOIN projects p ON r.project_id = p.id AND p.is_deleted = 0
         WHERE ${where}
         GROUP BY period
         ORDER BY period
@@ -167,14 +206,19 @@ router.get('/cost-trend', (req, res) => {
           period: r.period,
           cost: r.cost || 0,
           recordCount: r.record_count || 0,
+          sampleCount: r.sample_count || 0,
           isComplete: r.period !== currentPeriod,
         })),
       })
     } else {
       // 月度聚合（默认）
       const rows = db.prepare(`
-        SELECT strftime('%Y-%m', created_at) as period, SUM(total_cost) as cost, COUNT(*) as record_count
-        FROM outbound_records
+        SELECT strftime('%Y-%m', r.created_at) as period,
+          SUM(r.total_cost) as cost,
+          COUNT(*) as record_count,
+          SUM(COALESCE(r.sample_count, 1)) as sample_count
+        FROM outbound_records r
+        LEFT JOIN projects p ON r.project_id = p.id AND p.is_deleted = 0
         WHERE ${where}
         GROUP BY period
         ORDER BY period
@@ -186,6 +230,7 @@ router.get('/cost-trend', (req, res) => {
           period: r.period,
           cost: r.cost || 0,
           recordCount: r.record_count || 0,
+          sampleCount: r.sample_count || 0,
         })),
       })
     }
@@ -355,11 +400,16 @@ router.get('/full-cost-by-project', (req, res) => {
     if (uniqueBomIds.length > 0) {
       const bomPlaceholders = uniqueBomIds.map(() => '?').join(',')
       const equipRows = db.prepare(`
-        SELECT et.bom_id, et.usage_minutes, e.purchase_price, e.depreciable_life_years,
-               e.residual_value, e.depreciation_method, e.total_capacity
-        FROM bom_equipment_templates et
-        JOIN equipment e ON et.equipment_id = e.id
-        WHERE et.bom_id IN (${bomPlaceholders})
+        SELECT bet.bom_id, bet.usage_minutes,
+               e.purchase_price, e.depreciable_life_years,
+               e.residual_value, e.depreciation_method, e.total_capacity,
+               et.default_purchase_price, et.default_depreciable_life_years,
+               et.default_residual_value, et.default_depreciation_method,
+               et.default_total_capacity
+        FROM bom_equipment_templates bet
+        LEFT JOIN equipment e ON bet.equipment_id = e.id
+        LEFT JOIN equipment_types et ON bet.equipment_type_id = et.id
+        WHERE bet.bom_id IN (${bomPlaceholders})
       `).all(...uniqueBomIds) as any[]
       for (const r of equipRows) {
         if (!equipmentMap[r.bom_id]) equipmentMap[r.bom_id] = []
@@ -483,11 +533,16 @@ router.get('/full-cost-by-project', (req, res) => {
         WHERE id IN (${bomPlaceholders}) AND is_deleted = 0
       `).all(...bomIds) as any[]
       for (const b of bomRows) {
+        const standardLaborCost = Number(b.standard_labor_cost) || 0
+        const standardEquipmentCost = Number(b.standard_equipment_cost) || 0
+        const standardIndirectCost = Number(b.standard_indirect_cost) || 0
+        const standardTotalCost = Number(b.standard_total_cost) || 0
         bomStandardCostMap[b.id] = {
-          standardLaborCost: b.standard_labor_cost || 0,
-          standardEquipmentCost: b.standard_equipment_cost || 0,
-          standardIndirectCost: b.standard_indirect_cost || 0,
-          standardTotalCost: b.standard_total_cost || 0,
+          standardMaterialCost: Math.max(0, standardTotalCost - standardLaborCost - standardEquipmentCost - standardIndirectCost),
+          standardLaborCost,
+          standardEquipmentCost,
+          standardIndirectCost,
+          standardTotalCost,
         }
       }
     }
@@ -561,50 +616,67 @@ router.get('/cost-structure', (req, res) => {
       WHERE ${where}
     `).get(...params) as any
 
-    const materialCost = rows?.material_cost || 0
-    const sampleCount = rows?.sample_count || 0
+    const materialCost = Number(rows?.material_cost || 0)
+    const sampleCount = Number(rows?.sample_count || 0)
 
-    // 计算人工成本（按项目类型）
-    const laborCost = sampleCount > 0 ? (() => {
+    const costRows = sampleCount > 0 ? db.prepare(`
+      SELECT
+        r.total_cost as material_cost,
+        COALESCE(r.sample_count, 1) as sample_count,
+        COALESCE(p.type, 'ihc') as project_type,
+        COALESCE(b.standard_equipment_cost, 0) as standard_equipment_cost,
+        strftime('%Y-%m', r.created_at) as cost_month
+      FROM outbound_records r
+      LEFT JOIN projects p ON r.project_id = p.id
+      LEFT JOIN boms b ON p.bom_id = b.id AND b.is_deleted = 0
+      WHERE ${where}
+    `).all(...params) as any[] : []
+
+    const uniqueTypes = [...new Set(costRows.map(row => row.project_type || 'ihc'))]
+    const laborCostMap: Record<string, number> = {}
+    if (uniqueTypes.length > 0) {
+      const placeholders = uniqueTypes.map(() => '?').join(',')
       const laborRows = db.prepare(`
         SELECT project_type, standard_minutes, labor_rate_per_minute
-        FROM standard_labor_times WHERE is_equipment_step = 0
-      `).all() as any[]
-      const costPerSample = laborRows.reduce((sum: number, r: any) =>
-        sum + (r.standard_minutes || 0) * (r.labor_rate_per_minute || 0), 0)
-      return Math.round(costPerSample * sampleCount * 100) / 100
-    })() : 0
-
-    // 计算间接成本
-    const indirectCost = sampleCount > 0 ? (() => {
-      const months = db.prepare(`
-        SELECT DISTINCT strftime('%Y-%m', r.created_at) as month
-        FROM outbound_records r
-        LEFT JOIN projects p ON r.project_id = p.id
-        WHERE ${where}
-      `).all(...params) as any[]
-      let totalRate = 0
-      for (const m of months) {
-        const allocRows = db.prepare(`
-          SELECT SUM(allocation_rate) as rate FROM indirect_cost_allocations WHERE year_month = ?
-        `).get(m.month) as any
-        totalRate += allocRows?.rate || 0
+        FROM standard_labor_times
+        WHERE (project_type IN (${placeholders}) OR project_type = 'all') AND is_equipment_step = 0
+      `).all(...uniqueTypes) as any[]
+      for (const row of laborRows) {
+        const key = row.project_type || 'all'
+        laborCostMap[key] = (laborCostMap[key] || 0)
+          + (Number(row.standard_minutes) || 0) * (Number(row.labor_rate_per_minute) || 0)
       }
-      const avgRate = months.length > 0 ? totalRate / months.length : 0
-      return Math.round(avgRate * sampleCount * 100) / 100
-    })() : 0
+    }
 
-    // 设备成本估算（简化：使用 BOM 标准设备成本）
-    const equipmentCost = (() => {
-      const bomRows = db.prepare(`
-        SELECT SUM(b.standard_equipment_cost * COALESCE(r.sample_count, 1)) as eq_cost
-        FROM outbound_records r
-        LEFT JOIN projects p ON r.project_id = p.id
-        LEFT JOIN boms b ON p.bom_id = b.id
-        WHERE ${where} AND b.standard_equipment_cost > 0
-      `).get(...params) as any
-      return Math.round((bomRows?.eq_cost || 0) * 100) / 100
-    })()
+    const uniqueMonths = [...new Set(costRows.map(row => row.cost_month).filter(Boolean))]
+    const indirectRateMap: Record<string, number> = {}
+    if (uniqueMonths.length > 0) {
+      const placeholders = uniqueMonths.map(() => '?').join(',')
+      const indirectRows = db.prepare(`
+        SELECT year_month, SUM(allocation_rate) as rate
+        FROM indirect_cost_allocations
+        WHERE year_month IN (${placeholders})
+        GROUP BY year_month
+      `).all(...uniqueMonths) as any[]
+      for (const row of indirectRows) {
+        indirectRateMap[row.year_month] = Number(row.rate) || 0
+      }
+    }
+
+    const laborCost = Math.round(costRows.reduce((sum, row) => {
+      const projectType = row.project_type || 'ihc'
+      const perSampleCost = (laborCostMap[projectType] || 0) + (laborCostMap['all'] || 0)
+      return sum + perSampleCost * (Number(row.sample_count) || 1)
+    }, 0) * 100) / 100
+
+    const indirectCost = Math.round(costRows.reduce((sum, row) => {
+      const rate = indirectRateMap[row.cost_month] || 0
+      return sum + rate * (Number(row.sample_count) || 1)
+    }, 0) * 100) / 100
+
+    const equipmentCost = Math.round(costRows.reduce((sum, row) => (
+      sum + (Number(row.standard_equipment_cost) || 0) * (Number(row.sample_count) || 1)
+    ), 0) * 100) / 100
 
     const totalCost = materialCost + laborCost + equipmentCost + indirectCost
 
@@ -622,28 +694,88 @@ router.get('/cost-structure', (req, res) => {
 // ===== Phase 2.4: 成本差异分析 =====
 router.get('/cost-variance', (req, res) => {
   try {
-    const { startDate, endDate, compareType = 'actual_vs_standard' } = req.query
+    const { startDate, endDate } = req.query
+    const compareType = ['project', 'month', 'material'].includes(String(req.query.compareType))
+      ? String(req.query.compareType)
+      : 'project'
     const db = getDatabase()
     let where = "r.status = 'completed' AND r.is_deleted = 0 AND (p.is_deleted = 0 OR p.id IS NULL)"
     const params: any[] = []
     if (startDate) { where += ' AND r.created_at >= ?'; params.push(startDate) }
     if (endDate) { where += ' AND r.created_at <= ?'; params.push(`${endDate}T23:59:59`) }
 
-    // 查询实际成本（按项目汇总）
+    if (compareType === 'material') {
+      const rows = db.prepare(`
+        SELECT
+          oi.material_id,
+          m.name as material_name,
+          m.unit,
+          SUM(oi.quantity) as quantity,
+          SUM(oi.total_cost) as actual_cost,
+          SUM(oi.quantity * COALESCE(m.price, oi.unit_cost, 0)) as standard_cost
+        FROM outbound_items oi
+        JOIN outbound_records r ON oi.outbound_id = r.id
+        LEFT JOIN projects p ON r.project_id = p.id
+        LEFT JOIN materials m ON oi.material_id = m.id AND m.is_deleted = 0
+        WHERE ${where}
+        GROUP BY oi.material_id
+        ORDER BY actual_cost DESC
+      `).all(...params) as any[]
+
+      const items = rows.map((row: any) => {
+        const materialActual = Math.round((Number(row.actual_cost) || 0) * 100) / 100
+        const materialStandard = Math.round((Number(row.standard_cost) || 0) * 100) / 100
+        const totalVariance = Math.round((materialActual - materialStandard) * 100) / 100
+        return {
+          projectId: row.material_id || 'unknown-material',
+          projectName: row.material_name || 'Unknown Material',
+          groupType: 'material',
+          unit: row.unit || '',
+          materialActual,
+          materialStandard,
+          laborActual: 0,
+          laborStandard: 0,
+          equipmentActual: 0,
+          equipmentStandard: 0,
+          qcActual: 0,
+          indirectActual: 0,
+          indirectStandard: 0,
+          totalActual: materialActual,
+          totalStandard: materialStandard,
+          totalVariance,
+          varianceRate: materialStandard > 0 ? Math.round(totalVariance / materialStandard * 10000) / 100 : 0,
+          sampleCount: Number(row.quantity) || 0,
+        }
+      })
+
+      const summary = {
+        totalActual: Math.round(items.reduce((s: number, i: any) => s + i.totalActual, 0) * 100) / 100,
+        totalStandard: Math.round(items.reduce((s: number, i: any) => s + i.totalStandard, 0) * 100) / 100,
+        totalVariance: Math.round(items.reduce((s: number, i: any) => s + i.totalVariance, 0) * 100) / 100,
+        varianceRate: 0,
+      }
+      summary.varianceRate = summary.totalStandard > 0
+        ? Math.round(summary.totalVariance / summary.totalStandard * 10000) / 100
+        : 0
+
+      success(res, { summary, items })
+      return
+    }
+
     const rows = db.prepare(`
       SELECT
+        r.id as outbound_id,
         r.project_id,
+        r.total_cost as actual_material_cost,
+        COALESCE(r.sample_count, 1) as sample_count,
         p.name as project_name,
-        p.type as project_type,
+        COALESCE(p.type, 'ihc') as project_type,
         p.bom_id,
-        SUM(r.total_cost) as actual_material_cost,
-        SUM(COALESCE(r.sample_count, 1)) as sample_count,
         strftime('%Y-%m', r.created_at) as cost_month
       FROM outbound_records r
       LEFT JOIN projects p ON r.project_id = p.id
       WHERE ${where}
-      GROUP BY r.project_id, cost_month
-      ORDER BY r.project_id, cost_month
+      ORDER BY r.created_at ASC
     `).all(...params) as any[]
 
     // 查询 BOM 标准成本
@@ -660,45 +792,61 @@ router.get('/cost-variance', (req, res) => {
       }
     }
 
-    // 按项目汇总差异
-    const projectMap = new Map<string, any>()
+    const groupMap = new Map<string, any>()
     for (const row of rows) {
-      const pid = row.project_id || 'unknown'
-      if (!projectMap.has(pid)) {
-        projectMap.set(pid, {
-          projectId: pid,
-          projectName: row.project_name || 'Unknown',
+      const month = row.cost_month || new Date().toISOString().slice(0, 7)
+      const groupId = compareType === 'month' ? month : (row.project_id || 'unknown')
+      const groupName = compareType === 'month' ? `${month} 月` : (row.project_name || 'Unknown')
+      if (!groupMap.has(groupId)) {
+        groupMap.set(groupId, {
+          projectId: groupId,
+          projectName: groupName,
+          groupType: compareType,
+          month: compareType === 'month' ? month : undefined,
           materialActual: 0, materialStandard: 0,
           laborActual: 0, laborStandard: 0,
           equipmentActual: 0, equipmentStandard: 0,
+          qcActual: 0,
           indirectActual: 0, indirectStandard: 0,
           totalActual: 0, totalStandard: 0,
           sampleCount: 0,
         })
       }
-      const proj = projectMap.get(pid)
+      const proj = groupMap.get(groupId)
       const bom = bomMap[row.bom_id]
-      const sc = row.sample_count || 1
+      const sc = Number(row.sample_count) || 1
       proj.sampleCount += sc
-      proj.materialActual += row.actual_material_cost || 0
+      proj.materialActual += Number(row.actual_material_cost) || 0
+      proj.laborActual += calculateLaborCost(db, row.project_type || 'ihc', sc)
+      proj.equipmentActual += row.bom_id ? calculateEquipmentCost(db, row.bom_id, sc) : 0
+      proj.qcActual += row.bom_id ? calculateQCCost(db, row.bom_id, sc) : 0
+      proj.indirectActual += calculateIndirectCost(db, month, sc)
       if (bom) {
-        proj.laborStandard += (bom.standard_labor_cost || 0) * sc
-        proj.equipmentStandard += (bom.standard_equipment_cost || 0) * sc
-        proj.indirectStandard += (bom.standard_indirect_cost || 0) * sc
-        proj.materialStandard += (bom.standard_total_cost - bom.standard_labor_cost - bom.standard_equipment_cost - bom.standard_indirect_cost) * sc || 0
+        const standardLabor = Number(bom.standard_labor_cost) || 0
+        const standardEquipment = Number(bom.standard_equipment_cost) || 0
+        const standardIndirect = Number(bom.standard_indirect_cost) || 0
+        const standardTotal = Number(bom.standard_total_cost) || 0
+        proj.laborStandard += standardLabor * sc
+        proj.equipmentStandard += standardEquipment * sc
+        proj.indirectStandard += standardIndirect * sc
+        proj.materialStandard += Math.max(0, standardTotal - standardLabor - standardEquipment - standardIndirect) * sc
       }
     }
 
-    const items = Array.from(projectMap.values()).map((p: any) => {
-      p.totalActual = Math.round((p.materialActual + p.laborActual + p.equipmentActual + p.indirectActual) * 100) / 100
+    const items = Array.from(groupMap.values()).map((p: any) => {
+      p.totalActual = Math.round((p.materialActual + p.laborActual + p.equipmentActual + p.qcActual + p.indirectActual) * 100) / 100
       p.totalStandard = Math.round((p.materialStandard + p.laborStandard + p.equipmentStandard + p.indirectStandard) * 100) / 100
       const totalVariance = p.totalActual - p.totalStandard
       return {
         ...p,
         materialActual: Math.round(p.materialActual * 100) / 100,
         materialStandard: Math.round(p.materialStandard * 100) / 100,
+        laborActual: Math.round(p.laborActual * 100) / 100,
         laborStandard: Math.round(p.laborStandard * 100) / 100,
+        equipmentActual: Math.round(p.equipmentActual * 100) / 100,
         equipmentStandard: Math.round(p.equipmentStandard * 100) / 100,
+        qcActual: Math.round(p.qcActual * 100) / 100,
+        indirectActual: Math.round(p.indirectActual * 100) / 100,
         indirectStandard: Math.round(p.indirectStandard * 100) / 100,
         totalVariance: Math.round(totalVariance * 100) / 100,
         varianceRate: p.totalStandard > 0 ? Math.round(totalVariance / p.totalStandard * 10000) / 100 : 0,
@@ -724,41 +872,57 @@ router.get('/cost-monthly-comparison', (req, res) => {
   try {
     const db = getDatabase()
     const now = new Date()
-    const currentMonth = now.toISOString().slice(0, 7)
-    const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1)
-    const previousMonth = prevDate.toISOString().slice(0, 7)
+    const todayMonth = formatYearMonth(now)
+    const requestedMonth = String(req.query.month || '').trim()
+    const source = String(req.query.source || 'outbound')
+    const currentMonth = /^\d{4}-\d{2}$/.test(requestedMonth) ? requestedMonth : todayMonth
+    const [targetYear, targetMonthNumber] = currentMonth.split('-').map(Number)
+    const targetDate = new Date(targetYear, targetMonthNumber - 1, 1)
+    const prevDate = new Date(targetDate.getFullYear(), targetDate.getMonth() - 1, 1)
+    const previousMonth = formatYearMonth(prevDate)
 
-    // 查询当月数据
-    const currentRows = db.prepare(`
-      SELECT
-        SUM(total_cost) as total_cost,
-        SUM(COALESCE(sample_count, 1)) as sample_count,
-        COUNT(*) as record_count
-      FROM outbound_records
-      WHERE status = 'completed' AND is_deleted = 0
-        AND strftime('%Y-%m', created_at) = ?
-    `).get(currentMonth) as any
+    const monthlySql = source === 'abc'
+      ? `
+        SELECT
+          SUM(total_cost) as total_cost,
+          SUM(COALESCE(sample_count, 0)) as sample_count,
+          COUNT(*) as record_count
+        FROM outbound_abc_details
+        WHERE cost_month = ?
+          AND COALESCE(cost_status, 'costed') NOT IN ('pending_cost', 'cost_exception')
+      `
+      : `
+        SELECT
+          SUM(total_cost) as total_cost,
+          SUM(COALESCE(sample_count, 1)) as sample_count,
+          COUNT(*) as record_count
+        FROM outbound_records
+        WHERE status = 'completed' AND is_deleted = 0
+          AND strftime('%Y-%m', created_at) = ?
+      `
 
-    // 查询上月数据
-    const previousRows = db.prepare(`
-      SELECT
-        SUM(total_cost) as total_cost,
-        SUM(COALESCE(sample_count, 1)) as sample_count,
-        COUNT(*) as record_count
-      FROM outbound_records
-      WHERE status = 'completed' AND is_deleted = 0
-        AND strftime('%Y-%m', created_at) = ?
-    `).get(previousMonth) as any
+    const currentRows = db.prepare(monthlySql).get(currentMonth) as any
+    const previousRows = db.prepare(monthlySql).get(previousMonth) as any
 
     const currentTotal = currentRows?.total_cost || 0
     const previousTotal = previousRows?.total_cost || 0
     const totalChange = currentTotal - previousTotal
     const totalChangeRate = previousTotal > 0 ? Math.round(totalChange / previousTotal * 10000) / 100 : 0
 
-    // 检查当月数据完整性
-    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()
-    const currentDay = now.getDate()
-    const isComplete = currentDay >= daysInMonth
+    const daysInMonth = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 0).getDate()
+    const currentDay = currentMonth < todayMonth
+      ? daysInMonth
+      : currentMonth === todayMonth
+        ? Math.min(now.getDate(), daysInMonth)
+        : 0
+    const isComplete = currentMonth < todayMonth || (currentMonth === todayMonth && currentDay >= daysInMonth)
+    const previousDaysInMonth = new Date(prevDate.getFullYear(), prevDate.getMonth() + 1, 0).getDate()
+    const previousDataDays = previousMonth < todayMonth
+      ? previousDaysInMonth
+      : previousMonth === todayMonth
+        ? Math.min(now.getDate(), previousDaysInMonth)
+        : 0
+    const previousIsComplete = previousMonth < todayMonth || (previousMonth === todayMonth && previousDataDays >= previousDaysInMonth)
 
     success(res, {
       currentMonth: {
@@ -774,15 +938,165 @@ router.get('/cost-monthly-comparison', (req, res) => {
         totalCost: Math.round(previousTotal * 100) / 100,
         sampleCount: previousRows?.sample_count || 0,
         recordCount: previousRows?.record_count || 0,
-        isComplete: true,
-        dataDays: new Date(prevDate.getFullYear(), prevDate.getMonth() + 1, 0).getDate(),
+        isComplete: previousIsComplete,
+        dataDays: previousDataDays,
       },
       changes: {
         totalChange: Math.round(totalChange * 100) / 100,
         totalChangeRate,
         direction: totalChange > 0 ? 'up' : totalChange < 0 ? 'down' : 'flat',
-        note: !isComplete ? `当月数据不完整（仅 ${currentDay}/${daysInMonth} 天）` : undefined,
+        note: !isComplete ? `${currentMonth} 数据不完整（仅 ${currentDay}/${daysInMonth} 天）` : undefined,
+        source,
       },
+    })
+  } catch (err: any) { error(res, err.message) }
+})
+
+router.get('/personnel-efficiency', (req, res) => {
+  try {
+    const db = getDatabase()
+    const { startDate, endDate } = getDateRange(req.query)
+    const role = String(req.query.role || 'all').trim()
+
+    let where = "r.status = 'completed' AND r.is_deleted = 0"
+    const params: any[] = []
+    if (startDate) { where += ' AND r.created_at >= ?'; params.push(startDate) }
+    if (endDate) { where += ' AND r.created_at <= ?'; params.push(`${endDate}T23:59:59`) }
+    if (role && role !== 'all') {
+      where += ' AND COALESCE(u.role, r.operator) = ?'
+      params.push(role)
+    }
+
+    const rows = db.prepare(`
+      SELECT
+        r.operator,
+        COALESCE(u.real_name, r.operator) as operator_name,
+        COALESCE(u.role, 'unknown') as role,
+        COALESCE(p.type, 'all') as project_type,
+        strftime('%Y-%m', r.created_at) as month,
+        COUNT(*) as record_count,
+        SUM(COALESCE(r.sample_count, 1)) as sample_count,
+        SUM(COALESCE(r.total_cost, 0)) as material_cost
+      FROM outbound_records r
+      LEFT JOIN users u ON u.username = r.operator AND u.is_deleted = 0
+      LEFT JOIN projects p ON p.id = r.project_id AND (p.is_deleted = 0 OR p.id IS NULL)
+      WHERE ${where}
+      GROUP BY r.operator, operator_name, role, project_type, month
+      ORDER BY sample_count DESC
+    `).all(...params) as any[]
+
+    const projectTypes = [...new Set(rows.map(row => row.project_type || 'all'))]
+    const laborRows = projectTypes.length > 0
+      ? db.prepare(`
+          SELECT project_type, standard_minutes, labor_rate_per_minute
+          FROM standard_labor_times
+          WHERE (project_type IN (${projectTypes.map(() => '?').join(',')}) OR project_type = 'all')
+            AND is_equipment_step = 0
+        `).all(...projectTypes) as any[]
+      : []
+
+    const minutesByType: Record<string, number> = {}
+    const laborCostByType: Record<string, number> = {}
+    for (const row of laborRows) {
+      const key = row.project_type || 'all'
+      minutesByType[key] = (minutesByType[key] || 0) + (Number(row.standard_minutes) || 0)
+      laborCostByType[key] = (laborCostByType[key] || 0)
+        + (Number(row.standard_minutes) || 0) * (Number(row.labor_rate_per_minute) || 0)
+    }
+
+    const people = new Map<string, any>()
+    const months = new Map<string, any>()
+    let totalOutput = 0
+    let totalLaborCost = 0
+    let totalStandardMinutes = 0
+
+    for (const row of rows) {
+      const operator = row.operator || 'unknown'
+      const projectType = row.project_type || 'all'
+      const sampleCount = Number(row.sample_count) || 0
+      const recordCount = Number(row.record_count) || 0
+      const perSampleMinutes = (minutesByType[projectType] || 0) + (minutesByType.all || 0)
+      const perSampleLaborCost = (laborCostByType[projectType] || 0) + (laborCostByType.all || 0)
+      const standardMinutes = perSampleMinutes * sampleCount
+      const laborCost = perSampleLaborCost * sampleCount
+
+      if (!people.has(operator)) {
+        people.set(operator, {
+          id: operator,
+          name: row.operator_name || operator,
+          role: row.role || 'unknown',
+          outputCount: 0,
+          recordCount: 0,
+          standardMinutes: 0,
+          totalCost: 0,
+          materialCost: 0,
+        })
+      }
+      const person = people.get(operator)
+      person.outputCount += sampleCount
+      person.recordCount += recordCount
+      person.standardMinutes += standardMinutes
+      person.totalCost += laborCost
+      person.materialCost += Number(row.material_cost) || 0
+
+      if (!months.has(row.month)) {
+        months.set(row.month, { month: row.month, outputCount: 0, totalCost: 0, standardMinutes: 0 })
+      }
+      const month = months.get(row.month)
+      month.outputCount += sampleCount
+      month.totalCost += laborCost
+      month.standardMinutes += standardMinutes
+
+      totalOutput += sampleCount
+      totalLaborCost += laborCost
+      totalStandardMinutes += standardMinutes
+    }
+
+    const baselineOutputPerHour = totalStandardMinutes > 0 ? totalOutput / (totalStandardMinutes / 60) : 0
+    const ranking = Array.from(people.values()).map(person => {
+      const hours = person.standardMinutes > 0 ? person.standardMinutes / 60 : 0
+      const outputPerHour = hours > 0 ? person.outputCount / hours : 0
+      return {
+        id: person.id,
+        name: person.name,
+        role: person.role,
+        efficiency: baselineOutputPerHour > 0 ? round2(outputPerHour / baselineOutputPerHour) : 0,
+        outputPerHour: round2(outputPerHour),
+        totalCost: round2(person.totalCost),
+        materialCost: round2(person.materialCost),
+        outputCount: person.outputCount,
+        recordCount: person.recordCount,
+        standardHours: round2(hours),
+        costPerOutput: person.outputCount > 0 ? round2(person.totalCost / person.outputCount) : 0,
+      }
+    }).sort((a, b) => b.outputCount - a.outputCount)
+
+    const trend = Array.from(months.values()).map(month => {
+      const hours = month.standardMinutes > 0 ? month.standardMinutes / 60 : 0
+      const outputPerHour = hours > 0 ? month.outputCount / hours : 0
+      return {
+        month: month.month,
+        avgEfficiency: baselineOutputPerHour > 0 ? round2(outputPerHour / baselineOutputPerHour) : 0,
+        outputPerHour: round2(outputPerHour),
+        totalCost: round2(month.totalCost),
+        outputCount: month.outputCount,
+        standardHours: round2(hours),
+      }
+    }).sort((a, b) => a.month.localeCompare(b.month))
+
+    success(res, {
+      summary: {
+        personCount: ranking.length,
+        totalOutput,
+        totalLaborCost: round2(totalLaborCost),
+        totalStandardHours: round2(totalStandardMinutes / 60),
+        avgEfficiency: ranking.length > 0
+          ? round2(ranking.reduce((sum, item) => sum + item.efficiency, 0) / ranking.length)
+          : 0,
+        costPerOutput: totalOutput > 0 ? round2(totalLaborCost / totalOutput) : 0,
+      },
+      ranking,
+      trend,
     })
   } catch (err: any) { error(res, err.message) }
 })

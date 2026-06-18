@@ -10,6 +10,8 @@ interface Props {
 
 export function StocktakingDetailModal({ open, row, onClose, onAdjust }: Props) {
   if (!open || !row) return null
+  const statusText = row.status === 'confirmed' ? '已确认' : '已完成'
+  const statusClass = row.status === 'confirmed' ? 'bg-blue-50 text-blue-600' : 'bg-green-50 text-green-600'
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
@@ -27,12 +29,12 @@ export function StocktakingDetailModal({ open, row, onClose, onAdjust }: Props) 
               {[
                 { label: '盘点编号', value: row.stocktakingNo },
                 { label: '盘点名称', value: row.materialName ? `${row.materialName}盘点` : row.stocktakingNo },
-                { label: '盘点范围', value: '全部物料' },
-                { label: '盘点方式', value: '全盘' },
+                { label: '盘点范围', value: '单物料' },
+                { label: '盘点方式', value: '实盘调整' },
                 { label: '负责人', value: row.operator || '-' },
                 { label: '创建时间', value: row.createdAt ? new Date(row.createdAt).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(/\//g, '-') : '-' },
                 { label: '盘点进度', value: '100%' },
-                { label: '状态', value: <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-600">已完成</span> },
+                { label: '状态', value: <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusClass}`}>{statusText}</span> },
               ].map(item => (
                 <div key={item.label}>
                   <div className="text-xs text-gray-500 mb-1">{item.label}</div>
@@ -57,7 +59,7 @@ export function StocktakingDetailModal({ open, row, onClose, onAdjust }: Props) 
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   <tr className="hover:bg-gray-50">
-                    <td className="px-3 py-2 font-mono text-gray-600 text-xs">{row.materialId}</td>
+                    <td className="px-3 py-2 font-mono text-gray-600 text-xs">{row.materialCode || row.materialId}</td>
                     <td className="px-3 py-2">{row.materialName}</td>
                     <td className="px-3 py-2">{row.systemStock}</td>
                     <td className="px-3 py-2">{row.actualStock}</td>
@@ -83,7 +85,7 @@ export function StocktakingDetailModal({ open, row, onClose, onAdjust }: Props) 
         </div>
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 shrink-0">
           <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-md border border-gray-300">关闭</button>
-          {row.difference !== 0 && (
+          {row.difference !== 0 && row.status !== 'confirmed' && (
             <button onClick={() => onAdjust(row)} className="px-4 py-2 bg-blue-500 text-white text-sm rounded-md hover:bg-blue-600">处理差异</button>
           )}
         </div>

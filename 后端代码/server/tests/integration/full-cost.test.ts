@@ -242,6 +242,12 @@ describe('集成测试：全成本计算端到端', () => {
     // 验证单样本成本 = 总成本 / 样本数
     expect(projectCost.unitCost).toBeCloseTo(expectedTotal / 10, 2)
 
+    // 验证 BOM 标准材料成本可用于运营差异分析：直接材料 100 + 质控批次用量 300 = 400
+    expect(projectCost.standardMaterialCost).toBe(400)
+    expect(projectCost.standardLaborCost).toBe(56.5)
+    expect(projectCost.standardEquipmentCost).toBeGreaterThan(5)
+    expect(projectCost.standardTotalCost).toBeGreaterThan(projectCost.standardMaterialCost)
+
     // 验证汇总数据
     expect(summary.totalCost).toBe(expectedTotal)
     expect(summary.totalSamples).toBe(10)
@@ -249,5 +255,57 @@ describe('集成测试：全成本计算端到端', () => {
     expect(summary.laborCost).toBe(565)
     expect(summary.qcCost).toBe(300)
     expect(summary.indirectCost).toBe(1500)
+
+    // 验证成本结构按出库记录所属项目类型和月份计算，而不是把所有工时类型/月份平均后套到总样本数。
+    const structureRes = await request(app)
+      .get('/api/v1/reports/cost-structure')
+      .set('Authorization', `Bearer ${token}`)
+    expect(structureRes.status).toBe(200)
+    const structure = structureRes.body.data.structure
+    expect(structure.find((item: any) => item.costType === 'material')?.amount).toBe(materialCost)
+    expect(structure.find((item: any) => item.costType === 'labor')?.amount).toBe(565)
+    expect(structure.find((item: any) => item.costType === 'indirect')?.amount).toBe(1500)
+
+    // 验证成本差异分析按项目维度使用完整实际成本，而不是只拿材料成本和全标准成本比较。
+    const projectVarianceRes = await request(app)
+      .get('/api/v1/reports/cost-variance?compareType=project')
+      .set('Authorization', `Bearer ${token}`)
+    expect(projectVarianceRes.status).toBe(200)
+    const projectVariance = projectVarianceRes.body.data.items.find((item: any) => item.projectId === projectId)
+    expect(projectVariance).toBeDefined()
+    expect(projectVariance.materialActual).toBe(materialCost)
+    expect(projectVariance.laborActual).toBe(565)
+    expect(projectVariance.qcActual).toBe(300)
+    expect(projectVariance.indirectActual).toBe(1500)
+    expect(projectVariance.totalActual).toBeCloseTo(expectedTotal, 2)
+    expect(projectVariance.materialStandard).toBe(4000)
+    expect(projectVariance.laborStandard).toBe(565)
+    expect(projectVariance.totalStandard).toBeGreaterThan(projectVariance.totalActual)
+
+    // 验证月份维度真正按月份聚合，而不是仍然按项目返回。
+    const monthVarianceRes = await request(app)
+      .get('/api/v1/reports/cost-variance?compareType=month')
+      .set('Authorization', `Bearer ${token}`)
+    expect(monthVarianceRes.status).toBe(200)
+    const monthVariance = monthVarianceRes.body.data.items.find((item: any) => item.projectId === yearMonth)
+    expect(monthVariance).toBeDefined()
+    expect(monthVariance.projectName).toBe(`${yearMonth} 月`)
+    expect(monthVariance.month).toBe(yearMonth)
+    expect(monthVariance.sampleCount).toBe(10)
+    expect(monthVariance.totalActual).toBeCloseTo(expectedTotal, 2)
+
+    // 验证物料维度按出库明细聚合实际与标准耗材成本。
+    const materialVarianceRes = await request(app)
+      .get('/api/v1/reports/cost-variance?compareType=material')
+      .set('Authorization', `Bearer ${token}`)
+    expect(materialVarianceRes.status).toBe(200)
+    const materialVariance = materialVarianceRes.body.data.items.find((item: any) => item.projectId === materialId)
+    expect(materialVariance).toBeDefined()
+    expect(materialVariance.projectName).toBe('Ki-67抗体')
+    expect(materialVariance.unit).toBe('支')
+    expect(materialVariance.sampleCount).toBe(10)
+    expect(materialVariance.materialActual).toBe(1000)
+    expect(materialVariance.materialStandard).toBe(1000)
+    expect(materialVariance.totalVariance).toBe(0)
   })
 })

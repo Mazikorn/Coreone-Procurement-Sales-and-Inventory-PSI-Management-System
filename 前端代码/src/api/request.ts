@@ -22,6 +22,9 @@ request.interceptors.request.use(
 
 request.interceptors.response.use(
   (response) => {
+    if (response.config?.responseType === 'blob') {
+      return response.data
+    }
     const { data } = response
     if (!data.success) {
       toast.error(data.error?.message || '操作失败')

@@ -1,0 +1,383 @@
+process.env.DATABASE_PATH = ':memory:'
+
+import { describe, it, expect, beforeAll } from 'vitest'
+import request from 'supertest'
+
+const getApp = async () => {
+  const { default: app } = await import('../src/app.js')
+  const { getDatabase } = await import('../src/database/DatabaseManager.js')
+  return { app, db: getDatabase() }
+}
+
+async function loginAdmin(app: any): Promise<string> {
+  const res = await request(app)
+    .post('/api/v1/auth/login')
+    .send({ username: 'admin', password: 'admin123' })
+  expect(res.status).toBe(200)
+  return res.body.data.token
+}
+
+async function createLocation(app: any, token: string, suffix: string) {
+  const res = await request(app)
+    .post('/api/v1/locations')
+    .set('Authorization', `Bearer ${token}`)
+    .send({
+      name: `库位保护-${suffix}`,
+      zone: 'A区',
+      type: 'shelf',
+    })
+  expect(res.status).toBe(201)
+  return res.body.data.id as string
+}
+
+function bindLocationToMaterial(db: any, locationId: string, suffix: string) {
+  const categoryId = `cat-loc-guard-${suffix}`
+  const materialId = `mat-loc-guard-${suffix}`
+  db.prepare('INSERT INTO material_categories (id, code, name, level) VALUES (?, ?, ?, ?)')
+    .run(categoryId, `CAT-LOC-GUARD-${suffix}`, '库位保护测试分类', 1)
+  db.prepare(`
+    INSERT INTO materials (id, code, name, spec, unit, category_id, location_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(materialId, `MAT-LOC-GUARD-${suffix}`, '库位保护测试物料', '1ml', '瓶', categoryId, locationId)
+  db.prepare('INSERT INTO inventory (id, material_id, stock, locked_stock, location_id) VALUES (?, ?, 0, 0, ?)')
+    .run(`inv-loc-guard-${suffix}`, materialId, locationId)
+}
+
+function seedInventoryLocationStock(db: any, locationId: string, suffix: string) {
+  const categoryId = `cat-loc-invloc-${suffix}`
+  const materialId = `mat-loc-invloc-${suffix}`
+  db.prepare('INSERT INTO material_categories (id, code, name, level) VALUES (?, ?, ?, ?)')
+    .run(categoryId, `CAT-LOC-INVLOC-${suffix}`, '库位明细库存测试分类', 1)
+  db.prepare(`
+    INSERT INTO materials (id, code, name, spec, unit, category_id)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(materialId, `MAT-LOC-INVLOC-${suffix}`, '库位明细库存测试物料', '1ml', '瓶', categoryId)
+  db.prepare('INSERT INTO inventory (id, material_id, stock, locked_stock, location_id) VALUES (?, ?, 5, 0, NULL)')
+    .run(`inv-loc-invloc-${suffix}`, materialId)
+  db.prepare('INSERT INTO inventory_locations (id, material_id, location_id, stock, locked_stock) VALUES (?, ?, ?, 5, 0)')
+    .run(`invloc-loc-guard-${suffix}`, materialId, locationId)
+}
+
+describe('库位删除保护', () => {
+  let app: any
+  let db: any
+  let token: string
+
+  beforeAll(async () => {
+    ;({ app, db } = await getApp())
+    token = await loginAdmin(app)
+  })
+
+  it('LOC-GUARD-001: 被物料默认库位引用时不可删除', async () => {
+    const suffix = `mat-${Date.now()}`
+    const locationId = await createLocation(app, token, suffix)
+    bindLocationToMaterial(db, locationId, suffix)
+
+    const res = await request(app)
+      .delete(`/api/v1/locations/${locationId}`)
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(409)
+    const location = db.prepare('SELECT is_deleted FROM locations WHERE id = ?').get(locationId) as any
+    expect(Number(location.is_deleted)).toBe(0)
+  })
+
+  it('LOC-GUARD-002: 无引用库位仍可删除', async () => {
+    const locationId = await createLocation(app, token, `free-${Date.now()}`)
+
+    const res = await request(app)
+      .delete(`/api/v1/locations/${locationId}`)
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(200)
+    const location = db.prepare('SELECT is_deleted FROM locations WHERE id = ?').get(locationId) as any
+    expect(Number(location.is_deleted)).toBe(1)
+  })
+
+  it('LOC-DELETE-001: 库位删除前检查必须覆盖多库位库存明细', async () => {
+    const suffix = `invloc-${Date.now()}`
+    const locationId = await createLocation(app, token, suffix)
+    seedInventoryLocationStock(db, locationId, suffix)
+
+    const check = await request(app)
+      .get(`/api/v1/locations/${locationId}/check-deletable`)
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(check.status).toBe(200)
+    expect(check.body.data).toMatchObject({
+      deletable: false,
+      impacts: {
+        inventoryLocationCount: 1,
+      },
+    })
+    expect(check.body.data.reasons).toEqual(expect.arrayContaining([
+      '存在 1 条多库位库存明细引用',
+    ]))
+
+    const deleted = await request(app)
+      .delete(`/api/v1/locations/${locationId}`)
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(deleted.status).toBe(409)
+    const location = db.prepare('SELECT is_deleted FROM locations WHERE id = ?').get(locationId) as any
+    const stock = db.prepare('SELECT stock FROM inventory_locations WHERE location_id = ?').get(locationId) as any
+    expect(Number(location.is_deleted)).toBe(0)
+    expect(Number(stock.stock)).toBe(5)
+  })
+
+  it('LOC-STATUS-001: 更新库位状态必须拒绝页面选项以外的状态', async () => {
+    const suffix = `status-invalid-${Date.now()}`
+    const locationId = await createLocation(app, token, suffix)
+
+    const res = await request(app)
+      .put(`/api/v1/locations/${locationId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ status: 'archived' })
+
+    expect(res.status).toBe(400)
+    const location = db.prepare('SELECT status FROM locations WHERE id = ?').get(locationId) as any
+    expect(Number(location.status)).toBe(1)
+  })
+
+  it('LOC-STATUS-002: 有活跃子库位、默认物料或当前库存的库位不可停用', async () => {
+    const suffix = `status-ref-${Date.now()}`
+    const parentId = await createLocation(app, token, `${suffix}-parent`)
+    await request(app)
+      .post('/api/v1/locations')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        name: `子库位-${suffix}`,
+        zone: 'A区',
+        type: 'shelf',
+        parentId,
+      })
+      .expect(201)
+    bindLocationToMaterial(db, parentId, suffix)
+    db.prepare('UPDATE inventory SET stock = 3 WHERE location_id = ?').run(parentId)
+
+    const res = await request(app)
+      .put(`/api/v1/locations/${parentId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ status: 'inactive' })
+
+    expect(res.status).toBe(409)
+    const location = db.prepare('SELECT status FROM locations WHERE id = ?').get(parentId) as any
+    const material = db.prepare('SELECT location_id FROM materials WHERE code = ?').get(`MAT-LOC-GUARD-${suffix}`) as any
+    const inventory = db.prepare('SELECT stock, location_id FROM inventory WHERE location_id = ?').get(parentId) as any
+    expect(Number(location.status)).toBe(1)
+    expect(material.location_id).toBe(parentId)
+    expect(Number(inventory.stock)).toBe(3)
+  })
+
+  it('LOC-STATUS-003: 库位停用前检查必须覆盖多库位库存明细', async () => {
+    const suffix = `status-invloc-${Date.now()}`
+    const locationId = await createLocation(app, token, suffix)
+    seedInventoryLocationStock(db, locationId, suffix)
+
+    const check = await request(app)
+      .get(`/api/v1/locations/${locationId}/check-status`)
+      .query({ status: 'inactive' })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(check.status).toBe(200)
+    expect(check.body.data).toMatchObject({
+      canChange: false,
+      targetStatus: 'inactive',
+      impacts: {
+        inventoryLocationCount: 1,
+      },
+    })
+    expect(check.body.data.reasons).toEqual(expect.arrayContaining([
+      '存在 1 条多库位库存明细引用',
+    ]))
+
+    const res = await request(app)
+      .put(`/api/v1/locations/${locationId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ status: 'inactive' })
+
+    expect(res.status).toBe(409)
+    const location = db.prepare('SELECT status FROM locations WHERE id = ?').get(locationId) as any
+    const stock = db.prepare('SELECT stock FROM inventory_locations WHERE location_id = ?').get(locationId) as any
+    expect(Number(location.status)).toBe(1)
+    expect(Number(stock.stock)).toBe(5)
+  })
+
+  it('LOC-PARENT-001: 库位父级必须存在且启用，更新时不可选择自己或子级', async () => {
+    const suffix = `parent-${Date.now()}`
+    const inactiveParentId = `loc-inactive-parent-${suffix}`
+    db.prepare(`
+      INSERT INTO locations (id, code, name, type, zone, status)
+      VALUES (?, ?, ?, 'shelf', 'A区', 0)
+    `).run(inactiveParentId, `LOC-INACTIVE-PARENT-${suffix}`, `停用父库位-${suffix}`)
+
+    const inactiveParentCreate = await request(app)
+      .post('/api/v1/locations')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        name: `停用父级子库位-${suffix}`,
+        zone: 'A区',
+        type: 'shelf',
+        parentId: inactiveParentId,
+      })
+
+    expect(inactiveParentCreate.status).toBe(409)
+
+    const parentId = await createLocation(app, token, `${suffix}-parent`)
+    const childRes = await request(app)
+      .post('/api/v1/locations')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        name: `合法子库位-${suffix}`,
+        zone: 'A区',
+        type: 'shelf',
+        parentId,
+      })
+    expect(childRes.status).toBe(201)
+    const childId = childRes.body.data.id
+
+    const selfParent = await request(app)
+      .put(`/api/v1/locations/${parentId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ parentId })
+    expect(selfParent.status).toBe(400)
+
+    const childParent = await request(app)
+      .put(`/api/v1/locations/${parentId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ parentId: childId })
+    expect(childParent.status).toBe(400)
+
+    const parent = db.prepare('SELECT parent_id FROM locations WHERE id = ?').get(parentId) as any
+    const child = db.prepare('SELECT parent_id FROM locations WHERE id = ?').get(childId) as any
+    expect(parent.parent_id).toBeFalsy()
+    expect(child.parent_id).toBe(parentId)
+  })
+
+  it('LOC-STATS-001: 库位关键字筛选和统计使用后端全量口径', async () => {
+    const suffix = `stats-${Date.now()}`
+    const rows = [
+      [`loc-${suffix}-1`, `LOC-${suffix}-1`, `统计库位-${suffix}-1`, 1, 100, 25],
+      [`loc-${suffix}-2`, `LOC-${suffix}-2`, `统计库位-${suffix}-2`, 1, 100, 50],
+      [`loc-${suffix}-3`, `LOC-${suffix}-3`, `统计库位-${suffix}-3`, 0, 100, 100],
+    ]
+    for (const row of rows) {
+      db.prepare(`
+        INSERT INTO locations (id, code, name, type, zone, capacity, used, status)
+        VALUES (?, ?, ?, 'shelf', ?, ?, ?, ?)
+      `).run(row[0], row[1], row[2], `统计区-${suffix}`, row[4], row[5], row[3])
+    }
+
+    const listRes = await request(app)
+      .get('/api/v1/locations')
+      .query({ keyword: suffix, page: 1, pageSize: 1 })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(listRes.status).toBe(200)
+    expect(listRes.body.data.total).toBe(3)
+    expect(listRes.body.data.list).toHaveLength(1)
+
+    const statsRes = await request(app)
+      .get('/api/v1/locations/stats')
+      .query({ keyword: suffix })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(statsRes.status).toBe(200)
+    expect(statsRes.body.data).toMatchObject({
+      total: 3,
+      active: 2,
+      inactive: 1,
+      avgUtilization: 58,
+    })
+
+    const inactiveStats = await request(app)
+      .get('/api/v1/locations/stats')
+      .query({ keyword: suffix, status: 'inactive' })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(inactiveStats.status).toBe(200)
+    expect(inactiveStats.body.data).toMatchObject({
+      total: 1,
+      active: 0,
+      inactive: 1,
+      avgUtilization: 100,
+    })
+
+    const allStatusList = await request(app)
+      .get('/api/v1/locations')
+      .query({ keyword: suffix, status: 'all', page: 1, pageSize: 10 })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(allStatusList.status).toBe(200)
+    expect(allStatusList.body.data.total).toBe(3)
+    expect(allStatusList.body.data.list.map((item: any) => item.status).sort()).toEqual([
+      'active',
+      'active',
+      'inactive',
+    ])
+
+    const allStatusStats = await request(app)
+      .get('/api/v1/locations/stats')
+      .query({ keyword: suffix, status: 'all' })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(allStatusStats.status).toBe(200)
+    expect(allStatusStats.body.data).toMatchObject({
+      total: 3,
+      active: 2,
+      inactive: 1,
+      avgUtilization: 58,
+    })
+  })
+
+  it('LOC-TEXT-001: 创建和更新库位时拦截危险文本并保存清理后的展示文本', async () => {
+    const suffix = `text-${Date.now()}`
+
+    const blockedCreate = await request(app)
+      .post('/api/v1/locations')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        name: "' OR '1'='1",
+        zone: 'A区',
+        type: 'shelf',
+      })
+
+    expect(blockedCreate.status).toBe(400)
+    expect(blockedCreate.body.error).toMatchObject({ code: 'INVALID_TEXT' })
+    const dirtyCount = (db.prepare('SELECT COUNT(*) as count FROM locations WHERE name = ?')
+      .get("' OR '1'='1") as any).count
+    expect(dirtyCount).toBe(0)
+
+    const created = await request(app)
+      .post('/api/v1/locations')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        name: `  B194 安全库位 ${suffix}  `,
+        zone: '  B区  ',
+        shelf: '  01 架  ',
+        position: '  02 位  ',
+        type: 'shelf',
+      })
+
+    expect(created.status).toBe(201)
+    const safeRow = db.prepare('SELECT name, zone, shelf, position FROM locations WHERE id = ?')
+      .get(created.body.data.id) as any
+    expect(safeRow).toMatchObject({
+      name: `B194 安全库位 ${suffix}`,
+      zone: 'B区',
+      shelf: '01 架',
+      position: '02 位',
+    })
+
+    const blockedUpdate = await request(app)
+      .put(`/api/v1/locations/${created.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: '<script>alert(1)</script>' })
+
+    expect(blockedUpdate.status).toBe(400)
+    expect(blockedUpdate.body.error).toMatchObject({ code: 'INVALID_TEXT' })
+    const unchanged = db.prepare('SELECT name FROM locations WHERE id = ?')
+      .get(created.body.data.id) as any
+    expect(unchanged.name).toBe(`B194 安全库位 ${suffix}`)
+  })
+})

@@ -9,6 +9,7 @@ interface Props {
   total: number
   page: number
   pageSize: number
+  keyword: string
   typeFilter: string
   moduleFilter: string
   userFilter: string
@@ -17,9 +18,10 @@ interface Props {
   logTypes: { value: string; label: string }[]
   modules: { value: string; label: string }[]
   users: { value: string; label: string }[]
-  getLogType: (op: string) => { value: string; label: string; className: string }
+  getLogType: (op: string, operationType?: string) => { value: string; label: string; className: string }
   getAvatarChar: (name: string) => string
   getModuleLabel: (moduleVal: string) => string
+  onKeywordChange: (v: string) => void
   onTypeFilterChange: (v: string) => void
   onModuleFilterChange: (v: string) => void
   onUserFilterChange: (v: string) => void
@@ -34,10 +36,10 @@ interface Props {
 
 export function LogsTable({
   data, loading, total, page, pageSize,
-  typeFilter, moduleFilter, userFilter, startDate, endDate,
+  keyword, typeFilter, moduleFilter, userFilter, startDate, endDate,
   logTypes, modules, users,
   getLogType, getAvatarChar, getModuleLabel,
-  onTypeFilterChange, onModuleFilterChange, onUserFilterChange,
+  onKeywordChange, onTypeFilterChange, onModuleFilterChange, onUserFilterChange,
   onStartDateChange, onEndDateChange,
   onSearch, onReset,
   onPageChange, onPageSizeChange,
@@ -48,6 +50,17 @@ export function LogsTable({
       <div className="px-5 py-4 border-b border-gray-200 bg-gray-50 flex items-center justify-between flex-wrap gap-3">
         <span className="text-base font-semibold text-gray-900">操作记录</span>
         <div className="flex items-center gap-3 flex-wrap">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input
+              type="text"
+              value={keyword}
+              onChange={e => onKeywordChange(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && onSearch()}
+              placeholder="搜索操作内容"
+              className="h-10 w-44 rounded-md border border-gray-200 bg-white pl-9 pr-3 text-sm text-gray-900 outline-none transition-all focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10"
+            />
+          </div>
           <SearchableSelect
             value={typeFilter}
             onChange={val => onTypeFilterChange(val)}
@@ -105,7 +118,7 @@ export function LogsTable({
             ) : data.length === 0 ? (
               <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">暂无日志数据</td></tr>
             ) : data.map(row => {
-              const logType = getLogType(row.operation)
+              const logType = getLogType(row.operation, row.operationType)
               return (
                 <tr key={row.id} className="hover:bg-gray-50 transition-colors">
                   <td className="px-4 py-3.5 font-mono text-[13px] text-gray-700">{new Date(row.createdAt).toLocaleString()}</td>
@@ -125,7 +138,7 @@ export function LogsTable({
                     </span>
                   </td>
                   <td className="px-4 py-3.5">
-                    <span className="text-xs px-2.5 py-1 rounded-full bg-gray-100 text-gray-700 font-medium">{getModuleLabel(row.requestData?.module as string || '')}</span>
+                    <span className="text-xs px-2.5 py-1 rounded-full bg-gray-100 text-gray-700 font-medium">{getModuleLabel(row.module || (row.requestData?.module as string) || '')}</span>
                   </td>
                   <td className="px-4 py-3.5">
                     <div className="text-sm text-gray-900">{row.description}</div>

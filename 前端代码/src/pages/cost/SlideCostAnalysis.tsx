@@ -2,7 +2,7 @@ import { Fragment, useState, useEffect, useMemo } from 'react'
 import { ChevronDown, ChevronRight, Download } from 'lucide-react'
 import { toast } from 'sonner'
 import { abcApi } from '@/api/abc'
-import { formatCurrency } from '@/lib/utils'
+import { downloadTextFile, formatCurrency } from '@/lib/utils'
 import { ProfitBadge } from '@/components/ui/ProfitBadge'
 import { CostWaterfall } from '@/components/ui/CostWaterfall'
 import { Pagination } from '@/components/ui/Pagination'
@@ -13,6 +13,8 @@ interface BomProfit {
   projectType: string
   caseCount: number
   sampleCount: number
+  materialCost: number
+  activityCost: number
   avgCostPerSlide: number
   totalCost: number
   feeAmount: number
@@ -29,6 +31,44 @@ const PROJECT_TYPE_OPTIONS = [
   { value: 'cyto', label: '细胞病理' },
 ]
 
+export function normalizeProfitabilityRows(rows: any[], month: string, projectType: string): BomProfit[] {
+  const groups = new Map<string, BomProfit>()
+
+  for (const row of rows) {
+    if (row.costMonth && row.costMonth !== month) continue
+    if (projectType !== 'all' && row.projectType !== projectType) continue
+
+    const key = row.bomId || row.projectId || row.outboundId || `unknown-${groups.size}`
+    const existing = groups.get(key) || {
+      bomId: key,
+      bomName: row.bomName || row.projectName || row.outboundId || '未关联项目',
+      projectType: row.projectType || '',
+      caseCount: 0,
+      sampleCount: 0,
+      materialCost: 0,
+      activityCost: 0,
+      avgCostPerSlide: 0,
+      totalCost: 0,
+      feeAmount: 0,
+      profit: 0,
+      profitRate: 0,
+    }
+
+    existing.caseCount += Number(row.caseCount) || 1
+    existing.sampleCount += Number(row.sampleCount) || 0
+    existing.materialCost += Number(row.materialCost) || 0
+    existing.activityCost += Number(row.activityCost) || 0
+    existing.totalCost += Number(row.totalCost) || 0
+    existing.feeAmount += Number(row.feeAmount) || 0
+    existing.profit += Number(row.profit) || 0
+    existing.avgCostPerSlide = existing.sampleCount > 0 ? existing.totalCost / existing.sampleCount : 0
+    existing.profitRate = existing.feeAmount > 0 ? existing.profit / existing.feeAmount : 0
+    groups.set(key, existing)
+  }
+
+  return [...groups.values()].sort((a, b) => b.totalCost - a.totalCost)
+}
+
 export default function SlideCostAnalysis() {
   const [loading, setLoading] = useState(true)
   const [data, setData] = useState<BomProfit[]>([])
@@ -37,6 +77,7 @@ export default function SlideCostAnalysis() {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
+  const [exporting, setExporting] = useState(false)
 
   useEffect(() => {
     loadData()
@@ -48,7 +89,8 @@ export default function SlideCostAnalysis() {
       const params: Record<string, string> = { dimension: 'bom', startDate: month, endDate: month }
       if (projectType !== 'all') params.projectType = projectType
       const res = await abcApi.getProfitability(params)
-      setData(Array.isArray(res) ? res : res?.list || res?.items || [])
+      const rows = Array.isArray(res) ? res : res?.list || res?.items || []
+      setData(normalizeProfitabilityRows(rows, month, projectType))
     } catch {
       toast.error('加载切片成本数据失败')
     } finally {
@@ -75,6 +117,22 @@ export default function SlideCostAnalysis() {
     setExpandedId(prev => prev === bomId ? null : bomId)
   }
 
+  const handleExport = async () => {
+    try {
+      setExporting(true)
+      const data = await abcApi.exportData({
+        month,
+        projectType: projectType !== 'all' ? projectType : undefined,
+      })
+      downloadTextFile(data.filename || `abc-slide-cost-${month}.csv`, data.content || '', data.mimeType)
+      toast.success('导出完成')
+    } catch {
+      // 统一错误提示已在请求拦截器处理
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <div className="p-6 space-y-6">
       {/* 页面头部 */}
@@ -83,7 +141,12 @@ export default function SlideCostAnalysis() {
           <h1 className="text-2xl font-bold text-gray-900">切片成本明细</h1>
           <p className="text-sm text-gray-500 mt-1">按 BOM 维度分析每张切片的成本构成</p>
         </div>
-        <button className="h-10 px-4 bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors flex items-center gap-2 self-start">
+        <button
+          type="button"
+          onClick={handleExport}
+          disabled={exporting}
+          className="h-10 px-4 bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 disabled:opacity-50 transition-colors flex items-center gap-2 self-start"
+        >
           <Download className="h-4 w-4" /> 导出
         </button>
       </div>
@@ -139,7 +202,7 @@ export default function SlideCostAnalysis() {
           <thead className="bg-gray-50">
             <tr>
               <th className="w-8 px-2" />
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">BOM 名称</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">BOM/项目名称</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">项目类型</th>
               <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">样本数</th>
               <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">切片均成本</th>
@@ -186,8 +249,8 @@ export default function SlideCostAnalysis() {
                           <h4 className="text-sm font-medium text-gray-700 mb-3">成本构成</h4>
                           <CostWaterfall
                             items={[
-                              { name: '物料成本', cost: item.sampleCount > 0 ? (item.totalCost - item.sampleCount * item.avgCostPerSlide) || 0 : 0, color: 'bg-blue-500' },
-                              { name: '作业成本', cost: item.sampleCount * item.avgCostPerSlide || 0, color: 'bg-emerald-500' },
+                              { name: '物料成本', cost: item.materialCost || 0, color: 'bg-blue-500' },
+                              { name: '作业成本', cost: item.activityCost || 0, color: 'bg-emerald-500' },
                             ]}
                           />
                         </div>
@@ -213,4 +276,3 @@ export default function SlideCostAnalysis() {
     </div>
   )
 }
-

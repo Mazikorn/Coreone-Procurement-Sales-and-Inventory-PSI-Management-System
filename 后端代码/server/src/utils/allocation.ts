@@ -9,8 +9,30 @@ export interface GroupBatchAllocation extends BatchAllocation {
   materialId: string
 }
 
-/** 按 FEFO 分配批次，返回分配结果。库存不足时抛出错误。 */
-export function allocateBatches(db: any, materialId: string, totalQty: number): BatchAllocation[] {
+/** 按指定批次或 FEFO 分配批次，返回分配结果。库存不足时抛出错误。 */
+export function allocateBatches(db: any, materialId: string, totalQty: number, batchId?: string): BatchAllocation[] {
+  if (batchId) {
+    const batch = db.prepare(`
+      SELECT b.* FROM batches b
+      JOIN materials m ON b.material_id = m.id
+      WHERE b.id = ? AND b.material_id = ? AND b.status = 1 AND m.is_deleted = 0
+    `).get(batchId, materialId) as any
+
+    if (!batch) {
+      throw new Error('指定出库批次不存在或不可用')
+    }
+    if (Number(batch.remaining || 0) < totalQty) {
+      throw new Error(`批次库存不足: 需要 ${totalQty}, 可用 ${Number(batch.remaining || 0)}`)
+    }
+
+    return [{
+      batchId: batch.id,
+      batchNo: batch.batch_no,
+      quantity: totalQty,
+      unitCost: batch.inbound_price || 0,
+    }]
+  }
+
   const batches = db.prepare(`
     SELECT b.* FROM batches b
     JOIN materials m ON b.material_id = m.id

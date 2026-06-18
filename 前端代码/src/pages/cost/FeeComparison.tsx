@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Download, AlertTriangle } from 'lucide-react'
 import { toast } from 'sonner'
 import { abcApi } from '@/api/abc'
-import { formatCurrency, formatDate } from '@/lib/utils'
+import { downloadTextFile, formatCurrency, formatDate } from '@/lib/utils'
 import { ProfitBadge } from '@/components/ui/ProfitBadge'
 import { Pagination } from '@/components/ui/Pagination'
 
@@ -67,6 +67,7 @@ export default function FeeComparison() {
   const [projectType, setProjectType] = useState('all')
   const [profitFilter, setProfitFilter] = useState('all')
   const [mappingFilter, setMappingFilter] = useState('all')
+  const [exporting, setExporting] = useState(false)
 
   const loadData = useCallback(async () => {
     try {
@@ -98,6 +99,23 @@ export default function FeeComparison() {
     loadData()
   }
 
+  const handleExport = async () => {
+    try {
+      setExporting(true)
+      const data = await abcApi.exportData({
+        startMonth: startDate ? startDate.slice(0, 7) : undefined,
+        endMonth: endDate ? endDate.slice(0, 7) : undefined,
+        projectType: projectType !== 'all' ? projectType : undefined,
+      })
+      downloadTextFile(data.filename || 'abc-fee-comparison.csv', data.content || '', data.mimeType)
+      toast.success('导出完成')
+    } catch {
+      // 统一错误提示已在请求拦截器处理
+    } finally {
+      setExporting(false)
+    }
+  }
+
   const alerts: { type: string; message: string }[] = []
   if (summary) {
     if (summary.lossCount > 0) {
@@ -116,7 +134,12 @@ export default function FeeComparison() {
           <h1 className="text-2xl font-bold text-gray-900">收费对照</h1>
           <p className="text-sm text-gray-500 mt-1">出库记录的成本与收费对比分析</p>
         </div>
-        <button className="h-10 px-4 bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors flex items-center gap-2 self-start">
+        <button
+          type="button"
+          onClick={handleExport}
+          disabled={exporting}
+          className="h-10 px-4 bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 disabled:opacity-50 transition-colors flex items-center gap-2 self-start"
+        >
           <Download className="h-4 w-4" /> 导出
         </button>
       </div>

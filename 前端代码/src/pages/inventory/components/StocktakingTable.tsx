@@ -11,12 +11,9 @@ interface Props {
   pageSize: number
   keyword: string
   statusFilter: string
-  scopeFilter: string
   statusOptions: { value: string; label: string }[]
-  scopeOptions: { value: string; label: string }[]
   onKeywordChange: (v: string) => void
   onStatusFilterChange: (v: string) => void
-  onScopeFilterChange: (v: string) => void
   onQuery: () => void
   onReset: () => void
   onPageChange: (p: number) => void
@@ -28,13 +25,18 @@ interface Props {
 
 export function StocktakingTable({
   data, loading, total, page, pageSize,
-  keyword, statusFilter, scopeFilter,
-  statusOptions, scopeOptions,
-  onKeywordChange, onStatusFilterChange, onScopeFilterChange,
+  keyword, statusFilter,
+  statusOptions,
+  onKeywordChange, onStatusFilterChange,
   onQuery, onReset,
   onPageChange, onPageSizeChange,
   onOpenDetail, onOpenAdjust, onOpenDelete,
 }: Props) {
+  const statusLabel = (status: string) => status === 'confirmed' ? '已确认' : '已完成'
+  const statusClass = (status: string) => status === 'confirmed'
+    ? 'bg-blue-50 text-blue-600'
+    : 'bg-green-50 text-green-600'
+
   return (
     <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
       <div className="px-5 py-4 border-b border-gray-200 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -42,20 +44,13 @@ export function StocktakingTable({
         <div className="flex flex-wrap items-center gap-3">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-            <input type="text" placeholder="搜索盘点编号/盘点名称..." value={keyword} onChange={e => onKeywordChange(e.target.value)} className="w-56 pl-9 pr-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500" />
+            <input type="text" placeholder="搜索盘点编号/物料..." value={keyword} onChange={e => onKeywordChange(e.target.value)} className="w-56 pl-9 pr-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500" />
           </div>
           <SearchableSelect
             value={statusFilter}
             onChange={val => onStatusFilterChange(val)}
             options={statusOptions}
             placeholder="全部状态"
-            className="w-32"
-          />
-          <SearchableSelect
-            value={scopeFilter}
-            onChange={val => onScopeFilterChange(val)}
-            options={scopeOptions}
-            placeholder="全部范围"
             className="w-32"
           />
           <button onClick={onQuery} className="px-4 py-2 bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 text-sm font-medium transition-colors">查询</button>
@@ -88,8 +83,8 @@ export function StocktakingTable({
               <tr key={row.id} className="hover:bg-gray-50 transition-colors">
                 <td className="px-4 py-3 font-mono text-gray-600 text-xs">{row.stocktakingNo}</td>
                 <td className="px-4 py-3 font-medium text-gray-900">{row.materialName ? `${row.materialName}盘点` : row.stocktakingNo}</td>
-                <td className="px-4 py-3 text-gray-500">全部物料</td>
-                <td className="px-4 py-3 text-gray-500">全盘</td>
+                <td className="px-4 py-3 text-gray-500">单物料</td>
+                <td className="px-4 py-3 text-gray-500">实盘调整</td>
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-2">
                     <div className="w-20 h-1.5 bg-gray-200 rounded-full overflow-hidden">
@@ -100,19 +95,19 @@ export function StocktakingTable({
                 </td>
                 <td className="px-4 py-3">
                   <span className={`text-sm font-medium ${row.difference === 0 ? 'text-gray-400' : row.difference > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {row.difference === 0 ? '0项' : `${Math.abs(row.difference)}项`}
+                    {row.difference === 0 ? '0' : `${row.difference > 0 ? '+' : ''}${row.difference}${row.materialUnit || ''}`}
                   </span>
                 </td>
                 <td className="px-4 py-3 text-gray-700">{row.operator || '-'}</td>
                 <td className="px-4 py-3 text-gray-500 text-xs">{row.createdAt ? new Date(row.createdAt).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(/\//g, '-') : '-'}</td>
                 <td className="px-4 py-3">
-                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-600">已完成</span>
+                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusClass(row.status)}`}>{statusLabel(row.status)}</span>
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-1">
                     <button onClick={() => onOpenDetail(row)} className="px-2 py-1 text-gray-500 hover:text-blue-600 text-xs font-medium transition-colors">详情</button>
-                    {row.difference !== 0 && (
-                      <button onClick={() => onOpenAdjust(row)} className="px-2 py-1 text-gray-500 hover:text-blue-600 text-xs font-medium transition-colors">查看差异</button>
+                    {row.difference !== 0 && row.status !== 'confirmed' && (
+                      <button onClick={() => onOpenAdjust(row)} className="px-2 py-1 text-gray-500 hover:text-blue-600 text-xs font-medium transition-colors">处理差异</button>
                     )}
                     <button onClick={() => onOpenDelete(row)} className="px-2 py-1 text-gray-400 hover:text-red-600 text-xs font-medium transition-colors" title="撤销">
                       <Trash2 className="w-3.5 h-3.5" />

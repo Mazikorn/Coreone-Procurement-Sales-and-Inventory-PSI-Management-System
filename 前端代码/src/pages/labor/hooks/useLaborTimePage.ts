@@ -1,0 +1,219 @@
+import { useCallback, useEffect, useState } from 'react'
+import { toast } from 'sonner'
+import { laborTimeApi } from '@/api/master'
+import { usePagination } from '@/hooks/usePagination'
+import { getUserRole } from '@/lib/permissions'
+import type { StandardLaborTime } from '@/types'
+
+export interface LaborTimeForm {
+  stepCode: string
+  stepName: string
+  projectType: string
+  standardMinutes: number
+  laborRatePerMinute: number
+  isEquipmentStep: boolean
+  description: string
+  sortOrder: number
+  referenceSource: 'supplier' | 'industry' | 'system'
+}
+
+const defaultForm: LaborTimeForm = {
+  stepCode: '',
+  stepName: '',
+  projectType: 'all',
+  standardMinutes: 0,
+  laborRatePerMinute: 0,
+  isEquipmentStep: false,
+  description: '',
+  sortOrder: 0,
+  referenceSource: 'system',
+}
+
+export const PROJECT_TYPE_OPTIONS = [
+  { value: '', label: '全部项目类型' },
+  { value: 'all', label: '通用' },
+  { value: 'ihc', label: '免疫组化' },
+  { value: 'he', label: 'HE染色' },
+  { value: 'ss', label: '特殊染色' },
+  { value: 'mp', label: '分子病理' },
+  { value: 'cyto', label: '细胞病理' },
+]
+
+export function useLaborTimePage() {
+  const canManageLaborTimes = getUserRole() === 'admin'
+  const [searchInput, setSearchInput] = useState('')
+  const [keyword, setKeyword] = useState('')
+  const [filterProjectType, setFilterProjectType] = useState('')
+  const [filterReferenceSource, setFilterReferenceSource] = useState('')
+  const [modalType, setModalType] = useState<'create' | 'edit' | 'detail' | 'delete' | null>(null)
+  const [detailRow, setDetailRow] = useState<StandardLaborTime | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [form, setForm] = useState<LaborTimeForm>(defaultForm)
+  const [stats, setStats] = useState({ total: 0, totalMinutes: 0, avgRate: 0, equipmentSteps: 0 })
+
+  const { data, loading, page, pageSize, total, setPage, setPageSize, refresh } = usePagination<StandardLaborTime>({
+    fetchFn: async (params) => {
+      const res = await laborTimeApi.getList({
+        ...params,
+        keyword: keyword || undefined,
+        projectType: filterProjectType || undefined,
+        referenceSource: filterReferenceSource || undefined,
+      })
+      return { list: res?.list || [], pagination: res?.pagination }
+    },
+    initialPage: 1,
+    initialPageSize: 20,
+    deps: [keyword, filterProjectType, filterReferenceSource],
+  })
+
+  useEffect(() => {
+    laborTimeApi.getStats({
+      keyword: keyword || undefined,
+      projectType: filterProjectType || undefined,
+      referenceSource: filterReferenceSource || undefined,
+    })
+      .then((res: any) => setStats({
+        total: Number(res?.total || 0),
+        totalMinutes: Number(res?.totalMinutes || 0),
+        avgRate: Number(res?.avgRate || 0),
+        equipmentSteps: Number(res?.equipmentSteps || 0),
+      }))
+      .catch(() => setStats({ total, totalMinutes: 0, avgRate: 0, equipmentSteps: 0 }))
+  }, [keyword, filterProjectType, filterReferenceSource, total])
+
+  const handleSearch = useCallback(() => {
+    setKeyword(searchInput)
+    setPage(1)
+  }, [searchInput, setPage])
+
+  const handleReset = useCallback(() => {
+    setSearchInput('')
+    setKeyword('')
+    setFilterProjectType('')
+    setFilterReferenceSource('')
+    setPage(1)
+  }, [setPage])
+
+  const handleProjectTypeChange = useCallback((value: string) => {
+    setFilterProjectType(value)
+    setPage(1)
+  }, [setPage])
+
+  const handleReferenceSourceChange = useCallback((value: string) => {
+    setFilterReferenceSource(value)
+    setPage(1)
+  }, [setPage])
+
+  const openCreate = () => {
+    setForm(defaultForm)
+    setEditingId(null)
+    setDetailRow(null)
+    setModalType('create')
+  }
+
+  const openEdit = (row: StandardLaborTime) => {
+    setForm({
+      stepCode: row.stepCode || '',
+      stepName: row.stepName || '',
+      projectType: row.projectType || 'all',
+      standardMinutes: row.standardMinutes || 0,
+      laborRatePerMinute: row.laborRatePerMinute || 0,
+      isEquipmentStep: !!row.isEquipmentStep,
+      description: row.description || '',
+      sortOrder: row.sortOrder || 0,
+      referenceSource: row.referenceSource || 'system',
+    })
+    setEditingId(row.id)
+    setDetailRow(row)
+    setModalType('edit')
+  }
+
+  const openDetail = (row: StandardLaborTime) => {
+    setDetailRow(row)
+    setEditingId(null)
+    setModalType('detail')
+  }
+
+  const openDelete = (row: StandardLaborTime) => {
+    setDetailRow(row)
+    setModalType('delete')
+  }
+
+  const handleSubmit = async () => {
+    if (!form.stepCode.trim() || !form.stepName.trim()) {
+      toast.error('请填写步骤编号和步骤名称')
+      return
+    }
+    if (!Number.isFinite(form.standardMinutes) || form.standardMinutes <= 0) {
+      toast.error('标准时长必须大于0')
+      return
+    }
+    if (!Number.isFinite(form.laborRatePerMinute) || form.laborRatePerMinute < 0) {
+      toast.error('费率不能为负数')
+      return
+    }
+    if (!Number.isFinite(form.sortOrder) || form.sortOrder < 0) {
+      toast.error('排序必须大于等于0')
+      return
+    }
+    try {
+      if (modalType === 'edit' && editingId) {
+        await laborTimeApi.update(editingId, form)
+        toast.success('工时定义已更新')
+      } else {
+        await laborTimeApi.create(form)
+        toast.success('工时定义已创建')
+      }
+      setModalType(null)
+      refresh()
+    } catch {
+      toast.error('保存工时定义失败')
+    }
+  }
+
+  const handleDelete = async () => {
+    if (!detailRow) return
+    try {
+      await laborTimeApi.delete(detailRow.id)
+      toast.success('工时定义已删除')
+      setModalType(null)
+      refresh()
+    } catch {
+      toast.error('删除工时定义失败')
+    }
+  }
+
+  return {
+    canManageLaborTimes,
+    data,
+    loading,
+    page,
+    pageSize,
+    total,
+    setPage,
+    setPageSize,
+    stats,
+    searchInput,
+    setSearchInput,
+    filterProjectType,
+    setFilterProjectType,
+    filterReferenceSource,
+    setFilterReferenceSource,
+    handleProjectTypeChange,
+    handleReferenceSourceChange,
+    modalType,
+    setModalType,
+    form,
+    setForm,
+    detailRow,
+    PROJECT_TYPE_OPTIONS,
+    handleSearch,
+    handleReset,
+    openCreate,
+    openDetail,
+    openEdit,
+    openDelete,
+    handleSubmit,
+    handleDelete,
+  }
+}

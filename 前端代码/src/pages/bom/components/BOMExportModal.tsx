@@ -1,13 +1,19 @@
 import { X } from 'lucide-react'
+import type { BOMExportForm } from '../hooks/useBOMPage'
 
 interface Props {
   open: boolean
+  form: BOMExportForm
+  selectedCount: number
   onClose: () => void
+  onChange: (form: BOMExportForm) => void
   onConfirm: () => void
 }
 
-export function BOMExportModal({ open, onClose, onConfirm }: Props) {
+export function BOMExportModal({ open, form, selectedCount, onClose, onChange, onConfirm }: Props) {
   if (!open) return null
+
+  const update = (patch: Partial<BOMExportForm>) => onChange({ ...form, ...patch })
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -29,7 +35,8 @@ export function BOMExportModal({ open, onClose, onConfirm }: Props) {
                 <input
                   type="radio"
                   name="export-range"
-                  defaultChecked
+                  checked={form.range === 'all'}
+                  onChange={() => update({ range: 'all' })}
                   className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
                 />
                 <span className="text-sm text-gray-700">全部BOM</span>
@@ -38,14 +45,19 @@ export function BOMExportModal({ open, onClose, onConfirm }: Props) {
                 <input
                   type="radio"
                   name="export-range"
+                  checked={form.range === 'selected'}
+                  onChange={() => update({ range: 'selected' })}
+                  disabled={selectedCount === 0}
                   className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
                 />
-                <span className="text-sm text-gray-700">已选中的BOM</span>
+                <span className={`text-sm ${selectedCount === 0 ? 'text-gray-400' : 'text-gray-700'}`}>已选中的BOM{selectedCount > 0 ? `（${selectedCount}条）` : ''}</span>
               </label>
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="radio"
                   name="export-range"
+                  checked={form.range === 'filtered'}
+                  onChange={() => update({ range: 'filtered' })}
                   className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
                 />
                 <span className="text-sm text-gray-700">当前筛选结果</span>
@@ -59,7 +71,8 @@ export function BOMExportModal({ open, onClose, onConfirm }: Props) {
                 <input
                   type="radio"
                   name="export-format"
-                  defaultChecked
+                  checked={form.format === 'xlsx'}
+                  onChange={() => update({ format: 'xlsx' })}
                   className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
                 />
                 <span className="text-sm text-gray-700">Excel (.xlsx)</span>
@@ -68,6 +81,8 @@ export function BOMExportModal({ open, onClose, onConfirm }: Props) {
                 <input
                   type="radio"
                   name="export-format"
+                  checked={form.format === 'csv'}
+                  onChange={() => update({ format: 'csv' })}
                   className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
                 />
                 <span className="text-sm text-gray-700">CSV (.csv)</span>
@@ -80,7 +95,8 @@ export function BOMExportModal({ open, onClose, onConfirm }: Props) {
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
-                  defaultChecked
+                  checked={form.includeBasic}
+                  onChange={e => update({ includeBasic: e.target.checked })}
                   className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                 />
                 <span className="text-sm text-gray-700">基本信息</span>
@@ -88,7 +104,8 @@ export function BOMExportModal({ open, onClose, onConfirm }: Props) {
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
-                  defaultChecked
+                  checked={form.includeMaterials}
+                  onChange={e => update({ includeMaterials: e.target.checked })}
                   className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                 />
                 <span className="text-sm text-gray-700">物料清单</span>
@@ -96,6 +113,8 @@ export function BOMExportModal({ open, onClose, onConfirm }: Props) {
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
+                  checked={form.includeHistory}
+                  onChange={e => update({ includeHistory: e.target.checked })}
                   className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                 />
                 <span className="text-sm text-gray-700">版本历史</span>

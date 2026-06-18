@@ -3,8 +3,13 @@ import { SearchableSelect } from '@/components/ui/SearchableSelect'
 
 interface ScrapItem {
   id: string
+  name?: string
   materialName?: string
+  code?: string
   materialCode?: string
+  batch?: string
+  batchNo?: string
+  stock?: number
   totalQuantity?: number
   quantity?: number
   unit?: string
@@ -25,7 +30,13 @@ export function BatchScrapModal({ open, items, scrapReason, scrapRemark, onClose
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center pt-20">
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center pt-20"
+      role="dialog"
+      aria-modal="true"
+      aria-label="批量报废"
+      data-testid="batch-scrap-modal"
+    >
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
       <div className="relative bg-white rounded-xl shadow-xl w-full max-w-2xl overflow-hidden max-h-[80vh] flex flex-col">
         <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
@@ -46,17 +57,25 @@ export function BatchScrapModal({ open, items, scrapReason, scrapRemark, onClose
                   <tr>
                     <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">物料名称</th>
                     <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">编码</th>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">批号</th>
                     <th className="px-3 py-2 text-right text-xs font-medium text-gray-500">数量</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {items.map(item => (
+                  {items.map(item => {
+                    const materialName = item.materialName || item.name || '-'
+                    const materialCode = item.materialCode || item.code || '-'
+                    const batchNo = item.batchNo || item.batch || '-'
+                    const quantity = item.totalQuantity ?? item.quantity ?? item.stock ?? 0
+                    return (
                     <tr key={item.id}>
-                      <td className="px-3 py-2 text-gray-900">{item.materialName}</td>
-                      <td className="px-3 py-2 text-gray-500 font-mono text-xs">{item.materialCode}</td>
-                      <td className="px-3 py-2 text-right text-gray-700">{item.totalQuantity || item.quantity} {item.unit}</td>
+                      <td className="px-3 py-2 text-gray-900">{materialName}</td>
+                      <td className="px-3 py-2 text-gray-500 font-mono text-xs">{materialCode}</td>
+                      <td className="px-3 py-2 text-gray-500 font-mono text-xs">{batchNo}</td>
+                      <td className="px-3 py-2 text-right text-gray-700">{quantity} {item.unit}</td>
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -66,6 +85,7 @@ export function BatchScrapModal({ open, items, scrapReason, scrapRemark, onClose
               报废原因 <span className="text-red-500">*</span>
             </label>
             <SearchableSelect
+              testId="batch-scrap-reason"
               value={scrapReason}
               onChange={val => onChangeReason(val)}
               options={[
@@ -97,6 +117,7 @@ export function BatchScrapModal({ open, items, scrapReason, scrapRemark, onClose
           </button>
           <button
             onClick={onConfirm}
+            data-testid="batch-scrap-confirm-btn"
             className="inline-flex items-center gap-1.5 px-4 py-2 bg-red-500 text-white rounded-md text-sm font-medium hover:bg-red-600 transition-all duration-150 ease shadow-sm"
           >
             <Trash2 className="w-4 h-4" />

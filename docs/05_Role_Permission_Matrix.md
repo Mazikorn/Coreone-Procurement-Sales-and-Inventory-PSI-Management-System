@@ -11,7 +11,7 @@
 
 2026-06-11 核对结论：权限矩阵只能作为“设计与代码核对表”，不能单独证明权限已闭环。目标分支合并前必须同时核对 `app.ts`、`routes/` 实际文件、前端 `ROLE_MENU_MAP`、页面路由守卫和角色 E2E 结果。
 
-2026-06-15 PR #1 E2E 结论：核心 E2E 256/257 通过，唯一失败为 `BF-PERM-technician-outbound`。当前代码允许 technician 访问 `/outbound`，但测试预期应拦截；这是权限设计冲突，需 PM 明确业务口径后再改代码或测试。
+2026-06-16 PR #1 E2E 结论：PR 已 Ready for review，head SHA `d97efa991fee4797a7ccc8c3a6d684925d584da7`；GitHub Actions `E2E Tests / e2e` 已通过，`mergeStateStatus=CLEAN`。此前 technician `/outbound` 页面访问失败项已不再阻断：前端 `ROLE_MENU_MAP` 不给 technician `/outbound`，E2E 已验证页面拦截。PM 已确认权限口径按建议处理：默认采用最小权限原则，后续应将后端 `/api/v1/outbound` 只读权限收敛到与前端页面口径一致；除非 PM 后续提出明确业务场景，否则不为 technician/pathologist 保留出库 API 只读权限。
 
 ## 0.1 权限控制架构
 
@@ -34,7 +34,7 @@ COREONE 采用 **后端双层 + 前端三层** 的权限控制架构：
 | 角色代码 | 角色名称 | 业务职责 |
 |----------|----------|----------|
 | `admin` | 系统管理员 | 全部功能 |
-| `warehouse_manager` | 仓库管理员 | 入库、出库、盘点、退库、报废、调拨、库位管理 |
+| `warehouse_manager` | 仓库管理员 | 入库、出库、盘点、退库、报废、调拨、库位管理；BOM 出库时只读选择项目/BOM |
 | `technician` | 技术员 | 查看项目、BOM、库存、出库记录、项目出库、退料 |
 | `pathologist` | 病理医生 | 查看项目、成本报表、全成本分析 |
 | `procurement` | 采购员 | 采购订单、供应商管理 |
@@ -154,8 +154,8 @@ COREONE 采用 **后端双层 + 前端三层** 的权限控制架构：
 
 | 路由文件 | 路径前缀 | 读权限 | 写权限 |
 |----------|----------|--------|--------|
-| `projects-v1.1.ts` | `/api/v1/projects` | admin, technician, pathologist | admin |
-| `bom-v1.1.ts` | `/api/v1/boms` | admin, technician, pathologist | admin |
+| `projects-v1.1.ts` | `/api/v1/projects` | admin, warehouse_manager, technician, pathologist | admin |
+| `bom-v1.1.ts` | `/api/v1/boms` | admin, warehouse_manager, technician, pathologist | admin |
 
 #### 设备与工时
 
@@ -214,8 +214,8 @@ COREONE 采用 **后端双层 + 前端三层** 的权限控制架构：
 | 报废 | admin, wm | admin, wm |
 | 调拨 | admin, wm | admin, wm |
 | 供应商退货 | admin, wm, proc | admin, wm, proc |
-| 检测项目 | admin, tech, path | admin |
-| BOM | admin, tech, path | admin |
+| 检测项目 | admin, wm, tech, path | admin |
+| BOM | admin, wm, tech, path | admin |
 | 设备 | admin, tech, path | admin (类型); admin, tech, path (设备/工时) |
 | 成本报表 | admin, path, finance | — (只读) |
 | 消耗追踪 | admin, path, finance | admin, path, finance |
@@ -239,7 +239,7 @@ COREONE 采用 **后端双层 + 前端三层** 的权限控制架构：
 |------|------|------|:----:|
 | 用户/角色/日志 | 仅 admin 可见 | 仅 admin 可访问 | ✅ |
 | 入库 | admin, wm, proc 可见 | admin, wm, proc 可读 | ✅ |
-| 出库 | admin, wm 可见 | admin, wm, tech, path 可读 | ⚠️ |
+| 出库 | admin, wm 可见 | admin, wm, tech, path 可读 | ⚠️ 前端页面 E2E 已通过；后端只读 API 后续按最小权限原则收敛 |
 | 盘点/退库/报废/调拨 | admin, wm 可见 | admin, wm | ✅ |
 | 采购订单 | admin, proc 可见 | admin, proc | ✅ |
 | 供应商 | admin, wm, proc 可见 | admin, wm, proc | ✅ |
@@ -319,7 +319,7 @@ COREONE 采用 **后端双层 + 前端三层** 的权限控制架构：
 | 跨模块 API 权限测试 | 当前仅覆盖 `/roles` 模块的 API 权限，其他模块（入库、出库、成本等）缺少跨角色 API 权限测试 |
 | 端点级写权限测试 | 后端有读写分离的模块（如 inbound、outbound）缺少非写角色尝试写入的测试 |
 | 隐藏页面访问测试 | admin 和 finance 的隐藏 ABC 页面路由已补回，仍缺少 E2E 验证 |
-| technician 出库权限裁决 | `auth.spec.ts` 预期 technician 不可访问 `/outbound`，当前前后端权限配置允许访问 |
+| technician/pathologist 出库 API 只读权限收敛 | `auth.spec.ts` 已验证 technician 不可访问 `/outbound` 页面；后端 `/api/v1/outbound` 仍允许 technician/pathologist 读，后续按最小权限原则收敛 |
 
 ---
 
@@ -328,8 +328,8 @@ COREONE 采用 **后端双层 + 前端三层** 的权限控制架构：
 | 确认项 | PM 判断 |
 |--------|---------|
 | 6 种角色定义是否符合实际业务 | 待确认 |
-| 出库页面 technician/pathologist 是否应可见 | 待确认 |
+| 出库页面 technician/pathologist 不可见、后端出库 API 后续不保留只读权限 | PM 已确认按建议处理 |
 | 物料管理 pathologist 是否应可见 | 待确认 |
 | 成本管理 technician 可见是否符合业务意图 | 待确认 |
-| finance 的隐藏 ABC 页面是否需要在侧边栏显示 | 待确认 |
+| finance 的隐藏 ABC 页面是否需要在侧边栏显示 | PM 已确认暂不放入侧边栏，保留 URL 直接访问 |
 | 是否需要新增角色或合并角色 | 待确认 |

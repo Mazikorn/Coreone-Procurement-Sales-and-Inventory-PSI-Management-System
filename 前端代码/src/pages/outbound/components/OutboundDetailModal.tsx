@@ -1,7 +1,8 @@
 import { useState, useMemo, Fragment } from 'react'
-import { X, ChevronDown, ChevronRight } from 'lucide-react'
+import { X, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react'
 import type { OutboundRecord, OutboundItem } from '@/types'
 import { formatDate, formatCurrency } from '@/lib/utils'
+import { useNavigate } from 'react-router-dom'
 
 interface OutboundDetailModalProps {
   open: boolean
@@ -16,6 +17,13 @@ const statusConfig: Record<string, { label: string; bg: string; text: string }> 
   cancelled: { label: '已取消', bg: 'bg-red-50', text: 'text-red-600' },
 }
 
+const costStatusConfig: Record<string, { label: string; bg: string; text: string }> = {
+  pending_cost: { label: '待核算', bg: 'bg-gray-100', text: 'text-gray-600' },
+  costed: { label: '已核算', bg: 'bg-emerald-50', text: 'text-emerald-700' },
+  cost_exception: { label: '成本异常', bg: 'bg-red-50', text: 'text-red-700' },
+  recalculated: { label: '已重算', bg: 'bg-blue-50', text: 'text-blue-700' },
+}
+
 interface MaterialGroup {
   materialId: string
   materialName: string
@@ -28,6 +36,7 @@ interface MaterialGroup {
 
 export default function OutboundDetailModal({ open, record, onClose, onPrint }: OutboundDetailModalProps) {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+  const navigate = useNavigate()
 
   const groupedItems = useMemo<MaterialGroup[]>(() => {
     if (!record?.items) return []
@@ -71,6 +80,8 @@ export default function OutboundDetailModal({ open, record, onClose, onPrint }: 
 
   if (!open || !record) return null
 
+  const costCfg = costStatusConfig[record.costStatus || 'pending_cost'] || costStatusConfig.pending_cost
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl mx-4 max-h-[90vh] overflow-y-auto">
@@ -108,6 +119,61 @@ export default function OutboundDetailModal({ open, record, onClose, onPrint }: 
             <div>
               <div className="text-xs text-gray-500 mb-1">操作人</div>
               <div className="text-sm font-medium text-gray-900">{record.operator}</div>
+            </div>
+          </div>
+
+          {record.caseNo && (
+            <div className="grid grid-cols-2 gap-4 p-4 bg-blue-50 rounded-md border border-blue-100">
+              <div>
+                <div className="text-xs text-blue-700 mb-1">病例号</div>
+                <div className="text-sm font-semibold text-gray-900">{record.caseNo}</div>
+              </div>
+              <div>
+                <div className="text-xs text-blue-700 mb-1">样本数</div>
+                <div className="text-sm font-semibold text-gray-900">{record.sampleCount || '-'}</div>
+              </div>
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 p-4 bg-emerald-50 rounded-md border border-emerald-100">
+            <div>
+              <div className="text-xs text-emerald-700 mb-1">成本状态</div>
+              <div className="flex items-center gap-2">
+                <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${costCfg.bg} ${costCfg.text}`}>
+                  {record.costStatus === 'cost_exception' && <AlertTriangle className="h-3 w-3" />}
+                  {costCfg.label}
+                </span>
+                {record.costStatus === 'cost_exception' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose()
+                      navigate(`/abc/alerts?outboundId=${encodeURIComponent(record.id)}`)
+                    }}
+                    className="text-xs text-blue-600 hover:text-blue-700"
+                  >
+                    查看异常
+                  </button>
+                )}
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-emerald-700 mb-1">ABC总成本</div>
+              <div className="text-sm font-semibold text-gray-900">{record.abcTotalCost ? formatCurrency(record.abcTotalCost) : '-'}</div>
+            </div>
+            <div>
+              <div className="text-xs text-emerald-700 mb-1">收费金额</div>
+              <div className="text-sm font-semibold text-gray-900">{record.feeAmount ? formatCurrency(record.feeAmount) : '-'}</div>
+            </div>
+            <div>
+              <div className="text-xs text-emerald-700 mb-1">利润</div>
+              {record.profit !== undefined && record.profit !== 0 ? (
+                <div className={`text-sm font-semibold ${record.profit > 0 ? 'text-green-700' : 'text-red-700'}`}>
+                  {record.profit > 0 ? '+' : ''}{formatCurrency(record.profit)}
+                </div>
+              ) : (
+                <div className="text-sm font-semibold text-gray-400">-</div>
+              )}
             </div>
           </div>
 

@@ -43,6 +43,20 @@ async function apiFetch(token: string, method: string, path: string, body?: any)
   return { status: res.status, data: (await res.json().catch(() => null)) as any }
 }
 
+async function createEquipment(token: string, overrides: Record<string, any> = {}) {
+  const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+  return apiFetch(token, 'POST', '/equipment', {
+    code: `E2E-EQ-${suffix}`,
+    name: `E2E测试设备-${suffix}`,
+    model: 'E2E-100',
+    purchasePrice: 50000,
+    residualValue: 5000,
+    depreciableLifeYears: 5,
+    depreciationMethod: 'straight_line',
+    ...overrides,
+  })
+}
+
 // ────────────────────────────────────────────
 // 1. 查看设备列表 (10 tests)
 // ────────────────────────────────────────────
@@ -51,7 +65,16 @@ test.describe('设备管理 -> 查看设备列表', () => {
     test(`EQ-LIST-01-${role}. ${role}可查看设备列表`, async ({ page }) => {
       await loginAs(page, role)
       await page.goto(`${FE_BASE}/equipment`)
-      await expect(page.locator('body')).toBeVisible({ timeout: 30000 })
+      await expect(page.getByRole('heading', { name: '设备管理' })).toBeVisible({ timeout: 30000 })
+      await expect(page.getByText('管理病理设备档案，配置折旧规则')).toBeVisible()
+      await expect(page.getByRole('button', { name: /设备类型/ })).toBeVisible()
+      if (role === 'admin') {
+        await expect(page.getByRole('button', { name: /新增设备/ })).toBeVisible()
+      } else {
+        await expect(page.getByRole('button', { name: /新增设备/ })).toHaveCount(0)
+        await expect(page.getByRole('button', { name: '编辑' })).toHaveCount(0)
+        await expect(page.getByRole('button', { name: '删除' })).toHaveCount(0)
+      }
     })
   }
   for (const role of FORBIDDEN_ROLES) {
@@ -96,20 +119,18 @@ test.describe('设备管理 -> 查看设备列表', () => {
 test.describe('设备管理 -> 创建设备', () => {
   test('EQ-CREATE-01. admin创建设备成功', async () => {
     const token = await apiLogin('admin')
-    const code = `E2E_${Date.now()}`
-    const res = await apiFetch(token, 'POST', '/equipment', {
-      code, name: 'E2E测试设备', model: 'Test-100', purchasePrice: 50000,
-    })
+    const res = await createEquipment(token)
     expect([200, 201]).toContain(res.status)
     expect(res.data?.data?.id).toBeDefined()
   })
-  test('EQ-CREATE-02. technician创建设备成功', async () => {
+  test('EQ-CREATE-02. technician创建设备返回403', async () => {
     const token = await apiLogin('technician')
-    const code = `E2E_T_${Date.now()}`
-    const res = await apiFetch(token, 'POST', '/equipment', {
-      code, name: 'E2E技术员设备', purchasePrice: 30000,
+    const res = await createEquipment(token, {
+      code: `E2E-T-EQ-${Date.now()}`,
+      name: 'E2E技术员越权设备',
+      purchasePrice: 30000,
     })
-    expect([200, 201]).toContain(res.status)
+    expect(res.status).toBe(403)
   })
   test('EQ-CREATE-03. 缺少code返回400', async () => {
     const token = await apiLogin('admin')
@@ -212,6 +233,11 @@ test.describe('设备管理 -> 使用记录', () => {
   test('EQ-USAGE-03. 为不存在的设备登记使用返回404', async () => {
     const token = await apiLogin('admin')
     const res = await apiFetch(token, 'POST', '/equipment/non-existent-id/usage', { usageMinutes: 30 })
+    expect(res.status).toBe(404)
+  })
+  test('EQ-USAGE-03B. 查询不存在设备的使用记录返回404', async () => {
+    const token = await apiLogin('admin')
+    const res = await apiFetch(token, 'GET', '/equipment/non-existent-id/usage?page=1&pageSize=10')
     expect(res.status).toBe(404)
   })
   test('EQ-USAGE-04. 折旧成本自动计算', async () => {

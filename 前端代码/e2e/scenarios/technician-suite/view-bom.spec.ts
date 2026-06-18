@@ -396,19 +396,18 @@ test.describe('技术员查看BOM - 成本预览路径', () => {
     }
   })
 
-  test('路径4-步骤6: 进入成本分析页面验证', async ({ page }) => {
+  test('路径4-步骤6: 进入ABC成本看板验证', async ({ page }) => {
     await loginAs(page, 'technician')
-    await page.goto(`${FE_BASE}/cost-analysis`)
+    await page.goto(`${FE_BASE}/abc/dashboard`)
     await page.waitForTimeout(1000)
 
-    // 验证成本分析页面可见
+    // 验证ABC成本看板可见
     await expect(page.locator('body')).toBeVisible()
   })
 
-  test('路径4-步骤7: 验证API返回成本数据', async ({ page }) => {
-    const res = await apiFetch(technicianToken, 'GET', '/cost-analysis?page=1&pageSize=10')
+  test('路径4-步骤7: 验证API返回ABC成本数据', async ({ page }) => {
+    const res = await apiFetch(technicianToken, 'GET', '/abc/dashboard')
 
-    // 成本分析API可能需要特定权限
-    expect([200, 403]).toContain(res.status)
+    expect(res.status).toBe(200)
   })
 })

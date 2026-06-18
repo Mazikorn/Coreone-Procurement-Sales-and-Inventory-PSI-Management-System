@@ -1,5 +1,4 @@
 import { Search, Clock, FileText } from 'lucide-react'
-import { toast } from 'sonner'
 import { Pagination } from '@/components/ui/Pagination'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { BOM } from '@/types'
@@ -24,6 +23,7 @@ interface Props {
   filterStatus: string
   quickFilter: string
   selectedIds: Set<string>
+  canWrite: boolean
   isAllSelected: boolean
   isIndeterminate: boolean
   onSearchInputChange: (v: string) => void
@@ -42,6 +42,9 @@ interface Props {
   onOpenCopy: (row: BOM) => void
   onOpenDelete: (row: BOM) => void
   onBatchDelete: () => void
+  onBatchEnable: () => void
+  onBatchDisable: () => void
+  onToggleStatus: (row: BOM) => void
 }
 
 export function BOMTable({
@@ -55,6 +58,7 @@ export function BOMTable({
   filterStatus,
   quickFilter,
   selectedIds,
+  canWrite,
   isAllSelected,
   isIndeterminate,
   onSearchInputChange,
@@ -73,6 +77,9 @@ export function BOMTable({
   onOpenCopy,
   onOpenDelete,
   onBatchDelete,
+  onBatchEnable,
+  onBatchDisable,
+  onToggleStatus,
 }: Props) {
   return (
     <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
@@ -139,7 +146,7 @@ export function BOMTable({
       </div>
 
       {/* 批量操作栏 */}
-      {selectedIds.size > 0 && (
+      {canWrite && selectedIds.size > 0 && (
         <div className="px-5 py-3 bg-blue-50 border-b border-blue-100 flex items-center gap-3 flex-wrap">
           <span className="text-sm text-gray-700">
             已选择{' '}
@@ -149,19 +156,13 @@ export function BOMTable({
             项
           </span>
           <button
-            onClick={() => {
-              toast.info('批量启用功能开发中')
-              onClearSelection()
-            }}
+            onClick={onBatchEnable}
             className="px-3 py-1.5 bg-white text-gray-700 border border-gray-300 rounded-md text-xs font-medium hover:bg-gray-50 transition-colors"
           >
             批量启用
           </button>
           <button
-            onClick={() => {
-              toast.info('批量停用功能开发中')
-              onClearSelection()
-            }}
+            onClick={onBatchDisable}
             className="px-3 py-1.5 bg-white text-gray-700 border border-gray-300 rounded-md text-xs font-medium hover:bg-gray-50 transition-colors"
           >
             批量停用
@@ -186,17 +187,19 @@ export function BOMTable({
         <table className="w-full text-sm">
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
-              <th className="w-12 px-4 py-3 text-left">
-                <input
-                  type="checkbox"
-                  checked={isAllSelected}
-                  ref={(el) => {
-                    if (el) el.indeterminate = isIndeterminate
-                  }}
-                  onChange={onToggleSelectAll}
-                  className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                />
-              </th>
+              {canWrite && (
+                <th className="w-12 px-4 py-3 text-left">
+                  <input
+                    type="checkbox"
+                    checked={isAllSelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = isIndeterminate
+                    }}
+                    onChange={onToggleSelectAll}
+                    className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
+                </th>
+              )}
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 BOM编号
               </th>
@@ -229,7 +232,7 @@ export function BOMTable({
           <tbody className="divide-y divide-gray-100">
             {loading ? (
               <tr>
-                <td colSpan={10} className="px-4 py-12 text-center text-gray-400">
+                <td colSpan={canWrite ? 10 : 9} className="px-4 py-12 text-center text-gray-400">
                   <div className="flex items-center justify-center gap-2">
                     <Clock className="w-5 h-5 animate-spin" />
                     加载中...
@@ -238,7 +241,7 @@ export function BOMTable({
               </tr>
             ) : data.length === 0 ? (
               <tr>
-                <td colSpan={10} className="px-4 py-12 text-center text-gray-400">
+                <td colSpan={canWrite ? 10 : 9} className="px-4 py-12 text-center text-gray-400">
                   <div className="flex flex-col items-center gap-2">
                     <FileText className="w-12 h-12 text-gray-300" />
                     <p className="text-sm">暂无BOM数据</p>
@@ -264,14 +267,16 @@ export function BOMTable({
 
                 return (
                   <tr key={row.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-3">
-                      <input
-                        type="checkbox"
-                        checked={selected}
-                        onChange={() => onToggleSelectRow(row.id)}
-                        className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                      />
-                    </td>
+                    {canWrite && (
+                      <td className="px-4 py-3">
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          onChange={() => onToggleSelectRow(row.id)}
+                          className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                      </td>
+                    )}
                     <td className="px-4 py-3 font-mono text-xs text-gray-600">
                       {row.code}
                     </td>
@@ -294,7 +299,10 @@ export function BOMTable({
                     <td className="px-4 py-3 text-gray-600">
                       {row.materialCount ?? 0}
                     </td>
-                    <td className={`px-4 py-3 ${supportableClass}`}>
+                    <td
+                      title="根据BOM物料用量和当前可用库存实时计算"
+                      className={`px-4 py-3 ${supportableClass}`}
+                    >
                       {supportable !== undefined && supportable !== null
                         ? supportable
                         : '-'}
@@ -313,36 +321,34 @@ export function BOMTable({
                         >
                           详情
                         </button>
-                        <button
-                          onClick={() => onOpenEdit(row)}
-                          className="px-2 py-1 text-gray-500 hover:text-blue-600 text-xs font-medium transition-colors"
-                        >
-                          编辑
-                        </button>
-                        <button
-                          onClick={() => onOpenCopy(row)}
-                          className="px-2 py-1 text-gray-500 hover:text-blue-600 text-xs font-medium transition-colors"
-                        >
-                          复制
-                        </button>
-                        <button
-                          onClick={() => {
-                            if (row.status === 'active') {
-                              toast.info('停用功能开发中')
-                            } else {
-                              toast.info('启用功能开发中')
-                            }
-                          }}
-                          className="px-2 py-1 text-gray-500 hover:text-yellow-600 text-xs font-medium transition-colors"
-                        >
-                          {row.status === 'active' ? '停用' : '启用'}
-                        </button>
-                        <button
-                          onClick={() => onOpenDelete(row)}
-                          className="px-2 py-1 text-gray-500 hover:text-red-600 text-xs font-medium transition-colors"
-                        >
-                          删除
-                        </button>
+                        {canWrite && (
+                          <>
+                            <button
+                              onClick={() => onOpenEdit(row)}
+                              className="px-2 py-1 text-gray-500 hover:text-blue-600 text-xs font-medium transition-colors"
+                            >
+                              编辑
+                            </button>
+                            <button
+                              onClick={() => onOpenCopy(row)}
+                              className="px-2 py-1 text-gray-500 hover:text-blue-600 text-xs font-medium transition-colors"
+                            >
+                              复制
+                            </button>
+                            <button
+                              onClick={() => onToggleStatus(row)}
+                              className="px-2 py-1 text-gray-500 hover:text-yellow-600 text-xs font-medium transition-colors"
+                            >
+                              {row.status === 'active' ? '停用' : '启用'}
+                            </button>
+                            <button
+                              onClick={() => onOpenDelete(row)}
+                              className="px-2 py-1 text-gray-500 hover:text-red-600 text-xs font-medium transition-colors"
+                            >
+                              删除
+                            </button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>

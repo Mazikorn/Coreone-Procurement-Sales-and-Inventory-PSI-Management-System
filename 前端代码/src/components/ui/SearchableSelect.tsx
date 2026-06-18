@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { Search, ChevronDown, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -184,7 +184,7 @@ export function SearchableSelect({
             <ul className="max-h-60 overflow-y-auto py-1">
               {filtered.map((opt, idx) => (
                 <li
-                  key={opt.value}
+                  key={`${opt.value}-${idx}`}
                   data-testid={`option-${opt.value}`}
                   onClick={() => handleSelect(opt)}
                   onMouseEnter={() => setHighlightedIndex(idx)}

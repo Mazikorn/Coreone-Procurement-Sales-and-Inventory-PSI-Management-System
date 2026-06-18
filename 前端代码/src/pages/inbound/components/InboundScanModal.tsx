@@ -8,7 +8,7 @@ interface InboundScanModalProps {
   open: boolean
   onClose: () => void
   onManualInput: () => void
-  onScanSuccess?: (materialId: string) => void
+  onScanSuccess?: (material: Material) => void
 }
 
 export default function InboundScanModal({ open, onClose, onManualInput, onScanSuccess }: InboundScanModalProps) {
@@ -31,20 +31,10 @@ export default function InboundScanModal({ open, onClose, onManualInput, onScanS
                 const code = (e.target as HTMLInputElement).value.trim()
                 if (!code) return
                 try {
-                  const res: any = await materialApi.getList({ keyword: code, pageSize: 10 })
-                  const matched = res?.list?.find((m: Material) =>
-                    m.code?.toLowerCase() === code.toLowerCase() ||
-                    m.name?.toLowerCase().includes(code.toLowerCase())
-                  )
-                  if (matched) {
-                    toast.success('扫码成功', { description: `已识别耗材：${matched.name}` })
-                    setTimeout(() => {
-                      onClose()
-                      onScanSuccess?.(matched.id)
-                    }, 400)
-                  } else {
-                    toast.error('未找到匹配物料', { description: `条码 "${code}" 未匹配到任何物料` })
-                  }
+                  const matched = await materialApi.getByBarcode(code) as Material
+                  toast.success('扫码成功', { description: `已识别耗材：${matched.name}` })
+                  onClose()
+                  onScanSuccess?.(matched)
                 } catch {
                   toast.error('查询失败')
                 }

@@ -10,6 +10,7 @@ interface Props {
   page: number
   pageSize: number
   selectedIds: Set<string>
+  canWrite: boolean
   keyword: string
   categoryId: string
   supplierId: string
@@ -39,7 +40,7 @@ interface Props {
 }
 
 export function MaterialTable({
-  data, loading, total, page, pageSize, selectedIds,
+  data, loading, total, page, pageSize, selectedIds, canWrite,
   keyword, categoryId, supplierId, quickFilter, categories, suppliers,
   getCategoryName, getSupplierName, statusBadge,
   onKeywordChange, onCategoryIdChange, onSupplierIdChange, onQuickFilterChange,
@@ -117,7 +118,7 @@ export function MaterialTable({
       </div>
 
       {/* Batch Actions */}
-      {selectedIds.size > 0 && (
+      {canWrite && selectedIds.size > 0 && (
         <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5">
           <div className="flex items-center gap-2 text-sm text-blue-800">
             <input
@@ -152,14 +153,16 @@ export function MaterialTable({
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
-                <th className="px-4 py-3 text-left w-10">
-                  <input
-                    type="checkbox"
-                    checked={data.length > 0 && selectedIds.size === data.length}
-                    onChange={onToggleSelectAll}
-                    className="w-4 h-4 rounded border-gray-300 text-blue-600"
-                  />
-                </th>
+                {canWrite && (
+                  <th className="px-4 py-3 text-left w-10">
+                    <input
+                      type="checkbox"
+                      checked={data.length > 0 && selectedIds.size === data.length}
+                      onChange={onToggleSelectAll}
+                      className="w-4 h-4 rounded border-gray-300 text-blue-600"
+                    />
+                  </th>
+                )}
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">物料编码</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">物料名称</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">规格</th>
@@ -167,24 +170,26 @@ export function MaterialTable({
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">供应商</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">库存</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状态</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[180px]">操作</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[120px]">操作</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {loading ? (
-                <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-400">加载中...</td></tr>
+                <tr><td colSpan={canWrite ? 9 : 8} className="px-4 py-8 text-center text-gray-400">加载中...</td></tr>
               ) : data.length === 0 ? (
-                <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-400">暂无数据</td></tr>
+                <tr><td colSpan={canWrite ? 9 : 8} className="px-4 py-8 text-center text-gray-400">暂无数据</td></tr>
               ) : data.map(row => (
                 <tr key={row.id} className={`hover:bg-gray-50 transition-colors ${selectedIds.has(row.id) ? 'bg-blue-50/50' : ''}`}>
-                  <td className="px-4 py-3">
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.has(row.id)}
-                      onChange={() => onToggleSelect(row.id)}
-                      className="w-4 h-4 rounded border-gray-300 text-blue-600"
-                    />
-                  </td>
+                  {canWrite && (
+                    <td className="px-4 py-3">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(row.id)}
+                        onChange={() => onToggleSelect(row.id)}
+                        className="w-4 h-4 rounded border-gray-300 text-blue-600"
+                      />
+                    </td>
+                  )}
                   <td className="px-4 py-3 font-mono text-xs text-gray-600">{row.code}</td>
                   <td className="px-4 py-3 font-medium text-gray-900">{row.name}</td>
                   <td className="px-4 py-3 text-gray-500">{row.spec || '-'}</td>
@@ -203,12 +208,16 @@ export function MaterialTable({
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2 whitespace-nowrap">
                       <button onClick={() => onOpenDetail(row)} className="text-sm text-gray-600 hover:text-blue-600 transition-colors">详情</button>
-                      <span className="text-gray-300">|</span>
-                      <button onClick={() => onOpenEdit(row)} className="text-sm text-gray-600 hover:text-blue-600 transition-colors">编辑</button>
-                      <span className="text-gray-300">|</span>
-                      <button onClick={() => onToggleStatus(row)} className="text-sm text-gray-600 hover:text-amber-600 transition-colors">{row.status === 'active' ? '停用' : '启用'}</button>
-                      <span className="text-gray-300">|</span>
-                      <button onClick={() => onDelete(row.id)} className="text-sm text-gray-600 hover:text-red-600 transition-colors">删除</button>
+                      {canWrite && (
+                        <>
+                          <span className="text-gray-300">|</span>
+                          <button onClick={() => onOpenEdit(row)} className="text-sm text-gray-600 hover:text-blue-600 transition-colors">编辑</button>
+                          <span className="text-gray-300">|</span>
+                          <button onClick={() => onToggleStatus(row)} className="text-sm text-gray-600 hover:text-amber-600 transition-colors">{row.status === 'active' ? '停用' : '启用'}</button>
+                          <span className="text-gray-300">|</span>
+                          <button onClick={() => onDelete(row.id)} className="text-sm text-gray-600 hover:text-red-600 transition-colors">删除</button>
+                        </>
+                      )}
                     </div>
                   </td>
                 </tr>

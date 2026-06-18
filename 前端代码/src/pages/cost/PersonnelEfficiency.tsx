@@ -1,10 +1,12 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { Download, Users } from 'lucide-react'
+import { toast } from 'sonner'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer, BarChart, Bar,
 } from 'recharts'
-import { formatCurrency } from '@/lib/utils'
+import { reportsApi } from '@/api/reports'
+import { downloadTextFile, formatCurrency } from '@/lib/utils'
 import { EmptyState } from '@/components/ui/EmptyState'
 
 interface PersonnelRankItem {
@@ -13,7 +15,11 @@ interface PersonnelRankItem {
   role: string
   efficiency: number
   totalCost: number
+  materialCost?: number
   outputCount: number
+  recordCount?: number
+  standardHours?: number
+  outputPerHour?: number
   costPerOutput: number
 }
 
@@ -22,6 +28,8 @@ interface PersonnelTrendPoint {
   avgEfficiency: number
   totalCost: number
   outputCount: number
+  standardHours?: number
+  outputPerHour?: number
 }
 
 const TIME_RANGE_OPTIONS = [
@@ -37,17 +45,30 @@ const ROLE_OPTIONS = [
   { value: 'warehouse_manager', label: '仓库管理员' },
 ]
 
-// Placeholder data — will be replaced when backend API is ready
-const PLACEHOLDER_RANK: PersonnelRankItem[] = []
-const PLACEHOLDER_TREND: PersonnelTrendPoint[] = []
-
 export default function PersonnelEfficiency() {
   const [timeRange, setTimeRange] = useState('6m')
   const [role, setRole] = useState('all')
-  const [loading] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [exporting, setExporting] = useState(false)
+  const [ranking, setRanking] = useState<PersonnelRankItem[]>([])
+  const [trend, setTrend] = useState<PersonnelTrendPoint[]>([])
 
-  const ranking = PLACEHOLDER_RANK
-  const trend = PLACEHOLDER_TREND
+  useEffect(() => {
+    loadData()
+  }, [timeRange, role])
+
+  const loadData = async () => {
+    try {
+      setLoading(true)
+      const res = await reportsApi.getPersonnelEfficiency({ timeRange, role })
+      setRanking(res?.ranking || [])
+      setTrend(res?.trend || [])
+    } catch {
+      toast.error('加载人员效率数据失败')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const summary = useMemo(() => {
     const filteredRanking = role === 'all'
@@ -67,6 +88,30 @@ export default function PersonnelEfficiency() {
     return ranking.filter(r => r.role === role)
   }, [ranking, role])
 
+  const handleExport = () => {
+    try {
+      setExporting(true)
+      const header = ['姓名', '角色', '效率值', '标准小时', '产出数', '总人工成本', '单位产出成本']
+      const rows = filteredRanking.map(item => [
+        item.name,
+        item.role,
+        item.efficiency.toFixed(2),
+        (item.standardHours || 0).toFixed(2),
+        String(item.outputCount || 0),
+        (item.totalCost || 0).toFixed(2),
+        (item.costPerOutput || 0).toFixed(2),
+      ])
+      downloadTextFile(
+        `personnel-efficiency-${timeRange}-${role}.csv`,
+        [header, ...rows].map(row => row.map(cell => `"${cell.replace(/"/g, '""')}"`).join(',')).join('\n'),
+        'text/csv;charset=utf-8',
+      )
+      toast.success('导出完成')
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <div className="p-6 space-y-6">
       {/* 页面头部 */}
@@ -75,7 +120,12 @@ export default function PersonnelEfficiency() {
           <h1 className="text-2xl font-bold text-gray-900">人员效率分析</h1>
           <p className="text-sm text-gray-500 mt-1">分析人员工作效率、成本产出比及排名</p>
         </div>
-        <button className="h-10 px-4 bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors flex items-center gap-2 self-start">
+        <button
+          type="button"
+          onClick={handleExport}
+          disabled={exporting || filteredRanking.length === 0}
+          className="h-10 px-4 bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 disabled:opacity-50 transition-colors flex items-center gap-2 self-start"
+        >
           <Download className="h-4 w-4" /> 导出
         </button>
       </div>
@@ -135,7 +185,7 @@ export default function PersonnelEfficiency() {
           <EmptyState
             icon={Users}
             title="暂无人员效率数据"
-            description="后续将接入人员效率分析 API"
+            description="当前筛选范围内没有已完成出库记录"
           />
         ) : (
           <div className="overflow-x-auto">
@@ -146,7 +196,8 @@ export default function PersonnelEfficiency() {
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">姓名</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">角色</th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">效率值</th>
-                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">总成本</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">标准小时</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">人工成本</th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">产出数</th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">单位成本</th>
                 </tr>
@@ -173,6 +224,7 @@ export default function PersonnelEfficiency() {
                         {item.efficiency.toFixed(2)}
                       </span>
                     </td>
+                    <td className="px-4 py-3 text-sm text-right text-gray-500">{(item.standardHours || 0).toFixed(2)}</td>
                     <td className="px-4 py-3 text-sm text-right text-gray-900">{formatCurrency(item.totalCost)}</td>
                     <td className="px-4 py-3 text-sm text-right text-gray-500">{item.outputCount.toLocaleString()}</td>
                     <td className="px-4 py-3 text-sm text-right text-gray-500">{formatCurrency(item.costPerOutput)}</td>
@@ -193,7 +245,7 @@ export default function PersonnelEfficiency() {
           <EmptyState
             icon={Users}
             title="暂无趋势数据"
-            description="后续将接入人员效率趋势 API"
+            description="当前筛选范围内没有可形成趋势的出库记录"
           />
         ) : (
           <ResponsiveContainer width="100%" height={320}>
@@ -239,7 +291,7 @@ export default function PersonnelEfficiency() {
           <EmptyState
             icon={Users}
             title="暂无对比数据"
-            description="后续将接入人员成本产出对比 API"
+            description="当前筛选范围内没有可对比的人工成本与产出"
           />
         ) : (
           <ResponsiveContainer width="100%" height={300}>

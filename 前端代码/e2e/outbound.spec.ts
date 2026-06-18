@@ -672,14 +672,14 @@ test.describe('出库管理 -> BOM一键出库', () => {
     })
     expect([422, 201]).toContain(res.status)
   })
-  test('OUT-BOM-03. 表单校验：未传bomId返回400', async () => {
+  test('OUT-BOM-03. 项目已配置BOM时未传bomId也可按项目配置出库', async () => {
     const token = await apiLogin('admin')
     const pid = await getAnyProjectId(token)
     if (!pid) { test.skip(); return }
     const res = await apiFetch(token, 'POST', '/outbound/bom', {
       projectId: pid, sampleCount: 10,
     })
-    expect(res.status).toBe(400)
+    expect([201, 422]).toContain(res.status)
   })
   test('OUT-BOM-04. 表单校验：未传sampleCount返回400', async () => {
     const token = await apiLogin('admin')

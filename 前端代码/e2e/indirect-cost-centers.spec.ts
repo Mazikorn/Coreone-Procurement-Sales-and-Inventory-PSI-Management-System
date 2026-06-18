@@ -47,17 +47,15 @@ async function apiFetch(token: string, method: string, path: string, body?: any)
 // 1. 间接成本中心列表 (6 tests)
 // ────────────────────────────────────────────
 test.describe('间接成本中心 -> 查看列表', () => {
-  test('ICC-LIST-01. admin可查看间接成本中心列表', async ({ page }) => {
-    await loginAs(page, 'admin')
-    await page.goto(`${FE_BASE}/indirect-costs`)
-    await expect(page.locator('body')).toBeVisible({ timeout: 30000 })
-  })
-
-  test('ICC-LIST-02. finance可查看间接成本中心列表', async ({ page }) => {
-    await loginAs(page, 'finance')
-    await page.goto(`${FE_BASE}/indirect-costs`)
-    await expect(page.locator('body')).toBeVisible({ timeout: 30000 })
-  })
+  for (const role of READ_ROLES) {
+    test(`ICC-LIST-01-${role}. ${role}可查看间接成本中心列表`, async ({ page }) => {
+      await loginAs(page, role)
+      await page.goto(`${FE_BASE}/indirect-costs`)
+      await expect(page.getByRole('heading', { name: '间接成本中心' })).toBeVisible({ timeout: 30000 })
+      await expect(page.getByText('管理房租、水电、管理等间接费用，录入月度分摊数据')).toBeVisible()
+      await expect(page.getByRole('button', { name: /新增成本中心/ })).toBeVisible()
+    })
+  }
 
   test('ICC-LIST-03. warehouse_manager访问返回403', async () => {
     const res = await apiFetch(await apiLogin('warehouse_manager'), 'GET', '/indirect-costs')
@@ -86,6 +84,34 @@ test.describe('间接成本中心 -> 查看列表', () => {
       bodyText.includes('分摊项') ||
       bodyText.includes('总数')
     expect(hasStats).toBeTruthy()
+  })
+
+  test('ICC-LIST-07. status=all不作为真实状态筛选', async () => {
+    const token = await apiLogin('admin')
+    const suffix = `E2E_ALL_${Date.now()}`
+    const active = await apiFetch(token, 'POST', '/indirect-costs', {
+      name: `E2E启用成本中心_${suffix}`,
+      code: `ICC_ACTIVE_${suffix}`,
+      costType: 'rent',
+      monthlyAmount: 5000,
+      status: 'active',
+    })
+    expect([200, 201]).toContain(active.status)
+    const inactive = await apiFetch(token, 'POST', '/indirect-costs', {
+      name: `E2E停用成本中心_${suffix}`,
+      code: `ICC_INACTIVE_${suffix}`,
+      costType: 'rent',
+      monthlyAmount: 3000,
+      status: 'inactive',
+    })
+    expect([200, 201]).toContain(inactive.status)
+
+    const res = await apiFetch(token, 'GET', `/indirect-costs?keyword=${encodeURIComponent(suffix)}&status=all`)
+    expect(res.status).toBe(200)
+    expect(res.data?.data?.list).toEqual(expect.arrayContaining([
+      expect.objectContaining({ status: 'active' }),
+      expect.objectContaining({ status: 'inactive' }),
+    ]))
   })
 })
 
@@ -117,6 +143,12 @@ test.describe('间接成本中心 -> 创建', () => {
       status: 'active',
     })
     expect([400, 422]).toContain(res.status)
+  })
+
+  test('ICC-ALLOC-404. 查询不存在成本中心的分摊记录返回404', async () => {
+    const token = await apiLogin('admin')
+    const res = await apiFetch(token, 'GET', '/indirect-costs/non-existent-id/allocations?page=1&pageSize=10')
+    expect(res.status).toBe(404)
   })
 })
 

@@ -3,10 +3,14 @@ import { X, Plus, Trash2 } from 'lucide-react'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { Material, Project, BOM } from '@/types'
 import { bomApi } from '@/api/master'
+import { reconciliationApi } from '@/api/reconciliation'
 
 export interface OutboundItemForm {
   materialId: string
+  batchId?: string
   quantity: number
+  usage?: 'self' | 'external'
+  receiver?: string | null
 }
 
 export interface FormData {
@@ -16,6 +20,7 @@ export interface FormData {
   remark: string
   bomId?: string
   sampleCount?: number
+  caseNo?: string
 }
 
 interface OutboundFormModalProps {
@@ -37,6 +42,17 @@ interface CostPreview {
   profit: number
 }
 
+interface LisCaseOption {
+  id: string
+  caseNo: string
+  projectId?: string
+  projectName?: string
+  bomId?: string | null
+  hasBom?: boolean
+  status?: string
+  operateTime?: string
+}
+
 export default function OutboundFormModal({
   open,
   editRecordId,
@@ -48,14 +64,34 @@ export default function OutboundFormModal({
   onFormChange,
 }: OutboundFormModalProps) {
   const [boms, setBoms] = useState<BOM[]>([])
+  const [lisCases, setLisCases] = useState<LisCaseOption[]>([])
   const [selectedBom, setSelectedBom] = useState<BOM | null>(null)
   const [costPreview, setCostPreview] = useState<CostPreview | null>(null)
+  const selectedProject = projects.find(project => project.id === form.projectId)
+  const compatibleBoms = boms.filter(bom => {
+    if (bom.status !== 'active') return false
+    if (!selectedProject) return false
+    return bom.type === selectedProject.type || bom.type === 'project'
+  })
+  const isBomOutbound = Boolean(form.bomId || form.caseNo?.trim())
 
-  // Load BOM list when modal opens
+  // Load BOM and LIS case list when modal opens
   useEffect(() => {
     if (!open) return
     bomApi.getList({ page: 1, pageSize: 999, status: 'active' }).then((res: any) => {
       setBoms(res?.list || [])
+    }).catch(() => {})
+    reconciliationApi.getCases({ page: 1, pageSize: 100 }).then((res: any) => {
+      setLisCases((res?.list || []).map((item: any) => ({
+        id: item.id,
+        caseNo: item.caseNo || item.case_no,
+        projectId: item.projectId || item.project_id,
+        projectName: item.projectName || item.project_name,
+        bomId: item.bomId || item.joined_bom_id || null,
+        hasBom: item.hasBom,
+        status: item.status,
+        operateTime: item.operateTime || item.operate_time,
+      })).filter((item: LisCaseOption) => item.caseNo))
     }).catch(() => {})
   }, [open])
 
@@ -92,6 +128,31 @@ export default function OutboundFormModal({
 
   const setFormField = <K extends keyof FormData>(field: K, value: FormData[K]) => {
     onFormChange({ ...form, [field]: value })
+  }
+
+  const handleProjectChange = (projectId: string) => {
+    const nextProject = projects.find(project => project.id === projectId)
+    onFormChange({
+      ...form,
+      projectId,
+      bomId: nextProject?.bomId || undefined,
+    })
+  }
+
+  const applyLisCase = (caseNo: string) => {
+    const matched = lisCases.find(item => item.caseNo === caseNo)
+    if (!matched) {
+      onFormChange({ ...form, caseNo })
+      return
+    }
+    onFormChange({
+      ...form,
+      type: 'project',
+      caseNo: matched.caseNo,
+      projectId: matched.projectId || form.projectId,
+      bomId: matched.bomId || form.bomId,
+      sampleCount: form.sampleCount || 1,
+    })
   }
 
   const addItem = () =>
@@ -147,8 +208,11 @@ export default function OutboundFormModal({
               <label className="block text-sm font-medium text-gray-700 mb-1">关联项目</label>
               <SearchableSelect
                 value={form.projectId}
-                onChange={val => setFormField('projectId', val)}
-                options={projects.map(p => ({ value: p.id, label: p.name }))}
+                onChange={handleProjectChange}
+                options={projects.map(p => ({
+                  value: p.id,
+                  label: `${p.name}${p.bomName ? `｜${p.bomName}${p.bomVersion ? ` ${p.bomVersion}` : ''}` : '｜未配置BOM'}`,
+                }))}
                 placeholder="请选择"
                 testId="project-select"
               />
@@ -161,8 +225,8 @@ export default function OutboundFormModal({
               <SearchableSelect
                 value={form.bomId || ''}
                 onChange={val => setFormField('bomId', val || undefined)}
-                options={boms.map(b => ({ value: b.id, label: `${b.name} (${b.code})` }))}
-                placeholder="选择BOM（可选）"
+                options={compatibleBoms.map(b => ({ value: b.id, label: `${b.name} (${b.code})` }))}
+                placeholder={selectedProject?.bomId ? '已按检测服务带出BOM' : '请选择已配置BOM的检测服务'}
                 testId="bom-select"
               />
             </div>
@@ -175,6 +239,33 @@ export default function OutboundFormModal({
                 onChange={e => setFormField('sampleCount', Number(e.target.value) || undefined)}
                 placeholder="填写样本数"
                 data-testid="sample-count-input"
+                className="w-full h-10 px-3 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">LIS病例</label>
+              <SearchableSelect
+                value={lisCases.some(item => item.caseNo === form.caseNo) ? form.caseNo || '' : ''}
+                onChange={applyLisCase}
+                options={lisCases.map(item => ({
+                  value: item.caseNo,
+                  label: `${item.caseNo}｜${item.projectName || '未关联项目'}${item.hasBom ? '' : '｜未配置BOM'}`,
+                  disabled: !item.hasBom,
+                }))}
+                placeholder="选择LIS病例（可选）"
+                testId="lis-case-select"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">病例号</label>
+              <input
+                value={form.caseNo || ''}
+                onChange={e => setFormField('caseNo', e.target.value)}
+                placeholder="手工输入或由LIS病例带入"
+                data-testid="case-no-input"
                 className="w-full h-10 px-3 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
               />
             </div>
@@ -211,50 +302,80 @@ export default function OutboundFormModal({
             </div>
           )}
 
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="block text-sm font-medium text-gray-700">出库明细 *</label>
-              <button
-                onClick={addItem}
-                data-testid="add-item-btn"
-                className="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-500 text-white text-xs rounded-md hover:bg-blue-600 transition-colors duration-150"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                添加物料
-              </button>
+          {isBomOutbound ? (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">BOM自动出库明细</label>
+              <div className="overflow-hidden rounded-md border border-gray-200">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 text-xs text-gray-500">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-medium">物料</th>
+                      <th className="px-3 py-2 text-left font-medium">用量/样本</th>
+                      <th className="px-3 py-2 text-left font-medium">单位</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {selectedBom?.materials?.length ? selectedBom.materials.map(material => (
+                      <tr key={material.id}>
+                        <td className="px-3 py-2 text-gray-900">{material.name}</td>
+                        <td className="px-3 py-2 text-gray-600">{material.usagePerSample}</td>
+                        <td className="px-3 py-2 text-gray-600">{material.unit}</td>
+                      </tr>
+                    )) : (
+                      <tr>
+                        <td colSpan={3} className="px-3 py-6 text-center text-gray-400">暂无BOM物料</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
-            <div className="space-y-2">
-              {form.items.map((item, idx) => (
-                <div key={idx} className="flex items-center gap-2 p-3 bg-gray-50 rounded-md">
-                  <SearchableSelect
-                    value={item.materialId}
-                    onChange={val => updateItem(idx, 'materialId', val)}
-                    options={materials.map(m => ({ value: m.id, label: `${m.name} (${m.code})` }))}
-                    placeholder="选择物料"
-                    className="flex-1"
-                    testId={`material-select-${idx}`}
-                  />
-                  <input
-                    type="number"
-                    placeholder="数量"
-                    min={1}
-                    value={item.quantity || ''}
-                    onChange={e => updateItem(idx, 'quantity', Number(e.target.value))}
-                    data-testid={`quantity-input-${idx}`}
-                    className="w-24 h-9 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                  {form.items.length > 1 && (
-                    <button
-                      onClick={() => removeItem(idx)}
-                      className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors duration-150"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  )}
-                </div>
-              ))}
+          ) : (
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-sm font-medium text-gray-700">出库明细 *</label>
+                <button
+                  onClick={addItem}
+                  data-testid="add-item-btn"
+                  className="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-500 text-white text-xs rounded-md hover:bg-blue-600 transition-colors duration-150"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  添加物料
+                </button>
+              </div>
+              <div className="space-y-2">
+                {form.items.map((item, idx) => (
+                  <div key={idx} className="flex items-center gap-2 p-3 bg-gray-50 rounded-md">
+                    <SearchableSelect
+                      value={item.materialId}
+                      onChange={val => updateItem(idx, 'materialId', val)}
+                      options={materials.map(m => ({ value: m.id, label: `${m.name} (${m.code})` }))}
+                      placeholder="选择物料"
+                      className="flex-1"
+                      testId={`material-select-${idx}`}
+                    />
+                    <input
+                      type="number"
+                      placeholder="数量"
+                      min={1}
+                      value={item.quantity || ''}
+                      onChange={e => updateItem(idx, 'quantity', Number(e.target.value))}
+                      data-testid={`quantity-input-${idx}`}
+                      className="w-24 h-9 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    {form.items.length > 1 && (
+                      <button
+                        onClick={() => removeItem(idx)}
+                        className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors duration-150"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">备注</label>

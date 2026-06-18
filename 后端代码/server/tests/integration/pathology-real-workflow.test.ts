@@ -11,6 +11,9 @@ import request from 'supertest'
 import fs from 'fs'
 import path from 'path'
 
+const seedPath = path.resolve(process.cwd(), '.claude/research/pathology-seed-data.sql')
+const describeWithSeed = fs.existsSync(seedPath) ? describe : describe.skip
+
 const getApp = async () => {
   const { default: app } = await import('../../src/app.js')
   const { getDatabase } = await import('../../src/database/DatabaseManager.js')
@@ -45,7 +48,7 @@ async function loginFinance(app: any): Promise<string> {
   return res.body.data.token
 }
 
-describe('病理科真实工作流测试', () => {
+describeWithSeed('病理科真实工作流测试', () => {
   let app: any, db: any, adminToken: string, whmToken: string, techToken: string, finToken: string
   let testLocationId: string
 
@@ -54,8 +57,7 @@ describe('病理科真实工作流测试', () => {
     app = got.app
     db = got.db
 
-    // 导入种子数据
-    const seedPath = path.resolve('d:/Git/COREONE/最新代码/.claude/research/pathology-seed-data.sql')
+    // 导入仓库内种子数据；缺少该 fixture 时本 suite 会显式 skip，避免依赖某台机器的绝对路径。
     const sql = fs.readFileSync(seedPath, 'utf-8')
     db.exec(sql)
 
@@ -826,6 +828,15 @@ describe('病理科真实工作流测试', () => {
           remark: '月度盘点',
         })
       expect(stRes.status).toBe(200)
+
+      const confirmRes = await request(app)
+        .post(`/api/v1/stocktaking/${stRes.body.data.id}/confirm`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          reason: 'physical',
+          remark: '月度盘点复核',
+        })
+      expect(confirmRes.status).toBe(200)
 
       // 验证库存调整为实际值
       const invAfter = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any

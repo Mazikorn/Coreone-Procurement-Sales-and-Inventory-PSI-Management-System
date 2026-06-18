@@ -46,6 +46,20 @@ async function getAnyMaterialId(token: string): Promise<string> {
   return r.data?.data?.list?.[0]?.id || ''
 }
 
+async function getPurchaseInboundRefs(token: string) {
+  const [materials, suppliers, locations] = await Promise.all([
+    apiFetch(token, 'GET', '/materials?page=1&pageSize=1'),
+    apiFetch(token, 'GET', '/suppliers?page=1&pageSize=1'),
+    apiFetch(token, 'GET', '/locations?page=1&pageSize=1'),
+  ])
+
+  return {
+    material: materials.data?.data?.list?.[0],
+    supplier: suppliers.data?.data?.list?.[0],
+    location: locations.data?.data?.list?.[0],
+  }
+}
+
 // ────────────────────────────────────────────
 // 1. 查看采购订单列表 (10 tests)
 // ────────────────────────────────────────────
@@ -226,7 +240,7 @@ test.describe('采购订单 -> 详情', () => {
 // 4. 收货与取消 (12 tests)
 // ────────────────────────────────────────────
 test.describe('采购订单 -> 收货与取消', () => {
-  test('PO-RECEIVE-01. 部分收货状态更新为partial', async () => {
+  test('PO-RECEIVE-01. 直接收货接口被拒绝且不改订单状态', async () => {
     const token = await apiLogin('admin')
     const mid = await getAnyMaterialId(token)
     if (!mid) { test.skip(); return }
@@ -236,19 +250,74 @@ test.describe('采购订单 -> 收货与取消', () => {
     const id = create.data?.data?.id
     if (!id) { test.skip(); return }
     const res = await apiFetch(token, 'PUT', `/purchase-orders/${id}/receive`, { quantity: 50 })
-    expect([200, 400]).toContain(res.status)
+    expect(res.status).toBe(400)
+    expect(res.data?.error?.message).toContain('采购收货必须通过入库接口')
+
+    const detail = await apiFetch(token, 'GET', `/purchase-orders/${id}`)
+    expect(detail.status).toBe(200)
+    expect(detail.data?.data?.receivedQty).toBe(0)
+    expect(detail.data?.data?.status).toBe('pending')
   })
-  test('PO-RECEIVE-02. 全部收货状态更新为completed', async () => {
+  test('PO-RECEIVE-02. 采购入库闭环更新订单并生成库存批次', async () => {
     const token = await apiLogin('admin')
-    const mid = await getAnyMaterialId(token)
-    if (!mid) { test.skip(); return }
+    const { material, supplier, location } = await getPurchaseInboundRefs(token)
+    if (!material?.id || !location?.id) { test.skip(); return }
+    const suffix = Date.now()
     const create = await apiFetch(token, 'POST', '/purchase-orders', {
-      materialId: mid, orderedQty: 10, unitPrice: 5,
+      materialId: material.id,
+      materialName: material.name || `E2E采购物料-${suffix}`,
+      supplierId: supplier?.id || material.supplierId,
+      orderedQty: 10,
+      unit: material.unit || '个',
+      unitPrice: 5,
     })
     const id = create.data?.data?.id
     if (!id) { test.skip(); return }
-    const res = await apiFetch(token, 'PUT', `/purchase-orders/${id}/receive`, { quantity: 10 })
-    expect([200, 400]).toContain(res.status)
+
+    const firstBatchNo = `E2E-PO-IN-${suffix}-1`
+    const firstInbound = await apiFetch(token, 'POST', '/inbound', {
+      type: 'purchase',
+      materialId: material.id,
+      batchNo: firstBatchNo,
+      quantity: 4,
+      price: 5,
+      supplierId: supplier?.id || material.supplierId,
+      locationId: location.id,
+      expiryDate: '2027-12-31',
+      purchaseOrderId: id,
+    })
+    expect(firstInbound.status).toBe(201)
+
+    const partial = await apiFetch(token, 'GET', `/purchase-orders/${id}`)
+    expect(partial.status).toBe(200)
+    expect(partial.data?.data?.receivedQty).toBe(4)
+    expect(partial.data?.data?.remainingQty).toBe(6)
+    expect(partial.data?.data?.status).toBe('partial')
+
+    const secondBatchNo = `E2E-PO-IN-${suffix}-2`
+    const secondInbound = await apiFetch(token, 'POST', '/inbound', {
+      type: 'purchase',
+      materialId: material.id,
+      batchNo: secondBatchNo,
+      quantity: 6,
+      price: 5,
+      supplierId: supplier?.id || material.supplierId,
+      locationId: location.id,
+      expiryDate: '2027-12-31',
+      purchaseOrderId: id,
+    })
+    expect(secondInbound.status).toBe(201)
+
+    const completed = await apiFetch(token, 'GET', `/purchase-orders/${id}`)
+    expect(completed.status).toBe(200)
+    expect(completed.data?.data?.receivedQty).toBe(10)
+    expect(completed.data?.data?.remainingQty).toBe(0)
+    expect(completed.data?.data?.status).toBe('completed')
+
+    const inventory = await apiFetch(token, 'GET', `/inventory?keyword=${encodeURIComponent(firstBatchNo)}&page=1&pageSize=10`)
+    expect(inventory.status).toBe(200)
+    const batches = inventory.data?.data?.list || []
+    expect(batches.some((row: any) => row.batchNo === firstBatchNo && Number(row.stock) >= 4)).toBe(true)
   })
   test('PO-RECEIVE-03. 收货数量超过订单数量返回400', async () => {
     const token = await apiLogin('admin')

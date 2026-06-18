@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Search, Plus, X, Package } from 'lucide-react'
 import { usePagination } from '@/hooks/usePagination'
 import { Pagination } from '@/components/ui/Pagination'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import { Modal } from '@/components/ui/Modal'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { purchaseOrderApi } from '@/api/inventory'
 import { materialApi, supplierApi } from '@/api/master'
 import type { PurchaseOrder, Material, Supplier } from '@/types'
@@ -17,7 +19,28 @@ const statusConfig: Record<string, { label: string; bg: string; text: string }> 
   cancelled: { label: '已取消', bg: 'bg-red-50', text: 'text-red-600' },
 }
 
+export interface PurchaseOrderForm {
+  materialId: string
+  supplierId: string
+  orderedQty: number
+  unitPrice: number
+  unit: string
+  expectedDate: string
+  remark: string
+}
+
+export function applySelectedMaterialToPurchaseForm(form: PurchaseOrderForm, material?: Material): PurchaseOrderForm {
+  if (!material) return form
+  return {
+    ...form,
+    materialId: material.id,
+    unit: material.unit || form.unit,
+    unitPrice: Number(material.price || 0),
+  }
+}
+
 export default function PurchaseOrders() {
+  const navigate = useNavigate()
   const [materials, setMaterials] = useState<Material[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [searchText, setSearchText] = useState('')
@@ -26,10 +49,12 @@ export default function PurchaseOrders() {
   const [modalOpen, setModalOpen] = useState(false)
   const [receiveModalOpen, setReceiveModalOpen] = useState(false)
   const [detailModalOpen, setDetailModalOpen] = useState(false)
+  const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false)
   const [selectedOrder, setSelectedOrder] = useState<PurchaseOrder | null>(null)
+  const [orderToCancel, setOrderToCancel] = useState<PurchaseOrder | null>(null)
   const [receiveQty, setReceiveQty] = useState(0)
 
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<PurchaseOrderForm>({
     materialId: '',
     supplierId: '',
     orderedQty: 1,
@@ -105,21 +130,36 @@ export default function PurchaseOrders() {
       toast.error('收货数量不能超过剩余数量')
       return
     }
-    try {
-      await purchaseOrderApi.receive(selectedOrder.id, { quantity: receiveQty })
-      toast.success('收货成功')
-      setReceiveModalOpen(false)
-      setSelectedOrder(null)
-      refresh()
-    } catch (e) {
-      toast.error('收货失败')
-    }
+    const params = new URLSearchParams({
+      action: 'create',
+      type: 'purchase',
+      purchaseOrderId: selectedOrder.id,
+      materialId: selectedOrder.materialId,
+      quantity: String(receiveQty),
+      price: String(selectedOrder.unitPrice || 0),
+    })
+    if (selectedOrder.supplierId) params.set('supplierId', selectedOrder.supplierId)
+    setReceiveModalOpen(false)
+    setSelectedOrder(null)
+    navigate(`/inbound?${params.toString()}`)
   }
 
-  const handleCancel = async (order: PurchaseOrder) => {
+  const openCancelConfirm = (order: PurchaseOrder) => {
+    setOrderToCancel(order)
+    setCancelConfirmOpen(true)
+  }
+
+  const closeCancelConfirm = () => {
+    setCancelConfirmOpen(false)
+    setOrderToCancel(null)
+  }
+
+  const handleCancel = async () => {
+    if (!orderToCancel) return
     try {
-      await purchaseOrderApi.cancel(order.id)
+      await purchaseOrderApi.cancel(orderToCancel.id)
       toast.success('订单已取消')
+      closeCancelConfirm()
       refresh()
     } catch (e) {
       toast.error('取消失败')
@@ -225,20 +265,20 @@ export default function PurchaseOrders() {
                             详情
                           </button>
                           {(row.status === 'pending' || row.status === 'partial') && (
-                            <>
-                              <button
-                                onClick={() => { setSelectedOrder(row); setReceiveQty(row.remainingQty); setReceiveModalOpen(true) }}
-                                className="px-2 py-1 text-xs text-blue-600 hover:bg-blue-50 rounded transition-colors duration-150"
-                              >
-                                收货
-                              </button>
-                              <button
-                                onClick={() => handleCancel(row)}
-                                className="px-2 py-1 text-xs text-red-600 hover:bg-red-50 rounded transition-colors duration-150"
-                              >
-                                取消
-                              </button>
-                            </>
+                            <button
+                              onClick={() => { setSelectedOrder(row); setReceiveQty(row.remainingQty); setReceiveModalOpen(true) }}
+                              className="px-2 py-1 text-xs text-blue-600 hover:bg-blue-50 rounded transition-colors duration-150"
+                            >
+                              收货
+                            </button>
+                          )}
+                          {row.status === 'pending' && (
+                            <button
+                              onClick={() => openCancelConfirm(row)}
+                              className="px-2 py-1 text-xs text-red-600 hover:bg-red-50 rounded transition-colors duration-150"
+                            >
+                              取消
+                            </button>
                           )}
                         </div>
                       </td>
@@ -264,7 +304,7 @@ export default function PurchaseOrders() {
               <label className="block text-sm font-medium text-gray-700 mb-1">物料 <span className="text-red-500">*</span></label>
               <SearchableSelect
                 value={form.materialId}
-                onChange={val => setForm({ ...form, materialId: val })}
+                onChange={val => setForm(applySelectedMaterialToPurchaseForm(form, materials.find(m => m.id === val)))}
                 options={materials.map(m => ({
                   value: m.id,
                   label: `${m.name} (${m.code})`,
@@ -442,13 +482,26 @@ export default function PurchaseOrders() {
               />
               <p className="text-xs text-gray-400 mt-1">剩余可收货：{selectedOrder.remainingQty} {selectedOrder.unit}</p>
             </div>
+            <div className="rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-700">
+              收货需要创建入库记录并填写批号、库位和有效期；确认后将跳转到入库页面，库存和采购订单收货数量会在入库成功后同步更新。
+            </div>
           </div>
           <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-gray-200">
             <button onClick={() => setReceiveModalOpen(false)} className="px-4 h-10 text-sm text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors">取消</button>
-            <button onClick={handleReceive} className="px-4 h-10 text-sm text-white bg-blue-500 rounded-md hover:bg-blue-600 transition-colors">确认收货</button>
+            <button onClick={handleReceive} className="px-4 h-10 text-sm text-white bg-blue-500 rounded-md hover:bg-blue-600 transition-colors">去入库</button>
           </div>
         </Modal>
       )}
+
+      <ConfirmDialog
+        open={cancelConfirmOpen && !!orderToCancel}
+        title="确认取消采购订单"
+        description={`确定要取消采购订单 ${orderToCancel?.orderNo} 吗？取消后该订单将不再作为入库收货候选。`}
+        confirmText="确认取消"
+        confirmVariant="danger"
+        onConfirm={handleCancel}
+        onCancel={closeCancelConfirm}
+      />
     </div>
   )
 }

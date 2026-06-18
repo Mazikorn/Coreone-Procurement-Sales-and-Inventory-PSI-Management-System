@@ -3,6 +3,7 @@ import { QrCode, Plus, Upload, Printer } from 'lucide-react'
 import ImportInboundModal from './components/ImportInboundModal'
 import InboundFormModal from './components/InboundFormModal'
 import InboundDetailModal from './components/InboundDetailModal'
+import InboundCancelModal from './components/InboundCancelModal'
 import InboundRestoreModal from './components/InboundRestoreModal'
 import InboundScanModal from './components/InboundScanModal'
 import InboundPrintModal from './components/InboundPrintModal'
@@ -13,6 +14,19 @@ import InboundQuickFilters from './components/InboundQuickFilters'
 import { Modal } from '@/components/ui/Modal'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useInboundPage } from './hooks/useInboundPage'
+import type { Material } from '@/types'
+import type { FormData } from './components/InboundFormModal'
+
+export function applyScannedMaterialToInboundForm(prev: FormData, material: Material): FormData {
+  return {
+    ...prev,
+    type: 'direct',
+    materialId: material.id,
+    price: material.price ?? prev.price,
+    supplierId: material.supplierId || prev.supplierId,
+    locationId: material.locationId || prev.locationId,
+  }
+}
 
 export default function Inbound() {
   const navigate = useNavigate()
@@ -66,11 +80,12 @@ export default function Inbound() {
 
       {/* 统计卡片 */}
       <InboundStats
-        total={page.stats.total}
+        total={page.stats.monthTotal}
         amount={page.stats.amount}
         pendingOrders={page.stats.pendingOrders}
         supplierCount={page.stats.supplierCount}
         onFilterStatus={handleFilterStatus}
+        onOpenSuppliers={() => navigate('/suppliers')}
       />
 
       {/* 快速筛选 */}
@@ -151,7 +166,16 @@ export default function Inbound() {
         record={page.selectedRecord}
         materials={page.materials}
         onClose={page.closeModal}
-        onPrint={() => page.setModalType('print')}
+        onPrint={() => {
+          if (page.selectedRecord) page.handlePrintRecord(page.selectedRecord)
+        }}
+      />
+
+      <InboundCancelModal
+        open={page.modalType === 'cancel'}
+        record={page.selectedRecord}
+        onClose={page.closeModal}
+        onConfirm={page.handleCancelInbound}
       />
 
       <InboundRestoreModal
@@ -165,10 +189,10 @@ export default function Inbound() {
         open={page.modalType === 'scan'}
         onClose={page.closeModal}
         onManualInput={() => { page.closeModal(); page.openCreate() }}
-        onScanSuccess={(materialId) => {
+        onScanSuccess={(material) => {
           page.closeModal()
           page.openCreate()
-          page.setForm(prev => ({ ...prev, materialId, type: 'direct' }))
+          page.setForm(prev => applyScannedMaterialToInboundForm(prev, material))
         }}
       />
 
@@ -179,14 +203,14 @@ export default function Inbound() {
             onSuccess={() => { page.closeModal(); page.refresh() }}
             materials={page.materials}
             locations={page.locations}
+            suppliers={page.suppliers}
           />
         </Modal>
       )}
 
       <InboundPrintModal
         open={page.modalType === 'print'}
-        data={page.data}
-        selectedRecord={page.selectedRecord}
+        data={page.printRecords}
         onClose={page.closeModal}
       />
 
@@ -197,8 +221,8 @@ export default function Inbound() {
         confirmText="确认"
         cancelText="取消"
         confirmVariant="danger"
-        onConfirm={() => {
-          page.confirmModal.onConfirm?.()
+        onConfirm={async () => {
+          await page.confirmModal.onConfirm?.()
           page.closeConfirmModal()
         }}
         onCancel={page.closeConfirmModal}

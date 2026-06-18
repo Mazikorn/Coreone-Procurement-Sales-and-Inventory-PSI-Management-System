@@ -69,6 +69,12 @@ describe('request', () => {
     expect(result).toEqual({ id: 1 })
   })
 
+  it('should return blob response data without success envelope unwrapping', () => {
+    const blob = new Blob(['csv'])
+    const result = responseFulfilled({ config: { responseType: 'blob' }, data: blob })
+    expect(result).toBe(blob)
+  })
+
   it('should reject when API returns success=false', async () => {
     const response = {
       data: { success: false, error: { message: '操作失败' } },

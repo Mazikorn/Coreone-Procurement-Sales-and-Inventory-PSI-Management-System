@@ -45,21 +45,8 @@ export function LogExportModal({ open, form, onClose, onChange, onExport }: Prop
 
           <div className="mb-5">
             <label className="block text-[13px] font-medium text-gray-700 mb-2">导出格式</label>
-            <div className="flex gap-3">
-              <label
-                onClick={() => onChange({ ...form, format: 'xlsx' })}
-                className={`flex-1 flex items-center gap-2 p-3 border-2 rounded-lg cursor-pointer transition-all ${form.format === 'xlsx' ? 'border-blue-500 bg-blue-50' : 'border-gray-200'}`}
-              >
-                <input type="radio" checked={form.format === 'xlsx'} readOnly className="text-blue-500" />
-                <span className="text-sm text-gray-900">Excel (.xlsx)</span>
-              </label>
-              <label
-                onClick={() => onChange({ ...form, format: 'csv' })}
-                className={`flex-1 flex items-center gap-2 p-3 border-2 rounded-lg cursor-pointer transition-all ${form.format === 'csv' ? 'border-blue-500 bg-blue-50' : 'border-gray-200'}`}
-              >
-                <input type="radio" checked={form.format === 'csv'} readOnly className="text-blue-500" />
-                <span className="text-sm text-gray-900">CSV (.csv)</span>
-              </label>
+            <div className="rounded-lg border-2 border-blue-500 bg-blue-50 p-3 text-sm text-gray-900">
+              CSV (.csv)
             </div>
           </div>
 

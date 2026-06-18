@@ -52,12 +52,12 @@ test.describe('财务一天的工作 - 完整流程', () => {
     await expect(page.locator('body')).toBeVisible()
   })
 
-  test('步骤4: 查看项目成本分析', async ({ page }) => {
+  test('步骤4: 查看盈利分析', async ({ page }) => {
     await loginAs(page, 'finance')
-    await page.goto(`${FE_BASE}/cost-analysis`)
+    await page.goto(`${FE_BASE}/abc/profitability`)
     await page.waitForTimeout(1000)
 
-    // 验证成本分析页面可见
+    // 验证盈利分析页面可见
     await expect(page.locator('body')).toBeVisible()
   })
 

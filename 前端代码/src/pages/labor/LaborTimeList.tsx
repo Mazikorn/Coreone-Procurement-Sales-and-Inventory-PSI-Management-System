@@ -2,6 +2,7 @@ import { Plus, Search } from 'lucide-react'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import { useLaborTimePage } from './hooks/useLaborTimePage'
 import { LaborTimeFormModal } from './components/LaborTimeFormModal'
+import { LaborTimeDetailModal } from './components/LaborTimeDetailModal'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 
 export default function LaborTimeList() {
@@ -19,13 +20,15 @@ export default function LaborTimeList() {
             定义各环节标准工时与费率，用于人工成本核算
           </p>
         </div>
-        <button
-          onClick={page.openCreate}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 text-sm font-medium transition-colors h-10"
-        >
-          <Plus className="w-4 h-4" />
-          新增工时定义
-        </button>
+        {page.canManageLaborTimes && (
+          <button
+            onClick={page.openCreate}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 text-sm font-medium transition-colors h-10"
+          >
+            <Plus className="w-4 h-4" />
+            新增工时定义
+          </button>
+        )}
       </div>
 
       {/* 统计卡片 */}
@@ -62,14 +65,14 @@ export default function LaborTimeList() {
           </div>
           <SearchableSelect
             value={page.filterProjectType}
-            onChange={(val) => page.setFilterProjectType(val)}
+            onChange={page.handleProjectTypeChange}
             options={page.PROJECT_TYPE_OPTIONS}
             placeholder="全部项目类型"
             className="w-36"
           />
           <SearchableSelect
             value={page.filterReferenceSource}
-            onChange={(val) => page.setFilterReferenceSource(val)}
+            onChange={page.handleReferenceSourceChange}
             options={[
               { value: '', label: '全部来源' },
               { value: 'system', label: '系统预设' },
@@ -150,17 +153,27 @@ export default function LaborTimeList() {
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-center gap-1">
                         <button
-                          onClick={() => page.openEdit(row)}
+                          onClick={() => page.openDetail(row)}
                           className="px-2 py-1 text-sm text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
                         >
-                          编辑
+                          详情
                         </button>
-                        <button
-                          onClick={() => page.openDelete(row)}
-                          className="px-2 py-1 text-sm text-gray-600 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
-                        >
-                          删除
-                        </button>
+                        {page.canManageLaborTimes && (
+                          <>
+                            <button
+                              onClick={() => page.openEdit(row)}
+                              className="px-2 py-1 text-sm text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                            >
+                              编辑
+                            </button>
+                            <button
+                              onClick={() => page.openDelete(row)}
+                              className="px-2 py-1 text-sm text-gray-600 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                            >
+                              删除
+                            </button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -205,6 +218,15 @@ export default function LaborTimeList() {
         onClose={() => page.setModalType(null)}
         onChange={page.setForm}
         onSubmit={page.handleSubmit}
+      />
+
+      {/* 详情弹窗 */}
+      <LaborTimeDetailModal
+        open={page.modalType === 'detail'}
+        row={page.detailRow}
+        onClose={() => page.setModalType(null)}
+        onEdit={page.openEdit}
+        canEdit={page.canManageLaborTimes}
       />
 
       {/* 删除确认 */}

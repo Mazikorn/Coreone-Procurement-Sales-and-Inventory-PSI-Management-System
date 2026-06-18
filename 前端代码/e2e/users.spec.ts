@@ -89,9 +89,10 @@ test.describe('用户管理 -> 查看用户列表', () => {
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/users`); await page.waitForTimeout(1500)
     await page.unroute('**/api/v1/users**')
   })
-  test('USER-LIST-07. 权限：technician访问返回403', async ({ page }) => {
-    await loginAs(page, 'technician'); await page.goto(`${FE_BASE}/users`); await page.waitForTimeout(1200)
-    await expect(page.locator('text=/无权访问|403|Forbidden/i').first()).toBeVisible()
+  test('USER-LIST-07. 权限：technician直输URL会被拦截', async ({ page }) => {
+    await loginAs(page, 'technician'); await page.goto(`${FE_BASE}/users`)
+    await expect(page).toHaveURL(`${FE_BASE}/`, { timeout: 5000 })
+    await expect(page.getByRole('heading', { name: '用户管理' })).toHaveCount(0)
   })
   test('USER-LIST-08. 并发：快速刷新页面多次', async ({ page }) => {
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/users`)

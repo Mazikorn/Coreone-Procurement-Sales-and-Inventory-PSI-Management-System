@@ -471,7 +471,7 @@ test.describe('认证与登录 -> 用户登出', () => {
 // 六、角色权限矩阵（大量组合）
 // ═══════════════════════════════════════════════════════════════
 test.describe('认证与登录 -> 角色权限矩阵补充', () => {
-  const protectedPaths = ['/', '/inventory', '/inbound', '/outbound', '/stocktaking', '/categories', '/materials', '/suppliers', '/locations', '/projects', '/bom', '/cost-analysis', '/reconciliation', '/alerts', '/users', '/roles', '/logs', '/supplier-returns']
+  const protectedPaths = ['/', '/inventory', '/inbound', '/outbound', '/stocktaking', '/categories', '/materials', '/suppliers', '/locations', '/projects', '/bom', '/reconciliation', '/alerts', '/users', '/roles', '/logs', '/supplier-returns']
 
   for (const path of protectedPaths) {
     test(`TC-PERM-AUTH-01${path.replace(/\//g, '-')}. 未登录访问${path}应重定向到登录页`, async ({ page }) => {
@@ -527,7 +527,7 @@ test.describe('认证与登录 -> 角色权限矩阵补充', () => {
 
   test('TC-PERM-AUTH-07. procurement不可访问出库/盘点/成本', async ({ page }) => {
     await loginAs(page, 'procurement')
-    for (const path of ['/outbound', '/stocktaking', '/cost-analysis']) {
+    for (const path of ['/outbound', '/stocktaking']) {
       await page.goto(`${FE_BASE}${path}`, { waitUntil: 'domcontentloaded' })
       await page.waitForTimeout(500)
     }
@@ -556,7 +556,7 @@ test.describe('认证与登录 -> 角色权限矩阵补充', () => {
 test.describe('认证与登录 -> 业务流程树', () => {
   const forbiddenPaths: { role: RoleKey; paths: string[] }[] = [
     { role: 'technician', paths: ['/inbound', '/outbound', '/stocktaking', '/users', '/roles'] },
-    { role: 'procurement', paths: ['/outbound', '/stocktaking', '/cost-analysis'] },
+    { role: 'procurement', paths: ['/outbound', '/stocktaking'] },
     { role: 'finance', paths: ['/inbound', '/outbound', '/stocktaking'] },
     { role: 'warehouse_manager', paths: ['/projects', '/bom', '/users'] },
     { role: 'pathologist', paths: ['/users', '/roles', '/logs'] },

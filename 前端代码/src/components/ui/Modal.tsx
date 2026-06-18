@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import React, { type ReactNode } from 'react'
 import { X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -46,4 +46,3 @@ export function Modal({ title, children, onClose, size = 'md' }: ModalProps) {
     </div>
   )
 }
-

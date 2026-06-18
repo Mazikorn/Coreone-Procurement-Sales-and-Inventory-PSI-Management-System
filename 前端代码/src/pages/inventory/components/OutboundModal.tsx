@@ -5,6 +5,7 @@ import type { Project } from '@/types'
 interface OutboundMaterial {
   rowId: number
   materialId: string
+  batchId?: string
   name: string
   spec: string
   batch?: string
@@ -55,7 +56,13 @@ export function OutboundModal({
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/[0.6]">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/[0.6]"
+      role="dialog"
+      aria-modal="true"
+      aria-label="出库登记"
+      data-testid="outbound-modal"
+    >
       <div className="absolute inset-0" onClick={onClose} />
       <div className="relative bg-white rounded-xl shadow-lg w-full max-w-[1100px] max-h-[90vh] flex flex-col overflow-hidden">
         <div className="px-6 py-5 border-b border-gray-200 flex items-center justify-between">
@@ -130,6 +137,7 @@ export function OutboundModal({
                         <td className="px-4 py-3 text-gray-900">{m.stock}</td>
                         <td className="px-4 py-3">
                           <input
+                            data-testid={`outbound-quantity-${m.rowId}`}
                             type="number"
                             value={m.quantity}
                             min={1}
@@ -140,6 +148,7 @@ export function OutboundModal({
                         </td>
                         <td className="px-4 py-3">
                           <SearchableSelect
+                            testId={`outbound-user-${m.rowId}`}
                             value={m.user}
                             onChange={val => onUpdateUser(m.rowId, val)}
                             options={[
@@ -213,6 +222,7 @@ export function OutboundModal({
           <button
             onClick={onConfirm}
             disabled={materials.length === 0}
+            data-testid="outbound-confirm-btn"
             className="px-4 py-2 bg-blue-500 text-white rounded-md text-sm font-medium hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-150 ease shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30"
           >
             确认出库

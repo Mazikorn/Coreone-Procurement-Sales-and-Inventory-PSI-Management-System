@@ -12,8 +12,8 @@ const ROLES = {
   finance: { username: 'sunli', password: 'CoreOne2026!' },
 } as const
 type RoleKey = keyof typeof ROLES
-const BOM_READ_ROLES: RoleKey[] = ['admin', 'technician', 'pathologist']
-const BOM_FORBIDDEN: RoleKey[] = ['warehouse_manager', 'procurement', 'finance']
+const BOM_READ_ROLES: RoleKey[] = ['admin', 'warehouse_manager', 'technician', 'pathologist']
+const BOM_FORBIDDEN: RoleKey[] = ['procurement', 'finance']
 
 async function loginAs(page: Page, role: RoleKey) {
   await page.goto(`${FE_BASE}/login`, { waitUntil: 'domcontentloaded' })
@@ -51,9 +51,56 @@ async function getAnyMaterialId(token: string): Promise<string> {
   const r = await apiFetch(token, 'GET', '/materials?page=1&pageSize=1')
   return r.data?.data?.list?.[0]?.id || ''
 }
+async function getAnyCategoryId(token: string): Promise<string> {
+  const r = await apiFetch(token, 'GET', '/categories?page=1&pageSize=1')
+  return r.data?.data?.list?.[0]?.id || ''
+}
+async function createTestMaterial(token: string, suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`): Promise<string> {
+  const categoryId = await getAnyCategoryId(token)
+  expect(categoryId, '创建BOM测试物料需要至少一个物料分类').toBeTruthy()
+  const res = await apiFetch(token, 'POST', '/materials', {
+    code: `TEST-BOM-MAT-${suffix}`,
+    name: `E2E-BOM物料-${suffix}`,
+    unit: '瓶',
+    categoryId,
+    price: 12.5,
+  })
+  expect(res.status, `创建BOM测试物料失败: ${JSON.stringify(res.data)}`).toBe(201)
+  return res.data?.data?.id
+}
+async function createValidBom(token: string, overrides: Record<string, any> = {}) {
+  const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+  const materialId = overrides.materialId || await createTestMaterial(token, suffix)
+  const body = {
+    code: `TEST-BOM-${suffix}`,
+    name: `E2E有效BOM-${suffix}`,
+    type: 'ihc',
+    materials: [{ materialId, usagePerSample: 1, unit: '瓶' }],
+    ...overrides,
+  }
+  const res = await apiFetch(token, 'POST', '/boms', body)
+  expect(res.status, `创建有效BOM失败: ${JSON.stringify(res.data)}`).toBe(201)
+  return { id: res.data?.data?.id, materialId, body, res }
+}
+async function createProjectWithBom(token: string, bomId: string, suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`) {
+  const res = await apiFetch(token, 'POST', '/projects', {
+    code: `TEST-PRJ-BOM-${suffix}`,
+    name: `E2E引用BOM项目-${suffix}`,
+    type: 'ihc',
+    bomId,
+  })
+  expect(res.status, `创建引用BOM项目失败: ${JSON.stringify(res.data)}`).toBe(201)
+  return res.data?.data?.id
+}
 
 async function cleanupTestData(token: string) {
   try {
+    const projects = await apiFetch(token, 'GET', '/projects?page=1&pageSize=200')
+    for (const item of projects.data?.data?.list || []) {
+      if (item.code?.startsWith('TEST-PRJ-BOM-') || item.name?.includes('E2E引用BOM项目')) {
+        await apiFetch(token, 'DELETE', `/projects/${item.id}`)
+      }
+    }
     const r = await apiFetch(token, 'GET', '/boms?page=1&pageSize=200')
     const list = r.data?.data?.list || []
     for (const item of list) {
@@ -199,19 +246,19 @@ test.describe('BOM清单 -> 搜索BOM', () => {
 test.describe('BOM清单 -> 新建BOM', () => {
   test('BOM-CREATE-01. admin新建成功', async () => {
     const token = await apiLogin('admin')
-    const mid = await getAnyMaterialId(token)
+    const mid = await createTestMaterial(token)
     const res = await apiFetch(token, 'POST', '/boms', {
       code: `TEST-BOM-${Date.now()}`, name: 'E2E测试BOM', type: 'ihc',
-      materials: mid ? [{ materialId: mid, quantity: 1 }] : [], remark: 'E2E',
+      materials: [{ materialId: mid, usagePerSample: 1, unit: '瓶' }], remark: 'E2E',
     })
-    expect([201, 400, 409]).toContain(res.status)
+    expect(res.status).toBe(201)
   })
-  test('BOM-CREATE-02. materials空返回201', async () => {
+  test('BOM-CREATE-02. 空物料BOM返回400', async () => {
     const token = await apiLogin('admin')
     const res = await apiFetch(token, 'POST', '/boms', {
       code: `TEST-BOM-${Date.now()}`, name: '空物料', type: 'ihc', materials: [],
     })
-    expect([201, 400]).toContain(res.status)
+    expect(res.status).toBe(400)
   })
   test('BOM-CREATE-03. 未传code返回400', async () => {
     const token = await apiLogin('admin')
@@ -238,22 +285,27 @@ test.describe('BOM清单 -> 新建BOM', () => {
   test('BOM-CREATE-07. code已存在返回409', async () => {
     const token = await apiLogin('admin')
     const code = `TEST-DUP-${Date.now()}`
-    await apiFetch(token, 'POST', '/boms', { code, name: '重复1', type: 'ihc', materials: [] })
-    const res = await apiFetch(token, 'POST', '/boms', { code, name: '重复2', type: 'ihc', materials: [] })
-    expect([400, 409]).toContain(res.status)
+    const materialId = await createTestMaterial(token)
+    const body = { code, name: '重复1', type: 'ihc', materials: [{ materialId, usagePerSample: 1, unit: '瓶' }] }
+    const first = await apiFetch(token, 'POST', '/boms', body)
+    expect(first.status).toBe(201)
+    const res = await apiFetch(token, 'POST', '/boms', { ...body, name: '重复2' })
+    expect(res.status).toBe(409)
   })
   test('BOM-CREATE-08. 快速双击', async () => {
     const token = await apiLogin('admin')
-    const body = { code: `TEST-CON-${Date.now()}`, name: '并发', type: 'ihc', materials: [] }
+    const materialId = await createTestMaterial(token)
+    const body = { code: `TEST-CON-${Date.now()}`, name: '并发', type: 'ihc', materials: [{ materialId, usagePerSample: 1, unit: '瓶' }] }
     const [r1, r2] = await Promise.all([apiFetch(token, 'POST', '/boms', body), apiFetch(token, 'POST', '/boms', body)])
-    expect([201, 400, 409]).toContain(r1.status)
+    expect([r1.status, r2.status].sort()).toEqual([201, 409])
   })
   test('BOM-CREATE-09. 网络中断重试', async () => {
     const token = await apiLogin('admin')
+    const materialId = await createTestMaterial(token)
     const res = await apiFetch(token, 'POST', '/boms', {
-      code: `TEST-RET-${Date.now()}`, name: '恢复', type: 'ihc', materials: [], remark: 'E2E',
+      code: `TEST-RET-${Date.now()}`, name: '恢复', type: 'ihc', materials: [{ materialId, usagePerSample: 1, unit: '瓶' }], remark: 'E2E',
     })
-    expect([201, 400, 409]).toContain(res.status)
+    expect(res.status).toBe(201)
   })
   test('BOM-CREATE-10. admin显示新增按钮', async ({ page }) => {
     await loginAs(page, 'admin')
@@ -267,28 +319,26 @@ test.describe('BOM清单 -> 新建BOM', () => {
   })
   test('BOM-CREATE-12. 新建后version=v1.0', async () => {
     const token = await apiLogin('admin')
-    const res = await apiFetch(token, 'POST', '/boms', {
-      code: `TEST-VER-${Date.now()}`, name: '版本', type: 'ihc', materials: [],
-    })
-    if (res.status === 201) {
-      // POST 只返回 { id }，需要通过 GET 确认 version
-      const getRes = await apiFetch(token, 'GET', `/boms/${res.data?.data?.id || res.data?.id}`)
-      expect(getRes.data?.data?.version).toBe('v1.0')
-    }
+    const created = await createValidBom(token, { code: `TEST-VER-${Date.now()}`, name: '版本' })
+    const getRes = await apiFetch(token, 'GET', `/boms/${created.id}`)
+    expect(getRes.status).toBe(200)
+    expect(getRes.data?.data?.version).toBe('v1.0')
   })
   test('BOM-CREATE-13. 超长code', async () => {
     const token = await apiLogin('admin')
+    const materialId = await createTestMaterial(token)
     const res = await apiFetch(token, 'POST', '/boms', {
-      code: 'TEST-' + 'X'.repeat(200), name: '超长', type: 'ihc', materials: [],
+      code: 'TEST-' + 'X'.repeat(200), name: '超长', type: 'ihc', materials: [{ materialId, usagePerSample: 1, unit: '瓶' }],
     })
-    expect([201, 400, 409]).toContain(res.status)
+    expect(res.status).toBe(400)
   })
   test('BOM-CREATE-14. 特殊字符name', async () => {
     const token = await apiLogin('admin')
+    const materialId = await createTestMaterial(token)
     const res = await apiFetch(token, 'POST', '/boms', {
-      code: `TEST-SPEC-${Date.now()}`, name: '!@#$$%^&*()', type: 'ihc', materials: [],
+      code: `TEST-SPEC-${Date.now()}`, name: '!@#$$%^&*()', type: 'ihc', materials: [{ materialId, usagePerSample: 1, unit: '瓶' }],
     })
-    expect([201, 409]).toContain(res.status)
+    expect(res.status).toBe(201)
   })
   test('BOM-CREATE-15. 多物料BOM', async () => {
     const token = await apiLogin('admin')
@@ -296,18 +346,18 @@ test.describe('BOM清单 -> 新建BOM', () => {
     const list = mats.data?.data?.list || []
     const res = await apiFetch(token, 'POST', '/boms', {
       code: `TEST-MULTI-${Date.now()}`, name: '多物料', type: 'ihc',
-      materials: list.map((m: any) => ({ materialId: m.id, quantity: 1 })),
+      materials: list.map((m: any) => ({ materialId: m.id, usagePerSample: 1, unit: m.unit || '瓶' })),
     })
-    expect([201, 400, 409]).toContain(res.status)
+    expect(res.status).toBe(201)
   })
   test('BOM-CREATE-16. 负数量物料', async () => {
     const token = await apiLogin('admin')
     const mid = await getAnyMaterialId(token)
     const res = await apiFetch(token, 'POST', '/boms', {
       code: `TEST-NEG-${Date.now()}`, name: '负数', type: 'ihc',
-      materials: mid ? [{ materialId: mid, quantity: -1 }] : [],
+      materials: mid ? [{ materialId: mid, usagePerSample: -1, unit: '瓶' }] : [],
     })
-    expect([201, 400, 409]).toContain(res.status)
+    expect(res.status).toBe(400)
   })
 })
 
@@ -402,15 +452,9 @@ test.describe('BOM清单 -> 编辑BOM', () => {
 test.describe('BOM清单 -> 删除BOM', () => {
   test('BOM-DEL-01. admin删除无关联BOM', async () => {
     const token = await apiLogin('admin')
-    const create = await apiFetch(token, 'POST', '/boms', {
-      code: `TEST-DEL-${Date.now()}`, name: '删除', type: 'ihc', materials: [],
-    })
-    expect([201, 409]).toContain(create.status)
-    const id = create.data?.data?.id
-    if (id) {
-      const res = await apiFetch(token, 'DELETE', `/boms/${id}`)
-      expect([200, 404]).toContain(res.status)
-    }
+    const { id } = await createValidBom(token, { code: `TEST-DEL-${Date.now()}`, name: '删除' })
+    const res = await apiFetch(token, 'DELETE', `/boms/${id}`)
+    expect([200, 404]).toContain(res.status)
   })
   for (const role of ['technician', 'pathologist', 'warehouse_manager', 'procurement', 'finance'] as RoleKey[]) {
     test(`BOM-DEL-02-${role}. ${role}删除返回403`, async () => {
@@ -422,36 +466,27 @@ test.describe('BOM清单 -> 删除BOM', () => {
       expect(res.status).toBe(403)
     })
   }
-  test('BOM-DEL-03. 被项目关联删除后悬空引用', async () => {
+  test('BOM-DEL-03. 被项目关联删除返回409', async () => {
     const token = await apiLogin('admin')
-    const id = await getAnyBomId(token)
-    if (!id) { test.skip(); return }
+    const { id } = await createValidBom(token, { code: `TEST-DEL-REF-PRJ-${Date.now()}`, name: '项目引用删除' })
+    await createProjectWithBom(token, id)
     const res = await apiFetch(token, 'DELETE', `/boms/${id}`)
-    expect([200, 404]).toContain(res.status)
+    expect(res.status).toBe(409)
   })
   test('BOM-DEL-04. 并发删除', async () => {
     const token = await apiLogin('admin')
-    const create = await apiFetch(token, 'POST', '/boms', {
-      code: `TEST-DEL-CON-${Date.now()}`, name: '并发删', type: 'ihc', materials: [],
-    })
-    const id = create.data?.data?.id
-    if (!id) { test.skip(); return }
+    const { id } = await createValidBom(token, { code: `TEST-DEL-CON-${Date.now()}`, name: '并发删' })
     const [r1, r2] = await Promise.all([
       apiFetch(token, 'DELETE', `/boms/${id}`),
       apiFetch(token, 'DELETE', `/boms/${id}`),
     ])
-    expect([200, 404]).toContain(r1.status)
+    expect([r1.status, r2.status].sort()).toEqual([200, 404])
   })
   test('BOM-DEL-05. API 500后重试', async () => {
     const token = await apiLogin('admin')
-    const create = await apiFetch(token, 'POST', '/boms', {
-      code: `TEST-DEL-RET-${Date.now()}`, name: '恢复删', type: 'ihc', materials: [],
-    })
-    const id = create.data?.data?.id
-    if (id) {
-      const res = await apiFetch(token, 'DELETE', `/boms/${id}`)
-      expect([200, 404]).toContain(res.status)
-    }
+    const { id } = await createValidBom(token, { code: `TEST-DEL-RET-${Date.now()}`, name: '恢复删' })
+    const res = await apiFetch(token, 'DELETE', `/boms/${id}`)
+    expect([200, 404]).toContain(res.status)
   })
   test('BOM-DEL-06. admin显示删除按钮', async ({ page }) => {
     await loginAs(page, 'admin')
@@ -470,22 +505,16 @@ test.describe('BOM清单 -> 删除BOM', () => {
   })
   test('BOM-DEL-09. 再次删除返回404', async () => {
     const token = await apiLogin('admin')
-    const create = await apiFetch(token, 'POST', '/boms', {
-      code: `TEST-DEL-DUP-${Date.now()}`, name: '重复删', type: 'ihc', materials: [],
-    })
-    const id = create.data?.data?.id
-    if (!id) { test.skip(); return }
+    const { id } = await createValidBom(token, { code: `TEST-DEL-DUP-${Date.now()}`, name: '重复删' })
     await apiFetch(token, 'DELETE', `/boms/${id}`)
     const res2 = await apiFetch(token, 'DELETE', `/boms/${id}`)
     expect(res2.status).toBe(404)
   })
   test('BOM-DEL-10. 删除后列表刷新', async () => {
     const token = await apiLogin('admin')
-    const create = await apiFetch(token, 'POST', '/boms', {
-      code: `TEST-DEL-REF-${Date.now()}`, name: '刷新删', type: 'ihc', materials: [],
-    })
-    const id = create.data?.data?.id
-    if (id) await apiFetch(token, 'DELETE', `/boms/${id}`)
+    const { id } = await createValidBom(token, { code: `TEST-DEL-REF-${Date.now()}`, name: '刷新删' })
+    const res = await apiFetch(token, 'DELETE', `/boms/${id}`)
+    expect([200, 404]).toContain(res.status)
   })
 })
 
@@ -564,9 +593,9 @@ test.describe('BOM清单 -> 分页切换', () => {
 
 // 9. 角色权限矩阵 (8)
 test.describe('BOM清单 -> 角色权限矩阵补充', () => {
-  test('TC-PERM-108. WHM GET /boms 返回403', async () => {
+  test('TC-PERM-108. WHM GET /boms 返回200（只读）', async () => {
     const res = await apiFetch(await apiLogin('warehouse_manager'), 'GET', '/boms')
-    expect(res.status).toBe(403)
+    expect(res.status).toBe(200)
   })
   test('TC-PERM-109. PROC GET /boms 返回403', async () => {
     const res = await apiFetch(await apiLogin('procurement'), 'GET', '/boms')
@@ -602,10 +631,10 @@ test.describe('BOM清单 -> 角色权限矩阵补充', () => {
 test.describe('BOM清单 -> 业务流程树', () => {
   test('BF-BOM-01. 主路径：新建→填写→提交→version=v1.0', async () => {
     const token = await apiLogin('admin')
-    const res = await apiFetch(token, 'POST', '/boms', {
-      code: `TEST-BF-${Date.now()}`, name: '业务流程', type: 'ihc', materials: [], remark: 'E2E',
-    })
-    expect([201, 409]).toContain(res.status)
+    const { id } = await createValidBom(token, { code: `TEST-BF-${Date.now()}`, name: '业务流程' })
+    const detail = await apiFetch(token, 'GET', `/boms/${id}`)
+    expect(detail.status).toBe(200)
+    expect(detail.data?.data?.version).toBe('v1.0')
   })
   test('BF-BOM-02. 关闭弹窗不保存', async ({ page }) => {
     await loginAs(page, 'admin')
@@ -615,9 +644,12 @@ test.describe('BOM清单 -> 业务流程树', () => {
   test('BF-BOM-03. code已存在', async () => {
     const token = await apiLogin('admin')
     const code = `TEST-DUP-BF-${Date.now()}`
-    await apiFetch(token, 'POST', '/boms', { code, name: '重复1', type: 'ihc', materials: [] })
-    const res = await apiFetch(token, 'POST', '/boms', { code, name: '重复2', type: 'ihc', materials: [] })
-    expect([400, 409]).toContain(res.status)
+    const materialId = await createTestMaterial(token)
+    const body = { code, name: '重复1', type: 'ihc', materials: [{ materialId, usagePerSample: 1, unit: '瓶' }] }
+    const first = await apiFetch(token, 'POST', '/boms', body)
+    expect(first.status).toBe(201)
+    const res = await apiFetch(token, 'POST', '/boms', { ...body, name: '重复2' })
+    expect(res.status).toBe(409)
   })
   test('BF-BOM-04. 必填漏填', async () => {
     const token = await apiLogin('admin')
@@ -631,12 +663,12 @@ test.describe('BOM清单 -> 业务流程树', () => {
     await page.reload()
     await page.waitForTimeout(800)
   })
-  test('BF-BOM-06. 被项目关联删除', async () => {
+  test('BF-BOM-06. 被项目关联删除返回409', async () => {
     const token = await apiLogin('admin')
-    const id = await getAnyBomId(token)
-    if (!id) { test.skip(); return }
+    const { id } = await createValidBom(token, { code: `TEST-BF-REF-PRJ-${Date.now()}`, name: '业务项目引用' })
+    await createProjectWithBom(token, id)
     const res = await apiFetch(token, 'DELETE', `/boms/${id}`)
-    expect([200, 404]).toContain(res.status)
+    expect(res.status).toBe(409)
   })
   test('BF-BOM-07. technician尝试新建被403', async () => {
     const res = await apiFetch(await apiLogin('technician'), 'POST', '/boms', { code: 'TEST', name: 'TEST', type: 'ihc' })
@@ -656,10 +688,12 @@ test.describe('BOM清单 -> 盲点分析补充', () => {
   test('BLIND-BOM-01. 编码唯一性', async () => {
     const token = await apiLogin('admin')
     const code = `TEST-UNIQ-${Date.now()}`
-    const r1 = await apiFetch(token, 'POST', '/boms', { code, name: '唯一1', type: 'ihc', materials: [] })
-    const r2 = await apiFetch(token, 'POST', '/boms', { code, name: '唯一2', type: 'ihc', materials: [] })
-    expect([201, 409]).toContain(r1.status)
-    expect([400, 409]).toContain(r2.status)
+    const materialId = await createTestMaterial(token)
+    const body = { code, name: '唯一1', type: 'ihc', materials: [{ materialId, usagePerSample: 1, unit: '瓶' }] }
+    const r1 = await apiFetch(token, 'POST', '/boms', body)
+    const r2 = await apiFetch(token, 'POST', '/boms', { ...body, name: '唯一2' })
+    expect(r1.status).toBe(201)
+    expect(r2.status).toBe(409)
   })
   test('BLIND-BOM-02. version自动升级', async () => {
     const token = await apiLogin('admin')
@@ -715,17 +749,21 @@ test.describe('BOM清单 -> 盲点分析补充', () => {
   })
   test('BLIND-BOM-10. XSS防护', async () => {
     const token = await apiLogin('admin')
+    const materialId = await createTestMaterial(token)
     const res = await apiFetch(token, 'POST', '/boms', {
-      code: `TEST-XSS-${Date.now()}`, name: '<script>alert(1)</script>', type: 'ihc', materials: [],
+      code: `TEST-XSS-${Date.now()}`, name: '<script>alert(1)</script>', type: 'ihc',
+      materials: [{ materialId, usagePerSample: 1, unit: '瓶' }],
     })
-    expect([201, 409]).toContain(res.status)
+    expect(res.status).toBe(201)
   })
   test('BLIND-BOM-11. SQL注入防护', async () => {
     const token = await apiLogin('admin')
+    const materialId = await createTestMaterial(token)
     const res = await apiFetch(token, 'POST', '/boms', {
-      code: `TEST-SQL-${Date.now()}`, name: "' OR '1'='1", type: 'ihc', materials: [],
+      code: `TEST-SQL-${Date.now()}`, name: "' OR '1'='1", type: 'ihc',
+      materials: [{ materialId, usagePerSample: 1, unit: '瓶' }],
     })
-    expect([201, 409]).toContain(res.status)
+    expect(res.status).toBe(201)
   })
   test('BLIND-BOM-12. API响应格式', async () => {
     const token = await apiLogin('admin')
@@ -760,11 +798,11 @@ test.describe('BOM清单 -> 盲点分析补充', () => {
   })
   test('BLIND-BOM-16. 物料用量小数', async () => {
     const token = await apiLogin('admin')
-    const mid = await getAnyMaterialId(token)
+    const mid = await createTestMaterial(token)
     const res = await apiFetch(token, 'POST', '/boms', {
       code: `TEST-FLT-${Date.now()}`, name: '小数用量', type: 'ihc',
-      materials: mid ? [{ materialId: mid, quantity: 1.5 }] : [],
+      materials: [{ materialId: mid, usagePerSample: 1.5, unit: '瓶' }],
     })
-    expect([201, 400, 409]).toContain(res.status)
+    expect(res.status).toBe(201)
   })
 })

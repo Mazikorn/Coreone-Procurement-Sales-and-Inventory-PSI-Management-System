@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { usePagination } from '@/hooks/usePagination'
 import { indirectCostApi } from '@/api/master'
 import type { IndirectCostCenter, IndirectCostAllocation } from '@/types'
@@ -40,6 +40,7 @@ export function useCostCenterPage() {
   const [keyword, setKeyword] = useState('')
   const [searchInput, setSearchInput] = useState('')
   const [filterStatus, setFilterStatus] = useState('')
+  const [stats, setStats] = useState({ total: 0, active: 0, totalMonthly: 0, allocationCount: 0 })
 
   const [modalType, setModalType] = useState<null | 'create' | 'edit' | 'delete' | 'allocation'>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -68,7 +69,7 @@ export function useCostCenterPage() {
       const res: any = await indirectCostApi.getList({
         ...params,
         keyword: keyword || undefined,
-        status: filterStatus || undefined,
+        status: filterStatus && filterStatus !== 'all' ? filterStatus : undefined,
       })
       return { list: res?.list || [], pagination: res?.pagination }
     },
@@ -78,12 +79,19 @@ export function useCostCenterPage() {
   const { data, loading, page, pageSize, total, setPage, setPageSize, refresh } =
     usePagination<IndirectCostCenter>({ fetchFn, initialPage: 1, initialPageSize: 20, deps: [keyword, filterStatus] })
 
-  const stats = useMemo(() => {
-    const all = data
-    const active = all.filter((c) => c.status === 'active').length
-    const totalMonthly = all.reduce((sum, c) => sum + (c.monthlyAmount || 0), 0)
-    return { total: all.length, active, totalMonthly }
-  }, [data])
+  useEffect(() => {
+    indirectCostApi.getStats({
+      keyword: keyword || undefined,
+      status: filterStatus && filterStatus !== 'all' ? filterStatus : undefined,
+    })
+      .then((res: any) => setStats({
+        total: Number(res?.total || 0),
+        active: Number(res?.active || 0),
+        totalMonthly: Number(res?.totalMonthly || 0),
+        allocationCount: Number(res?.allocationCount || 0),
+      }))
+      .catch(() => setStats({ total, active: 0, totalMonthly: 0, allocationCount: 0 }))
+  }, [keyword, filterStatus, total])
 
   const handleSearch = () => {
     setKeyword(searchInput)
@@ -96,6 +104,11 @@ export function useCostCenterPage() {
     setFilterStatus('')
     setPage(1)
   }
+
+  const handleStatusChange = useCallback((value: string) => {
+    setFilterStatus(value)
+    setPage(1)
+  }, [setPage])
 
   const openCreate = () => {
     setEditingId(null)
@@ -153,6 +166,10 @@ export function useCostCenterPage() {
       toast.error('请填写必填项')
       return
     }
+    if (!Number.isFinite(form.monthlyAmount) || form.monthlyAmount < 0) {
+      toast.error('月度金额必须大于等于0')
+      return
+    }
     try {
       const payload = { ...form }
       if (editingId) {
@@ -187,6 +204,18 @@ export function useCostCenterPage() {
       toast.error('请填写必填项')
       return
     }
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(allocationForm.yearMonth)) {
+      toast.error('年月格式必须为 YYYY-MM')
+      return
+    }
+    if (!Number.isFinite(allocationForm.totalAmount) || allocationForm.totalAmount < 0) {
+      toast.error('费用总额必须大于等于0')
+      return
+    }
+    if (!Number.isFinite(allocationForm.allocationBaseValue) || allocationForm.allocationBaseValue <= 0) {
+      toast.error('分摊基础值必须大于0')
+      return
+    }
     try {
       const res: any = await indirectCostApi.recordAllocation(editingId, {
         yearMonth: allocationForm.yearMonth,
@@ -216,6 +245,7 @@ export function useCostCenterPage() {
     setSearchInput,
     filterStatus,
     setFilterStatus,
+    handleStatusChange,
     modalType,
     setModalType,
     editingId,

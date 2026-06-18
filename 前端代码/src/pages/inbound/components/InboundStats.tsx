@@ -6,9 +6,10 @@ interface InboundStatsProps {
   pendingOrders: number
   supplierCount: number
   onFilterStatus: (status: string) => void
+  onOpenSuppliers: () => void
 }
 
-export default function InboundStats({ total, amount, pendingOrders, supplierCount, onFilterStatus }: InboundStatsProps) {
+export default function InboundStats({ total, amount, pendingOrders, supplierCount, onFilterStatus, onOpenSuppliers }: InboundStatsProps) {
   return (
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
       <div
@@ -33,7 +34,7 @@ export default function InboundStats({ total, amount, pendingOrders, supplierCou
         <div className="text-sm text-gray-500 mt-1">待入库</div>
       </div>
       <div
-        onClick={() => { }}
+        onClick={onOpenSuppliers}
         className="bg-white rounded-lg p-5 shadow-sm border border-gray-200 border-l-4 border-l-gray-500 cursor-pointer hover:shadow-md transition-shadow"
       >
         <div className="text-2xl font-semibold text-gray-900">{supplierCount}</div>

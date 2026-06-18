@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { bomApi, projectApi } from '@/api/master'
 import { usePagination } from '@/hooks/usePagination'
 import { useUrlParams } from '@/hooks/useUrlParams'
-import type { BOM, Project } from '@/types'
+import type { BOM, Project, ProjectDeleteCheck, ProjectStatusCheck } from '@/types'
 import { toast } from 'sonner'
+import { getUserRole } from '@/lib/permissions'
 
 export interface FormData {
   type: string
@@ -16,7 +17,33 @@ export interface FormData {
   bomId: string
 }
 
+export interface ProjectImportRow {
+  type: string
+  code: string
+  name: string
+  cycle?: string
+  manager?: string
+  status: 'active' | 'inactive'
+  description?: string
+  bomId?: string
+}
+
 export type ProjectModalType = 'create' | 'edit' | 'copy' | 'delete' | 'import' | null
+
+interface ProjectStats {
+  total: number
+  active: number
+  inactive: number
+  noBom: number
+}
+
+export type ProjectBatchStatusAction = 'active' | 'inactive'
+
+export interface ProjectBatchStatusResult {
+  project: Project
+  check: ProjectStatusCheck | null
+  error?: string
+}
 
 const defaultForm: FormData = {
   type: 'he',
@@ -34,6 +61,7 @@ const getValidStatus = (value: string | null) =>
 
 export function useProjectsPage() {
   const { get, getNumber, setMultiple } = useUrlParams()
+  const canWrite = getUserRole() === 'admin'
 
   const [keyword, setKeyword] = useState(get('keyword') || '')
   const [typeFilter, setTypeFilter] = useState(get('type') || '')
@@ -41,10 +69,27 @@ export function useProjectsPage() {
   const [bomFilter, setBomFilter] = useState(get('bom') === 'configured' || get('bom') === 'unconfigured' ? get('bom')! : '')
 
   const [boms, setBoms] = useState<BOM[]>([])
-  const [allProjects, setAllProjects] = useState<Project[]>([])
+  const [stats, setStats] = useState<ProjectStats>({
+    total: 0,
+    active: 0,
+    inactive: 0,
+    noBom: 0,
+  })
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [modalType, setModalType] = useState<ProjectModalType>(null)
   const [editingRow, setEditingRow] = useState<Project | null>(null)
+  const [deleteCheck, setDeleteCheck] = useState<ProjectDeleteCheck | null>(null)
+  const [checkingDelete, setCheckingDelete] = useState(false)
+  const [statusTarget, setStatusTarget] = useState<Project | null>(null)
+  const [statusTargetStatus, setStatusTargetStatus] = useState<'active' | 'inactive'>('inactive')
+  const [statusCheck, setStatusCheck] = useState<ProjectStatusCheck | null>(null)
+  const [checkingStatus, setCheckingStatus] = useState(false)
+  const [updatingStatus, setUpdatingStatus] = useState(false)
+  const [batchStatusAction, setBatchStatusAction] = useState<ProjectBatchStatusAction | null>(null)
+  const [batchStatusTargets, setBatchStatusTargets] = useState<Project[]>([])
+  const [batchStatusResults, setBatchStatusResults] = useState<ProjectBatchStatusResult[]>([])
+  const [checkingBatchStatus, setCheckingBatchStatus] = useState(false)
+  const [submittingBatchStatus, setSubmittingBatchStatus] = useState(false)
   const [form, setForm] = useState<FormData>(defaultForm)
   const [createStep, setCreateStep] = useState(1)
   const [editTab, setEditTab] = useState<'basic' | 'bom'>('basic')
@@ -62,16 +107,10 @@ export function useProjectsPage() {
       if (keyword.trim()) params.keyword = keyword.trim()
       if (typeFilter) params.type = typeFilter
       if (statusFilter) params.status = statusFilter
+      if (bomFilter) params.bomFilter = bomFilter
 
       const res = await projectApi.getList(params)
-      let list = res.list || []
-      if (bomFilter === 'configured') {
-        list = list.filter(project => Boolean(project.bomId))
-      }
-      if (bomFilter === 'unconfigured') {
-        list = list.filter(project => !project.bomId)
-      }
-      return { list, pagination: res.pagination }
+      return { list: res.list || [], pagination: res.pagination }
     },
     [keyword, typeFilter, statusFilter, bomFilter]
   )
@@ -105,11 +144,9 @@ export function useProjectsPage() {
 
   const fetchRefs = useCallback(async () => {
     try {
-      const [projectRes, bomRes] = await Promise.all([
-        projectApi.getList({ page: 1, pageSize: 1000 }),
-        bomApi.getList({ page: 1, pageSize: 1000 }),
+      const [bomRes] = await Promise.all([
+        bomApi.getList({ page: 1, pageSize: 1000, status: 'active' }),
       ])
-      setAllProjects(projectRes.list || [])
       setBoms(bomRes.list || [])
     } catch (e) {
       console.error(e)
@@ -120,12 +157,28 @@ export function useProjectsPage() {
     fetchRefs()
   }, [fetchRefs])
 
-  const stats = useMemo(() => ({
-    total: allProjects.length,
-    active: allProjects.filter(project => project.status === 'active').length,
-    inactive: allProjects.filter(project => project.status === 'inactive').length,
-    noBom: allProjects.filter(project => !project.bomId).length,
-  }), [allProjects])
+  const loadStats = useCallback(async () => {
+    try {
+      const params: { keyword?: string; type?: string; status?: string; bomFilter?: string } = {}
+      if (keyword.trim()) params.keyword = keyword.trim()
+      if (typeFilter) params.type = typeFilter
+      if (statusFilter) params.status = statusFilter
+      if (bomFilter) params.bomFilter = bomFilter
+      const res = await projectApi.getStats(params)
+      setStats({
+        total: Number(res.total || 0),
+        active: Number(res.active || 0),
+        inactive: Number(res.inactive || 0),
+        noBom: Number(res.noBom || 0),
+      })
+    } catch (e) {
+      console.error(e)
+    }
+  }, [keyword, typeFilter, statusFilter, bomFilter])
+
+  useEffect(() => {
+    loadStats()
+  }, [loadStats])
 
   const resetForm = () => {
     setForm(defaultForm)
@@ -148,12 +201,20 @@ export function useProjectsPage() {
   }
 
   const openCreate = () => {
+    if (!canWrite) {
+      toast.error('当前角色只能查看检测服务')
+      return
+    }
     setEditingRow(null)
     resetForm()
     setModalType('create')
   }
 
   const openEdit = (row: Project) => {
+    if (!canWrite) {
+      toast.error('当前角色只能查看检测服务')
+      return
+    }
     setEditingRow(row)
     fillForm(row)
     setEditTab('basic')
@@ -161,6 +222,10 @@ export function useProjectsPage() {
   }
 
   const openCopy = (row: Project) => {
+    if (!canWrite) {
+      toast.error('当前角色只能查看检测服务')
+      return
+    }
     setEditingRow(row)
     fillForm({
       ...row,
@@ -170,14 +235,30 @@ export function useProjectsPage() {
     setModalType('copy')
   }
 
-  const openDelete = (row: Project) => {
+  const openDelete = async (row: Project) => {
+    if (!canWrite) {
+      toast.error('当前角色只能查看检测服务')
+      return
+    }
     setEditingRow(row)
+    setDeleteCheck(null)
     setModalType('delete')
+    setCheckingDelete(true)
+    try {
+      const check = await projectApi.checkDeletable(row.id)
+      setDeleteCheck(check)
+    } catch (e) {
+      toast.error('删除影响检查失败')
+    } finally {
+      setCheckingDelete(false)
+    }
   }
 
   const closeModal = () => {
     setModalType(null)
     setEditingRow(null)
+    setDeleteCheck(null)
+    setCheckingDelete(false)
     resetForm()
   }
 
@@ -193,6 +274,10 @@ export function useProjectsPage() {
   })
 
   const handleSubmit = async () => {
+    if (!canWrite) {
+      toast.error('当前角色只能查看检测服务')
+      return
+    }
     if (!form.type || !form.code.trim() || !form.name.trim()) {
       toast.error('请填写必填字段')
       return
@@ -212,6 +297,7 @@ export function useProjectsPage() {
       closeModal()
       refresh()
       fetchRefs()
+      loadStats()
     } catch (e) {
       toast.error('操作失败')
     } finally {
@@ -220,7 +306,15 @@ export function useProjectsPage() {
   }
 
   const handleDeleteConfirm = async () => {
+    if (!canWrite) {
+      toast.error('当前角色只能查看检测服务')
+      return
+    }
     if (!editingRow) return
+    if (deleteCheck && !deleteCheck.deletable) {
+      toast.error('该检测服务存在业务引用，不能删除')
+      return
+    }
     setIsSubmitting(true)
     try {
       await projectApi.delete(editingRow.id)
@@ -233,10 +327,70 @@ export function useProjectsPage() {
       closeModal()
       refresh()
       fetchRefs()
+      loadStats()
     } catch (e) {
       toast.error('删除失败')
     } finally {
       setIsSubmitting(false)
+    }
+  }
+
+  const openStatus = async (row: Project) => {
+    if (!canWrite) {
+      toast.error('当前角色只能查看检测服务')
+      return
+    }
+    const targetStatus = row.status === 'active' ? 'inactive' : 'active'
+    setStatusTarget(row)
+    setStatusTargetStatus(targetStatus)
+    setStatusCheck(null)
+    setCheckingStatus(true)
+    try {
+      const check = await projectApi.checkStatus(row.id, targetStatus)
+      setStatusCheck(check)
+    } catch (e) {
+      toast.error('状态变更影响检查失败')
+    } finally {
+      setCheckingStatus(false)
+    }
+  }
+
+  const closeStatusModal = () => {
+    if (updatingStatus) return
+    setStatusTarget(null)
+    setStatusCheck(null)
+    setCheckingStatus(false)
+  }
+
+  const handleStatusConfirm = async () => {
+    if (!canWrite) {
+      toast.error('当前角色只能查看检测服务')
+      return
+    }
+    if (!statusTarget || !statusCheck?.canChange) return
+    setUpdatingStatus(true)
+    try {
+      await projectApi.update(statusTarget.id, {
+        code: statusTarget.code,
+        name: statusTarget.name,
+        type: statusTarget.type,
+        status: statusTargetStatus,
+      })
+      toast.success(statusTargetStatus === 'active' ? '检测服务已启用' : '检测服务已停用')
+      setStatusTarget(null)
+      setStatusCheck(null)
+      setSelectedIds(prev => {
+        const next = new Set(prev)
+        next.delete(statusTarget.id)
+        return next
+      })
+      refresh()
+      fetchRefs()
+      loadStats()
+    } catch (e) {
+      toast.error('操作失败')
+    } finally {
+      setUpdatingStatus(false)
     }
   }
 
@@ -254,15 +408,107 @@ export function useProjectsPage() {
   }
 
   const batchSetStatus = async (status: 'active' | 'inactive') => {
+    if (!canWrite) {
+      toast.error('当前角色只能查看检测服务')
+      return
+    }
     if (selectedIds.size === 0) return
+    const targets = data.filter(project => selectedIds.has(project.id))
+    setBatchStatusAction(status)
+    setBatchStatusTargets(targets)
+    setBatchStatusResults([])
+    setCheckingBatchStatus(true)
     try {
-      await Promise.all([...selectedIds].map(id => projectApi.update(id, { status })))
-      toast.success(status === 'active' ? '批量启用成功' : '批量停用成功')
+      const results = await Promise.all(targets.map(async project => {
+        try {
+          const check = await projectApi.checkStatus(project.id, status)
+          return { project, check }
+        } catch {
+          return { project, check: null, error: '状态影响检查失败' }
+        }
+      }))
+      setBatchStatusResults(results)
+    } finally {
+      setCheckingBatchStatus(false)
+    }
+  }
+
+  const closeBatchStatusModal = () => {
+    if (submittingBatchStatus) return
+    setBatchStatusAction(null)
+    setBatchStatusTargets([])
+    setBatchStatusResults([])
+    setCheckingBatchStatus(false)
+  }
+
+  const confirmBatchStatus = async () => {
+    if (!canWrite) {
+      toast.error('当前角色只能查看检测服务')
+      return
+    }
+    if (!batchStatusAction || batchStatusTargets.length === 0) return
+    setSubmittingBatchStatus(true)
+    try {
+      await projectApi.batchStatus(batchStatusTargets.map(project => project.id), batchStatusAction)
+      toast.success(batchStatusAction === 'active' ? '批量启用成功' : '批量停用成功')
       setSelectedIds(new Set())
+      setBatchStatusAction(null)
+      setBatchStatusTargets([])
+      setBatchStatusResults([])
       refresh()
       fetchRefs()
+      loadStats()
     } catch (e) {
       toast.error('批量操作失败')
+    } finally {
+      setSubmittingBatchStatus(false)
+    }
+  }
+
+  const handleImportProjects = async (rows: ProjectImportRow[]) => {
+    if (!canWrite) {
+      toast.error('当前角色只能查看检测服务')
+      return { success: 0, failed: rows.length }
+    }
+    setIsSubmitting(true)
+    let success = 0
+    let failed = 0
+
+    try {
+      for (const row of rows) {
+        try {
+          await projectApi.create({
+            type: row.type,
+            code: row.code.trim(),
+            name: row.name.trim(),
+            cycle: row.cycle?.trim() || undefined,
+            manager: row.manager?.trim() || undefined,
+            status: row.status,
+            description: row.description?.trim() || undefined,
+            bomId: row.bomId || undefined,
+          })
+          success += 1
+        } catch {
+          failed += 1
+        }
+      }
+
+      if (success > 0) {
+        setModalType(null)
+        refresh()
+        fetchRefs()
+        loadStats()
+      }
+
+      if (failed === 0) {
+        toast.success('导入成功', { description: `已创建 ${success} 个检测服务` })
+      } else {
+        toast.warning('导入完成', { description: `成功 ${success} 条，失败 ${failed} 条` })
+      }
+
+      return { success, failed }
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
@@ -282,6 +528,7 @@ export function useProjectsPage() {
 
   return {
     data,
+    canWrite,
     loading,
     total,
     page,
@@ -303,6 +550,18 @@ export function useProjectsPage() {
     setModalType,
     editingRow,
     setEditingRow,
+    deleteCheck,
+    checkingDelete,
+    statusTarget,
+    statusTargetStatus,
+    statusCheck,
+    checkingStatus,
+    updatingStatus,
+    batchStatusAction,
+    batchStatusTargets,
+    batchStatusResults,
+    checkingBatchStatus,
+    submittingBatchStatus,
     form,
     setForm,
     createStep,
@@ -320,11 +579,18 @@ export function useProjectsPage() {
     openEdit,
     openCopy,
     openDelete,
+    openStatus,
+    closeModal,
+    closeStatusModal,
+    closeBatchStatusModal,
     handleSubmit,
     handleDeleteConfirm,
+    handleStatusConfirm,
+    confirmBatchStatus,
     toggleSelectAll,
     toggleSelectOne,
     batchEnable: () => batchSetStatus('active'),
     batchDisable: () => batchSetStatus('inactive'),
+    handleImportProjects,
   }
 }

@@ -29,6 +29,17 @@ export function getUserRole(): string | null {
   }
 }
 
+export function getUserPermissions(): string[] {
+  try {
+    const userStr = localStorage.getItem('user')
+    if (!userStr) return []
+    const user = JSON.parse(userStr)
+    return Array.isArray(user.permissions) ? user.permissions : []
+  } catch {
+    return []
+  }
+}
+
 // 角色-菜单权限映射
 // 侧边栏显示 24 项，其余页面通过 URL 直接访问（高级用户/财务）
 export const ROLE_MENU_MAP: Record<string, string[]> = {
@@ -39,7 +50,7 @@ export const ROLE_MENU_MAP: Record<string, string[]> = {
     '/inventory', '/inbound', '/outbound', '/returns', '/supplier-returns', '/transfers', '/scraps', '/stocktaking',
     // 成本管理（含 ABC 配置入口）
     '/abc/dashboard', '/abc/slide-cost', '/abc/profitability', '/abc/fee-comparison', '/abc/trend',
-    '/reconciliation', '/cost-analysis', '/abc/activity-centers',
+    '/abc/fee-mappings', '/reconciliation', '/abc/activity-centers',
     // 采购管理
     '/purchase-orders', '/suppliers',
     // 基础数据
@@ -59,9 +70,9 @@ export const ROLE_MENU_MAP: Record<string, string[]> = {
   ],
   technician: [
     '/', '/alerts',
-    '/inventory', '/projects', '/bom', '/reconciliation', '/cost-analysis',
+    '/inventory', '/projects', '/bom',
     '/materials', '/categories', '/equipment', '/labor-times',
-    '/abc/dashboard', '/abc/slide-cost', '/abc/profitability', '/abc/fee-comparison', '/abc/trend',
+    '/abc/dashboard', '/abc/slide-cost', '/abc/profitability', '/abc/fee-comparison', '/abc/fee-mappings', '/abc/trend',
   ],
   procurement: [
     '/', '/alerts',
@@ -69,8 +80,8 @@ export const ROLE_MENU_MAP: Record<string, string[]> = {
   ],
   finance: [
     '/', '/alerts',
-    '/inventory', '/reconciliation', '/cost-analysis', '/categories',
-    '/abc/dashboard', '/abc/slide-cost', '/abc/profitability', '/abc/fee-comparison', '/abc/trend',
+    '/reconciliation', '/categories', '/logs',
+    '/abc/dashboard', '/abc/slide-cost', '/abc/profitability', '/abc/fee-comparison', '/abc/fee-mappings', '/abc/trend',
     '/abc/activity-centers',
     // ABC 高级页面
     '/abc/cost-drivers', '/abc/cost-pools', '/abc/budgets', '/abc/quality-costs',
@@ -80,9 +91,63 @@ export const ROLE_MENU_MAP: Record<string, string[]> = {
   ],
   pathologist: [
     '/', '/alerts',
-    '/inventory', '/projects', '/bom', '/reconciliation', '/cost-analysis',
+    '/inventory', '/projects', '/bom', '/reconciliation',
     '/categories', '/equipment', '/labor-times',
-    '/abc/dashboard', '/abc/slide-cost', '/abc/profitability', '/abc/fee-comparison', '/abc/trend',
+    '/abc/dashboard', '/abc/slide-cost', '/abc/profitability', '/abc/fee-comparison', '/abc/fee-mappings', '/abc/trend',
     '/abc/forecast', '/abc/model-validation',
   ],
+}
+
+const PERMISSION_PATH_MAP: Record<string, string[]> = {
+  inventory: ['/inventory'],
+  inbound: ['/inbound'],
+  outbound: ['/outbound'],
+  stocktaking: ['/stocktaking'],
+  returns: ['/returns'],
+  scraps: ['/scraps'],
+  transfers: ['/transfers'],
+  supplier_returns: ['/supplier-returns'],
+  purchase_orders: ['/purchase-orders'],
+  projects: ['/projects'],
+  bom: ['/bom'],
+  categories: ['/categories'],
+  materials: ['/materials'],
+  suppliers: ['/suppliers'],
+  locations: ['/locations'],
+  equipment: ['/equipment', '/equipment/types', '/equipment/depreciation'],
+  labor_times: ['/labor-times'],
+  cost_analysis: [
+    '/reconciliation',
+    '/indirect-costs',
+    '/abc/dashboard',
+    '/abc/slide-cost',
+    '/abc/profitability',
+    '/abc/fee-comparison',
+    '/abc/fee-mappings',
+    '/abc/trend',
+  ],
+  alerts: ['/alerts'],
+  users: ['/users'],
+  roles: ['/roles'],
+  logs: ['/logs'],
+}
+
+function moduleFromPermission(permission: string) {
+  if (permission === '*') return '*'
+  return permission.split(':')[0]
+}
+
+export function getAllowedPaths(role = getUserRole(), permissions = getUserPermissions()): string[] {
+  if (!role) return []
+  if (ROLE_MENU_MAP[role]) return ROLE_MENU_MAP[role]
+  const modules = new Set(permissions.map(moduleFromPermission))
+  if (modules.has('*')) return ROLE_MENU_MAP.admin
+
+  const paths = new Set<string>(['/'])
+  for (const module of modules) {
+    for (const path of PERMISSION_PATH_MAP[module] || []) {
+      paths.add(path)
+    }
+  }
+  return [...paths]
 }

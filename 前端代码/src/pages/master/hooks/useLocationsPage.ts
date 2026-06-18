@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { locationApi } from '@/api/master'
-import type { Location } from '@/types'
+import type { Location, LocationDeleteCheck, LocationStatusCheck } from '@/types'
 import { toast } from 'sonner'
 
 export interface TreeNode {
@@ -42,6 +42,27 @@ export const typeOptions = [
   { value: 'other', label: '其他' },
 ] as const
 
+const levelConfigStorageKey = 'coreone.locationLevelConfigs'
+
+const defaultLevelConfigs: Record<string, string[]> = {
+  shelf: ['库区', '货架', '库位'],
+  fridge: ['冷冻区', '层', '抽屉'],
+  cabinet: ['柜号', '层', '格'],
+  counter: ['操作台', '区域'],
+  other: ['区域', '位置'],
+}
+
+function loadLevelConfigs() {
+  try {
+    const raw = localStorage.getItem(levelConfigStorageKey)
+    if (!raw) return defaultLevelConfigs
+    const parsed = JSON.parse(raw) as Record<string, string[]>
+    return { ...defaultLevelConfigs, ...parsed }
+  } catch {
+    return defaultLevelConfigs
+  }
+}
+
 export function getTypeIcon(type?: string) {
   switch (type) {
     case 'fridge': return '🧊'
@@ -64,6 +85,12 @@ export function useLocationsPage() {
   const [loading, setLoading] = useState(false)
   const [keyword, setKeyword] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('all')
+  const [stats, setStats] = useState({
+    total: 0,
+    active: 0,
+    inactive: 0,
+    avgUtilization: 0,
+  })
   const [searchKeyword, setSearchKeyword] = useState('')
   const [searchStatus, setSearchStatus] = useState<string>('all')
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
@@ -75,14 +102,17 @@ export function useLocationsPage() {
   }, [data])
   const [modalType, setModalType] = useState<ModalType>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<Location | null>(null)
+  const [deleteCheck, setDeleteCheck] = useState<LocationDeleteCheck | null>(null)
+  const [checkingDelete, setCheckingDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [statusTarget, setStatusTarget] = useState<Location | null>(null)
+  const [statusCheck, setStatusCheck] = useState<LocationStatusCheck | null>(null)
+  const [statusTargetStatus, setStatusTargetStatus] = useState<'active' | 'inactive'>('inactive')
+  const [checkingStatus, setCheckingStatus] = useState(false)
+  const [updatingStatus, setUpdatingStatus] = useState(false)
   const [levelTab, setLevelTab] = useState<string>('shelf')
-  const [levelConfigs, setLevelConfigs] = useState<Record<string, string[]>>({
-    shelf: ['库区', '货架', '库位'],
-    fridge: ['冷冻区', '层', '抽屉'],
-    cabinet: ['柜号', '层', '格'],
-    counter: ['操作台', '区域'],
-    other: ['区域', '位置'],
-  })
+  const [levelConfigs, setLevelConfigs] = useState<Record<string, string[]>>(loadLevelConfigs)
   const [form, setForm] = useState<FormData>({
     code: '',
     name: '',
@@ -96,12 +126,19 @@ export function useLocationsPage() {
   const fetchData = useCallback(async () => {
     setLoading(true)
     try {
-      const [listRes, treeRes] = await Promise.all([
+      const [listRes, treeRes, statsRes] = await Promise.all([
         locationApi.getList({ page: 1, pageSize: 1000, keyword: keyword || undefined, status: statusFilter !== 'all' ? statusFilter : undefined }),
         locationApi.getTree(),
+        locationApi.getStats({ keyword: keyword || undefined, status: statusFilter !== 'all' ? statusFilter : undefined }),
       ])
       setData((listRes as any).list || [])
       setTreeData((treeRes as any) || [])
+      setStats({
+        total: Number((statsRes as any)?.total || 0),
+        active: Number((statsRes as any)?.active || 0),
+        inactive: Number((statsRes as any)?.inactive || 0),
+        avgUtilization: Number((statsRes as any)?.avgUtilization || 0),
+      })
     } catch (e) {
       console.error(e)
     } finally {
@@ -150,16 +187,6 @@ export function useLocationsPage() {
     const ids = new Set(getDescendantIds(node))
     return data.filter(d => ids.has(d.id))
   }, [data, selectedNodeId, treeData, getDescendantIds])
-
-  const stats = useMemo(() => ({
-    total: data.length,
-    active: data.filter((d) => d.status === 'active').length,
-    inactive: data.filter((d) => d.status === 'inactive').length,
-    avgUtilization:
-      data.length > 0
-        ? Math.round(data.reduce((sum, d) => sum + (d.capacity > 0 ? (d.used / d.capacity) * 100 : 0), 0) / data.length)
-        : 0,
-  }), [data])
 
   const handleSearch = () => {
     setKeyword(searchKeyword)
@@ -238,28 +265,94 @@ export function useLocationsPage() {
   }
 
   const handleDelete = async (id: string) => {
-    if (!confirm('确定删除该库位？')) return
+    setDeleteTarget(data.find(item => item.id === id) || ({ id, name: '该库位' } as Location))
+    setDeleteCheck(null)
+    setCheckingDelete(true)
     try {
-      await locationApi.delete(id)
+      const check = await locationApi.checkDeletable(id)
+      setDeleteCheck(check)
+    } catch {
+      toast.error('删除影响检查失败')
+    } finally {
+      setCheckingDelete(false)
+    }
+  }
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return
+    if (!deleteCheck || !deleteCheck.deletable) {
+      toast.error('该库位存在业务引用，不能删除')
+      return
+    }
+    setDeleting(true)
+    try {
+      await locationApi.delete(deleteTarget.id)
       toast.success('删除成功')
+      closeDelete()
       fetchData()
     } catch (e) {
       toast.error('删除失败')
+    } finally {
+      setDeleting(false)
     }
+  }
+
+  const closeDelete = () => {
+    setDeleteTarget(null)
+    setDeleteCheck(null)
+    setCheckingDelete(false)
+    setDeleting(false)
   }
 
   const handleToggleStatus = async (row: Location) => {
     const newStatus = row.status === 'active' ? 'inactive' : 'active'
+    setStatusTarget(row)
+    setStatusTargetStatus(newStatus)
+    setStatusCheck(null)
+    setCheckingStatus(true)
     try {
-      await locationApi.update(row.id, { status: newStatus })
-      toast.success(newStatus === 'active' ? '已启用' : '已停用')
-      fetchData()
+      const check = await locationApi.checkStatus(row.id, newStatus)
+      setStatusCheck(check)
     } catch (e) {
-      toast.error('操作失败')
+      toast.error('状态变更影响检查失败')
+    } finally {
+      setCheckingStatus(false)
     }
   }
 
+  const confirmStatusChange = async () => {
+    if (!statusTarget || !statusCheck || !statusCheck.canChange) {
+      toast.error('该库位存在业务引用，不能停用')
+      return
+    }
+    setUpdatingStatus(true)
+    try {
+      await locationApi.update(statusTarget.id, { status: statusTargetStatus })
+      toast.success(statusTargetStatus === 'active' ? '已启用' : '已停用')
+      closeStatusChange()
+      fetchData()
+    } catch (e: any) {
+      toast.error(e?.response?.data?.message || '操作失败')
+    } finally {
+      setUpdatingStatus(false)
+    }
+  }
+
+  const closeStatusChange = () => {
+    setStatusTarget(null)
+    setStatusCheck(null)
+    setStatusTargetStatus('inactive')
+    setCheckingStatus(false)
+    setUpdatingStatus(false)
+  }
+
   const saveLevelConfigs = () => {
+    try {
+      localStorage.setItem(levelConfigStorageKey, JSON.stringify(levelConfigs))
+    } catch {
+      toast.error('配置保存失败')
+      return
+    }
     toast.success('配置已保存')
     setModalType(null)
   }
@@ -285,6 +378,16 @@ export function useLocationsPage() {
     setModalType,
     editingId,
     setEditingId,
+    deleteTarget,
+    setDeleteTarget,
+    deleteCheck,
+    checkingDelete,
+    deleting,
+    statusTarget,
+    statusCheck,
+    statusTargetStatus,
+    checkingStatus,
+    updatingStatus,
     levelTab,
     setLevelTab,
     levelConfigs,
@@ -304,7 +407,11 @@ export function useLocationsPage() {
     openEdit,
     handleSubmit,
     handleDelete,
+    confirmDelete,
+    closeDelete,
     handleToggleStatus,
+    confirmStatusChange,
+    closeStatusChange,
     saveLevelConfigs,
   }
 }

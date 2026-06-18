@@ -1,3 +1,4 @@
+import React from 'react'
 import { X } from 'lucide-react'
 import type { FormData } from '../hooks/useRolesPage'
 import { PERMISSION_MODULES, DATA_SCOPE_OPTIONS } from '../hooks/useRolesPage'

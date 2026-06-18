@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import { useEquipmentPage } from './hooks/useEquipmentPage'
 import { EquipmentFormModal } from './components/EquipmentFormModal'
+import { EquipmentDetailModal } from './components/EquipmentDetailModal'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 
 export default function EquipmentList() {
@@ -29,13 +30,15 @@ export default function EquipmentList() {
             <Settings className="w-4 h-4" />
             设备类型
           </button>
-          <button
-            onClick={page.openCreate}
-            className="h-10 px-4 text-sm font-medium text-white bg-blue-500 rounded-md hover:bg-blue-600 flex items-center gap-2 transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            新增设备
-          </button>
+          {page.canManageEquipmentAssets && (
+            <button
+              onClick={page.openCreate}
+              className="h-10 px-4 text-sm font-medium text-white bg-blue-500 rounded-md hover:bg-blue-600 flex items-center gap-2 transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              新增设备
+            </button>
+          )}
         </div>
       </div>
 
@@ -73,16 +76,16 @@ export default function EquipmentList() {
           </div>
           <SearchableSelect
             value={page.filterTypeId}
-            onChange={(val) => { page.setFilterTypeId(val); page.setPage(1) }}
+            onChange={page.handleTypeChange}
             options={[{ value: '', label: '全部类型' }, ...page.typeOptions]}
             placeholder="全部类型"
             className="w-36"
           />
           <SearchableSelect
             value={page.filterStatus}
-            onChange={(val) => page.setFilterStatus(val)}
+            onChange={page.handleStatusChange}
             options={[
-              { value: 'all', label: '全部状态' },
+              { value: '', label: '全部状态' },
               { value: 'active', label: '已启用' },
               { value: 'inactive', label: '已停用' },
               { value: 'scrapped', label: '已报废' },
@@ -164,18 +167,22 @@ export default function EquipmentList() {
                         >
                           详情
                         </button>
-                        <button
-                          onClick={() => page.openEdit(row)}
-                          className="px-2 py-1 text-sm text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
-                        >
-                          编辑
-                        </button>
-                        <button
-                          onClick={() => page.openDelete(row)}
-                          className="px-2 py-1 text-sm text-gray-600 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
-                        >
-                          删除
-                        </button>
+                        {page.canManageEquipmentAssets && (
+                          <>
+                            <button
+                              onClick={() => page.openEdit(row)}
+                              className="px-2 py-1 text-sm text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                            >
+                              编辑
+                            </button>
+                            <button
+                              onClick={() => page.openDelete(row)}
+                              className="px-2 py-1 text-sm text-gray-600 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                            >
+                              删除
+                            </button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -223,6 +230,15 @@ export default function EquipmentList() {
         onClose={() => page.setModalType(null)}
         onChange={page.setForm}
         onSubmit={page.handleSubmit}
+      />
+
+      {/* 详情弹窗 */}
+      <EquipmentDetailModal
+        open={page.modalType === 'detail'}
+        row={page.detailRow}
+        onClose={() => page.setModalType(null)}
+        onEdit={page.openEdit}
+        canEdit={page.canManageEquipmentAssets}
       />
 
       {/* 删除确认 */}

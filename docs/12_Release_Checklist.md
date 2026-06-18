@@ -30,10 +30,11 @@
 
 | 检查项 | 标准 | 当前状态 |
 |--------|------|----------|
-| 核心 E2E 通过 | 当前存在的核心 spec 通过 | ❌ PR #1 GitHub Actions `e2e` 256/257 通过，唯一失败：`BF-PERM-technician-outbound` |
-| 完整 E2E 通过率 | ≥95% | ⚠️ 本轮未跑完整 E2E；需作为合并后/发布前回归项 |
+| 核心 E2E 通过 | 当前存在的核心 spec 通过 | ✅ PR #1 GitHub Actions `E2E Tests / e2e` 已通过，head SHA `d97efa991fee4797a7ccc8c3a6d684925d584da7` |
+| 完整 E2E 通过率 | ≥95% | ✅ PR #1 当前 GitHub E2E check 成功；合并后发布前仍建议按发布范围复跑 |
 | 后端单元测试通过 | 100% | ✅ 2026-06-15 `npm run test:node` 8 files / 87 tests passed |
 | 前端单元测试通过 | 100% | ❌ 2026-06-15 `npm test` 81/84 passed，3 个失败集中在 `useInventoryPage.test.ts` |
+| lint 检查通过 | 0 error | ❌ 当前未绿；PM 已确认不作为 PR #1 当前合并节奏的唯一阻断，后续在独立 `quality-gates` 分支集中处理 |
 | 关键业务流 E2E 覆盖 | 入库/出库/盘点/BOM/成本 | ✅ |
 
 ### 4. 数据库变更
@@ -49,8 +50,8 @@
 | 检查项 | 标准 | 当前状态 |
 |--------|------|----------|
 | 权限矩阵已更新 | `docs/05_Role_Permission_Matrix.md` | ✅ 已建立 |
-| 角色测试已覆盖 | E2E roles.spec.ts | ❌ PR #1 核心 E2E 暴露 technician `/outbound` 权限预期冲突；跨模块 API 权限测试仍待补 |
-| 前端菜单与后端一致 | 三方核对 | ⚠️ 路由缺失已修复；菜单/后端角色差异仍需 PM 确认业务意图 |
+| 角色测试已覆盖 | E2E roles.spec.ts | ⚠️ PR #1 GitHub E2E 已绿；跨模块 API 权限测试仍待补 |
+| 前端菜单与后端一致 | 三方核对 | ⚠️ 前端 technician `/outbound` 页面访问已被拦截并通过 E2E；后端 `/api/v1/outbound` 仍允许 technician/pathologist 读，需 PM 确认是否为有意设计 |
 
 ### 6. 文档变更
 
@@ -159,7 +160,7 @@ docker compose up -d
 | 有条件发布 | P0 Bug = 0，P1 Bug 有延期理由 | PM 确认后发布 |
 | 不可发布 | P0 Bug > 0、核心 E2E 失败、后端启动/构建失败、关键路由文件缺失 | 修复后重新检查 |
 
-**当前建议结论（2026-06-15）**：PR 可以继续审查，但保持 Draft，不建议合并。后端构建/测试、前端类型检查/构建、路由一致性已通过；GitHub `e2e` 已从“后端启动失败”推进到真实用例结果，但仍有 1 个权限用例失败：technician 访问 `/outbound` 未被拦截。合并前至少需要 PM 明确 technician 是否应拥有出库访问权限，并由团队按结论修复代码或调整测试预期；同时仍需处理或豁免前端单测、lint、权限差异和剩余 P0/P1 治理项。
+**当前建议结论（2026-06-16 PM 更新）**：PR #1 已 Ready for review，head SHA `d97efa991fee4797a7ccc8c3a6d684925d584da7`，GitHub `E2E Tests / e2e` 已通过，`mergeStateStatus=CLEAN`。PM 决策：**暂不合并**，等待另一个会话完成全部优化，并由 PM 补齐所有功能细节后再做最终合并判断。其他质量口径按建议执行：3 个 `useInventoryPage.test.ts` 单测失败和 lint 未绿不单独作为当前合并节奏的唯一阻断；权限/API 按最小权限原则后续收敛；如 PR 合并后仍需质量收口，再从最新主干新建独立 `quality-gates` 分支处理 unit/lint。
 
 ---
 

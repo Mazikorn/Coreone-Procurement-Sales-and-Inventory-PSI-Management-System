@@ -1,5 +1,5 @@
 import { Plus } from 'lucide-react'
-import { useStocktakingPage, statusOptions, scopeOptions } from './hooks/useStocktakingPage'
+import { useStocktakingPage, statusOptions } from './hooks/useStocktakingPage'
 import { StocktakingTable } from './components/StocktakingTable'
 import { StocktakingCreateModal } from './components/StocktakingCreateModal'
 import { StocktakingDetailModal } from './components/StocktakingDetailModal'
@@ -25,8 +25,8 @@ export default function Stocktaking() {
       {/* Stats Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-white rounded-lg p-5 shadow-sm border border-gray-200 border-l-4 border-l-blue-500">
-          <div className="text-2xl font-semibold text-gray-900">{page.stats.inProgress}</div>
-          <div className="mt-1 text-sm text-gray-500">进行中</div>
+          <div className="text-2xl font-semibold text-gray-900">{page.stats.confirmed}</div>
+          <div className="mt-1 text-sm text-gray-500">已确认</div>
         </div>
         <div className="bg-white rounded-lg p-5 shadow-sm border border-gray-200 border-l-4 border-l-green-500">
           <div className="text-2xl font-semibold text-gray-900">{page.stats.completed}</div>
@@ -51,12 +51,9 @@ export default function Stocktaking() {
         pageSize={page.pageSize}
         keyword={page.keyword}
         statusFilter={page.statusFilter}
-        scopeFilter={page.scopeFilter}
         statusOptions={statusOptions}
-        scopeOptions={scopeOptions}
         onKeywordChange={page.setKeyword}
         onStatusFilterChange={page.setStatusFilter}
-        onScopeFilterChange={page.setScopeFilter}
         onQuery={page.handleQuery}
         onReset={page.handleReset}
         onPageChange={page.setPage}
@@ -100,6 +97,8 @@ export default function Stocktaking() {
         open={page.modalType === 'adjust'}
         row={page.detailRow}
         onClose={() => page.setModalType(null)}
+        onConfirm={page.handleAdjustConfirm}
+        submitting={page.isSubmitting}
       />
     </div>
   )

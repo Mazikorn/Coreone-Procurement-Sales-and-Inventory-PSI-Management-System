@@ -150,12 +150,12 @@ test.describe('项目领用出库完整流程', () => {
     await expect(rows.first()).toBeVisible({ timeout: 5000 })
   })
 
-  test('步骤8: 查看成本分析页面', async ({ page }) => {
+  test('步骤8: 查看ABC成本看板', async ({ page }) => {
     await loginAs(page, 'technician')
-    await page.goto(`${FE_BASE}/cost-analysis`)
+    await page.goto(`${FE_BASE}/abc/dashboard`)
     await page.waitForTimeout(1000)
 
-    // 验证成本分析页面可见
+    // 验证ABC成本看板可见
     await expect(page.locator('body')).toBeVisible()
   })
 })

@@ -1,8 +1,190 @@
 import { Router } from 'express'
+import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
+import { recordCostException } from '../utils/cost-exceptions.js'
 
 const router = Router()
+
+const dateRegex = /^\d{4}-\d{2}-\d{2}$/
+const dateTimeRegex = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/
+
+function isValidDateOnly(value: string) {
+  if (!dateRegex.test(value)) return false
+  const [year, month, day] = value.split('-').map(Number)
+  const date = new Date(Date.UTC(year, month - 1, day))
+  return date.getUTCFullYear() === year
+    && date.getUTCMonth() === month - 1
+    && date.getUTCDate() === day
+}
+
+function validateDateRange(startDate?: string, endDate?: string) {
+  if (startDate && !isValidDateOnly(startDate)) return false
+  if (endDate && !isValidDateOnly(endDate)) return false
+  if (startDate && endDate && startDate > endDate) return false
+  return true
+}
+
+function validateLisOperateTime(value: string) {
+  const match = value.trim().match(dateTimeRegex)
+  if (!match) return false
+
+  const [, yearText, monthText, dayText, hourText = '00', minuteText = '00', secondText = '00'] = match
+  const year = Number(yearText)
+  const month = Number(monthText)
+  const day = Number(dayText)
+  const hour = Number(hourText)
+  const minute = Number(minuteText)
+  const second = Number(secondText)
+  if (hour > 23 || minute > 59 || second > 59) return false
+
+  const date = new Date(year, month - 1, day, hour, minute, second)
+  return date.getFullYear() === year
+    && date.getMonth() === month - 1
+    && date.getDate() === day
+    && date.getHours() === hour
+    && date.getMinutes() === minute
+    && date.getSeconds() === second
+}
+
+function badImportResponse(res: any, message: string, errors: any[]) {
+  res.status(400).json({
+    success: false,
+    error: {
+      code: 'BAD_REQUEST',
+      message,
+      details: { errors },
+    },
+  })
+}
+
+function exceptionMonth(startDate?: string, endDate?: string) {
+  return String(endDate || startDate || new Date().toISOString()).slice(0, 7)
+}
+
+function reconciliationSourceId(projectId: string, materialId: string, startDate?: string, endDate?: string) {
+  return `${projectId}:${materialId}:${startDate || 'all'}:${endDate || 'all'}`
+}
+
+function csvEscape(value: unknown) {
+  const text = value === null || value === undefined ? '' : String(value)
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
+}
+
+function toCsv(headers: string[], rows: Array<Array<unknown>>) {
+  return [
+    headers.map(csvEscape).join(','),
+    ...rows.map(row => row.map(csvEscape).join(',')),
+  ].join('\n')
+}
+
+function buildCaseFilterClause(filters: {
+  search?: string
+  projectId?: string
+  status?: string
+  startDate?: string
+  endDate?: string
+}, alias = '') {
+  const prefix = alias ? `${alias}.` : ''
+  let where = 'WHERE 1=1'
+  const params: any[] = []
+
+  if (filters.search) {
+    where += ` AND (${prefix}case_no LIKE ? OR ${prefix}project_name LIKE ?)`
+    params.push(`%${filters.search}%`, `%${filters.search}%`)
+  }
+  if (filters.projectId) {
+    where += ` AND ${prefix}project_id = ?`
+    params.push(filters.projectId)
+  }
+  if (filters.status) {
+    where += ` AND ${prefix}status = ?`
+    params.push(filters.status)
+  }
+  if (filters.startDate && filters.endDate) {
+    where += ` AND ${prefix}operate_time >= ? AND ${prefix}operate_time <= ?`
+    params.push(filters.startDate, `${filters.endDate} 23:59:59`)
+  }
+
+  return { where, params }
+}
+
+function findProjectForImportedCase(projectsById: Map<string, any>, projectsByNameOrCode: Map<string, any>, item: any) {
+  const projectId = String(item.projectId || item.project_id || '').trim()
+  if (projectId) {
+    return projectsById.get(projectId) || null
+  }
+
+  const projectName = String(item.projectName || item.project_name || '').trim()
+  if (!projectName) return null
+  return projectsByNameOrCode.get(projectName.toLowerCase()) || null
+}
+
+function getProjectMaterialReconciliation(db: any, projectId: string, startDate?: string, endDate?: string) {
+  if (!validateDateRange(startDate, endDate)) {
+    throw new Error('Invalid date format')
+  }
+
+  const hasDate = startDate && endDate
+  const dateParams: any[] = hasDate ? [startDate, `${endDate} 23:59:59`] : []
+
+  const project = db.prepare('SELECT * FROM projects WHERE id = ? AND is_deleted = 0').get(projectId) as any
+  if (!project) return { project: null, rows: [] }
+
+  const bomItems = db.prepare(`
+    SELECT bi.*, m.name as material_name, m.spec, m.unit as material_unit, m.price
+    FROM bom_items bi
+    JOIN materials m ON bi.material_id = m.id
+    WHERE bi.bom_id = ? AND m.is_deleted = 0
+  `).all(project.bom_id || '') as any[]
+
+  const caseCount = db.prepare(`
+    SELECT COUNT(*) as count FROM lis_cases
+    WHERE project_id = ? ${hasDate ? 'AND operate_time >= ? AND operate_time <= ?' : ''}
+  `).get(projectId, ...dateParams) as any
+
+  const cases = caseCount?.count || 0
+
+  const actualOutbounds = db.prepare(`
+    SELECT oi.material_id, SUM(oi.quantity) as total_qty, m.unit, m.name, m.spec
+    FROM outbound_items oi
+    JOIN outbound_records o ON oi.outbound_id = o.id
+    JOIN materials m ON oi.material_id = m.id
+    WHERE o.project_id = ? AND o.status = 'completed' AND o.is_deleted = 0 ${hasDate ? 'AND o.created_at >= ? AND o.created_at <= ?' : ''}
+    GROUP BY oi.material_id
+  `).all(projectId, ...dateParams) as any[]
+
+  const rows = bomItems.map((bi: any) => {
+    const theoryQty = cases * (bi.usage_per_sample || 0)
+    const actual = actualOutbounds.find((a: any) => a.material_id === bi.material_id)
+    const actualQty = actual?.total_qty || 0
+    const diff = actualQty - theoryQty
+    const diffRate = theoryQty > 0 ? ((diff / theoryQty) * 100).toFixed(1) : '0'
+
+    let status = 'match'
+    if (diff > theoryQty * 0.2) status = 'warn'
+    if (diff > theoryQty * 0.5) status = 'danger'
+    if (diff < -theoryQty * 0.2) status = 'warn'
+
+    return {
+      materialId: bi.material_id,
+      materialName: bi.material_name,
+      spec: bi.spec,
+      bomUsagePerSample: bi.usage_per_sample,
+      bomUnit: bi.unit,
+      theoryQty,
+      theoryUnit: bi.unit,
+      actualQty,
+      actualUnit: actual?.unit || bi.unit,
+      diff,
+      diffRate: parseFloat(diffRate),
+      status,
+      price: bi.price || 0,
+    }
+  })
+
+  return { project, rows }
+}
 
 /**
  * GET /api/v1/reconciliation/summary
@@ -13,8 +195,7 @@ router.get('/summary', (req, res) => {
     const db = getDatabase()
     const { startDate, endDate } = req.query as Record<string, string>
 
-    const dateRegex = /^\d{4}-\d{2}-\d{2}$/
-    if ((startDate && !dateRegex.test(startDate)) || (endDate && !dateRegex.test(endDate))) {
+    if (!validateDateRange(startDate, endDate)) {
       error(res, 'Invalid date format', 'INVALID_PARAMETER', 400); return
     }
 
@@ -66,6 +247,148 @@ router.get('/summary', (req, res) => {
 })
 
 /**
+ * GET /api/v1/reconciliation/export
+ * 导出对账报表 CSV
+ */
+router.get('/export', (req, res) => {
+  try {
+    const db = getDatabase()
+    const { type = 'project', startDate, endDate, search, projectId, status } = req.query as Record<string, string>
+    if (!validateDateRange(startDate, endDate)) {
+      error(res, 'Invalid date format', 'INVALID_PARAMETER', 400); return
+    }
+
+    const hasDate = startDate && endDate
+    const endDateTime = hasDate ? `${endDate} 23:59:59` : ''
+    let headers: string[] = []
+    let rows: Array<Array<unknown>> = []
+    let filename = `reconciliation-${type}-${Date.now()}.csv`
+
+    if (type === 'material') {
+      const materials = db.prepare(`
+        SELECT m.id, m.name, m.spec, m.unit, m.price,
+          (SELECT COUNT(DISTINCT p.id) FROM projects p
+            JOIN bom_items bi ON bi.bom_id = p.bom_id
+            WHERE bi.material_id = m.id AND p.is_deleted = 0
+          ) as project_count
+        FROM materials m
+        WHERE m.is_deleted = 0 AND m.status = 1
+        ORDER BY m.name
+      `).all() as any[]
+      const allBomUsages = db.prepare(`
+        SELECT bi.material_id, bi.usage_per_sample, p.id as project_id
+        FROM bom_items bi
+        JOIN projects p ON bi.bom_id = p.bom_id
+        WHERE p.is_deleted = 0
+      `).all() as any[]
+      const caseRows = hasDate
+        ? db.prepare(`
+          SELECT project_id, COUNT(*) as count FROM lis_cases
+          WHERE operate_time >= ? AND operate_time <= ?
+          GROUP BY project_id
+        `).all(startDate, endDateTime) as any[]
+        : db.prepare('SELECT project_id, COUNT(*) as count FROM lis_cases GROUP BY project_id').all() as any[]
+      const caseCounts = new Map(caseRows.map((row: any) => [row.project_id, Number(row.count) || 0]))
+      const outboundRows = hasDate
+        ? db.prepare(`
+          SELECT oi.material_id, SUM(oi.quantity) as total_qty
+          FROM outbound_items oi
+          JOIN outbound_records o ON oi.outbound_id = o.id
+          WHERE o.status = 'completed' AND o.is_deleted = 0 AND o.created_at >= ? AND o.created_at <= ?
+          GROUP BY oi.material_id
+        `).all(startDate, endDateTime) as any[]
+        : db.prepare(`
+          SELECT oi.material_id, SUM(oi.quantity) as total_qty
+          FROM outbound_items oi
+          JOIN outbound_records o ON oi.outbound_id = o.id
+          WHERE o.status = 'completed' AND o.is_deleted = 0
+          GROUP BY oi.material_id
+        `).all() as any[]
+      const outboundQty = new Map(outboundRows.map((row: any) => [row.material_id, Number(row.total_qty) || 0]))
+
+      headers = ['物料', '规格', '单位', '关联项目数', '理论消耗', '实际出库', '差异', '差异率', '状态']
+      rows = materials.map((material: any) => {
+        const theoryTotal = allBomUsages
+          .filter((usage: any) => usage.material_id === material.id)
+          .reduce((sum: number, usage: any) => sum + (caseCounts.get(usage.project_id) || 0) * (Number(usage.usage_per_sample) || 0), 0)
+        const actualTotal = outboundQty.get(material.id) || 0
+        const diff = actualTotal - theoryTotal
+        const status = diff > theoryTotal * 0.5 ? 'danger' : Math.abs(diff) > theoryTotal * 0.2 ? 'warn' : 'match'
+        const diffRate = theoryTotal > 0 ? (diff / theoryTotal * 100).toFixed(1) : '0'
+        return [material.name, material.spec, material.unit, material.project_count, theoryTotal, actualTotal, diff, `${diffRate}%`, status]
+      })
+    } else if (type === 'case') {
+      const caseFilter = buildCaseFilterClause({ search, projectId, status, startDate, endDate }, 'lc')
+      const caseRows = db.prepare(`
+        SELECT lc.case_no, COALESCE(p.name, lc.project_name) as project_name,
+               lc.operate_time, lc.operator, lc.status,
+               CASE WHEN p.bom_id IS NULL OR p.bom_id = '' THEN '否' ELSE '是' END as has_bom
+        FROM lis_cases lc
+        LEFT JOIN projects p ON lc.project_id = p.id AND p.is_deleted = 0
+        ${caseFilter.where}
+        ORDER BY lc.operate_time DESC
+      `).all(...caseFilter.params) as any[]
+      headers = ['病理号', '检测项目', '操作时间', '操作人', '状态', '是否关联BOM']
+      rows = caseRows.map(row => [row.case_no, row.project_name, row.operate_time, row.operator, row.status, row.has_bom])
+    } else if (type === 'log') {
+      const logRows = db.prepare(`
+        SELECT type, target_name, field, old_value, new_value, reason, operator, created_at
+        FROM reconciliation_logs
+        ${hasDate ? 'WHERE created_at >= ? AND created_at <= ?' : ''}
+        ORDER BY created_at DESC
+      `).all(...(hasDate ? [startDate, endDateTime] : [])) as any[]
+      headers = ['类型', '对象', '字段', '旧值', '新值', '原因', '操作人', '时间']
+      rows = logRows.map(row => [row.type, row.target_name, row.field, row.old_value, row.new_value, row.reason, row.operator, row.created_at])
+    } else {
+      const projects = db.prepare(`
+        SELECT p.id, p.code, p.name, p.bom_id, p.type,
+          (SELECT COUNT(*) FROM lis_cases WHERE project_id = p.id
+            ${hasDate ? 'AND operate_time >= ? AND operate_time <= ?' : ''}
+          ) as case_count,
+          (SELECT COUNT(DISTINCT o.id) FROM outbound_records o
+            WHERE o.project_id = p.id AND o.status = 'completed' AND o.is_deleted = 0
+            ${hasDate ? 'AND o.created_at >= ? AND o.created_at <= ?' : ''}
+          ) as outbound_count
+        FROM projects p
+        WHERE p.is_deleted = 0 AND p.status = 1
+        ORDER BY case_count DESC
+      `).all(...(hasDate ? [startDate, endDateTime, startDate, endDateTime] : [])) as any[]
+      headers = ['项目编码', '项目名称', '项目类型', 'LIS病例数', '关联出库数', '是否配置BOM', '物料', '理论消耗', '实际出库', '差异', '差异率', '状态']
+      rows = projects.flatMap((project: any) => {
+        const { rows: materialRows } = getProjectMaterialReconciliation(db, project.id, startDate, endDate)
+        if (materialRows.length === 0) {
+          return [[project.code, project.name, project.type, project.case_count, project.outbound_count, project.bom_id ? '是' : '否', '', '', '', '', '', '']]
+        }
+        return materialRows.map(row => [
+          project.code,
+          project.name,
+          project.type,
+          project.case_count,
+          project.outbound_count,
+          project.bom_id ? '是' : '否',
+          row.materialName,
+          row.theoryQty,
+          row.actualQty,
+          row.diff,
+          `${row.diffRate}%`,
+          row.status,
+        ])
+      })
+      filename = `reconciliation-project-${Date.now()}.csv`
+    }
+
+    success(res, {
+      filename,
+      contentType: 'text/csv;charset=utf-8',
+      content: toCsv(headers, rows),
+      rowCount: rows.length,
+    })
+  } catch (e: any) {
+    error(res, e.message || '导出对账报表失败')
+  }
+})
+
+/**
  * GET /api/v1/reconciliation/projects
  * 按项目对账列表
  */
@@ -74,8 +397,7 @@ router.get('/projects', (req, res) => {
     const db = getDatabase()
     const { startDate, endDate } = req.query as Record<string, string>
 
-    const dateRegex = /^\d{4}-\d{2}-\d{2}$/
-    if ((startDate && !dateRegex.test(startDate)) || (endDate && !dateRegex.test(endDate))) {
+    if (!validateDateRange(startDate, endDate)) {
       error(res, 'Invalid date format', 'INVALID_PARAMETER', 400); return
     }
 
@@ -161,77 +483,128 @@ router.get('/projects/:id/materials', (req, res) => {
     const projectId = req.params.id
     const { startDate, endDate } = req.query as Record<string, string>
 
-    const dateRegex = /^\d{4}-\d{2}-\d{2}$/
-    if ((startDate && !dateRegex.test(startDate)) || (endDate && !dateRegex.test(endDate))) {
+    if (!validateDateRange(startDate, endDate)) {
       error(res, 'Invalid date format', 'INVALID_PARAMETER', 400); return
     }
 
-    const hasDate = startDate && endDate
-    const dateParams: any[] = hasDate ? [startDate, `${endDate} 23:59:59`] : []
-
-    const project = db.prepare('SELECT * FROM projects WHERE id = ? AND is_deleted = 0').get(projectId) as any
+    const { project, rows } = getProjectMaterialReconciliation(db, projectId, startDate, endDate)
     if (!project) {
       return error(res, '项目不存在', 'NOT_FOUND', 404)
     }
 
-    // 获取BOM items
-    const bomItems = db.prepare(`
-      SELECT bi.*, m.name as material_name, m.spec, m.unit as material_unit, m.price
-      FROM bom_items bi
-      JOIN materials m ON bi.material_id = m.id
-      WHERE bi.bom_id = ? AND m.is_deleted = 0
-    `).all(project.bom_id || '') as any[]
-
-    // LIS病例数
-    const caseCount = db.prepare(`
-      SELECT COUNT(*) as count FROM lis_cases
-      WHERE project_id = ? ${hasDate ? 'AND operate_time >= ? AND operate_time <= ?' : ''}
-    `).get(projectId, ...dateParams) as any
-
-    const cases = caseCount?.count || 0
-
-    // 实际出库量
-    const actualOutbounds = db.prepare(`
-      SELECT oi.material_id, SUM(oi.quantity) as total_qty, m.unit, m.name, m.spec
-      FROM outbound_items oi
-      JOIN outbound_records o ON oi.outbound_id = o.id
-      JOIN materials m ON oi.material_id = m.id
-      WHERE o.project_id = ? AND o.status = 'completed' AND o.is_deleted = 0 ${hasDate ? 'AND o.created_at >= ? AND o.created_at <= ?' : ''}
-      GROUP BY oi.material_id
-    `).all(projectId, ...dateParams) as any[]
-
-    const result = bomItems.map((bi: any) => {
-      const theoryQty = cases * (bi.usage_per_sample || 0)
-      const actual = actualOutbounds.find((a: any) => a.material_id === bi.material_id)
-      const actualQty = actual?.total_qty || 0
-      const diff = actualQty - theoryQty
-      const diffRate = theoryQty > 0 ? ((diff / theoryQty) * 100).toFixed(1) : '0'
-
-      let status = 'match'
-      if (diff > theoryQty * 0.2) status = 'warn'
-      if (diff > theoryQty * 0.5) status = 'danger'
-      if (diff < -theoryQty * 0.2) status = 'warn'
-
-      return {
-        materialId: bi.material_id,
-        materialName: bi.material_name,
-        spec: bi.spec,
-        bomUsagePerSample: bi.usage_per_sample,
-        bomUnit: bi.unit,
-        theoryQty,
-        theoryUnit: bi.unit,
-        actualQty,
-        actualUnit: actual?.unit || bi.unit,
-        diff,
-        diffRate: parseFloat(diffRate),
-        status,
-        price: bi.price || 0,
-      }
-    })
-
-    successList(res, result, 1, result.length, result.length)
+    successList(res, rows, 1, rows.length, rows.length)
   } catch (e: any) {
     error(res, e.message || '获取项目物料对账失败')
+  }
+})
+
+/**
+ * POST /api/v1/reconciliation/projects/:id/materials/audit
+ * 将项目物料对账差异写入成本异常台账
+ */
+router.post('/projects/:id/materials/audit', (req, res) => {
+  try {
+    const db = getDatabase()
+    const projectId = req.params.id
+    const { startDate, endDate } = req.body || {}
+    const { project, rows } = getProjectMaterialReconciliation(db, projectId, startDate, endDate)
+    if (!project) {
+      return error(res, '项目不存在', 'NOT_FOUND', 404)
+    }
+
+    const yearMonth = exceptionMonth(startDate, endDate)
+    const operator = (req as any).user?.username || 'system'
+    let created = 0
+    let updated = 0
+    let resolved = 0
+    const exceptions: any[] = []
+
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      for (const row of rows) {
+        const sourceId = reconciliationSourceId(projectId, row.materialId, startDate, endDate)
+        const existing = db.prepare(`
+          SELECT * FROM cost_exceptions
+          WHERE source_module = 'reconciliation'
+            AND source_type = 'project_material'
+            AND source_id = ?
+            AND exception_type = 'reconciliation_variance'
+            AND status = 'open'
+        `).get(sourceId) as any
+
+        if (row.status === 'match') {
+          if (existing) {
+            db.prepare(`
+              UPDATE cost_exceptions
+              SET status = 'resolved', resolved_by = ?, resolved_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+              WHERE id = ?
+            `).run(operator, existing.id)
+            resolved += 1
+          }
+          continue
+        }
+
+        const severity = row.status === 'danger' ? 'error' : 'warning'
+        const message = `${project.name || project.project_name || '项目'} / ${row.materialName} 对账差异 ${row.diff} ${row.actualUnit || row.bomUnit || ''}`.trim()
+        const details = {
+          projectId,
+          projectName: project.name,
+          materialId: row.materialId,
+          materialName: row.materialName,
+          theoryQty: row.theoryQty,
+          actualQty: row.actualQty,
+          diff: row.diff,
+          diffRate: row.diffRate,
+          status: row.status,
+          startDate: startDate || null,
+          endDate: endDate || null,
+        }
+
+        if (existing) {
+          db.prepare(`
+            UPDATE cost_exceptions
+            SET severity = ?, message = ?, details = ?, year_month = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+          `).run(severity, message, JSON.stringify(details), yearMonth, existing.id)
+          updated += 1
+          exceptions.push({ id: existing.id, exceptionNo: existing.exception_no, materialId: row.materialId, status: row.status })
+        } else {
+          const record = recordCostException(db, {
+            sourceModule: 'reconciliation',
+            sourceType: 'project_material',
+            sourceId,
+            projectId,
+            bomId: project.bom_id || null,
+            yearMonth,
+            exceptionType: 'reconciliation_variance',
+            severity,
+            message,
+            details,
+          })
+          created += 1
+          exceptions.push({ ...record, materialId: row.materialId, status: row.status })
+        }
+      }
+      db.exec('COMMIT')
+    } catch (innerErr) {
+      db.exec('ROLLBACK')
+      throw innerErr
+    }
+
+    success(res, {
+      total: rows.length,
+      warningCount: rows.filter(row => row.status === 'warn').length,
+      dangerCount: rows.filter(row => row.status === 'danger').length,
+      created,
+      updated,
+      resolved,
+      exceptions,
+    }, '对账差异审计完成')
+  } catch (e: any) {
+    if (e.message === 'Invalid date format') {
+      error(res, 'Invalid date format', 'INVALID_PARAMETER', 400); return
+    }
+    error(res, e.message || '对账差异审计失败')
   }
 })
 
@@ -324,6 +697,7 @@ router.get('/materials', (req, res) => {
       let status = 'match'
       if (diff > theoryTotal * 0.2) status = 'warn'
       if (diff > theoryTotal * 0.5) status = 'danger'
+      if (diff < -theoryTotal * 0.2) status = 'warn'
 
       return {
         materialId: m.id,
@@ -353,42 +727,44 @@ router.get('/materials', (req, res) => {
 router.get('/cases', (req, res) => {
   try {
     const db = getDatabase()
-    const { page = '1', pageSize = '20', search, projectId, status } = req.query as Record<string, string>
+    const { page = '1', pageSize = '20', search, projectId, status, startDate, endDate } = req.query as Record<string, string>
+    if (!validateDateRange(startDate, endDate)) {
+      error(res, 'Invalid date format', 'INVALID_PARAMETER', 400); return
+    }
+
     const pageNum = Math.max(1, parseInt(page))
-    const offset = (pageNum - 1) * parseInt(pageSize)
-
-    let where = 'WHERE 1=1'
-    const params: any[] = []
-    if (search) { where += ' AND (case_no LIKE ? OR project_name LIKE ?)'; params.push(`%${search}%`, `%${search}%`) }
-    if (projectId) { where += ' AND project_id = ?'; params.push(projectId) }
-    if (status) { where += ' AND status = ?'; params.push(status) }
-
-    // For JOIN query, qualify column names with table alias
-    let joinWhere = 'WHERE 1=1'
-    if (search) { joinWhere += ' AND (lc.case_no LIKE ? OR lc.project_name LIKE ?)' }
-    if (projectId) { joinWhere += ' AND lc.project_id = ?' }
-    if (status) { joinWhere += ' AND lc.status = ?' }
+    const safePageSize = Math.max(1, parseInt(pageSize))
+    const offset = (pageNum - 1) * safePageSize
+    const filters = { search, projectId, status, startDate, endDate }
+    const plainFilter = buildCaseFilterClause(filters)
+    const joinFilter = buildCaseFilterClause(filters, 'lc')
 
     const list = db.prepare(`
       SELECT lc.*, p.name as joined_project_name, p.bom_id as joined_bom_id
       FROM lis_cases lc
       LEFT JOIN projects p ON lc.project_id = p.id AND p.is_deleted = 0
-      ${joinWhere}
+      ${joinFilter.where}
       ORDER BY lc.operate_time DESC
       LIMIT ? OFFSET ?
-    `).all(...params, parseInt(pageSize), offset) as any[]
+    `).all(...joinFilter.params, safePageSize, offset) as any[]
 
-    const count = (db.prepare(`SELECT COUNT(*) as count FROM lis_cases ${where}`).get(...params) as any)?.count || 0
+    const count = (db.prepare(`SELECT COUNT(*) as count FROM lis_cases ${plainFilter.where}`).get(...plainFilter.params) as any)?.count || 0
 
     const result = list.map((c: any) => {
       return {
         ...c,
+        caseNo: c.case_no,
+        projectId: c.project_id,
         projectName: c.joined_project_name || c.project_name || '-',
+        bomId: c.joined_bom_id || null,
         hasBom: !!c.joined_bom_id,
+        operateTime: c.operate_time,
+        importBatch: c.import_batch,
+        createdAt: c.created_at,
       }
     })
 
-    successList(res, result, pageNum, parseInt(pageSize), count)
+    successList(res, result, pageNum, safePageSize, count)
   } catch (e: any) {
     error(res, e.message || '获取病例列表失败')
   }
@@ -411,10 +787,14 @@ router.post('/cases/import', (req, res) => {
 
     db.exec('BEGIN IMMEDIATE')
     try {
-      // 预加载有效项目 ID 集合
-      const validProjects = new Set(
-        (db.prepare("SELECT id FROM projects WHERE is_deleted = 0").all() as any[]).map(p => p.id)
-      )
+      // 预加载项目，支持按 ID、编码或名称匹配。LIS 导入文件通常只有项目名称。
+      const projects = db.prepare("SELECT id, code, name FROM projects WHERE is_deleted = 0").all() as any[]
+      const projectsById = new Map(projects.map(p => [p.id, p]))
+      const projectsByNameOrCode = new Map<string, any>()
+      for (const project of projects) {
+        if (project.name) projectsByNameOrCode.set(String(project.name).toLowerCase(), project)
+        if (project.code) projectsByNameOrCode.set(String(project.code).toLowerCase(), project)
+      }
 
       const stmt = db.prepare(`
         INSERT INTO lis_cases (id, case_no, project_id, project_name, operator, operate_time, import_batch)
@@ -428,31 +808,59 @@ router.post('/cases/import', (req, res) => {
 
       let successCount = 0
       let skippedCount = 0
-      for (const item of items) {
-        const projectId = item.projectId || item.project_id || ''
-        // 验证 project_id 是否存在
-        if (projectId && !validProjects.has(projectId)) {
+      let unmatchedCount = 0
+      const errors: Array<{ row: number; caseNo?: string; message: string }> = []
+      for (const [index, item] of items.entries()) {
+        const row = index + 1
+        const caseNo = String(item.caseNo || item.case_no || '').trim()
+        const projectName = String(item.projectName || item.project_name || '').trim()
+        const operateTime = String(item.operateTime || item.operate_time || '').trim()
+        const operator = String(item.operator || '').trim()
+        if (!caseNo || !projectName || !operateTime) {
+          errors.push({
+            row,
+            caseNo,
+            message: !caseNo ? '病理号不能为空' : !projectName ? '检测项目不能为空' : '检测时间不能为空',
+          })
           skippedCount++
           continue
         }
-        const id = `LC-${Date.now()}-${Math.floor(Math.random() * 10000)}`
+        if (!validateLisOperateTime(operateTime)) {
+          errors.push({ row, caseNo, message: '检测时间格式错误，应为 YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss' })
+          skippedCount++
+          continue
+        }
+
+        const explicitProjectId = String(item.projectId || item.project_id || '').trim()
+        const project = findProjectForImportedCase(projectsById, projectsByNameOrCode, { ...item, projectName })
+        if (explicitProjectId && !project) {
+          errors.push({ row, caseNo, message: '指定检测项目不存在' })
+          skippedCount++
+          continue
+        }
+        if (!project) unmatchedCount++
         stmt.run(
-          id,
-          item.caseNo || item.case_no || '',
-          projectId,
-          item.projectName || item.project_name || '',
-          item.operator || '',
-          item.operateTime || item.operate_time || null,
+          uuidv4(),
+          caseNo,
+          project?.id || '',
+          project?.name || projectName,
+          operator,
+          operateTime,
           importBatch
         )
         successCount++
+      }
+
+      if (successCount === 0) {
+        db.exec('ROLLBACK')
+        return badImportResponse(res, '未找到有效病例数据', errors)
       }
 
       db.exec('COMMIT')
       const msg = skippedCount > 0
         ? `成功导入 ${successCount} 条病例数据，跳过 ${skippedCount} 条无效项目`
         : `成功导入 ${successCount} 条病例数据`
-      success(res, { importBatch, count: successCount, skipped: skippedCount }, msg)
+      success(res, { importBatch, count: successCount, skipped: skippedCount, unmatched: unmatchedCount, errors }, msg)
     } catch (e: any) {
       db.exec('ROLLBACK')
       throw e
@@ -474,6 +882,12 @@ router.put('/cases/:id', (req, res) => {
 
     const existing = db.prepare('SELECT * FROM lis_cases WHERE id = ?').get(id)
     if (!existing) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
+    let nextProjectName = projectName
+    if (projectId) {
+      const project = db.prepare('SELECT id, name FROM projects WHERE id = ? AND is_deleted = 0').get(projectId) as any
+      if (!project) { error(res, '项目不存在', 'NOT_FOUND', 404); return }
+      nextProjectName = projectName || project.name
+    }
 
     db.prepare(`
       UPDATE lis_cases SET
@@ -482,7 +896,7 @@ router.put('/cases/:id', (req, res) => {
         status = COALESCE(?, status),
         updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(projectId, projectName, status, id)
+    `).run(projectId, nextProjectName, status, id)
 
     success(res, null, '病例信息已更新')
   } catch (e: any) {
@@ -521,25 +935,34 @@ router.get('/logs', (req, res) => {
 router.post('/logs', (req, res) => {
   try {
     const db = getDatabase()
-    const { type, targetId, targetName, field, oldValue, newValue, reason, projectId, materialId, newUsage } = req.body
+    const { type, targetId, targetName, field, oldValue, newValue, reason, projectId, materialId, newUsage, newUnit } = req.body
 
     db.exec('BEGIN IMMEDIATE')
     try {
       // 如果提供了projectId、materialId和newUsage，先更新bom_items
       if (projectId && materialId && newUsage !== undefined) {
         const usage = Number(newUsage)
-        if (isNaN(usage) || usage < 0) {
+        if (!Number.isFinite(usage) || usage <= 0) {
           db.exec('ROLLBACK')
-          error(res, 'newUsage 必须为非负数', 'INVALID_PARAMETER', 400); return
+          error(res, 'newUsage 必须大于0', 'INVALID_PARAMETER', 400); return
         }
         const project = db.prepare('SELECT bom_id FROM projects WHERE id = ? AND is_deleted = 0').get(projectId) as any
-        if (project?.bom_id) {
-          db.prepare('UPDATE bom_items SET usage_per_sample = ? WHERE bom_id = ? AND material_id = ?')
-            .run(usage, project.bom_id, materialId)
+        if (!project?.bom_id) {
+          db.exec('ROLLBACK')
+          error(res, '项目未关联BOM', 'INVALID_PARAMETER', 400); return
+        }
+        const result = db.prepare(`
+          UPDATE bom_items
+          SET usage_per_sample = ?, unit = COALESCE(?, unit)
+          WHERE bom_id = ? AND material_id = ?
+        `).run(usage, newUnit || null, project.bom_id, materialId)
+        if (result.changes === 0) {
+          db.exec('ROLLBACK')
+          error(res, 'BOM物料不存在', 'NOT_FOUND', 404); return
         }
       }
 
-      const id = `LOG-${Date.now()}-${Math.floor(Math.random() * 1000)}`
+      const id = uuidv4()
       db.prepare(`
         INSERT INTO reconciliation_logs (id, type, target_id, target_name, field, old_value, new_value, reason, operator, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)

@@ -16,6 +16,26 @@ interface Props {
 export function CategoryFormModal({ open, editingId, form, flatList, onClose, onChange, onSubmit }: Props) {
   if (!open) return null
 
+  const parentById = new Map(flatList.map(category => [category.id, category.parentId || null]))
+  const isDescendantOfEditing = (category: Category) => {
+    if (!editingId) return false
+    let currentParentId = category.parentId || null
+    const visited = new Set<string>()
+    while (currentParentId) {
+      if (currentParentId === editingId) return true
+      if (visited.has(currentParentId)) return true
+      visited.add(currentParentId)
+      currentParentId = parentById.get(currentParentId) || null
+    }
+    return false
+  }
+  const parentOptions = flatList
+    .filter(c => c.id !== editingId && !isDescendantOfEditing(c) && c.level < 3)
+    .map(c => ({
+      value: c.id,
+      label: `${c.name} (${c.code})`,
+    }))
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
       onClick={e => { if (e.target === e.currentTarget) onClose() }}
@@ -58,10 +78,7 @@ export function CategoryFormModal({ open, editingId, form, flatList, onClose, on
               onChange={val => onChange({ ...form, parentId: val || null })}
               options={[
                 { value: '', label: '无（作为一级分类）' },
-                ...flatList.filter(c => c.id !== editingId).map(c => ({
-                  value: c.id,
-                  label: `${c.name} (${c.code})`,
-                })),
+                ...parentOptions,
               ]}
               placeholder="无（作为一级分类）"
             />

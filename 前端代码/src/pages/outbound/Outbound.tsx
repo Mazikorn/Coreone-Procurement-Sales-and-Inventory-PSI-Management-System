@@ -19,6 +19,24 @@ import OutboundTable from './components/OutboundTable'
 type QuickFilter = 'all' | 'today' | 'week' | 'month'
 type StatusFilter = '' | 'completed' | 'pending' | 'cancelled'
 
+export function mapOutboundRecordToForm(record: OutboundRecord, fallbackMaterialId = ''): FormData {
+  return {
+    type: record.type as FormData['type'],
+    projectId: record.projectId || '',
+    items: record.items?.map(item => ({
+      materialId: item.materialId,
+      batchId: item.batchId || undefined,
+      quantity: item.quantity,
+      usage: item.usage,
+      receiver: item.receiver,
+    })) || [{ materialId: fallbackMaterialId, quantity: 1 }],
+    remark: record.remark || '',
+    bomId: undefined,
+    sampleCount: undefined,
+    caseNo: record.caseNo || '',
+  }
+}
+
 export default function Outbound() {
   const { get, getNumber, setMultiple } = useUrlParams()
 
@@ -121,6 +139,7 @@ export default function Outbound() {
     remark: '',
     bomId: undefined,
     sampleCount: undefined,
+    caseNo: '',
   })
 
   const fetchRefs = async () => {
@@ -154,13 +173,22 @@ export default function Outbound() {
 
   // 统计数据（从后端获取）
   const [stats, setStats] = useState({
-    monthTotal: 0, completed: 0, pending: 0, cancelled: 0,
+    monthTotal: 0,
+    completed: 0,
+    pending: 0,
+    cancelled: 0,
+    quickCounts: { all: 0, today: 0, week: 0, month: 0 },
   })
 
   const fetchStats = async () => {
     try {
       const res: any = await outboundApi.getStats()
-      setStats(res.data || res)
+      const next = res.data || res
+      setStats(prev => ({
+        ...prev,
+        ...next,
+        quickCounts: next.quickCounts || prev.quickCounts,
+      }))
     } catch (e) { console.error(e) }
   }
 
@@ -168,17 +196,7 @@ export default function Outbound() {
     fetchStats()
   }, [])
 
-  const quickFilterCounts = useMemo(() => {
-    const today = new Date().toISOString().slice(0, 10)
-    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
-    const monthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
-    return {
-      all: data.length,
-      today: data.filter(d => d.createdAt?.startsWith(today)).length,
-      week: data.filter(d => d.createdAt >= weekAgo).length,
-      month: data.filter(d => d.createdAt >= monthAgo).length,
-    }
-  }, [data])
+  const quickFilterCounts = stats.quickCounts
 
   const openCreate = () => {
     setEditRecordId(null)
@@ -189,6 +207,7 @@ export default function Outbound() {
       remark: '',
       bomId: undefined,
       sampleCount: undefined,
+      caseNo: '',
     })
     fetchRefs()
     setCreateModalOpen(true)
@@ -196,14 +215,7 @@ export default function Outbound() {
 
   const openEdit = (record: OutboundRecord) => {
     setEditRecordId(record.id)
-    setForm({
-      type: record.type as any,
-      projectId: record.projectId || '',
-      items: record.items?.map(i => ({ materialId: i.materialId, quantity: i.quantity })) || [{ materialId: materials[0]?.id || '', quantity: 1 }],
-      remark: record.remark || '',
-      bomId: undefined,
-      sampleCount: undefined,
-    })
+    setForm(mapOutboundRecordToForm(record, materials[0]?.id || ''))
     fetchRefs()
     setCreateModalOpen(true)
   }
@@ -227,12 +239,17 @@ export default function Outbound() {
 
   const handleSubmit = async () => {
     // BOM 出库模式
-    if (form.bomId && form.sampleCount && form.sampleCount > 0) {
+    if (form.bomId || form.caseNo?.trim()) {
+      if (!form.sampleCount || form.sampleCount <= 0) {
+        toast.error('请填写有效样本数')
+        return
+      }
       try {
-        await outboundApi.createBom({
-          bomId: form.bomId,
+        const res = await outboundApi.createBom({
+          bomId: form.bomId || undefined,
           projectId: form.projectId || undefined,
           sampleCount: form.sampleCount,
+          caseNo: form.caseNo?.trim() || undefined,
           remark: form.remark || undefined,
         })
         toast.success('BOM出库登记成功')
@@ -339,12 +356,33 @@ export default function Outbound() {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;')
 
-  const handlePrintRecord = (record: OutboundRecord) => {
-    const w = window.open('', '_blank')
-    if (!w) return
-    const items = record.items?.map(i => `<tr><td>${escapeHtml(i.materialName || '')}</td><td>${escapeHtml(i.batchNo || '-')}</td><td>${i.quantity} ${escapeHtml(i.unit || '')}</td><td>${i.unitCost || 0}</td><td>${i.totalCost || 0}</td></tr>`).join('') || ''
-    w.document.write(`
-      <html><head><title>出库单 ${escapeHtml(record.outboundNo)}</title><style>
+  const buildPrintDocument = (records: OutboundRecord[]) => {
+    const pages = records.map(record => {
+      const items = record.items?.map(i => `
+        <tr>
+          <td>${escapeHtml(i.materialName || '')}</td>
+          <td>${escapeHtml(i.batchNo || '-')}</td>
+          <td>${i.quantity} ${escapeHtml(i.unit || '')}</td>
+          <td>${i.unitCost || 0}</td>
+          <td>${i.totalCost || 0}</td>
+        </tr>
+      `).join('') || ''
+
+      return `
+        <section class="print-page">
+          <h2>出库单</h2>
+          <div class="meta">单号：${escapeHtml(record.outboundNo)} | 项目：${escapeHtml(record.projectName || '-')} | 时间：${new Date(record.createdAt).toLocaleString()}</div>
+          <table><thead><tr><th>物料</th><th>批号</th><th>数量</th><th>单价</th><th>金额</th></tr></thead>
+          <tbody>${items}</tbody>
+          </table>
+          <div class="footer">操作人：${escapeHtml(record.operator || '-')} | 备注：${escapeHtml(record.remark || '无')}</div>
+          <div class="footer">本单据由 COREONE 系统自动生成</div>
+        </section>
+      `
+    }).join('')
+
+    return `
+      <html><head><title>出库单打印</title><style>
         body { font-family: sans-serif; padding: 40px; }
         h2 { text-align: center; margin-bottom: 8px; }
         .meta { text-align: center; color: #666; font-size: 12px; margin-bottom: 24px; }
@@ -352,18 +390,23 @@ export default function Outbound() {
         th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
         th { background: #f5f5f5; }
         .footer { margin-top: 24px; font-size: 12px; color: #999; text-align: center; }
-      </style></head><body>
-        <h2>出库单</h2>
-        <div class="meta">单号：${escapeHtml(record.outboundNo)} | 项目：${escapeHtml(record.projectName || '-')} | 时间：${new Date(record.createdAt).toLocaleString()}</div>
-        <table><thead><tr><th>物料</th><th>批号</th><th>数量</th><th>单价</th><th>金额</th></tr></thead>
-        <tbody>${items}</tbody>
-        </table>
-        <div class="footer">操作人：${escapeHtml(record.operator || '-')} | 备注：${escapeHtml(record.remark || '无')}</div>
-        <div class="footer">本单据由 COREONE 系统自动生成</div>
-      </body></html>
-    `)
+        .print-page { page-break-after: always; }
+        .print-page:last-child { page-break-after: auto; }
+      </style></head><body>${pages}</body></html>
+    `
+  }
+
+  const printRecords = (records: OutboundRecord[]) => {
+    if (records.length === 0) return
+    const w = window.open('', '_blank')
+    if (!w) return
+    w.document.write(buildPrintDocument(records))
     w.document.close()
     w.print()
+  }
+
+  const handlePrintRecord = (record: OutboundRecord) => {
+    printRecords([record])
   }
 
   const batchPrint = () => {
@@ -372,9 +415,7 @@ export default function Outbound() {
       return
     }
     const records = data.filter(d => selectedIds.has(d.id))
-    records.forEach((r, i) => {
-      setTimeout(() => handlePrintRecord(r), i * 500)
-    })
+    printRecords(records)
   }
 
   return (

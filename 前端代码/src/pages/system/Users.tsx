@@ -52,11 +52,17 @@ export default function Users() {
         roleFilter={page.roleFilter}
         statusFilter={page.statusFilter}
         selectedRoleId={page.selectedRoleId}
+        selectedIds={page.selectedIds}
         roles={page.roles}
         onKeywordChange={page.setKeyword}
         onRoleFilterChange={page.setRoleFilter}
         onStatusFilterChange={page.setStatusFilter}
         onSelectedRoleIdChange={page.setSelectedRoleId}
+        onToggleSelectAll={page.toggleSelectAll}
+        onToggleSelect={page.toggleSelect}
+        onClearSelection={page.clearSelection}
+        onBatchToggleStatus={page.batchToggleStatus}
+        onBatchDelete={page.batchDelete}
         onSearch={page.handleSearch}
         onReset={page.handleReset}
         onPageChange={page.setPage}
@@ -73,6 +79,7 @@ export default function Users() {
         open={page.modalType === 'create' || page.modalType === 'edit'}
         type={page.modalType === 'edit' ? 'edit' : 'create'}
         form={page.form}
+        roles={page.roles}
         onClose={() => page.setModalType(null)}
         onChange={page.setForm}
         onSubmit={page.handleSubmit}

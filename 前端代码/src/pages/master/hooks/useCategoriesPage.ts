@@ -188,10 +188,10 @@ export function useCategoriesPage() {
     setDeleteModalOpen(true)
   }
 
-  const confirmDelete = async (targetCategoryId?: string) => {
+  const confirmDelete = async () => {
     if (!deleteTarget) return
     try {
-      await categoryApi.delete(deleteTarget.id, targetCategoryId ? { targetCategoryId } : undefined)
+      await categoryApi.delete(deleteTarget.id)
       toast.success('分类删除成功')
       if (selectedId === deleteTarget.id) setSelectedId(null)
       setDeleteModalOpen(false)

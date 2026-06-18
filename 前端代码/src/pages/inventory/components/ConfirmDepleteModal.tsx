@@ -21,6 +21,7 @@ interface Props {
   onChangeRemainValue: (value: string) => void
   onChangeExpiredReason: (value: string) => void
   onChangeExpiredRemark: (value: string) => void
+  onConfirm: () => void
 }
 
 export function ConfirmDepleteModal({
@@ -35,6 +36,7 @@ export function ConfirmDepleteModal({
   onChangeRemainValue,
   onChangeExpiredReason,
   onChangeExpiredRemark,
+  onConfirm,
 }: Props) {
   if (!open || !item) return null
 
@@ -85,12 +87,12 @@ export function ConfirmDepleteModal({
             className="w-full resize-none rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
           />
         </div>
-        <div className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-700">
-          后端尚未提供耗尽确认接口，本弹窗只记录输入，不提交伪成功。
-        </div>
-        <div className="flex justify-end border-t border-gray-200 pt-4">
+        <div className="flex justify-end gap-3 border-t border-gray-200 pt-4">
           <button type="button" onClick={onClose} className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
-            关闭
+            取消
+          </button>
+          <button type="button" onClick={onConfirm} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
+            确认耗尽
           </button>
         </div>
       </div>

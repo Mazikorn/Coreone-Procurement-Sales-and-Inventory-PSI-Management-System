@@ -34,7 +34,20 @@ async function apiLogin(role: RoleKey): Promise<string> {
     body: JSON.stringify(cred),
   })
   const data = (await res.json()) as any
-  return data.data?.token || data.token
+  expect(res.status, `${role} API 登录失败: ${JSON.stringify(data)}`).toBe(200)
+  const token = data.data?.token || data.token
+  expect(token, `${role} API 登录未返回 token`).toBeTruthy()
+  return token
+}
+
+async function loginByStorage(page: Page, role: RoleKey) {
+  const token = await apiLogin(role)
+  const cred = ROLES[role]
+  await page.goto(`${FE_BASE}/login`, { waitUntil: 'domcontentloaded' })
+  await page.evaluate(({ token, role, username }) => {
+    localStorage.setItem('token', token)
+    localStorage.setItem('user', JSON.stringify({ username, realName: username, role }))
+  }, { token, role, username: cred.username })
 }
 
 async function apiFetch(token: string, method: string, path: string, body?: any) {
@@ -47,6 +60,97 @@ async function apiFetch(token: string, method: string, path: string, body?: any)
 async function getAnySupplierId(token: string): Promise<string> {
   const r = await apiFetch(token, 'GET', '/suppliers?page=1&pageSize=1')
   return r.data?.data?.list?.[0]?.id || ''
+}
+
+async function createSupplier(token: string, suffix = Date.now().toString(), overrides: any = {}) {
+  const name = overrides.name || `E2E供应商-${suffix}`
+  const res = await apiFetch(token, 'POST', '/suppliers', {
+    name,
+    contact: overrides.contact || `联系人-${suffix}`,
+    phone: overrides.phone || '13800138000',
+    email: overrides.email || `supplier-${suffix}@example.com`,
+    address: overrides.address || `E2E地址-${suffix}`,
+  })
+  expect(res.status).toBe(201)
+  const id = res.data?.data?.id
+  const code = res.data?.data?.code
+  expect(id, `创建供应商未返回 id: ${JSON.stringify(res.data)}`).toBeTruthy()
+  expect(code, `创建供应商未返回 code: ${JSON.stringify(res.data)}`).toBeTruthy()
+  return { id, code, name, suffix }
+}
+
+async function getSupplierByKeyword(token: string, keyword: string) {
+  const res = await apiFetch(token, 'GET', `/suppliers?keyword=${encodeURIComponent(keyword)}&page=1&pageSize=20`)
+  expect(res.status).toBe(200)
+  const list = res.data?.data?.list || []
+  return list.find((item: any) => item.name?.includes(keyword) || item.code === keyword)
+}
+
+function expectSupplierShape(item: any) {
+  expect(item).toEqual(expect.objectContaining({
+    id: expect.any(String),
+    code: expect.any(String),
+    name: expect.any(String),
+    status: expect.stringMatching(/^(active|inactive)$/),
+    cooperationCount: expect.any(Number),
+    totalAmount: expect.any(Number),
+    rating: expect.any(Number),
+    createdAt: expect.any(String),
+  }))
+}
+
+async function mockSuppliersPage(page: Page, options?: {
+  listRequests?: URL[]
+  statsRequests?: URL[]
+  name?: string
+  code?: string
+  status?: 'active' | 'inactive'
+}) {
+  const name = options?.name || 'Mock供应商'
+  const code = options?.code || 'SUP-MOCK-001'
+  const status = options?.status || 'active'
+  await page.route('**/api/v1/suppliers**', async (route) => {
+    const url = new URL(route.request().url())
+    if (url.pathname.endsWith('/suppliers/stats')) {
+      options?.statsRequests?.push(url)
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          data: { total: 1, active: status === 'active' ? 1 : 0, inactive: status === 'inactive' ? 1 : 0, newThisMonth: 1 },
+        }),
+      })
+      return
+    }
+
+    options?.listRequests?.push(url)
+    const keyword = url.searchParams.get('keyword') || ''
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        success: true,
+        data: {
+          list: [{
+            id: 'supplier-mock-001',
+            code,
+            name: keyword ? `${name}-${keyword}` : name,
+            contact: '王供应',
+            phone: '13800138000',
+            email: 'mock-supplier@example.com',
+            address: '上海市E2E路1号',
+            status,
+            cooperationCount: 3,
+            totalAmount: 12800,
+            rating: 4,
+            createdAt: '2026-06-18T10:00:00+08:00',
+          }],
+          pagination: { total: 1, page: 1, pageSize: 20 },
+        },
+      }),
+    })
+  })
 }
 
 async function cleanupTestData(token: string) {
@@ -646,119 +750,225 @@ test.describe('供应商管理 -> 业务流程树', () => {
 test.describe('供应商管理 -> 盲点分析补充', () => {
   test('BLIND-SUP-01. 供应商编码自动生成规则', async () => {
     const token = await apiLogin('admin')
-    const res = await apiFetch(token, 'POST', '/suppliers', {
-      name: `E2E编码-${Date.now()}`, contact: '编码', phone: '13800138000',
-    })
-    if (res.status === 201) expect(res.data?.data?.code).toBeDefined()
+    const first = await createSupplier(token, `code-a-${Date.now()}`)
+    const second = await createSupplier(token, `code-b-${Date.now()}`)
+    expect(first.code).toMatch(/^SUP-\d{5}$/)
+    expect(second.code).toMatch(/^SUP-\d{5}$/)
+    expect(first.code).not.toBe(second.code)
   })
-  test('BLIND-SUP-02. 供应商合作次数统计', async ({ page }) => {
+  test('BLIND-SUP-02. 供应商合作次数统计', async () => {
     const token = await apiLogin('admin')
-    const res = await apiFetch(token, 'GET', '/suppliers?page=1&pageSize=1')
-    expect(res.status).toBe(200)
+    const created = await createSupplier(token, `coop-${Date.now()}`)
+    const supplier = await getSupplierByKeyword(token, created.name)
+    expect(supplier).toBeTruthy()
+    expect(supplier.cooperationCount).toBe(0)
   })
-  test('BLIND-SUP-03. 供应商累计金额统计', async ({ page }) => {
+  test('BLIND-SUP-03. 供应商累计金额统计', async () => {
     const token = await apiLogin('admin')
-    const res = await apiFetch(token, 'GET', '/suppliers?page=1&pageSize=1')
-    expect(res.status).toBe(200)
+    const created = await createSupplier(token, `amount-${Date.now()}`)
+    const supplier = await getSupplierByKeyword(token, created.name)
+    expect(supplier).toBeTruthy()
+    expect(supplier.totalAmount).toBe(0)
   })
   test('BLIND-SUP-04. 供应商列表导出功能', async ({ page }) => {
-    await loginAs(page, 'admin')
-    await page.goto(`${FE_BASE}/suppliers`)
-    await page.waitForTimeout(1000)
+    await loginByStorage(page, 'admin')
+    await mockSuppliersPage(page)
+    await page.goto(`${FE_BASE}/suppliers`, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByRole('heading', { name: '供应商管理' })).toBeVisible({ timeout: 15000 })
+    await expect(page.getByRole('button', { name: /^导出$/ })).toHaveCount(0)
   })
   test('BLIND-SUP-05. 供应商打印功能', async ({ page }) => {
-    await loginAs(page, 'admin')
-    await page.goto(`${FE_BASE}/suppliers`)
-    await page.waitForTimeout(1000)
+    await loginByStorage(page, 'admin')
+    await mockSuppliersPage(page)
+    await page.goto(`${FE_BASE}/suppliers`, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByRole('heading', { name: '供应商管理' })).toBeVisible({ timeout: 15000 })
+    await expect(page.getByRole('button', { name: /^打印$/ })).toHaveCount(0)
   })
   test('BLIND-SUP-06. 供应商页面响应式布局', async ({ page }) => {
-    await loginAs(page, 'admin')
+    await loginByStorage(page, 'admin')
     await page.setViewportSize({ width: 375, height: 667 })
-    await page.goto(`${FE_BASE}/suppliers`)
-    await page.waitForTimeout(1000)
+    await mockSuppliersPage(page, { name: '移动端供应商' })
+    await page.goto(`${FE_BASE}/suppliers`, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByRole('heading', { name: '供应商管理' })).toBeVisible({ timeout: 15000 })
+    await expect(page.getByPlaceholder('搜索供应商名称')).toBeVisible()
+    await expect(page.getByText('移动端供应商')).toBeVisible()
+    await expect(page.getByText('供应商总数').locator('..')).toContainText('1')
+
+    const incoherentOverflow = await page.evaluate(() => {
+      const viewportWidth = document.documentElement.clientWidth
+      return Array.from(document.querySelectorAll('main *')).filter((node) => {
+        const element = node as HTMLElement
+        if (element.closest('.overflow-x-auto')) return false
+        const style = getComputedStyle(element)
+        if (style.position === 'fixed' || style.position === 'absolute') return false
+        if (style.overflowX === 'auto' || style.overflowX === 'scroll') return false
+        const rect = element.getBoundingClientRect()
+        return rect.width > 0 && (rect.left < -2 || rect.right > viewportWidth + 2)
+      }).length
+    })
+    expect(incoherentOverflow).toBe(0)
   })
   test('BLIND-SUP-07. 供应商页面加载性能', async ({ page }) => {
-    await loginAs(page, 'admin')
+    await loginByStorage(page, 'admin')
+    const listRequests: URL[] = []
+    const statsRequests: URL[] = []
+    await mockSuppliersPage(page, { listRequests, statsRequests, name: '性能供应商' })
     const start = Date.now()
-    await page.goto(`${FE_BASE}/suppliers`)
-    await page.waitForTimeout(2000)
-    expect(Date.now() - start).toBeLessThan(10000)
+    await page.goto(`${FE_BASE}/suppliers`, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByText('性能供应商')).toBeVisible({ timeout: 5000 })
+    expect(Date.now() - start).toBeLessThan(5000)
+    expect(listRequests.length).toBeGreaterThanOrEqual(1)
+    expect(listRequests.length).toBeLessThanOrEqual(2)
+    expect(statsRequests.length).toBeGreaterThanOrEqual(1)
+    expect(statsRequests.length).toBeLessThanOrEqual(2)
   })
   test('BLIND-SUP-08. 供应商搜索防抖', async ({ page }) => {
-    await loginAs(page, 'admin')
-    await page.goto(`${FE_BASE}/suppliers`)
-    await page.waitForTimeout(800)
-    const search = page.locator('input[placeholder*="搜索"], input[type="search"]').first()
-    if (await search.isVisible().catch(() => false)) {
-      await search.fill('a')
-      await search.fill('ab')
-      await page.waitForTimeout(600)
-    }
+    await loginByStorage(page, 'admin')
+    const listRequests: URL[] = []
+    const statsRequests: URL[] = []
+    await mockSuppliersPage(page, { listRequests, statsRequests })
+    await page.goto(`${FE_BASE}/suppliers`, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByText('Mock供应商')).toBeVisible({ timeout: 15000 })
+
+    const search = page.getByPlaceholder('搜索供应商名称')
+    await search.fill('a')
+    await page.waitForTimeout(100)
+    await search.fill('ab')
+    await page.waitForTimeout(400)
+    expect(listRequests.some(url => url.searchParams.get('keyword') === 'a')).toBe(false)
+    expect(listRequests.some(url => url.searchParams.get('keyword') === 'ab')).toBe(false)
+    expect(statsRequests.some(url => url.searchParams.get('keyword') === 'a')).toBe(false)
+    expect(statsRequests.some(url => url.searchParams.get('keyword') === 'ab')).toBe(false)
+
+    await page.getByRole('button', { name: '查询' }).click()
+    await expect(page.getByText('Mock供应商-ab')).toBeVisible({ timeout: 15000 })
+    expect(listRequests.map(url => url.searchParams.get('keyword') || '')).toContain('ab')
+    expect(statsRequests.map(url => url.searchParams.get('keyword') || '')).toContain('ab')
   })
   test('BLIND-SUP-09. 供应商详情弹窗', async ({ page }) => {
-    await loginAs(page, 'admin')
-    await page.goto(`${FE_BASE}/suppliers`)
-    await page.waitForTimeout(1000)
-    const rows = page.locator('table tbody tr')
-    if (await rows.count() > 0) await rows.first().click()
+    await loginByStorage(page, 'admin')
+    await mockSuppliersPage(page, { name: '详情供应商', code: 'SUP-DETAIL-001' })
+    await page.goto(`${FE_BASE}/suppliers`, { waitUntil: 'domcontentloaded' })
+    const row = page.locator('tbody tr', { hasText: '详情供应商' }).first()
+    await expect(row).toBeVisible({ timeout: 15000 })
+    await row.getByRole('button', { name: '详情' }).click()
+    const detailModal = page.locator('.fixed.inset-0', { hasText: '供应商详情' }).first()
+    await expect(detailModal).toBeVisible({ timeout: 15000 })
+    await expect(detailModal).toContainText('SUP-DETAIL-001')
+    await expect(detailModal).toContainText('王供应')
+    await expect(detailModal).toContainText('13800138000')
+    await expect(detailModal).toContainText('年度采购额')
   })
-  test('BLIND-SUP-10. 供应商字段XSS防护', async () => {
+  test('BLIND-SUP-10. 供应商字段XSS防护', async ({ page }) => {
     const token = await apiLogin('admin')
-    const res = await apiFetch(token, 'POST', '/suppliers', {
-      name: '<script>alert(1)</script>', contact: 'XSS', phone: '13800138000',
+    const suffix = `xss-${Date.now()}`
+    const xssName = `E2E-XSS供应商-${suffix}<script>window.__supplierXssExecuted=true</script>`
+    await createSupplier(token, suffix, { name: xssName, contact: 'XSS联系人' })
+
+    await page.addInitScript(() => {
+      ;(window as any).__supplierXssExecuted = false
     })
-    expect([201, 409]).toContain(res.status)
+    await loginByStorage(page, 'admin')
+    await page.goto(`${FE_BASE}/suppliers`, { waitUntil: 'domcontentloaded' })
+    await page.getByPlaceholder('搜索供应商名称').fill(`E2E-XSS供应商-${suffix}`)
+    await page.getByRole('button', { name: '查询' }).click()
+    const row = page.locator('tbody tr', { hasText: `E2E-XSS供应商-${suffix}` }).first()
+    await expect(row).toBeVisible({ timeout: 15000 })
+    await row.getByRole('button', { name: '详情' }).click()
+    const detailModal = page.locator('.fixed.inset-0', { hasText: '供应商详情' }).first()
+    await expect(detailModal).toContainText(xssName)
+    await expect(detailModal.locator('script')).toHaveCount(0)
+    await expect.poll(() => page.evaluate(() => (window as any).__supplierXssExecuted)).toBe(false)
   })
   test('BLIND-SUP-11. 供应商字段SQL注入防护', async () => {
     const token = await apiLogin('admin')
-    const res = await apiFetch(token, 'POST', '/suppliers', {
-      name: "' OR '1'='1", contact: 'SQL', phone: '13800138000',
-    })
-    expect([201, 409]).toContain(res.status)
+    const suffix = `sql-${Date.now()}`
+    const injectedName = `E2E-SQL供应商-${suffix}' OR '1'='1`
+    const created = await createSupplier(token, suffix, { name: injectedName, contact: 'SQL联系人' })
+    const res = await apiFetch(token, 'GET', `/suppliers?keyword=${encodeURIComponent(injectedName)}&page=1&pageSize=20`)
+    expect(res.status).toBe(200)
+    const list = res.data?.data?.list || []
+    expect(list.map((item: any) => item.id)).toContain(created.id)
+    expect(list.every((item: any) => item.name.includes(`E2E-SQL供应商-${suffix}`))).toBe(true)
   })
   test('BLIND-SUP-12. 供应商API响应格式验证', async () => {
     const token = await apiLogin('admin')
-    const res = await apiFetch(token, 'GET', '/suppliers?page=1&pageSize=1')
+    const created = await createSupplier(token, `api-${Date.now()}`)
+    const res = await apiFetch(token, 'GET', `/suppliers?keyword=${encodeURIComponent(created.name)}&page=1&pageSize=10`)
     expect(res.status).toBe(200)
-    expect(res.data).toHaveProperty('data')
-    expect(res.data?.data).toHaveProperty('list')
-    const hasPagination = res.data?.data?.pagination !== undefined
-    if (hasPagination) {
-      expect(res.data?.data?.pagination).toHaveProperty('page')
-      expect(res.data?.data?.pagination).toHaveProperty('total')
-    } else {
-      expect(res.data?.data).toHaveProperty('page')
-      expect(res.data?.data).toHaveProperty('total')
-    }
+    expect(res.data).toMatchObject({ success: true })
+    expect(res.data?.data?.pagination).toMatchObject({ total: 1, page: 1, pageSize: 10 })
+    expect(res.data?.data?.list).toHaveLength(1)
+    expectSupplierShape(res.data.data.list[0])
+    expect(res.data.data.list[0]).toMatchObject({
+      id: created.id,
+      code: created.code,
+      name: created.name,
+      contact: expect.any(String),
+      phone: expect.any(String),
+      status: 'active',
+    })
   })
   test('BLIND-SUP-13. 供应商状态颜色标签', async ({ page }) => {
-    await loginAs(page, 'admin')
-    await page.goto(`${FE_BASE}/suppliers`)
-    await page.waitForTimeout(1000)
+    await loginByStorage(page, 'admin')
+    await mockSuppliersPage(page, { name: '状态供应商', status: 'inactive' })
+    await page.goto(`${FE_BASE}/suppliers`, { waitUntil: 'domcontentloaded' })
+    const row = page.locator('tbody tr', { hasText: '状态供应商' }).first()
+    await expect(row).toBeVisible({ timeout: 15000 })
+    const badge = row.locator('span', { hasText: '已终止' }).first()
+    await expect(badge).toBeVisible()
+    await expect(badge).toHaveClass(/bg-gray-100/)
+    await expect(badge).toHaveClass(/text-gray-600/)
   })
-  test('BLIND-SUP-14. 供应商排序功能', async ({ page }) => {
+  test('BLIND-SUP-14. 供应商排序功能', async () => {
     const token = await apiLogin('admin')
-    const res = await apiFetch(token, 'GET', '/suppliers?sort=code&order=asc')
+    const older = await createSupplier(token, `sort-a-${Date.now()}`)
+    await new Promise(resolve => setTimeout(resolve, 1100))
+    const newer = await createSupplier(token, `sort-b-${Date.now()}`)
+    const res = await apiFetch(token, 'GET', `/suppliers?keyword=${encodeURIComponent('E2E供应商-sort')}&page=1&pageSize=20`)
     expect(res.status).toBe(200)
+    const ids = (res.data?.data?.list || []).map((item: any) => item.id)
+    expect(ids.indexOf(newer.id)).toBeLessThan(ids.indexOf(older.id))
   })
-  test('BLIND-SUP-15. 供应商联系信息完整性', async ({ page }) => {
+  test('BLIND-SUP-15. 供应商联系信息完整性', async () => {
     const token = await apiLogin('admin')
-    const res = await apiFetch(token, 'GET', '/suppliers?page=1&pageSize=1')
-    expect(res.status).toBe(200)
-    const item = res.data?.data?.list?.[0]
-    if (item) expect(item.name).toBeDefined()
+    const suffix = `contact-${Date.now()}`
+    const created = await createSupplier(token, suffix, {
+      contact: `联系人-${suffix}`,
+      phone: '13900139000',
+      email: `contact-${suffix}@example.com`,
+      address: `E2E联系地址-${suffix}`,
+    })
+    const supplier = await getSupplierByKeyword(token, created.name)
+    expect(supplier).toMatchObject({
+      id: created.id,
+      name: created.name,
+      contact: `联系人-${suffix}`,
+      phone: '13900139000',
+      email: `contact-${suffix}@example.com`,
+      address: `E2E联系地址-${suffix}`,
+    })
   })
-  test('BLIND-SUP-16. 多角色同时操作互不影响', async ({ browser }) => {
-    const ctx1 = await browser.newContext()
-    const ctx2 = await browser.newContext()
-    const p1 = await ctx1.newPage()
-    const p2 = await ctx2.newPage()
-    await loginAs(p1, 'admin')
-    await loginAs(p2, 'procurement')
-    await p1.goto(`${FE_BASE}/suppliers`)
-    await p2.goto(`${FE_BASE}/suppliers`)
-    await ctx1.close()
-    await ctx2.close()
+  test('BLIND-SUP-16. 多角色同时操作互不影响', async () => {
+    const adminToken = await apiLogin('admin')
+    const procurementToken = await apiLogin('procurement')
+    const suffix = `multi-${Date.now()}`
+    const [adminCreated, procurementCreated] = await Promise.all([
+      createSupplier(adminToken, `admin-${suffix}`, { contact: `管理员-${suffix}` }),
+      createSupplier(procurementToken, `procurement-${suffix}`, { contact: `采购-${suffix}` }),
+    ])
+    const adminSupplier = await getSupplierByKeyword(adminToken, adminCreated.name)
+    const procurementSupplier = await getSupplierByKeyword(adminToken, procurementCreated.name)
+    expect(adminSupplier).toMatchObject({
+      id: adminCreated.id,
+      contact: `管理员-${suffix}`,
+    })
+    expect(procurementSupplier).toMatchObject({
+      id: procurementCreated.id,
+      contact: `采购-${suffix}`,
+    })
+    expect(adminSupplier.id).not.toBe(procurementSupplier.id)
+    expect(adminSupplier.code).not.toBe(procurementSupplier.code)
   })
 })
 

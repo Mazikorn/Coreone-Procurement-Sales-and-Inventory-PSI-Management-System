@@ -51,6 +51,7 @@ interface Props {
   statusFilter: string
   bomFilter: string
   selectedIds: Set<string>
+  canWrite: boolean
   onKeywordChange: (v: string) => void
   onTypeFilterChange: (v: string) => void
   onStatusFilterChange: (v: string) => void
@@ -63,11 +64,11 @@ interface Props {
   onPageSizeChange: (s: number) => void
   onOpenEdit: (row: Project) => void
   onOpenCopy: (row: Project) => void
+  onToggleStatus: (row: Project) => void
+  onOpenDelete: (row: Project) => void
   onBatchEnable: () => void
   onBatchDisable: () => void
   onClearSelection: () => void
-  onSetEditingRow: (row: Project) => void
-  onSetModalType: (t: 'edit' | null) => void
 }
 
 export function ProjectTable({
@@ -81,6 +82,7 @@ export function ProjectTable({
   statusFilter,
   bomFilter,
   selectedIds,
+  canWrite,
   onKeywordChange,
   onTypeFilterChange,
   onStatusFilterChange,
@@ -93,11 +95,11 @@ export function ProjectTable({
   onPageSizeChange,
   onOpenEdit,
   onOpenCopy,
+  onToggleStatus,
+  onOpenDelete,
   onBatchEnable,
   onBatchDisable,
   onClearSelection,
-  onSetEditingRow,
-  onSetModalType,
 }: Props) {
   const isAllSelected = data.length > 0 && selectedIds.size === data.length
 
@@ -152,7 +154,7 @@ export function ProjectTable({
         </div>
       </div>
 
-      {selectedIds.size > 0 && (
+      {canWrite && selectedIds.size > 0 && (
         <div className="px-5 py-3 bg-blue-50 border-b border-blue-100 flex items-center gap-3">
           <span className="text-sm text-gray-700">
             已选择 <span className="font-semibold">{selectedIds.size}</span> 项
@@ -173,14 +175,16 @@ export function ProjectTable({
         <table className="w-full text-sm">
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
-              <th className="px-4 py-3 w-10">
-                <input
-                  type="checkbox"
-                  checked={isAllSelected}
-                  onChange={e => onToggleSelectAll(e.target.checked)}
-                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                />
-              </th>
+              {canWrite && (
+                <th className="px-4 py-3 w-10">
+                  <input
+                    type="checkbox"
+                    checked={isAllSelected}
+                    onChange={e => onToggleSelectAll(e.target.checked)}
+                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
+                </th>
+              )}
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">服务编号</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">服务名称</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">服务类型</th>
@@ -194,7 +198,7 @@ export function ProjectTable({
           <tbody className="divide-y divide-gray-100">
             {loading ? (
               <tr>
-                <td colSpan={9} className="px-4 py-12 text-center text-gray-400">
+                <td colSpan={canWrite ? 9 : 8} className="px-4 py-12 text-center text-gray-400">
                   <div className="flex items-center justify-center gap-2">
                     <Loader2 className="w-5 h-5 animate-spin" />加载中...
                   </div>
@@ -202,7 +206,7 @@ export function ProjectTable({
               </tr>
             ) : data.length === 0 ? (
               <tr>
-                <td colSpan={9} className="px-4 py-12 text-center text-gray-400">
+                <td colSpan={canWrite ? 9 : 8} className="px-4 py-12 text-center text-gray-400">
                   <FolderOpen className="w-10 h-10 mx-auto mb-2 text-gray-300" />
                   <div>暂无检测服务</div>
                   <div className="text-xs mt-1">点击"新建服务"添加检测服务</div>
@@ -210,14 +214,16 @@ export function ProjectTable({
               </tr>
             ) : data.map(row => (
               <tr key={row.id} className="hover:bg-gray-50 transition-colors">
-                <td className="px-4 py-3">
-                  <input
-                    type="checkbox"
-                    checked={selectedIds.has(row.id)}
-                    onChange={e => onToggleSelectOne(row.id, e.target.checked)}
-                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                  />
-                </td>
+                {canWrite && (
+                  <td className="px-4 py-3">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(row.id)}
+                      onChange={e => onToggleSelectOne(row.id, e.target.checked)}
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                  </td>
+                )}
                 <td className="px-4 py-3 font-mono text-gray-600 text-xs">{row.code}</td>
                 <td className="px-4 py-3 font-medium text-gray-900">{row.name}</td>
                 <td className="px-4 py-3">
@@ -233,14 +239,17 @@ export function ProjectTable({
                     <span className="text-gray-400 text-sm">未配置</span>
                   )}
                 </td>
-                <td className={`px-4 py-3 font-medium ${
-                  row.supportableSamples !== undefined && row.supportableSamples <= 10
-                    ? 'text-red-500'
-                    : row.supportableSamples !== undefined && row.supportableSamples <= 50
-                      ? 'text-amber-500'
-                      : 'text-gray-700'
-                }`}>
-                  {row.supportableSamples !== undefined ? row.supportableSamples : '-'}
+                <td
+                  title={row.bomId ? '根据关联BOM物料用量和当前可用库存实时计算' : '未配置BOM，暂无法计算'}
+                  className={`px-4 py-3 font-medium ${
+                    row.supportableSamples !== undefined && row.supportableSamples !== null && row.supportableSamples <= 10
+                      ? 'text-red-500'
+                      : row.supportableSamples !== undefined && row.supportableSamples !== null && row.supportableSamples <= 50
+                        ? 'text-amber-500'
+                        : 'text-gray-700'
+                  }`}
+                >
+                  {row.supportableSamples !== undefined && row.supportableSamples !== null ? row.supportableSamples : '-'}
                 </td>
                 <td className="px-4 py-3">
                   <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
@@ -251,24 +260,36 @@ export function ProjectTable({
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => { onSetEditingRow(row); onSetModalType('edit') }}
-                      className="px-2 py-1 text-gray-500 hover:text-blue-600 text-xs font-medium transition-colors"
-                    >
-                      详情
-                    </button>
-                    <button
-                      onClick={() => onOpenEdit(row)}
-                      className="px-2 py-1 text-gray-500 hover:text-blue-600 text-xs font-medium transition-colors"
-                    >
-                      编辑
-                    </button>
-                    <button
-                      onClick={() => onOpenCopy(row)}
-                      className="px-2 py-1 text-gray-500 hover:text-blue-600 text-xs font-medium transition-colors"
-                    >
-                      复制
-                    </button>
+                    {canWrite ? (
+                      <>
+                        <button
+                          onClick={() => onOpenEdit(row)}
+                          className="px-2 py-1 text-gray-500 hover:text-blue-600 text-xs font-medium transition-colors"
+                        >
+                          编辑
+                        </button>
+                        <button
+                          onClick={() => onOpenCopy(row)}
+                          className="px-2 py-1 text-gray-500 hover:text-blue-600 text-xs font-medium transition-colors"
+                        >
+                          复制
+                        </button>
+                        <button
+                          onClick={() => onToggleStatus(row)}
+                          className="px-2 py-1 text-gray-500 hover:text-amber-600 text-xs font-medium transition-colors"
+                        >
+                          {row.status === 'active' ? '停用' : '启用'}
+                        </button>
+                        <button
+                          onClick={() => onOpenDelete(row)}
+                          className="px-2 py-1 text-gray-500 hover:text-red-600 text-xs font-medium transition-colors"
+                        >
+                          删除
+                        </button>
+                      </>
+                    ) : (
+                      <span className="px-2 py-1 text-gray-400 text-xs">只读</span>
+                    )}
                   </div>
                 </td>
               </tr>

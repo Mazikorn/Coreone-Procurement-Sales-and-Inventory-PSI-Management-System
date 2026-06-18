@@ -47,23 +47,21 @@ async function apiFetch(token: string, method: string, path: string, body?: any)
 // 1. 设备类型列表 (6 tests)
 // ────────────────────────────────────────────
 test.describe('设备类型管理 -> 查看设备类型列表', () => {
-  test('EQT-LIST-01. admin可查看设备类型列表', async ({ page }) => {
-    await loginAs(page, 'admin')
-    await page.goto(`${FE_BASE}/equipment/types`)
-    await expect(page.locator('body')).toBeVisible({ timeout: 30000 })
-  })
-
-  test('EQT-LIST-02. technician可查看设备类型列表', async ({ page }) => {
-    await loginAs(page, 'technician')
-    await page.goto(`${FE_BASE}/equipment/types`)
-    await expect(page.locator('body')).toBeVisible({ timeout: 30000 })
-  })
-
-  test('EQT-LIST-03. pathologist可查看设备类型列表', async ({ page }) => {
-    await loginAs(page, 'pathologist')
-    await page.goto(`${FE_BASE}/equipment/types`)
-    await expect(page.locator('body')).toBeVisible({ timeout: 30000 })
-  })
+  for (const role of READ_ROLES) {
+    test(`EQT-LIST-01-${role}. ${role}可查看设备类型列表`, async ({ page }) => {
+      await loginAs(page, role)
+      await page.goto(`${FE_BASE}/equipment/types`)
+      await expect(page.getByRole('heading', { name: '设备类型管理' })).toBeVisible({ timeout: 30000 })
+      await expect(page.getByText('管理设备分类，用于 BOM 成本计算和折旧统计')).toBeVisible()
+      if (role === 'admin') {
+        await expect(page.getByRole('button', { name: /新增类型/ })).toBeVisible()
+      } else {
+        await expect(page.getByRole('button', { name: /新增类型/ })).toHaveCount(0)
+        await expect(page.getByRole('button', { name: '编辑' })).toHaveCount(0)
+        await expect(page.getByRole('button', { name: '删除' })).toHaveCount(0)
+      }
+    })
+  }
 
   test('EQT-LIST-04. warehouse_manager访问返回403', async () => {
     const res = await apiFetch(await apiLogin('warehouse_manager'), 'GET', '/equipment-types')
@@ -105,6 +103,20 @@ test.describe('设备类型管理 -> 创建设备类型', () => {
     expect(res.data?.success).toBeTruthy()
   })
 
+  test('EQT-CREATE-01B. technician创建设备类型返回403', async () => {
+    const token = await apiLogin('technician')
+    const res = await apiFetch(token, 'POST', '/equipment-types', {
+      name: `E2E技术员越权类型_${Date.now()}`,
+      code: `E2E_TECH_${Date.now()}`,
+      defaultPurchasePrice: 100000,
+      defaultValue: 10000,
+      defaultDepreciableLifeYears: 5,
+      defaultDepreciationMethod: 'straight_line',
+      status: 'active',
+    })
+    expect(res.status).toBe(403)
+  })
+
   test('EQT-CREATE-02. 表单校验name为空返回400', async () => {
     const token = await apiLogin('admin')
     const res = await apiFetch(token, 'POST', '/equipment-types', {
@@ -135,7 +147,7 @@ test.describe('设备类型管理 -> 编辑设备类型', () => {
     const updatedName = `E2E编辑后_${Date.now()}`
     const editRes = await apiFetch(token, 'PUT', `/equipment-types/${id}`, {
       name: updatedName,
-      status: 1,
+      status: 'active',
     })
     expect(editRes.status).toBe(200)
     expect(editRes.data?.success).toBeTruthy()

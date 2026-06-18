@@ -1,4 +1,4 @@
-import { X, Download, Printer } from 'lucide-react'
+import { AlertTriangle, Download, Printer, X } from 'lucide-react'
 import { Pagination } from '@/components/ui/Pagination'
 import type { OutboundRecord } from '@/types'
 import { formatDate } from '@/lib/utils'
@@ -14,6 +14,13 @@ const typeConfig: Record<string, string> = {
   project: '项目出库',
   transfer: '调拨出库',
   scrap: '报废出库',
+}
+
+const costStatusConfig: Record<string, { label: string; bg: string; text: string }> = {
+  pending_cost: { label: '待核算', bg: 'bg-gray-100', text: 'text-gray-600' },
+  costed: { label: '已核算', bg: 'bg-emerald-50', text: 'text-emerald-700' },
+  cost_exception: { label: '成本异常', bg: 'bg-red-50', text: 'text-red-700' },
+  recalculated: { label: '已重算', bg: 'bg-blue-50', text: 'text-blue-700' },
 }
 
 interface OutboundTableProps {
@@ -116,6 +123,7 @@ export default function OutboundTable({
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">领用人</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">出库时间</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ABC总成本</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">成本状态</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">收费金额</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">利润</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状态</th>
@@ -125,16 +133,17 @@ export default function OutboundTable({
           <tbody className="divide-y divide-gray-100">
             {loading ? (
               <tr>
-                <td colSpan={14} className="px-4 py-8 text-center text-gray-400">加载中...</td>
+                <td colSpan={15} className="px-4 py-8 text-center text-gray-400">加载中...</td>
               </tr>
             ) : data.length === 0 ? (
               <tr>
-                <td colSpan={14} className="px-4 py-8 text-center text-gray-400">暂无数据</td>
+                <td colSpan={15} className="px-4 py-8 text-center text-gray-400">暂无数据</td>
               </tr>
             ) : (
               data.map(row => {
                 const firstItem = row.items?.[0]
                 const cfg = statusConfig[row.status] || statusConfig.completed
+                const costCfg = costStatusConfig[row.costStatus || 'pending_cost'] || costStatusConfig.pending_cost
                 return (
                   <tr
                     key={row.id}
@@ -187,6 +196,26 @@ export default function OutboundTable({
                     <td className="px-4 py-3 text-gray-500">{formatDate(row.createdAt)}</td>
                     <td className="px-4 py-3 text-gray-900">
                       {row.abcTotalCost ? `¥${row.abcTotalCost.toFixed(2)}` : '-'}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${costCfg.bg} ${costCfg.text}`}>
+                          {row.costStatus === 'cost_exception' && <AlertTriangle className="h-3 w-3" />}
+                          {costCfg.label}
+                        </span>
+                        {row.costStatus === 'cost_exception' && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              navigate(`/abc/alerts?outboundId=${encodeURIComponent(row.id)}`)
+                            }}
+                            className="text-xs text-blue-600 hover:text-blue-700"
+                          >
+                            查看
+                          </button>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-gray-900">
                       {row.feeAmount ? `¥${row.feeAmount.toFixed(2)}` : '-'}

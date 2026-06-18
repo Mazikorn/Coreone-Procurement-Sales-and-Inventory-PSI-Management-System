@@ -115,6 +115,40 @@ describe('集成测试：BOM 管理', () => {
       expect(res.body.data.list.length).toBeGreaterThan(0)
     })
 
+    it('启停 BOM 只更新状态且支持状态筛选', async () => {
+      const before = await request(app)
+        .get(`/api/v1/boms/${bomId}`)
+        .set('Authorization', `Bearer ${token}`)
+      expect(before.status).toBe(200)
+
+      const patch = await request(app)
+        .patch(`/api/v1/boms/${bomId}/status`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ status: 'inactive' })
+
+      expect(patch.status).toBe(200)
+      expect(patch.body.success).toBe(true)
+      expect(patch.body.data.status).toBe('inactive')
+
+      const detail = await request(app)
+        .get(`/api/v1/boms/${bomId}`)
+        .set('Authorization', `Bearer ${token}`)
+      expect(detail.body.data.status).toBe('inactive')
+      expect(detail.body.data.version).toBe(before.body.data.version)
+
+      const filtered = await request(app)
+        .get('/api/v1/boms?status=inactive')
+        .set('Authorization', `Bearer ${token}`)
+      expect(filtered.status).toBe(200)
+      expect(filtered.body.data.list.some((item: any) => item.id === bomId)).toBe(true)
+
+      await request(app)
+        .patch(`/api/v1/boms/${bomId}/status`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ status: 'active' })
+        .expect(200)
+    })
+
     it('获取 BOM 详情（含物料明细）', async () => {
       const res = await request(app)
         .get(`/api/v1/boms/${bomId}`)
@@ -150,6 +184,94 @@ describe('集成测试：BOM 管理', () => {
         .set('Authorization', `Bearer ${token}`)
       expect(detail.body.data.name).toBe('Ki-67检测-v2')
       expect(detail.body.data.materials[0].usagePerSample).toBe(2)
+    })
+
+    it('BOM 详情返回真实版本快照和变更摘要', async () => {
+      const detail = await request(app)
+        .get(`/api/v1/boms/${bomId}`)
+        .set('Authorization', `Bearer ${token}`)
+
+      expect(detail.status).toBe(200)
+      expect(detail.body.data.versionHistory.length).toBeGreaterThanOrEqual(2)
+
+      const [latest, initial] = detail.body.data.versionHistory
+      expect(latest.version).toBe('v1.1')
+      expect(latest.isCurrent).toBe(true)
+      expect(latest.changeLog).toContain('名称')
+      expect(latest.changeLog).toContain('物料用量')
+      expect(latest.snapshot.materials[0].usagePerSample).toBe(2)
+      expect(latest.diff.changedMaterials[0].materialId).toBe(materialId)
+      expect(latest.diff.changedMaterials[0].before.usagePerSample).toBe(1)
+      expect(latest.diff.changedMaterials[0].after.usagePerSample).toBe(2)
+
+      expect(initial.version).toBe('v1.0')
+      expect(initial.changeLog).toBe('初始版本')
+      expect(initial.snapshot.materials[0].usagePerSample).toBe(1)
+
+      const versionRows = db.prepare('SELECT * FROM bom_versions WHERE bom_id = ? ORDER BY created_at ASC')
+        .all(bomId) as any[]
+      expect(versionRows.length).toBeGreaterThanOrEqual(2)
+    })
+
+    it('追溯更新 BOM 时返回历史出库影响范围并写入版本历史', async () => {
+      const projectRes = await request(app)
+        .post('/api/v1/projects')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          code: `BOM-IMPACT-${Date.now()}`,
+          name: 'BOM影响范围项目',
+          type: 'ihc',
+          bomId,
+          status: 'active',
+        })
+      expect(projectRes.status).toBe(201)
+
+      const outbound = await request(app)
+        .post('/api/v1/outbound/bom')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ projectId: projectRes.body.data.id, bomId, sampleCount: 1 })
+      expect(outbound.status).toBe(201)
+
+      const update = await request(app)
+        .put(`/api/v1/boms/${bomId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          name: 'Ki-67检测-v3',
+          effectiveScope: 'retroactive',
+          materials: [
+            { materialId, usagePerSample: 3, unit: '支', price: 100 },
+          ],
+        })
+      expect(update.status).toBe(200)
+      expect(update.body.data.effectiveScope).toBe('retroactive')
+      expect(update.body.data.impactSummary.totalOutboundCount).toBeGreaterThanOrEqual(1)
+      expect(update.body.data.impactSummary.months[0].yearMonth).toMatch(/^\d{4}-\d{2}$/)
+      expect(update.body.data.retroactiveRuns.length).toBeGreaterThanOrEqual(1)
+      expect(update.body.data.retroactiveRuns[0].status).toBe('completed')
+      expect(update.body.data.retroactiveRuns[0].runType).toBe('bom_retroactive_recalculate')
+      expect(update.body.data.requiresRecalculation).toBe(false)
+
+      const abcDetail = db.prepare(`
+        SELECT cost_status, cost_run_id, source_snapshot
+        FROM outbound_abc_details
+        WHERE outbound_id = ?
+      `).get(outbound.body.data.id) as any
+      expect(abcDetail.cost_status).toBe('recalculated')
+      expect(abcDetail.cost_run_id).toBe(update.body.data.retroactiveRuns[0].id)
+      expect(JSON.parse(abcDetail.source_snapshot).bomSnapshot.version).toBe('v1.2')
+
+      const runRecord = db.prepare('SELECT run_type, status FROM cost_runs WHERE id = ?')
+        .get(update.body.data.retroactiveRuns[0].id) as any
+      expect(runRecord.run_type).toBe('bom_retroactive_recalculate')
+      expect(runRecord.status).toBe('completed')
+
+      const detail = await request(app)
+        .get(`/api/v1/boms/${bomId}`)
+        .set('Authorization', `Bearer ${token}`)
+      expect(detail.body.data.versionHistory[0].version).toBe('v1.2')
+      expect(detail.body.data.versionHistory[0].effectiveScope).toBe('retroactive')
+      expect(detail.body.data.versionHistory[0].impactSummary.totalOutboundCount).toBeGreaterThanOrEqual(1)
+      expect(detail.body.data.versionHistory[0].snapshot.materials[0].usagePerSample).toBe(3)
     })
 
     it('删除不存在的 BOM 返回 404', async () => {

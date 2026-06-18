@@ -18,7 +18,7 @@
 - [procurement-suite/create-purchase-order.spec.ts](procurement-suite/create-purchase-order.spec.ts) - 创建采购订单完整流程
 
 ### 5. 财务套件
-- [finance-suite/cost-analysis.spec.ts](finance-suite/cost-analysis.spec.ts) - 成本分析完整流程
+- [finance-suite/cost-trend.spec.ts](finance-suite/cost-trend.spec.ts) - ABC 成本趋势流程
 
 ### 6. 场景化测试
 - [technician-daily-work/full-day.spec.ts](technician-daily-work/full-day.spec.ts) - 技术员一天的工作完整流程
@@ -122,7 +122,7 @@
 │   ├── /projects → 项目页面
 │   ├── /suppliers → 供应商页面
 │   ├── /purchase-orders → 采购订单页面
-│   └── /cost-analysis → 成本分析页面
+│   └── /abc/dashboard → ABC成本看板
 └── API路径
     ├── /api/v1/auth/login → 登录API
     ├── /api/v1/inbound → 入库API

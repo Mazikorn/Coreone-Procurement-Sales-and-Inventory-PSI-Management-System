@@ -52,6 +52,83 @@ async function getAnyLocationId(token: string): Promise<string> {
   return r.data?.data?.list?.[0]?.id || ''
 }
 
+async function getRefs(token: string) {
+  const categories = await apiFetch(token, 'GET', '/categories?page=1&pageSize=1')
+  return {
+    category: categories.data?.data?.list?.[0],
+  }
+}
+
+async function createTransferLocation(token: string, suffix: number, namePart: string) {
+  const name = `调拨E2E${namePart}库位-${suffix}`
+  const res = await apiFetch(token, 'POST', '/locations', {
+    name,
+    type: 'shelf',
+    zone: `E2E-${suffix}`,
+    shelf: namePart,
+    position: '01',
+    capacity: 999,
+  })
+  expect(res.status).toBe(201)
+  return { id: res.data?.data?.id, name }
+}
+
+async function createTransferMaterial(token: string, suffix: number, categoryId: string, locationId: string) {
+  const name = `调拨E2E物料-${suffix}`
+  const res = await apiFetch(token, 'POST', '/materials', {
+    code: `E2E-TRANSFER-MAT-${suffix}`,
+    name,
+    spec: '1ml',
+    unit: '瓶',
+    categoryId,
+    locationId,
+    price: 12,
+    minStock: 0,
+    maxStock: 1000,
+    safetyStock: 0,
+    remark: `E2E调拨测试物料-${suffix}`,
+  })
+  expect(res.status).toBe(201)
+  return { id: res.data?.data?.id, name, price: 12 }
+}
+
+async function createInboundStock(token: string, materialId: string, batchNo: string, quantity: number, price: number, locationId: string) {
+  const inbound = await apiFetch(token, 'POST', '/inbound', {
+    type: 'direct',
+    materialId,
+    batchNo,
+    quantity,
+    price,
+    locationId,
+    expiryDate: '2028-12-31',
+    remark: `E2E调拨库存准备-${batchNo}`,
+  })
+  expect(inbound.status).toBe(201)
+}
+
+async function getInventoryRows(token: string, materialId: string, locationId?: string) {
+  const query = new URLSearchParams({ page: '1', pageSize: '100', materialId })
+  if (locationId) query.set('locationId', locationId)
+  const inventory = await apiFetch(token, 'GET', `/inventory?${query.toString()}`)
+  expect(inventory.status).toBe(200)
+  return inventory.data?.data?.list || []
+}
+
+async function getLocationStock(token: string, materialId: string, locationId: string) {
+  const rows = await getInventoryRows(token, materialId, locationId)
+  return Number(rows.find((row: any) => row.materialId === materialId)?.stock || 0)
+}
+
+async function createTransferFixture(token: string, suffix: number, stock = 9) {
+  const { category } = await getRefs(token)
+  expect(category?.id).toBeTruthy()
+  const fromLocation = await createTransferLocation(token, suffix, '来源')
+  const toLocation = await createTransferLocation(token, suffix, '目标')
+  const material = await createTransferMaterial(token, suffix, category.id, fromLocation.id)
+  await createInboundStock(token, material.id, `E2E-TRANSFER-${suffix}`, stock, material.price, fromLocation.id)
+  return { material, fromLocation, toLocation }
+}
+
 test.beforeEach(async () => {
   // 清理测试数据
   const token = await apiLogin('admin').catch(() => '')
@@ -66,6 +143,53 @@ test.beforeEach(async () => {
       }
     } catch { /* ignore */ }
   }
+})
+
+test.describe('调拨管理 -> 页面部分调拨与撤销', () => {
+  test('TR-UI-PARTIAL-01. 页面部分调拨后来源和目标库位明细正确，撤销后恢复', async ({ page }) => {
+    const token = await apiLogin('admin')
+    const suffix = Date.now()
+    const { category } = await getRefs(token)
+    expect(category?.id).toBeTruthy()
+    const fromLocation = await createTransferLocation(token, suffix, '来源')
+    const toLocation = await createTransferLocation(token, suffix, '目标')
+    const material = await createTransferMaterial(token, suffix, category.id, fromLocation.id)
+    await createInboundStock(token, material.id, `E2E-TRANSFER-${suffix}`, 9, material.price, fromLocation.id)
+
+    expect(await getLocationStock(token, material.id, fromLocation.id)).toBe(9)
+    expect(await getLocationStock(token, material.id, toLocation.id)).toBe(0)
+
+    await loginAs(page, 'admin')
+    await page.goto(`${FE_BASE}/transfers`, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByRole('heading', { name: '调拨管理' })).toBeVisible({ timeout: 15000 })
+
+    await page.getByRole('button', { name: '调拨入库' }).click()
+    await page.getByTestId('transfer-material-select').click()
+    await page.getByTestId(`option-${material.id}`).click()
+    await page.getByTestId('transfer-quantity-input').fill('3')
+    await page.getByTestId('transfer-to-location-select').click()
+    await page.getByTestId(`option-${toLocation.id}`).click()
+    await page.getByTestId('transfer-remark-input').fill(`E2E页面部分调拨-${suffix}`)
+    await page.getByTestId('transfer-confirm-btn').click()
+
+    await expect(page.getByText('调拨入库登记成功')).toBeVisible({ timeout: 15000 })
+    const createdRow = page.locator('tbody tr', { hasText: material.name }).first()
+    await expect(createdRow).toBeVisible({ timeout: 15000 })
+    await expect(createdRow).toContainText(fromLocation.name)
+    await expect(createdRow).toContainText(toLocation.name)
+    await expect(createdRow).toContainText('3')
+
+    expect(await getLocationStock(token, material.id, fromLocation.id)).toBe(6)
+    expect(await getLocationStock(token, material.id, toLocation.id)).toBe(3)
+
+    await createdRow.locator('button[title="撤销"]').click()
+    await page.getByRole('button', { name: '确认撤销' }).click()
+    await expect(page.getByText('调拨记录已撤销')).toBeVisible({ timeout: 15000 })
+    await expect(createdRow).toBeHidden({ timeout: 15000 })
+
+    expect(await getLocationStock(token, material.id, fromLocation.id)).toBe(9)
+    expect(await getLocationStock(token, material.id, toLocation.id)).toBe(0)
+  })
 })
 
 // ────────────────────────────────────────────
@@ -132,28 +256,24 @@ test.describe('调拨管理 -> 查看调拨列表', () => {
 test.describe('调拨管理 -> 创建调拨', () => {
   test('TR-CREATE-01. 正常用例：admin创建调拨成功', async () => {
     const token = await apiLogin('admin')
-    const mid = await getAnyMaterialId(token)
-    const lid = await getAnyLocationId(token)
-    if (!mid || !lid) { test.skip(); return }
+    const { material, fromLocation, toLocation } = await createTransferFixture(token, Date.now())
     const res = await apiFetch(token, 'POST', '/transfers/inbound', {
-      materialId: mid, quantity: 1,
-      fromLocationId: lid, fromLocationName: 'E2E来源',
-      toLocationId: lid, remark: 'E2E调拨测试',
+      materialId: material.id, quantity: 3,
+      fromLocationId: fromLocation.id, fromLocationName: fromLocation.name,
+      toLocationId: toLocation.id, remark: 'E2E调拨测试',
     })
     expect([200, 201]).toContain(res.status)
   })
   test('TR-CREATE-02. 正常用例：warehouse_manager创建调拨成功', async () => {
     const token = await apiLogin('warehouse_manager')
     const adminToken = await apiLogin('admin')
-    const mid = await getAnyMaterialId(adminToken)
-    const lid = await getAnyLocationId(adminToken)
-    if (!mid || !lid) { test.skip(); return }
+    const { material, fromLocation, toLocation } = await createTransferFixture(adminToken, Date.now())
     const res = await apiFetch(token, 'POST', '/transfers/inbound', {
-      materialId: mid, quantity: 1,
-      fromLocationId: lid, fromLocationName: 'E2E来源',
-      toLocationId: lid, remark: 'E2E调拨WM',
+      materialId: material.id, quantity: 3,
+      fromLocationId: fromLocation.id, fromLocationName: fromLocation.name,
+      toLocationId: toLocation.id, remark: 'E2E调拨WM',
     })
-    expect([200, 201, 403]).toContain(res.status)
+    expect([200, 201]).toContain(res.status)
   })
   test('TR-CREATE-03. 表单校验：缺少materialId返回400', async () => {
     const token = await apiLogin('admin')
@@ -228,10 +348,8 @@ test.describe('调拨管理 -> 创建调拨', () => {
   })
   test('TR-CREATE-10. 并发：快速双击提交', async () => {
     const token = await apiLogin('admin')
-    const mid = await getAnyMaterialId(token)
-    const lid = await getAnyLocationId(token)
-    if (!mid || !lid) { test.skip(); return }
-    const body = { materialId: mid, quantity: 1, fromLocationId: lid, fromLocationName: 'E2E', toLocationId: lid, remark: 'E2E并发' }
+    const { material, fromLocation, toLocation } = await createTransferFixture(token, Date.now(), 9)
+    const body = { materialId: material.id, quantity: 1, fromLocationId: fromLocation.id, fromLocationName: fromLocation.name, toLocationId: toLocation.id, remark: 'E2E并发' }
     const [r1, r2] = await Promise.all([
       apiFetch(token, 'POST', '/transfers/inbound', body),
       apiFetch(token, 'POST', '/transfers/inbound', body),
@@ -240,15 +358,13 @@ test.describe('调拨管理 -> 创建调拨', () => {
   })
   test('TR-CREATE-11. 调拨后库存不变（仅变更库位）', async () => {
     const token = await apiLogin('admin')
-    const mid = await getAnyMaterialId(token)
-    const lid = await getAnyLocationId(token)
-    if (!mid || !lid) { test.skip(); return }
-    const before = await apiFetch(token, 'GET', `/inventory?page=1&pageSize=1&materialId=${mid}`)
+    const { material, fromLocation, toLocation } = await createTransferFixture(token, Date.now(), 9)
+    const before = await apiFetch(token, 'GET', `/inventory?page=1&pageSize=1&materialId=${material.id}`)
     const beforeStock = before.data?.data?.list?.[0]?.stock || 0
     await apiFetch(token, 'POST', '/transfers/inbound', {
-      materialId: mid, quantity: 1, fromLocationId: lid, fromLocationName: 'E2E', toLocationId: lid, remark: 'E2E库存验证',
+      materialId: material.id, quantity: 3, fromLocationId: fromLocation.id, fromLocationName: fromLocation.name, toLocationId: toLocation.id, remark: 'E2E库存验证',
     })
-    const after = await apiFetch(token, 'GET', `/inventory?page=1&pageSize=1&materialId=${mid}`)
+    const after = await apiFetch(token, 'GET', `/inventory?page=1&pageSize=1&materialId=${material.id}`)
     const afterStock = after.data?.data?.list?.[0]?.stock || 0
     expect(afterStock).toBe(beforeStock)
   })
@@ -274,11 +390,9 @@ test.describe('调拨管理 -> 创建调拨', () => {
   })
   test('TR-CREATE-15. 正常用例：调拨单号格式', async () => {
     const token = await apiLogin('admin')
-    const mid = await getAnyMaterialId(token)
-    const lid = await getAnyLocationId(token)
-    if (!mid || !lid) { test.skip(); return }
+    const { material, fromLocation, toLocation } = await createTransferFixture(token, Date.now())
     const res = await apiFetch(token, 'POST', '/transfers/inbound', {
-      materialId: mid, quantity: 1, fromLocationId: lid, fromLocationName: 'E2E', toLocationId: lid, remark: 'E2E格式',
+      materialId: material.id, quantity: 3, fromLocationId: fromLocation.id, fromLocationName: fromLocation.name, toLocationId: toLocation.id, remark: 'E2E格式',
     })
     if (res.status === 200 || res.status === 201) {
       expect(res.data?.data?.inboundNo).toMatch(/^TF-/)
@@ -292,11 +406,9 @@ test.describe('调拨管理 -> 创建调拨', () => {
 test.describe('调拨管理 -> 删除调拨', () => {
   test('TR-DELETE-01. 正常用例：admin删除调拨记录', async () => {
     const token = await apiLogin('admin')
-    const mid = await getAnyMaterialId(token)
-    const lid = await getAnyLocationId(token)
-    if (!mid || !lid) { test.skip(); return }
+    const { material, fromLocation, toLocation } = await createTransferFixture(token, Date.now())
     const create = await apiFetch(token, 'POST', '/transfers/inbound', {
-      materialId: mid, quantity: 1, fromLocationId: lid, fromLocationName: 'E2E', toLocationId: lid, remark: 'E2E删除',
+      materialId: material.id, quantity: 3, fromLocationId: fromLocation.id, fromLocationName: fromLocation.name, toLocationId: toLocation.id, remark: 'E2E删除',
     })
     const id = create.data?.data?.id
     if (!id) { test.skip(); return }
@@ -312,11 +424,9 @@ test.describe('调拨管理 -> 删除调拨', () => {
     test(`TR-DELETE-03-${role}. 权限：${role}删除调拨返回403`, async () => {
       const token = await apiLogin(role)
       const adminToken = await apiLogin('admin')
-      const mid = await getAnyMaterialId(adminToken)
-      const lid = await getAnyLocationId(adminToken)
-      if (!mid || !lid) { test.skip(); return }
+      const { material, fromLocation, toLocation } = await createTransferFixture(adminToken, Date.now())
       const create = await apiFetch(adminToken, 'POST', '/transfers/inbound', {
-        materialId: mid, quantity: 1, fromLocationId: lid, fromLocationName: 'E2E', toLocationId: lid, remark: 'E2E权限',
+        materialId: material.id, quantity: 3, fromLocationId: fromLocation.id, fromLocationName: fromLocation.name, toLocationId: toLocation.id, remark: 'E2E权限',
       })
       const id = create.data?.data?.id
       if (!id) { test.skip(); return }
@@ -327,11 +437,9 @@ test.describe('调拨管理 -> 删除调拨', () => {
   }
   test('TR-DELETE-04. 并发：并发删除同一调拨', async () => {
     const token = await apiLogin('admin')
-    const mid = await getAnyMaterialId(token)
-    const lid = await getAnyLocationId(token)
-    if (!mid || !lid) { test.skip(); return }
+    const { material, fromLocation, toLocation } = await createTransferFixture(token, Date.now())
     const create = await apiFetch(token, 'POST', '/transfers/inbound', {
-      materialId: mid, quantity: 1, fromLocationId: lid, fromLocationName: 'E2E', toLocationId: lid, remark: 'E2E并发删除',
+      materialId: material.id, quantity: 3, fromLocationId: fromLocation.id, fromLocationName: fromLocation.name, toLocationId: toLocation.id, remark: 'E2E并发删除',
     })
     const id = create.data?.data?.id
     if (!id) { test.skip(); return }
@@ -355,11 +463,9 @@ test.describe('调拨管理 -> 删除调拨', () => {
   })
   test('TR-DELETE-07. 业务冲突：重复删除返回404', async () => {
     const token = await apiLogin('admin')
-    const mid = await getAnyMaterialId(token)
-    const lid = await getAnyLocationId(token)
-    if (!mid || !lid) { test.skip(); return }
+    const { material, fromLocation, toLocation } = await createTransferFixture(token, Date.now())
     const create = await apiFetch(token, 'POST', '/transfers/inbound', {
-      materialId: mid, quantity: 1, fromLocationId: lid, fromLocationName: 'E2E', toLocationId: lid, remark: 'E2E重复删除',
+      materialId: material.id, quantity: 3, fromLocationId: fromLocation.id, fromLocationName: fromLocation.name, toLocationId: toLocation.id, remark: 'E2E重复删除',
     })
     const id = create.data?.data?.id
     if (!id) { test.skip(); return }

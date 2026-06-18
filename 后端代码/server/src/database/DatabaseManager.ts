@@ -4,6 +4,7 @@ import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { createRequire } from 'module'
 import fs from 'fs'
+import { ROLE_PERMISSIONS } from '../constants/rolePermissions.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -46,6 +47,30 @@ export function initializeDatabase(): void {
       // Table may not exist yet; later CREATE TABLE statements will establish the base schema.
     }
   }
+  const mergePermissions = (current: unknown, required: string[]): string => {
+    let parsed: unknown = []
+    if (typeof current === 'string' && current.trim()) {
+      try {
+        parsed = JSON.parse(current)
+      } catch {
+        parsed = []
+      }
+    }
+    const existing = Array.isArray(parsed) ? parsed.filter(item => typeof item === 'string') : []
+    return JSON.stringify(Array.from(new Set([...existing, ...required])))
+  }
+  const removePermissions = (current: unknown, removed: string[]): string => {
+    let parsed: unknown = []
+    if (typeof current === 'string' && current.trim()) {
+      try {
+        parsed = JSON.parse(current)
+      } catch {
+        parsed = []
+      }
+    }
+    const existing = Array.isArray(parsed) ? parsed.filter(item => typeof item === 'string') : []
+    return JSON.stringify(existing.filter(item => !removed.includes(item)))
+  }
 
   database.exec(`
     CREATE TABLE IF NOT EXISTS material_categories (id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL, parent_id TEXT, level INTEGER NOT NULL, sort_order INTEGER DEFAULT 0, status INTEGER NOT NULL DEFAULT 1, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, created_by TEXT, updated_by TEXT, is_deleted INTEGER NOT NULL DEFAULT 0)
@@ -61,6 +86,18 @@ export function initializeDatabase(): void {
   `)
   database.exec(`
     CREATE TABLE IF NOT EXISTS inventory (id TEXT PRIMARY KEY, material_id TEXT NOT NULL UNIQUE, stock DECIMAL(18, 4) NOT NULL DEFAULT 0, locked_stock DECIMAL(18, 4) NOT NULL DEFAULT 0, location_id TEXT, last_inbound_id TEXT, last_inbound_date TEXT, last_outbound_id TEXT, last_outbound_date TEXT, update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)
+  `)
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS inventory_locations (id TEXT PRIMARY KEY, material_id TEXT NOT NULL, location_id TEXT NOT NULL, stock DECIMAL(18, 4) NOT NULL DEFAULT 0, locked_stock DECIMAL(18, 4) NOT NULL DEFAULT 0, update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(material_id, location_id))
+  `)
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS inventory_location_adjustments (id TEXT PRIMARY KEY, related_type TEXT NOT NULL, related_id TEXT NOT NULL, material_id TEXT NOT NULL, location_id TEXT NOT NULL, quantity_delta DECIMAL(18, 4) NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)
+  `)
+  database.exec(`
+    INSERT OR IGNORE INTO inventory_locations (id, material_id, location_id, stock, locked_stock, update_time)
+    SELECT 'invloc-' || material_id || '-' || location_id, material_id, location_id, stock, locked_stock, update_time
+    FROM inventory
+    WHERE location_id IS NOT NULL AND COALESCE(stock, 0) > 0
   `)
   database.exec(`
     CREATE TABLE IF NOT EXISTS batches (id TEXT PRIMARY KEY, material_id TEXT NOT NULL, batch_no TEXT NOT NULL, quantity DECIMAL(18, 4) NOT NULL DEFAULT 0, remaining DECIMAL(18, 4) NOT NULL DEFAULT 0, production_date TEXT, expiry_date TEXT, inbound_id TEXT NOT NULL, inbound_price DECIMAL(18, 4) DEFAULT 0, supplier_id TEXT, status INTEGER NOT NULL DEFAULT 1, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(material_id, batch_no))
@@ -92,7 +129,7 @@ export function initializeDatabase(): void {
     }
   } catch (e: any) { console.error('Migration error for batches:', e.message) }
   database.exec(`
-    CREATE TABLE IF NOT EXISTS inbound_records (id TEXT PRIMARY KEY, inbound_no TEXT NOT NULL UNIQUE, type TEXT NOT NULL, material_id TEXT NOT NULL, batch_id TEXT, batch_no TEXT, quantity DECIMAL(18, 4) NOT NULL, unit TEXT NOT NULL, price DECIMAL(18, 4) DEFAULT 0, amount DECIMAL(18, 4) DEFAULT 0, supplier_id TEXT, location_id TEXT NOT NULL, production_date TEXT, expiry_date TEXT, operator TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'completed', remark TEXT, cancel_reason TEXT, purchase_order_id TEXT, purchase_order_no TEXT, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, created_by TEXT, updated_by TEXT, is_deleted INTEGER NOT NULL DEFAULT 0)
+    CREATE TABLE IF NOT EXISTS inbound_records (id TEXT PRIMARY KEY, inbound_no TEXT NOT NULL UNIQUE, type TEXT NOT NULL, material_id TEXT NOT NULL, batch_id TEXT, batch_no TEXT, quantity DECIMAL(18, 4) NOT NULL, unit TEXT NOT NULL, price DECIMAL(18, 4) DEFAULT 0, amount DECIMAL(18, 4) DEFAULT 0, supplier_id TEXT, location_id TEXT NOT NULL, from_location_id TEXT, from_location_name TEXT, production_date TEXT, expiry_date TEXT, operator TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'completed', remark TEXT, cancel_reason TEXT, purchase_order_id TEXT, purchase_order_no TEXT, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, created_by TEXT, updated_by TEXT, is_deleted INTEGER NOT NULL DEFAULT 0)
   `)
 
   // 兼容旧数据库：添加 purchase_order_id / purchase_order_no 字段
@@ -157,6 +194,21 @@ export function initializeDatabase(): void {
     CREATE TABLE IF NOT EXISTS bom_items (id TEXT PRIMARY KEY, bom_id TEXT NOT NULL, material_id TEXT NOT NULL, usage_per_sample DECIMAL(18, 4) NOT NULL, unit TEXT NOT NULL, is_alternative INTEGER NOT NULL DEFAULT 0, main_item_id TEXT, sort_order INTEGER DEFAULT 0, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(bom_id, material_id))
   `)
   database.exec(`
+    CREATE TABLE IF NOT EXISTS bom_versions (
+      id TEXT PRIMARY KEY,
+      bom_id TEXT NOT NULL,
+      version TEXT NOT NULL,
+      snapshot TEXT NOT NULL,
+      diff_summary TEXT,
+      change_log TEXT,
+      effective_scope TEXT NOT NULL DEFAULT 'future_only',
+      impact_summary TEXT,
+      changed_by TEXT,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(bom_id, version)
+    )
+  `)
+  database.exec(`
     CREATE TABLE IF NOT EXISTS stock_logs (id TEXT PRIMARY KEY, type TEXT NOT NULL, material_id TEXT NOT NULL, quantity DECIMAL(18, 4) NOT NULL, before_stock DECIMAL(18, 4) NOT NULL, after_stock DECIMAL(18, 4) NOT NULL, related_id TEXT, related_type TEXT, operator TEXT NOT NULL, remark TEXT, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)
   `)
   database.exec(`
@@ -166,19 +218,37 @@ export function initializeDatabase(): void {
     CREATE TABLE IF NOT EXISTS alerts (id TEXT PRIMARY KEY, type TEXT NOT NULL, level TEXT NOT NULL, material_id TEXT NOT NULL, material_name TEXT, current_stock INTEGER, threshold INTEGER, message TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', handled_by TEXT, handled_at TEXT, remark TEXT, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)
   `)
   database.exec(`
-    CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, password TEXT NOT NULL, real_name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'operator', department TEXT, phone TEXT, email TEXT, status INTEGER NOT NULL DEFAULT 1, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, created_by TEXT, updated_by TEXT, is_deleted INTEGER NOT NULL DEFAULT 0)
+    CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, password TEXT NOT NULL, real_name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'operator', department TEXT, phone TEXT, email TEXT, status INTEGER NOT NULL DEFAULT 1, last_login DATETIME, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, created_by TEXT, updated_by TEXT, is_deleted INTEGER NOT NULL DEFAULT 0)
   `)
+  try {
+    const userCols = database.prepare("PRAGMA table_info(users)").all() as any[]
+    if (!userCols.find(c => c.name === 'last_login')) {
+      database.exec('ALTER TABLE users ADD COLUMN last_login DATETIME')
+      console.log('Migrated users table: added last_login column')
+    }
+  } catch (_e) { /* ignore */ }
   database.exec(`
     CREATE TABLE IF NOT EXISTS login_attempts (id TEXT PRIMARY KEY, username TEXT NOT NULL, ip_address TEXT, success INTEGER NOT NULL DEFAULT 0, attempted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)
   `)
   database.exec(`
-    CREATE TABLE IF NOT EXISTS roles (id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL, description TEXT, permissions TEXT NOT NULL DEFAULT '[]', status INTEGER NOT NULL DEFAULT 1, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, is_deleted INTEGER NOT NULL DEFAULT 0)
+    CREATE TABLE IF NOT EXISTS roles (id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL, description TEXT, permissions TEXT NOT NULL DEFAULT '[]', data_scope TEXT NOT NULL DEFAULT 'dept', status INTEGER NOT NULL DEFAULT 1, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, is_deleted INTEGER NOT NULL DEFAULT 0)
   `)
+  ensureColumn('roles', 'data_scope', "TEXT NOT NULL DEFAULT 'dept'")
   database.exec(`
     CREATE TABLE IF NOT EXISTS operation_logs (id TEXT PRIMARY KEY, user_id TEXT, username TEXT, operation TEXT NOT NULL, description TEXT NOT NULL, request_data TEXT, response_data TEXT, ip TEXT, user_agent TEXT, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)
   `)
   database.exec(`
     CREATE TABLE IF NOT EXISTS stocktaking_records (id TEXT PRIMARY KEY, stocktaking_no TEXT NOT NULL UNIQUE, material_id TEXT NOT NULL, system_stock DECIMAL(18, 4) NOT NULL, actual_stock DECIMAL(18, 4) NOT NULL, difference DECIMAL(18, 4) NOT NULL, operator TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'completed', remark TEXT, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, is_deleted INTEGER NOT NULL DEFAULT 0)
+  `)
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS stocktaking_batch_adjustments (
+      id TEXT PRIMARY KEY,
+      stocktaking_id TEXT NOT NULL,
+      material_id TEXT NOT NULL,
+      batch_id TEXT NOT NULL,
+      quantity_delta DECIMAL(18, 4) NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
   `)
   database.exec(`
     CREATE TABLE IF NOT EXISTS return_records (id TEXT PRIMARY KEY, return_no TEXT NOT NULL UNIQUE, material_id TEXT NOT NULL, batch_id TEXT, quantity DECIMAL(18, 4) NOT NULL, unit_cost DECIMAL(18, 4) DEFAULT 0, total_cost DECIMAL(18, 4) DEFAULT 0, reason TEXT NOT NULL, operator TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'completed', remark TEXT, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, is_deleted INTEGER NOT NULL DEFAULT 0)
@@ -282,7 +352,8 @@ export function initializeDatabase(): void {
       operate_time TEXT,
       status TEXT NOT NULL DEFAULT 'normal',
       import_batch TEXT,
-      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `)
 
@@ -484,17 +555,26 @@ export function initializeDatabase(): void {
 
   // ABC 成本相关表
   ensureColumn('inbound_records', 'is_deleted', 'INTEGER NOT NULL DEFAULT 0')
+  ensureColumn('inbound_records', 'from_location_id', 'TEXT')
+  ensureColumn('inbound_records', 'from_location_name', 'TEXT')
   ensureColumn('purchase_orders', 'is_deleted', 'INTEGER NOT NULL DEFAULT 0')
+  ensureColumn('materials', 'barcode', 'TEXT')
   ensureColumn('stocktaking_records', 'is_deleted', 'INTEGER NOT NULL DEFAULT 0')
+  ensureColumn('stocktaking_records', 'updated_at', 'DATETIME')
+  ensureColumn('lis_cases', 'updated_at', 'DATETIME')
   ensureColumn('return_records', 'is_deleted', 'INTEGER NOT NULL DEFAULT 0')
+  ensureColumn('return_records', 'batch_id', 'TEXT')
   ensureColumn('return_records', 'unit_cost', 'DECIMAL(18, 4) DEFAULT 0')
   ensureColumn('return_records', 'total_cost', 'DECIMAL(18, 4) DEFAULT 0')
   ensureColumn('scrap_records', 'is_deleted', 'INTEGER NOT NULL DEFAULT 0')
+  ensureColumn('scrap_records', 'batch_id', 'TEXT')
   ensureColumn('outbound_records', 'sample_count', 'INTEGER DEFAULT 1')
   ensureColumn('outbound_records', 'abc_total_cost', 'DECIMAL(18, 4) DEFAULT 0')
   ensureColumn('outbound_records', 'abc_activity_cost', 'DECIMAL(18, 4) DEFAULT 0')
   ensureColumn('outbound_records', 'fee_amount', 'DECIMAL(18, 4) DEFAULT 0')
   ensureColumn('outbound_records', 'profit', 'DECIMAL(18, 4) DEFAULT 0')
+  ensureColumn('outbound_records', 'cost_status', "TEXT NOT NULL DEFAULT 'pending_cost'")
+  ensureColumn('outbound_records', 'case_no', 'TEXT')
   ensureColumn('outbound_records', 'cancel_reason', 'TEXT')
   ensureColumn('outbound_records', 'cancel_remark', 'TEXT')
   database.exec(`
@@ -525,19 +605,19 @@ export function initializeDatabase(): void {
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `)
-	  database.exec(`
-	    CREATE TABLE IF NOT EXISTS abc_cost_pools (
-	      id TEXT PRIMARY KEY,
-	      activity_center_id TEXT,
-	      year_month TEXT NOT NULL,
-	      direct_cost DECIMAL(18, 4) DEFAULT 0,
-	      indirect_cost DECIMAL(18, 4) DEFAULT 0,
-	      total_cost DECIMAL(18, 4) DEFAULT 0,
-	      driver_quantity DECIMAL(18, 4) DEFAULT 0,
-	      driver_rate DECIMAL(18, 4) DEFAULT 0,
-	      amount DECIMAL(18, 4) DEFAULT 0,
-	      source TEXT DEFAULT 'manual',
-	      description TEXT,
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS abc_cost_pools (
+      id TEXT PRIMARY KEY,
+      activity_center_id TEXT,
+      year_month TEXT NOT NULL,
+      direct_cost DECIMAL(18, 4) DEFAULT 0,
+      indirect_cost DECIMAL(18, 4) DEFAULT 0,
+      total_cost DECIMAL(18, 4) DEFAULT 0,
+      driver_quantity DECIMAL(18, 4) DEFAULT 0,
+      driver_rate DECIMAL(18, 4) DEFAULT 0,
+      amount DECIMAL(18, 4) DEFAULT 0,
+      source TEXT DEFAULT 'manual',
+      description TEXT,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `)
@@ -568,8 +648,37 @@ export function initializeDatabase(): void {
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `)
-	  database.exec(`
-	    CREATE TABLE IF NOT EXISTS outbound_abc_details (
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS bom_fee_mappings (
+      id TEXT PRIMARY KEY,
+      bom_id TEXT NOT NULL,
+      fee_standard_id TEXT NOT NULL,
+      quantity_multiplier DECIMAL(18, 4) DEFAULT 1,
+      aggregation_scope TEXT NOT NULL DEFAULT 'outbound',
+      sort_order INTEGER DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(bom_id, fee_standard_id, aggregation_scope)
+    )
+  `)
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS case_charge_groups (
+      id TEXT PRIMARY KEY,
+      case_no TEXT NOT NULL,
+      year_month TEXT NOT NULL,
+      fee_standard_id TEXT NOT NULL,
+      total_quantity DECIMAL(18, 4) DEFAULT 0,
+      total_fee DECIMAL(18, 4) DEFAULT 0,
+      outbound_count INTEGER DEFAULT 0,
+      rule_snapshot TEXT,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(case_no, year_month, fee_standard_id)
+    )
+  `)
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS outbound_abc_details (
       id TEXT PRIMARY KEY,
       outbound_id TEXT NOT NULL,
       bom_id TEXT,
@@ -588,43 +697,103 @@ export function initializeDatabase(): void {
       profit_rate DECIMAL(18, 6) DEFAULT 0,
       activity_details TEXT,
       cost_month TEXT,
-	      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-	    )
-	  `)
-	  database.exec(`
-	    CREATE TABLE IF NOT EXISTS cost_exceptions (
-	      id TEXT PRIMARY KEY,
-	      exception_no TEXT NOT NULL UNIQUE,
-	      source_module TEXT NOT NULL,
-	      source_type TEXT NOT NULL,
-	      source_id TEXT,
-	      project_id TEXT,
-	      bom_id TEXT,
-	      outbound_id TEXT,
-	      year_month TEXT,
-	      exception_type TEXT NOT NULL,
-	      severity TEXT NOT NULL DEFAULT 'warning',
-	      status TEXT NOT NULL DEFAULT 'open',
-	      message TEXT NOT NULL,
-	      details TEXT,
-	      retry_count INTEGER NOT NULL DEFAULT 0,
-	      resolved_by TEXT,
-	      resolved_at DATETIME,
-	      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-	      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-	    )
-	  `)
-	  database.exec(`
-	    CREATE INDEX IF NOT EXISTS idx_cost_exceptions_status ON cost_exceptions(status)
-	  `)
-	  database.exec(`
-	    CREATE INDEX IF NOT EXISTS idx_cost_exceptions_source ON cost_exceptions(source_module, source_id)
-	  `)
-	  database.exec(`
-	    CREATE INDEX IF NOT EXISTS idx_cost_exceptions_period ON cost_exceptions(year_month)
-	  `)
-	  database.exec(`
-	    CREATE TABLE IF NOT EXISTS abc_budgets (
+      cost_status TEXT NOT NULL DEFAULT 'costed',
+      cost_run_id TEXT,
+      case_no TEXT,
+      charge_group_id TEXT,
+      calculation_version TEXT NOT NULL DEFAULT 'v1',
+      source_snapshot TEXT,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS cost_exceptions (
+      id TEXT PRIMARY KEY,
+      exception_no TEXT NOT NULL UNIQUE,
+      source_module TEXT NOT NULL,
+      source_type TEXT NOT NULL,
+      source_id TEXT,
+      project_id TEXT,
+      bom_id TEXT,
+      outbound_id TEXT,
+      year_month TEXT,
+      exception_type TEXT NOT NULL,
+      severity TEXT NOT NULL DEFAULT 'warning',
+      status TEXT NOT NULL DEFAULT 'open',
+      message TEXT NOT NULL,
+      details TEXT,
+      retry_count INTEGER NOT NULL DEFAULT 0,
+      resolved_by TEXT,
+      resolved_at DATETIME,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_cost_exceptions_status ON cost_exceptions(status)
+  `)
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_cost_exceptions_source ON cost_exceptions(source_module, source_id)
+  `)
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_cost_exceptions_period ON cost_exceptions(year_month)
+  `)
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS abc_periods (
+      id TEXT PRIMARY KEY,
+      year_month TEXT NOT NULL UNIQUE,
+      status TEXT NOT NULL DEFAULT 'open',
+      started_at DATETIME,
+      calculated_at DATETIME,
+      reviewed_at DATETIME,
+      closed_at DATETIME,
+      closed_by TEXT,
+      remark TEXT,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS cost_runs (
+      id TEXT PRIMARY KEY,
+      year_month TEXT NOT NULL,
+      run_type TEXT NOT NULL DEFAULT 'recalculate',
+      status TEXT NOT NULL DEFAULT 'pending',
+      started_by TEXT,
+      started_at DATETIME,
+      finished_at DATETIME,
+      summary TEXT,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_cost_runs_period ON cost_runs(year_month)
+  `)
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS abc_cost_adjustments (
+      id TEXT PRIMARY KEY,
+      adjustment_no TEXT NOT NULL UNIQUE,
+      year_month TEXT NOT NULL,
+      adjustment_type TEXT NOT NULL DEFAULT 'manual',
+      amount DECIMAL(18, 4) NOT NULL DEFAULT 0,
+      reason TEXT NOT NULL,
+      source_module TEXT,
+      source_id TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      submitted_by TEXT,
+      submitted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      reviewed_by TEXT,
+      reviewed_at DATETIME,
+      review_remark TEXT,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_abc_cost_adjustments_period ON abc_cost_adjustments(year_month, status)
+  `)
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS abc_budgets (
       id TEXT PRIMARY KEY,
       year_month TEXT NOT NULL,
       category TEXT,
@@ -655,28 +824,39 @@ export function initializeDatabase(): void {
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `)
-	  database.exec(`
-	    CREATE TABLE IF NOT EXISTS abc_alert_rules (
-	      id TEXT PRIMARY KEY,
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS abc_alert_rules (
+      id TEXT PRIMARY KEY,
       type TEXT NOT NULL,
       name TEXT NOT NULL,
       threshold DECIMAL(18, 4) DEFAULT 0,
       enabled INTEGER NOT NULL DEFAULT 1,
-	      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-	    )
-	  `)
-	  ensureColumn('fee_standards', 'project_type', 'TEXT')
-	  ensureColumn('fee_standards', 'fee_per_slide', 'DECIMAL(18, 4) DEFAULT 0')
-	  ensureColumn('abc_cost_pools', 'direct_cost', 'DECIMAL(18, 4) DEFAULT 0')
-	  ensureColumn('abc_cost_pools', 'indirect_cost', 'DECIMAL(18, 4) DEFAULT 0')
-	  ensureColumn('abc_cost_pools', 'total_cost', 'DECIMAL(18, 4) DEFAULT 0')
-	  ensureColumn('abc_cost_pools', 'driver_quantity', 'DECIMAL(18, 4) DEFAULT 0')
-	  ensureColumn('abc_cost_pools', 'driver_rate', 'DECIMAL(18, 4) DEFAULT 0')
-	  ensureColumn('abc_cost_pools', 'amount', 'DECIMAL(18, 4) DEFAULT 0')
-	  ensureColumn('abc_cost_pools', 'source', "TEXT DEFAULT 'manual'")
-	  ensureColumn('abc_cost_pools', 'description', 'TEXT')
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+  ensureColumn('fee_standards', 'project_type', 'TEXT')
+  ensureColumn('fee_standards', 'fee_per_slide', 'DECIMAL(18, 4) DEFAULT 0')
+  ensureColumn('bom_fee_mappings', 'quantity_multiplier', 'DECIMAL(18, 4) DEFAULT 1')
+  ensureColumn('bom_fee_mappings', 'aggregation_scope', "TEXT NOT NULL DEFAULT 'outbound'")
+  ensureColumn('bom_versions', 'effective_scope', "TEXT NOT NULL DEFAULT 'future_only'")
+  ensureColumn('bom_versions', 'impact_summary', 'TEXT')
+  ensureColumn('case_charge_groups', 'rule_snapshot', 'TEXT')
+  ensureColumn('abc_cost_pools', 'direct_cost', 'DECIMAL(18, 4) DEFAULT 0')
+  ensureColumn('abc_cost_pools', 'indirect_cost', 'DECIMAL(18, 4) DEFAULT 0')
+  ensureColumn('abc_cost_pools', 'total_cost', 'DECIMAL(18, 4) DEFAULT 0')
+  ensureColumn('abc_cost_pools', 'driver_quantity', 'DECIMAL(18, 4) DEFAULT 0')
+  ensureColumn('abc_cost_pools', 'driver_rate', 'DECIMAL(18, 4) DEFAULT 0')
+  ensureColumn('abc_cost_pools', 'amount', 'DECIMAL(18, 4) DEFAULT 0')
+  ensureColumn('abc_cost_pools', 'source', "TEXT DEFAULT 'manual'")
+  ensureColumn('abc_cost_pools', 'description', 'TEXT')
+  ensureColumn('outbound_abc_details', 'cost_status', "TEXT NOT NULL DEFAULT 'costed'")
+  ensureColumn('outbound_abc_details', 'cost_run_id', 'TEXT')
+  ensureColumn('outbound_abc_details', 'case_no', 'TEXT')
+  ensureColumn('outbound_abc_details', 'charge_group_id', 'TEXT')
+  ensureColumn('outbound_abc_details', 'calculation_version', "TEXT NOT NULL DEFAULT 'v1'")
+  ensureColumn('outbound_abc_details', 'source_snapshot', 'TEXT')
 
-	  // 插入默认用户 (密码: admin123)
+  // 插入默认用户 (密码: admin123)
   const stmt = database.prepare('SELECT * FROM users WHERE username = ?')
   const defaultUser = stmt.get('admin') as any
   if (!defaultUser) {
@@ -694,6 +874,11 @@ export function initializeDatabase(): void {
     { id: 'USER-DOC1', username: 'yishi1', realName: '刘医师', role: 'pathologist', department: '病理科' },
     { id: 'USER-PRO', username: 'caigou', realName: '赵采购', role: 'procurement', department: '设备科' },
     { id: 'USER-FIN', username: 'caiwu', realName: '孙财务', role: 'finance', department: '财务科' },
+    { id: 'USER-WHM-STD', username: 'wangkq', realName: '王克强', role: 'warehouse_manager', department: '病理科' },
+    { id: 'USER-TECH-STD', username: 'zhangwei', realName: '张伟', role: 'technician', department: '病理科' },
+    { id: 'USER-DOC-STD', username: 'liuyf', realName: '刘玉芬', role: 'pathologist', department: '病理科' },
+    { id: 'USER-PRO-STD', username: 'zhaohp', realName: '赵海鹏', role: 'procurement', department: '设备科' },
+    { id: 'USER-FIN-STD', username: 'sunli', realName: '孙丽', role: 'finance', department: '财务科' },
   ]
   const hashedTestPw = bcrypt.hashSync('CoreOne2026!', 12)
   const insertUser = database.prepare(
@@ -703,7 +888,10 @@ export function initializeDatabase(): void {
     insertUser.run(u.id, u.username, hashedTestPw, u.realName, u.role, u.department, 1)
   }
   // 确保 E2E 测试用户始终可用（防止被软删除后无法恢复）
-  database.prepare("UPDATE users SET is_deleted = 0, status = 1 WHERE username IN ('cangguan','jishuyuan1','yishi1','caigou','caiwu')").run()
+  database.prepare(`
+    UPDATE users SET is_deleted = 0, status = 1
+    WHERE username IN ('cangguan','jishuyuan1','yishi1','caigou','caiwu','wangkq','zhangwei','liuyf','zhaohp','sunli')
+  `).run()
 
   // 插入默认角色（E2E 测试依赖）
   const defaultRoles = [
@@ -715,11 +903,49 @@ export function initializeDatabase(): void {
     { id: 'ROLE-FIN', code: 'finance', name: '财务', description: '负责对账、成本分析' },
   ]
   const insertRole = database.prepare(
-    'INSERT OR IGNORE INTO roles (id, code, name, description, permissions, status) VALUES (?, ?, ?, ?, ?, ?)'
+    'INSERT OR IGNORE INTO roles (id, code, name, description, permissions, data_scope, status) VALUES (?, ?, ?, ?, ?, ?, ?)'
   )
+  const updateEmptyRolePermissions = database.prepare(`
+    UPDATE roles
+    SET permissions = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE code = ?
+      AND is_deleted = 0
+      AND (permissions IS NULL OR permissions = '' OR permissions = '[]')
+  `)
+  const updateSystemRoleDefaults = database.prepare(`
+    UPDATE roles
+    SET permissions = ?,
+        status = 1,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE code = ?
+      AND is_deleted = 0
+  `)
   for (const r of defaultRoles) {
-    insertRole.run(r.id, r.code, r.name, r.description, '[]', 1)
+    const permissions = JSON.stringify(ROLE_PERMISSIONS[r.code] || [])
+    insertRole.run(r.id, r.code, r.name, r.description, permissions, r.code === 'admin' ? 'all' : 'dept', 1)
+    updateEmptyRolePermissions.run(permissions, r.code)
+    const currentRole = database.prepare('SELECT permissions FROM roles WHERE code = ? AND is_deleted = 0').get(r.code) as any
+    if (currentRole) {
+      updateSystemRoleDefaults.run(mergePermissions(currentRole.permissions, ROLE_PERMISSIONS[r.code] || []), r.code)
+    }
   }
+  const warehouseRole = database.prepare('SELECT permissions FROM roles WHERE code = ? AND is_deleted = 0').get('warehouse_manager') as any
+  if (warehouseRole) {
+    database.prepare(`
+      UPDATE roles
+      SET permissions = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE code = 'warehouse_manager' AND is_deleted = 0
+    `).run(removePermissions(warehouseRole.permissions, ['purchase_orders']))
+  }
+  database.prepare(`
+    UPDATE roles
+    SET permissions = REPLACE(permissions, '"labor_times"', '"labor_times:view"'),
+        updated_at = CURRENT_TIMESTAMP
+    WHERE code IN ('technician', 'pathologist')
+      AND is_deleted = 0
+      AND permissions LIKE '%"labor_times"%'
+  `).run()
+  database.prepare("UPDATE roles SET data_scope = 'all', updated_at = CURRENT_TIMESTAMP WHERE code = 'admin' AND is_deleted = 0 AND data_scope != 'all'").run()
 
   const laborDefaults = [
     ['LAB-ALL-001', 'sample_receive', '样本接收', 'all', 1.5, 1, 10],
@@ -751,7 +977,15 @@ export function initializeDatabase(): void {
       (id, code, name, cost_driver_type, sort_order, status)
     VALUES (?, ?, ?, ?, ?, 'active')
   `)
-  activityDefaults.forEach(row => insertActivity.run(...row))
+  const updateActivity = database.prepare(`
+    UPDATE abc_activity_centers
+    SET code = ?, name = ?, cost_driver_type = ?, sort_order = ?, status = 'active'
+    WHERE id = ?
+  `)
+  activityDefaults.forEach(row => {
+    insertActivity.run(...row)
+    updateActivity.run(row[1], row[2], row[3], row[4], row[0])
+  })
 
   const driverDefaults = [
     ['ABC-CD-001', 'block_count', '蜡块数', '块'],

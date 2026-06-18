@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { usersApi } from '@/api/users'
 import { rolesApi } from '@/api/roles'
 import type { User } from '@/types'
@@ -8,6 +8,7 @@ import { useUrlParams } from '@/hooks/useUrlParams'
 
 export interface FormData {
   username: string
+  password: string
   realName: string
   role: string
   department: string
@@ -26,13 +27,22 @@ export interface RoleItem {
   isSystem?: boolean
 }
 
+export function getTemporaryPasswordOrThrow(res: { temporaryPassword?: string } | null | undefined) {
+  if (!res?.temporaryPassword) {
+    throw new Error('接口未返回临时密码')
+  }
+  return res.temporaryPassword
+}
+
 export function useUsersPage() {
   const { get, getNumber, setMultiple } = useUrlParams()
 
-  const [keyword, setKeyword] = useState('')
-  const [roleFilter, setRoleFilter] = useState('')
-  const [statusFilter, setStatusFilter] = useState('')
-  const [selectedRoleId, setSelectedRoleId] = useState('')
+  const [keyword, setKeyword] = useState(get('keyword') || '')
+  const [roleFilter, setRoleFilter] = useState(get('role') || '')
+  const [statusFilter, setStatusFilter] = useState(get('status') || '')
+  const [selectedRoleId, setSelectedRoleId] = useState(get('roleId') || '')
+  const [stats, setStats] = useState({ totalUsers: 0, activeUsers: 0, inactiveUsers: 0, adminUsers: 0 })
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
 
   const urlPage = Math.max(1, getNumber('page', 1))
   const urlPageSize = [10, 20, 50, 100].includes(getNumber('pageSize', 20))
@@ -78,7 +88,7 @@ export function useUsersPage() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [detailUser, setDetailUser] = useState<User | null>(null)
   const [form, setForm] = useState<FormData>({
-    username: '', realName: '', role: 'operator', department: '', phone: '', email: '', status: 'active'
+    username: '', password: '', realName: '', role: '', department: '', phone: '', email: '', status: 'active'
   })
 
   const [roles, setRoles] = useState<RoleItem[]>([])
@@ -108,7 +118,7 @@ export function useUsersPage() {
       const res = await rolesApi.getList({ page: 1, pageSize: 100 })
       const list = res?.list || []
       setRoles(list.map((r: any) => ({
-        id: r.id, name: r.name, code: r.code, userCount: 0,
+        id: r.id, name: r.name, code: r.code, userCount: r.userCount || 0,
         description: r.description || '', permissions: r.permissions || [],
         isSystem: r.code === 'admin'
       })))
@@ -117,17 +127,27 @@ export function useUsersPage() {
 
   useEffect(() => { fetchRoles() }, [])
 
-  const stats = useMemo(() => {
-    const totalUsers = total
-    const activeUsers = data.filter(u => u.status === 'active').length
-    const inactiveUsers = data.filter(u => u.status === 'inactive').length
-    const adminUsers = data.filter(u => u.role === 'admin').length
-    return { totalUsers, activeUsers, inactiveUsers, adminUsers }
-  }, [data, total])
+  useEffect(() => {
+    usersApi.getStats({
+      ...(keyword && { keyword }),
+      ...(roleFilter && { role: roleFilter }),
+      ...(statusFilter && { status: statusFilter }),
+      ...(selectedRoleId && { roleId: selectedRoleId }),
+    })
+      .then((res: any) => setStats({
+        totalUsers: Number(res?.totalUsers || 0),
+        activeUsers: Number(res?.activeUsers || 0),
+        inactiveUsers: Number(res?.inactiveUsers || 0),
+        adminUsers: Number(res?.adminUsers || 0),
+      }))
+      .catch(() => {
+        setStats({ totalUsers: total, activeUsers: 0, inactiveUsers: 0, adminUsers: 0 })
+      })
+  }, [keyword, roleFilter, statusFilter, selectedRoleId, total])
 
   const openCreate = () => {
     setEditingId(null)
-    setForm({ username: '', realName: '', role: 'operator', department: '', phone: '', email: '', status: 'active' })
+    setForm({ username: '', password: '', realName: '', role: '', department: '', phone: '', email: '', status: 'active' })
     setModalType('create')
   }
 
@@ -135,6 +155,7 @@ export function useUsersPage() {
     setEditingId(row.id)
     setForm({
       username: row.username, realName: row.realName, role: row.role,
+      password: '',
       department: row.department || '', phone: row.phone || '', email: row.email || '',
       status: row.status
     })
@@ -147,17 +168,22 @@ export function useUsersPage() {
   }
 
   const handleSubmit = async () => {
-    if (!form.username.trim() || !form.realName.trim()) {
+    if (!form.username.trim() || !form.realName.trim() || !form.role.trim()) {
       toast.error('请填写必填字段')
       return
     }
     try {
       if (editingId) {
         await usersApi.update(editingId, form)
+        toast.success('保存成功')
       } else {
-        await usersApi.create(form)
+        const res = await usersApi.create(form)
+        if (res?.initialPassword) {
+          toast.success(`创建成功，初始密码：${res.initialPassword}`)
+        } else {
+          toast.success('创建成功')
+        }
       }
-      toast.success(editingId ? '保存成功' : '创建成功')
       setModalType(null)
       refresh()
     } catch (e) {
@@ -190,6 +216,55 @@ export function useUsersPage() {
     } catch (e) { toast.error('操作失败') }
   }
 
+  const toggleSelectAll = () => {
+    if (selectedIds.size === data.length && data.length > 0) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(data.map(row => row.id)))
+    }
+  }
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const clearSelection = () => setSelectedIds(new Set())
+
+  const batchToggleStatus = async (status: 'active' | 'inactive') => {
+    try {
+      await usersApi.batchUpdateStatus([...selectedIds], status)
+      toast.success(status === 'active' ? '批量启用成功' : '批量停用成功')
+      clearSelection()
+      refresh()
+    } catch (e) {
+      toast.error('批量操作失败')
+    }
+  }
+
+  const batchDelete = () => {
+    openConfirm({
+      title: '确认批量删除',
+      description: `确认删除选中的 ${selectedIds.size} 个用户？删除后不可恢复。`,
+      confirmText: '删除',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        try {
+          await usersApi.batchDelete([...selectedIds])
+          toast.success('批量删除成功')
+          clearSelection()
+          refresh()
+        } catch (e) {
+          toast.error('批量删除失败')
+        }
+      },
+    })
+  }
+
   const handleResetPassword = async (id: string) => {
     openConfirm({
       title: '确认重置密码',
@@ -198,9 +273,12 @@ export function useUsersPage() {
       confirmVariant: 'primary',
       onConfirm: async () => {
         try {
-          await usersApi.resetPassword(id)
-          toast.success('密码重置成功')
-        } catch (e) { toast.error('密码重置失败') }
+          const res = await usersApi.resetPassword(id)
+          const temporaryPassword = getTemporaryPasswordOrThrow(res)
+          toast.success(`密码已重置为 ${temporaryPassword}`)
+        } catch (e: any) {
+          toast.error(e?.message ? `密码重置失败：${e.message}` : '密码重置失败')
+        }
       },
     })
   }
@@ -222,10 +300,13 @@ export function useUsersPage() {
     form, setForm,
     roles, setRoles,
     confirmOpen, setConfirmOpen, confirmProps, setConfirmProps,
+    selectedIds, setSelectedIds,
     stats,
     handleSearch, handleReset,
     openCreate, openEdit, openDetail,
     handleSubmit, handleDelete, handleToggleStatus, handleResetPassword,
+    toggleSelectAll, toggleSelect, clearSelection,
+    batchDelete, batchToggleStatus,
     getAvatarChar,
   }
 }

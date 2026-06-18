@@ -43,6 +43,20 @@ async function apiFetch(token: string, method: string, path: string, body?: any)
   return { status: res.status, data: (await res.json().catch(() => null)) as any }
 }
 
+async function createLaborTime(token: string, overrides: Record<string, any> = {}) {
+  const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+  return apiFetch(token, 'POST', '/labor-times', {
+    stepCode: `E2E-LAB-${suffix}`,
+    stepName: `E2E标准工时-${suffix}`,
+    projectType: 'IHC',
+    standardMinutes: 18,
+    laborRatePerMinute: 2.75,
+    referenceSource: 'industry',
+    description: 'E2E标准工时详情说明',
+    ...overrides,
+  })
+}
+
 // ────────────────────────────────────────────
 // 1. 查看工时列表 (10 tests)
 // ────────────────────────────────────────────
@@ -51,7 +65,15 @@ test.describe('工时管理 -> 查看工时列表', () => {
     test(`LT-LIST-01-${role}. ${role}可查看工时列表`, async ({ page }) => {
       await loginAs(page, role)
       await page.goto(`${FE_BASE}/labor-times`)
-      await expect(page.locator('body')).toBeVisible({ timeout: 30000 })
+      await expect(page.getByRole('heading', { name: '标准工时库' })).toBeVisible({ timeout: 30000 })
+      await expect(page.getByText('定义各环节标准工时与费率，用于人工成本核算')).toBeVisible()
+      if (role === 'admin') {
+        await expect(page.getByRole('button', { name: /新增工时定义/ })).toBeVisible()
+      } else {
+        await expect(page.getByRole('button', { name: /新增工时定义/ })).toHaveCount(0)
+        await expect(page.getByRole('button', { name: '编辑' })).toHaveCount(0)
+        await expect(page.getByRole('button', { name: '删除' })).toHaveCount(0)
+      }
     })
   }
   for (const role of FORBIDDEN_ROLES) {
@@ -109,13 +131,15 @@ test.describe('工时管理 -> 创建工时', () => {
     expect([200, 201]).toContain(res.status)
     expect(res.data?.data?.id).toBeDefined()
   })
-  test('LT-CREATE-02. technician创建工时成功', async () => {
+  test('LT-CREATE-02. technician创建工时返回403', async () => {
     const token = await apiLogin('technician')
-    const stepCode = `E2E_T_${Date.now()}`
-    const res = await apiFetch(token, 'POST', '/labor-times', {
-      stepCode, stepName: 'E2E技术员步骤', projectType: 'HE', standardMinutes: 10,
+    const res = await createLaborTime(token, {
+      stepCode: `E2E-T-${Date.now()}`,
+      stepName: 'E2E技术员越权步骤',
+      projectType: 'HE',
+      standardMinutes: 10,
     })
-    expect([200, 201]).toContain(res.status)
+    expect(res.status).toBe(403)
   })
   test('LT-CREATE-03. 缺少stepCode返回400', async () => {
     const token = await apiLogin('admin')
@@ -167,13 +191,15 @@ test.describe('工时管理 -> 创建工时', () => {
 test.describe('工时管理 -> 工时详情', () => {
   test('LT-DETAIL-01. 查看工时详情', async () => {
     const token = await apiLogin('admin')
-    const list = await apiFetch(token, 'GET', '/labor-times?page=1&pageSize=1')
-    const id = list.data?.data?.list?.[0]?.id
-    if (!id) { test.skip(); return }
+    const created = await createLaborTime(token)
+    expect(created.status).toBe(201)
+    const id = created.data?.data?.id
     const res = await apiFetch(token, 'GET', `/labor-times/${id}`)
     expect(res.status).toBe(200)
-    expect(res.data?.data?.stepCode).toBeDefined()
-    expect(res.data?.data?.referenceSourceLabel).toBeDefined()
+    expect(res.data?.data?.stepCode).toContain('E2E-LAB-')
+    expect(res.data?.data?.referenceSource).toBe('industry')
+    expect(res.data?.data?.referenceSourceLabel).toBe('行业标准')
+    await apiFetch(token, 'DELETE', `/labor-times/${id}`).catch(() => {})
   })
   test('LT-DETAIL-02. 查看不存在的工时返回404', async () => {
     const token = await apiLogin('admin')
@@ -182,9 +208,16 @@ test.describe('工时管理 -> 工时详情', () => {
   })
   test('LT-DETAIL-03. 按项目类型获取工时模板', async () => {
     const token = await apiLogin('admin')
+    const created = await createLaborTime(token, { projectType: 'IHC', referenceSource: 'supplier' })
+    expect(created.status).toBe(201)
+    const id = created.data?.data?.id
     const res = await apiFetch(token, 'GET', '/labor-times/project-type/IHC')
     expect(res.status).toBe(200)
     expect(Array.isArray(res.data?.data)).toBe(true)
+    const row = res.data?.data?.find((item: any) => item.id === id)
+    expect(row?.referenceSource).toBe('supplier')
+    expect(row?.referenceSourceLabel).toBe('供应商提供')
+    await apiFetch(token, 'DELETE', `/labor-times/${id}`).catch(() => {})
   })
   test('LT-DETAIL-04. UI差异：admin可点击行查看详情', async ({ page }) => {
     await loginAs(page, 'admin')

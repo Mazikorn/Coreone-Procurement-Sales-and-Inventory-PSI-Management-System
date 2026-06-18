@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import type { DependencyList } from 'react'
 
 export interface UsePaginationOptions<T> {
@@ -14,12 +14,26 @@ export interface UsePaginationOptions<T> {
 export interface UsePaginationReturn<T> {
   data: T[]
   loading: boolean
+  error: string | null
   page: number
   pageSize: number
   total: number
   setPage: (page: number) => void
   setPageSize: (pageSize: number) => void
   refresh: () => void
+}
+
+function getErrorMessage(error: unknown) {
+  if (typeof error === 'object' && error !== null) {
+    const maybeError = error as {
+      message?: unknown
+      response?: { data?: { error?: { message?: unknown } } }
+    }
+    const responseMessage = maybeError.response?.data?.error?.message
+    if (typeof responseMessage === 'string' && responseMessage.trim()) return responseMessage
+    if (typeof maybeError.message === 'string' && maybeError.message.trim()) return maybeError.message
+  }
+  return '加载失败'
 }
 
 export function usePagination<T>({
@@ -30,27 +44,37 @@ export function usePagination<T>({
 }: UsePaginationOptions<T>): UsePaginationReturn<T> {
   const [data, setData] = useState<T[]>([])
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [page, setPage] = useState(initialPage)
   const [pageSize, setPageSize] = useState(initialPageSize)
   const [total, setTotal] = useState(0)
+  const [refreshKey, setRefreshKey] = useState(0)
+  const fetchFnRef = useRef(fetchFn)
+
+  useEffect(() => {
+    fetchFnRef.current = fetchFn
+  }, [fetchFn])
 
   const fetchData = useCallback(
-    async (targetPage?: number) => {
+    async () => {
       setLoading(true)
       try {
-        const res = await fetchFn({
-          page: targetPage ?? page,
+        const res = await fetchFnRef.current({
+          page,
           pageSize,
         })
         setData(res.list || [])
         setTotal(res.pagination?.total || 0)
+        setError(null)
       } catch (e) {
-        console.error(e)
+        setData([])
+        setTotal(0)
+        setError(getErrorMessage(e))
       } finally {
         setLoading(false)
       }
     },
-    [fetchFn, page, pageSize, ...deps]
+    [page, pageSize, refreshKey, ...deps]
   )
 
   useEffect(() => {
@@ -60,9 +84,8 @@ export function usePagination<T>({
   const goToPage = useCallback(
     (p: number) => {
       setPage(p)
-      fetchData(p)
     },
-    [fetchData]
+    []
   )
 
   const changePageSize = useCallback((size: number) => {
@@ -73,11 +96,12 @@ export function usePagination<T>({
   return {
     data,
     loading,
+    error,
     page,
     pageSize,
     total,
     setPage: goToPage,
     setPageSize: changePageSize,
-    refresh: () => fetchData(page),
+    refresh: () => setRefreshKey(key => key + 1),
   }
 }

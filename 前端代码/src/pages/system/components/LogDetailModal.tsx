@@ -4,7 +4,7 @@ import type { OperationLog } from '@/types'
 interface Props {
   open: boolean
   log: OperationLog | null
-  getLogType: (op: string) => { value: string; label: string; className: string }
+  getLogType: (op: string, operationType?: string) => { value: string; label: string; className: string }
   getModuleLabel: (moduleVal: string) => string
   onClose: () => void
 }
@@ -27,12 +27,12 @@ export function LogDetailModal({ open, log, getLogType, getModuleLabel, onClose 
           <div className="grid grid-cols-2 gap-5 mb-6">
             <Info label="操作时间" value={new Date(log.createdAt).toLocaleString()} mono />
             <Info label="操作类型" value={
-              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getLogType(log.operation).className}`}>
-                {getLogType(log.operation).label}
+              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getLogType(log.operation, log.operationType).className}`}>
+                {getLogType(log.operation, log.operationType).label}
               </span>
             } />
             <Info label="操作用户" value={log.username} />
-            <Info label="操作模块" value={getModuleLabel(log.requestData?.module as string || '')} />
+            <Info label="操作模块" value={getModuleLabel(log.module || (log.requestData?.module as string) || '')} />
             <Info label="IP地址" value={log.ip} mono />
             <Info label="浏览器" value={log.userAgent || '-'} />
           </div>

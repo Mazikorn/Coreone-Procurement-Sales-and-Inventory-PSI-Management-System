@@ -1,14 +1,38 @@
-import { X, Clock } from 'lucide-react'
+import { X } from 'lucide-react'
 import type { BOM, BOMMaterial, BOMVersion } from '@/types'
 import { formatDateTime } from '../constants'
 
 interface Props {
   open: boolean
   bom: BOM | null
-  tab: 'info' | 'history' | 'usage'
+  tab: 'info' | 'history'
   onClose: () => void
-  onChangeTab: (tab: 'info' | 'history' | 'usage') => void
+  onChangeTab: (tab: 'info' | 'history') => void
   onEdit: () => void
+}
+
+function versionDiffSummary(version: BOMVersion) {
+  const diff = version.diff || {}
+  const parts: string[] = []
+  if (diff.changedFields?.length) parts.push(`字段 ${diff.changedFields.length}`)
+  if (diff.addedMaterials?.length) parts.push(`新增物料 ${diff.addedMaterials.length}`)
+  if (diff.removedMaterials?.length) parts.push(`移除物料 ${diff.removedMaterials.length}`)
+  if (diff.changedMaterials?.length) parts.push(`用量调整 ${diff.changedMaterials.length}`)
+  return parts
+}
+
+function changedMaterialText(version: BOMVersion) {
+  const changed = version.diff?.changedMaterials?.[0]
+  if (!changed) return ''
+  const name = changed.materialName || changed.materialId
+  const before = changed.before?.usagePerSample ?? '-'
+  const after = changed.after?.usagePerSample ?? '-'
+  const unit = changed.after?.unit || changed.before?.unit || ''
+  return `${name}: ${before} -> ${after}${unit}`
+}
+
+function effectiveScopeLabel(version: BOMVersion) {
+  return version.effectiveScope === 'retroactive' ? '追溯重算' : '仅未来生效'
 }
 
 export function BOMDetailModal({ open, bom, tab, onClose, onChangeTab, onEdit }: Props) {
@@ -32,7 +56,6 @@ export function BOMDetailModal({ open, bom, tab, onClose, onChangeTab, onEdit }:
               [
                 { key: 'info' as const, label: '基本信息' },
                 { key: 'history' as const, label: '版本历史' },
-                { key: 'usage' as const, label: '使用记录' },
               ] as const
             ).map((t) => (
               <button
@@ -355,15 +378,42 @@ export function BOMDetailModal({ open, bom, tab, onClose, onChangeTab, onEdit }:
                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-600 border border-blue-200">
                             {v.version}
                           </span>
-                          {idx === 0 && (
+                          {v.isCurrent && (
                             <span className="ml-2 text-xs text-gray-400">当前</span>
                           )}
                         </td>
                         <td className="px-4 py-2.5 text-gray-700">
-                          {v.changeLog || '-'}
+                          <div>{v.changeLog || '-'}</div>
+                          {versionDiffSummary(v).length > 0 && (
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              <span className={`inline-flex items-center rounded border px-1.5 py-0.5 text-xs ${
+                                v.effectiveScope === 'retroactive'
+                                  ? 'border-amber-200 bg-amber-50 text-amber-700'
+                                  : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                              }`}>
+                                {effectiveScopeLabel(v)}
+                              </span>
+                              {versionDiffSummary(v).map(item => (
+                                <span key={item} className="inline-flex items-center rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-xs text-gray-500">
+                                  {item}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          {changedMaterialText(v) && (
+                            <div className="mt-1 text-xs text-gray-500">
+                              {changedMaterialText(v)}
+                            </div>
+                          )}
+                          {v.impactSummary && v.impactSummary.totalOutboundCount > 0 && (
+                            <div className="mt-1 text-xs text-amber-600">
+                              影响历史出库 {v.impactSummary.totalOutboundCount} 单，涉及 {v.impactSummary.affectedMonthCount} 个月
+                            </div>
+                          )}
                         </td>
                         <td className="px-4 py-2.5 text-gray-500 text-xs">
-                          {formatDateTime(v.updatedAt)}
+                          <div>{formatDateTime(v.updatedAt)}</div>
+                          {v.changedBy && <div className="mt-1">操作人: {v.changedBy}</div>}
                         </td>
                       </tr>
                     ))
@@ -379,12 +429,6 @@ export function BOMDetailModal({ open, bom, tab, onClose, onChangeTab, onEdit }:
                   )}
                 </tbody>
               </table>
-            </div>
-          )}
-          {tab === 'usage' && (
-            <div className="flex flex-col items-center justify-center py-12 text-gray-400">
-              <Clock className="w-12 h-12 mb-3 text-gray-300" />
-              <p className="text-sm">使用记录功能开发中</p>
             </div>
           )}
         </div>

@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { cn } from '@/lib/utils'
-import { ROLE_MENU_MAP, getUserRole } from '@/lib/permissions'
+import { getAllowedPaths, getUserRole } from '@/lib/permissions'
 import {
   LayoutDashboard,
   Package,
@@ -37,8 +37,8 @@ import {
   Layers,
   Settings,
   Receipt,
-  PieChart,
   LineChart,
+  Database,
 } from 'lucide-react'
 
 interface MenuItem {
@@ -80,9 +80,10 @@ const ALL_MENU_GROUPS: MenuGroup[] = [
       { label: '切片成本', path: '/abc/slide-cost', icon: Layers },
       { label: '盈利分析', path: '/abc/profitability', icon: TrendingUp },
       { label: '收费对照', path: '/abc/fee-comparison', icon: Receipt },
+      { label: '收费映射', path: '/abc/fee-mappings', icon: Settings },
       { label: '成本趋势', path: '/abc/trend', icon: LineChart },
+      { label: '成本池', path: '/abc/cost-pools', icon: Database },
       { label: '消耗对账', path: '/reconciliation', icon: Activity },
-      { label: '物料成本分析', path: '/cost-analysis', icon: PieChart },
       { label: 'ABC配置', path: '/abc/activity-centers', icon: Settings },
     ],
   },
@@ -135,7 +136,7 @@ export default function AppSidebar() {
   const role = useMemo(() => getUserRole(), [location.pathname])
   const allowedPaths = useMemo(() => {
     if (!role) return ALL_MENU_GROUPS.flatMap(g => g.items.map(m => m.path))
-    return ROLE_MENU_MAP[role] || ROLE_MENU_MAP.technician
+    return getAllowedPaths(role)
   }, [role])
 
   const visibleGroups = useMemo(() => {

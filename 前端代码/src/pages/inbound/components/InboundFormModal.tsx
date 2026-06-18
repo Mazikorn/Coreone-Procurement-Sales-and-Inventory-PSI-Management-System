@@ -24,8 +24,11 @@ interface PurchaseOrderOption {
   id?: string
   orderNo?: string
   purchaseOrderNo?: string
+  materialId?: string
   materialName?: string
+  supplierId?: string
   remainingQty?: number
+  unitPrice?: number
 }
 
 interface InboundFormModalProps {
@@ -43,6 +46,18 @@ interface InboundFormModalProps {
   submitting: boolean
   onClose: () => void
   onSubmit: () => void
+}
+
+export function applyPurchaseOrderToInboundForm(prev: FormData, order?: PurchaseOrderOption): FormData {
+  if (!order?.id) return { ...prev, purchaseOrderId: '' }
+  return {
+    ...prev,
+    purchaseOrderId: order.id,
+    materialId: order.materialId || prev.materialId,
+    supplierId: order.supplierId || prev.supplierId,
+    quantity: order.remainingQty !== undefined ? order.remainingQty : prev.quantity,
+    price: order.unitPrice !== undefined ? order.unitPrice : prev.price,
+  }
 }
 
 export default function InboundFormModal({
@@ -104,8 +119,9 @@ export default function InboundFormModal({
                 value={selectedOrderId}
                 onChange={event => {
                   const id = event.target.value
+                  const order = purchaseOrders.find(item => item.id === id)
                   setSelectedOrderId(id)
-                  updateForm('purchaseOrderId', id)
+                  setForm(prev => applyPurchaseOrderToInboundForm(prev, order))
                 }}
                 className="h-10 w-full rounded-md border border-gray-300 px-3 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/10"
               >

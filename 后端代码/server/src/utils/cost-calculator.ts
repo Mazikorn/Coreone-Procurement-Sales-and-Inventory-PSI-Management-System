@@ -4,6 +4,9 @@ export interface SlideCostInput {
   blockCount?: number
   month?: string
   materialCost?: number
+  caseNo?: string | null
+  applyCaseAggregation?: boolean
+  feeMappingsOverride?: any[]
 }
 
 export interface ActivityCost {
@@ -21,6 +24,16 @@ const round4 = (value: number): number => Math.round((Number(value) || 0) * 1000
 export interface TierRule {
   maxQuantity?: number
   unitPrice: number
+}
+
+interface FeeBreakdownItem {
+  feeStandardId: string | null
+  feeStandardName: string | null
+  category: string | null
+  quantity: number
+  feeAmount: number
+  aggregationScope: 'outbound' | 'case'
+  chargeGroupId?: string | null
 }
 
 export function calculateTieredCost(quantity: number, tiers: TierRule[], capAmount?: number | null): number {
@@ -64,6 +77,228 @@ export function calculateFeeAmountFromStandard(feeStandard: any, quantity: numbe
   }
 
   return round2(basePrice * safeQuantity)
+}
+
+function getFeeMappings(db: any, bom: any): any[] {
+  if (!bom?.id) return []
+  const rows = db.prepare(`
+    SELECT m.*, fs.name as fee_standard_name, fs.category, fs.project_type,
+           fs.fee_per_slide, fs.base_price, fs.tier_rules, fs.cap_amount
+    FROM bom_fee_mappings m
+    LEFT JOIN fee_standards fs ON m.fee_standard_id = fs.id
+    WHERE m.bom_id = ? AND (m.status = 'active' OR m.status = 1 OR m.status = '1')
+    ORDER BY m.sort_order ASC, m.created_at ASC
+  `).all(bom.id) as any[]
+
+  if (rows.length) return rows
+  if (!bom.fee_standard_id) return []
+
+  const legacy = db.prepare('SELECT * FROM fee_standards WHERE id = ?').get(bom.fee_standard_id) as any
+  return legacy ? [{
+    id: `legacy-${bom.fee_standard_id}`,
+    fee_standard_id: legacy.id,
+    fee_standard_name: legacy.name,
+    category: legacy.category,
+    project_type: legacy.project_type,
+    fee_per_slide: legacy.fee_per_slide,
+    base_price: legacy.base_price,
+    tier_rules: legacy.tier_rules,
+    cap_amount: legacy.cap_amount,
+    quantity_multiplier: 1,
+    aggregation_scope: 'outbound',
+  }] : []
+}
+
+export function buildBomSourceSnapshot(db: any, bomId: string) {
+  const bom = db.prepare(`
+    SELECT id, code, name, version, type, service_id, description,
+           supportable_samples, fee_standard_id, fee_category, status, updated_at
+    FROM boms
+    WHERE id = ? AND is_deleted = 0
+  `).get(bomId) as any
+  if (!bom) return null
+
+  const mapMaterialRow = (row: any) => ({
+    materialId: row.material_id,
+    materialCode: row.material_code,
+    materialName: row.material_name,
+    spec: row.spec || null,
+    unit: row.unit || null,
+    usagePerSample: row.usage_per_sample ?? null,
+    usagePerBatch: row.usage_per_batch ?? null,
+    coversSamples: row.covers_samples ?? null,
+    allocationType: row.allocation_type || null,
+    groupName: row.group_name || null,
+    sortOrder: row.sort_order || 0,
+  })
+
+  const items = db.prepare(`
+    SELECT bi.*, m.code as material_code, m.name as material_name, m.spec
+    FROM bom_items bi
+    LEFT JOIN materials m ON bi.material_id = m.id AND m.is_deleted = 0
+    WHERE bi.bom_id = ?
+    ORDER BY bi.sort_order ASC, bi.created_at ASC
+  `).all(bomId).map(mapMaterialRow)
+
+  const generalReagents = db.prepare(`
+    SELECT gr.*, m.code as material_code, m.name as material_name, m.spec
+    FROM bom_general_reagents gr
+    LEFT JOIN materials m ON gr.material_id = m.id AND m.is_deleted = 0
+    WHERE gr.bom_id = ?
+    ORDER BY gr.sort_order ASC, gr.created_at ASC
+  `).all(bomId).map(mapMaterialRow)
+
+  const generalConsumables = db.prepare(`
+    SELECT gc.*, m.code as material_code, m.name as material_name, m.spec
+    FROM bom_general_consumables gc
+    LEFT JOIN materials m ON gc.material_id = m.id AND m.is_deleted = 0
+    WHERE gc.bom_id = ?
+    ORDER BY gc.sort_order ASC, gc.created_at ASC
+  `).all(bomId).map(mapMaterialRow)
+
+  const qualityControls = db.prepare(`
+    SELECT qc.*, m.code as material_code, m.name as material_name, m.spec
+    FROM bom_quality_controls qc
+    LEFT JOIN materials m ON qc.material_id = m.id AND m.is_deleted = 0
+    WHERE qc.bom_id = ?
+    ORDER BY qc.sort_order ASC, qc.created_at ASC
+  `).all(bomId).map(mapMaterialRow)
+
+  const feeMappings = getFeeMappings(db, bom).map(mapping => ({
+    feeStandardId: mapping.fee_standard_id,
+    feeStandardName: mapping.fee_standard_name,
+    category: mapping.category || null,
+    projectType: mapping.project_type || null,
+    feePerSlide: Number(mapping.fee_per_slide) || 0,
+    basePrice: Number(mapping.base_price) || 0,
+    quantityMultiplier: Number(mapping.quantity_multiplier) || 1,
+    aggregationScope: mapping.aggregation_scope === 'case' ? 'case' : 'outbound',
+  }))
+
+  return {
+    id: bom.id,
+    code: bom.code,
+    name: bom.name,
+    version: bom.version,
+    type: bom.type,
+    serviceId: bom.service_id || null,
+    supportableSamples: bom.supportable_samples ?? null,
+    feeStandardId: bom.fee_standard_id || null,
+    feeCategory: bom.fee_category || null,
+    status: bom.status,
+    updatedAt: bom.updated_at,
+    items,
+    generalReagents,
+    generalConsumables,
+    qualityControls,
+    feeMappings,
+  }
+}
+
+function applyCaseChargeGroup(db: any, input: {
+  caseNo: string
+  month: string
+  feeStandard: any
+  quantity: number
+}) {
+  const groupId = `${input.caseNo}-${input.month}-${input.feeStandard.fee_standard_id}`
+  const existing = db.prepare(`
+    SELECT * FROM case_charge_groups
+    WHERE case_no = ? AND year_month = ? AND fee_standard_id = ?
+  `).get(input.caseNo, input.month, input.feeStandard.fee_standard_id) as any
+  const previousQuantity = Number(existing?.total_quantity) || 0
+  const previousFee = Number(existing?.total_fee) || 0
+  const nextQuantity = previousQuantity + input.quantity
+  const nextFee = calculateFeeAmountFromStandard(input.feeStandard, nextQuantity)
+  const incrementalFee = round2(nextFee - previousFee)
+  const snapshot = JSON.stringify({
+    feeStandardId: input.feeStandard.fee_standard_id,
+    feeStandardName: input.feeStandard.fee_standard_name,
+    tierRules: input.feeStandard.tier_rules ? parseJson(input.feeStandard.tier_rules) : null,
+    capAmount: input.feeStandard.cap_amount ?? null,
+  })
+
+  db.prepare(`
+    INSERT INTO case_charge_groups (
+      id, case_no, year_month, fee_standard_id,
+      total_quantity, total_fee, outbound_count, rule_snapshot
+    )
+    VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+    ON CONFLICT(case_no, year_month, fee_standard_id) DO UPDATE SET
+      total_quantity = excluded.total_quantity,
+      total_fee = excluded.total_fee,
+      outbound_count = case_charge_groups.outbound_count + 1,
+      rule_snapshot = excluded.rule_snapshot,
+      updated_at = CURRENT_TIMESTAMP
+  `).run(
+    existing?.id || groupId,
+    input.caseNo,
+    input.month,
+    input.feeStandard.fee_standard_id,
+    nextQuantity,
+    nextFee,
+    snapshot,
+  )
+
+  return { groupId, incrementalFee, totalFee: nextFee, totalQuantity: nextQuantity }
+}
+
+function parseJson(value: string) {
+  try {
+    return JSON.parse(value)
+  } catch (_e) {
+    return null
+  }
+}
+
+function calculateFeeBreakdown(db: any, input: {
+  bom: any
+  slideCount: number
+  month: string
+  caseNo?: string | null
+  applyCaseAggregation?: boolean
+  feeMappingsOverride?: any[]
+}): FeeBreakdownItem[] {
+  const mappings = input.feeMappingsOverride || getFeeMappings(db, input.bom)
+  return mappings.map(mapping => {
+    const quantity = round4(input.slideCount * (Number(mapping.quantity_multiplier) || 1))
+    const aggregationScope = mapping.aggregation_scope === 'case' ? 'case' : 'outbound'
+    const feeStandard = {
+      ...mapping,
+      id: mapping.fee_standard_id,
+      name: mapping.fee_standard_name,
+    }
+
+    if (aggregationScope === 'case' && input.caseNo && input.applyCaseAggregation) {
+      const group = applyCaseChargeGroup(db, {
+        caseNo: input.caseNo,
+        month: input.month,
+        feeStandard: mapping,
+        quantity,
+      })
+      return {
+        feeStandardId: mapping.fee_standard_id,
+        feeStandardName: mapping.fee_standard_name,
+        category: mapping.category,
+        quantity,
+        feeAmount: group.incrementalFee,
+        aggregationScope,
+        chargeGroupId: group.groupId,
+      }
+    }
+
+    return {
+      feeStandardId: mapping.fee_standard_id,
+      feeStandardName: mapping.fee_standard_name,
+      category: mapping.category,
+      quantity,
+      feeAmount: calculateFeeAmountFromStandard(feeStandard, quantity),
+      aggregationScope,
+      chargeGroupId: input.caseNo && aggregationScope === 'case'
+        ? `${input.caseNo}-${input.month}-${mapping.fee_standard_id}`
+        : null,
+    }
+  })
 }
 
 export function getDriverRate(db: any, activityCenterId: string, month: string): number {
@@ -153,30 +388,41 @@ export function calculateLaborCost(db: any, projectType: string, sampleCount = 1
 
 export function calculateEquipmentCost(db: any, bomId: string, sampleCount = 1): number {
   const rows = db.prepare(`
-    SELECT bet.usage_minutes, e.purchase_price, e.residual_value, e.depreciable_life_years
+    SELECT bet.usage_minutes,
+           e.purchase_price, e.residual_value, e.depreciable_life_years,
+           e.depreciation_method, e.total_capacity,
+           et.default_purchase_price, et.default_residual_value,
+           et.default_depreciable_life_years, et.default_depreciation_method,
+           et.default_total_capacity
     FROM bom_equipment_templates bet
     LEFT JOIN equipment e ON bet.equipment_id = e.id
+    LEFT JOIN equipment_types et ON bet.equipment_type_id = et.id
     WHERE bet.bom_id = ?
   `).all(bomId) as any[]
 
-  const total = rows.reduce((sum, row) => {
-    const purchasePrice = Number(row.purchase_price) || 0
-    const residualValue = Number(row.residual_value) || 0
-    const years = Number(row.depreciable_life_years) || 5
-    const perMinute = years > 0 ? (purchasePrice - residualValue) / years / 525600 : 0
-    return sum + perMinute * (Number(row.usage_minutes) || 0) * sampleCount
-  }, 0)
+  return calculateEquipmentCostFromRows(rows, sampleCount)
+}
 
-  return round2(total)
+function calculateEquipmentTemplateCost(row: any, sampleCount: number): number {
+  const purchasePrice = Number(row.purchase_price ?? row.default_purchase_price) || 0
+  const residualValue = Number(row.residual_value ?? row.default_residual_value) || 0
+  const depreciableAmount = Math.max(0, purchasePrice - residualValue)
+  const usageMinutes = Number(row.usage_minutes) || 0
+  const depreciationMethod = row.depreciation_method || row.default_depreciation_method || 'straight_line'
+  const totalCapacity = Number(row.total_capacity ?? row.default_total_capacity) || 0
+
+  if (depreciationMethod === 'units_of_production' && totalCapacity > 0) {
+    return (depreciableAmount / totalCapacity) * usageMinutes * sampleCount
+  }
+
+  const years = Number(row.depreciable_life_years ?? row.default_depreciable_life_years) || 5
+  const perMinute = years > 0 ? depreciableAmount / years / 525600 : 0
+  return perMinute * usageMinutes * sampleCount
 }
 
 export function calculateEquipmentCostFromRows(rows: any[], sampleCount = 1): number {
   const total = rows.reduce((sum, row) => {
-    const purchasePrice = Number(row.purchase_price) || 0
-    const residualValue = Number(row.residual_value) || 0
-    const years = Number(row.depreciable_life_years) || 5
-    const perMinute = years > 0 ? (purchasePrice - residualValue) / years / 525600 : 0
-    return sum + perMinute * (Number(row.usage_minutes) || 0) * sampleCount
+    return sum + calculateEquipmentTemplateCost(row, sampleCount)
   }, 0)
 
   return round2(total)
@@ -244,24 +490,31 @@ export function calculateSlideCostWithFee(db: any, input: SlideCostInput) {
   const totalActivityCost = round2(activityCosts.reduce((sum, item) => sum + item.totalCost, 0))
   const totalCost = round2(materialCost + totalActivityCost)
 
-  const feeStandard = bom?.fee_standard_id
-    ? db.prepare('SELECT * FROM fee_standards WHERE id = ?').get(bom.fee_standard_id) as any
-    : null
-
-  const feeAmount = calculateFeeAmountFromStandard(feeStandard, slideCount)
+  const feeBreakdown = calculateFeeBreakdown(db, {
+    bom,
+    slideCount,
+    month,
+    caseNo: input.caseNo,
+    applyCaseAggregation: input.applyCaseAggregation,
+    feeMappingsOverride: input.feeMappingsOverride,
+  })
+  const feeAmount = round2(feeBreakdown.reduce((sum, item) => sum + item.feeAmount, 0))
   const profit = round2(feeAmount - totalCost)
   const profitRate = feeAmount > 0 ? round4(profit / feeAmount) : 0
+  const primaryFee = feeBreakdown.length === 1 ? feeBreakdown[0] : null
 
   return {
     materialCost,
     totalActivityCost,
     totalCost,
     costPerSlide: round2(totalCost / slideCount),
-    feeCategory: feeStandard?.category || bom?.fee_category || null,
-    feeStandardId: feeStandard?.id || bom?.fee_standard_id || null,
+    feeCategory: primaryFee?.category || bom?.fee_category || null,
+    feeStandardId: primaryFee?.feeStandardId || bom?.fee_standard_id || null,
     feeAmount,
     profit,
     profitRate,
+    feeBreakdown,
+    chargeGroupId: primaryFee?.chargeGroupId || null,
     activityCosts,
   }
 }

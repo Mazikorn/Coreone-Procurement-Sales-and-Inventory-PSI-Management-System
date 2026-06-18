@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../database/DatabaseManager.js'
 import { success, error } from '../utils/response.js'
 
@@ -24,23 +25,28 @@ router.post('/tracking', (req, res) => {
   try {
     const db = getDatabase()
     const { material_id, material_name, batch, spec, total_qty, remaining, unit, start_date, expected_days, usage, receiver } = req.body
+    const totalQty = Number(total_qty)
+    const remainingQty = Number(remaining)
     if (!material_id || !batch || total_qty === undefined || remaining === undefined) {
       error(res, 'material_id, batch, total_qty, remaining 必填', 'INVALID_PARAMETER', 400); return
     }
-    if (isNaN(Number(total_qty)) || Number(total_qty) <= 0 || isNaN(Number(remaining)) || Number(remaining) < 0) {
+    if (!Number.isFinite(totalQty) || totalQty <= 0 || !Number.isFinite(remainingQty) || remainingQty < 0) {
       error(res, 'total_qty 和 remaining 必须为非负数且 total_qty > 0', 'INVALID_PARAMETER', 400); return
+    }
+    if (remainingQty > totalQty) {
+      error(res, 'remaining 不能大于领用总量', 'INVALID_PARAMETER', 400); return
     }
     const dateRegex = /^\d{4}-\d{2}-\d{2}$/
     if (start_date && !dateRegex.test(start_date)) {
       error(res, 'start_date 格式必须为 YYYY-MM-DD', 'INVALID_PARAMETER', 400); return
     }
 
-    const id = `TRK-${Date.now()}`
+    const id = uuidv4()
     db.prepare(`
       INSERT INTO batch_usage_tracking
       (id, material_id, material_name, batch, spec, total_qty, remaining, unit, start_date, days_used, expected_days, progress, usage, receiver, status, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, ?, ?, 'in-use', datetime('now'), datetime('now'))
-    `).run(id, material_id, material_name, batch, spec, total_qty, remaining, unit, start_date, expected_days, usage, receiver)
+    `).run(id, material_id, material_name, batch, spec, totalQty, remainingQty, unit, start_date, expected_days, usage, receiver)
 
     success(res, { id })
   } catch (err: any) { error(res, err.message) }
@@ -52,20 +58,27 @@ router.put('/tracking/:id/remain', (req, res) => {
     const db = getDatabase()
     const { id } = req.params
     const { remaining, reason } = req.body
-    if (remaining === undefined || isNaN(Number(remaining)) || Number(remaining) < 0) {
+    const remainingQty = Number(remaining)
+    if (remaining === undefined || !Number.isFinite(remainingQty) || remainingQty < 0) {
       error(res, 'remaining 必填且必须为非负数', 'INVALID_PARAMETER', 400); return
+    }
+    if (!String(reason || '').trim()) {
+      error(res, '调整原因必填', 'INVALID_PARAMETER', 400); return
     }
 
     const existing = db.prepare('SELECT * FROM batch_usage_tracking WHERE id = ?').get(id) as any
     if (!existing) { error(res, 'Not found', 'NOT_FOUND', 404); return }
+    if (remainingQty > Number(existing.total_qty || 0)) {
+      error(res, 'remaining 不能大于领用总量', 'INVALID_PARAMETER', 400); return
+    }
 
     db.prepare(`
       UPDATE batch_usage_tracking
       SET remaining = ?, updated_at = datetime('now')
       WHERE id = ?
-    `).run(remaining, id)
+    `).run(remainingQty, id)
 
-    success(res, { id, remaining })
+    success(res, { id, remaining: remainingQty })
   } catch (err: any) { error(res, err.message) }
 })
 
@@ -74,53 +87,71 @@ router.post('/tracking/:id/deplete', (req, res) => {
   try {
     const db = getDatabase()
     const { id } = req.params
-    const { remain_qty, deplete_type, deplete_reason, operator } = req.body
-    if (remain_qty === undefined || isNaN(Number(remain_qty)) || Number(remain_qty) < 0) {
+    const { remain_qty, deplete_type, deplete_reason } = req.body
+    const operator = (req as any).user?.username || 'system'
+    const remainQty = Number(remain_qty)
+    if (remain_qty === undefined || !Number.isFinite(remainQty) || remainQty < 0) {
       error(res, 'remain_qty 必填且必须为非负数', 'INVALID_PARAMETER', 400); return
     }
-
-    // 获取当前跟踪记录
-    const tracking = db.prepare(`SELECT * FROM batch_usage_tracking WHERE id = ?`).get(id) as any
-    if (!tracking) {
-      return error(res, '跟踪记录不存在', 'NOT_FOUND', 404)
-    }
-    if (tracking.status === 'depleted') {
-      return error(res, '该跟踪记录已耗尽，不可重复操作', 'ALREADY_DEPLETED', 400)
+    if (!deplete_type) {
+      error(res, 'deplete_type 必填', 'INVALID_PARAMETER', 400); return
     }
 
-    // 计算使用天数
-    const today = new Date().toISOString().split('T')[0]
-    const startDate = new Date(tracking.start_date)
-    const endDate = new Date(today)
-    const daysUsed = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24))
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      // 获取当前跟踪记录
+      const tracking = db.prepare(`SELECT * FROM batch_usage_tracking WHERE id = ?`).get(id) as any
+      if (!tracking) {
+        db.exec('ROLLBACK')
+        return error(res, '跟踪记录不存在', 'NOT_FOUND', 404)
+      }
+      if (tracking.status === 'depleted') {
+        db.exec('ROLLBACK')
+        return error(res, '该跟踪记录已耗尽，不可重复操作', 'ALREADY_DEPLETED', 400)
+      }
+      if (remainQty > Number(tracking.total_qty || 0)) {
+        db.exec('ROLLBACK')
+        return error(res, 'remain_qty 不能大于领用总量', 'INVALID_PARAMETER', 400)
+      }
 
-    // 创建耗尽记录
-    const depletionId = `DPL-${Date.now()}`
-    db.prepare(`
-      INSERT INTO batch_depletion
-      (id, tracking_id, material_id, material_name, batch, spec, total_qty, remain_qty, unit, start_date, end_date, days_used, actual_days, deplete_type, deplete_reason, operator, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-    `).run(depletionId, id, tracking.material_id, tracking.material_name, tracking.batch, tracking.spec,
-      tracking.total_qty, remain_qty, tracking.unit, tracking.start_date, today, daysUsed, tracking.expected_days,
-      deplete_type, deplete_reason, operator)
+      // 计算使用天数
+      const today = new Date().toISOString().split('T')[0]
+      const startDate = new Date(tracking.start_date)
+      const endDate = new Date(today)
+      const daysUsed = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24))
 
-    // 更新跟踪记录状态为耗尽
-    db.prepare(`
-      UPDATE batch_usage_tracking
-      SET status = 'depleted', updated_at = datetime('now')
-      WHERE id = ?
-    `).run(id)
-
-    // 更新批次库存
-    if (tracking.batch && tracking.material_id) {
+      // 创建耗尽记录
+      const depletionId = `DPL-${Date.now()}`
       db.prepare(`
-        UPDATE batches
-        SET remaining = ?, status = 2, updated_at = datetime('now')
-        WHERE batch_no = ? AND material_id = ?
-      `).run(remain_qty, tracking.batch, tracking.material_id)
-    }
+        INSERT INTO batch_depletion
+        (id, tracking_id, material_id, material_name, batch, spec, total_qty, remain_qty, unit, start_date, end_date, days_used, actual_days, deplete_type, deplete_reason, operator, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      `).run(depletionId, id, tracking.material_id, tracking.material_name, tracking.batch, tracking.spec,
+        tracking.total_qty, remainQty, tracking.unit, tracking.start_date, today, daysUsed, tracking.expected_days,
+        deplete_type, deplete_reason, operator)
 
-    success(res, { id: depletionId })
+      // 更新跟踪记录状态为耗尽
+      db.prepare(`
+        UPDATE batch_usage_tracking
+        SET status = 'depleted', updated_at = datetime('now')
+        WHERE id = ?
+      `).run(id)
+
+      // 更新批次库存
+      if (tracking.batch && tracking.material_id) {
+        db.prepare(`
+          UPDATE batches
+          SET remaining = ?, status = 2, updated_at = datetime('now')
+          WHERE batch_no = ? AND material_id = ?
+        `).run(remainQty, tracking.batch, tracking.material_id)
+      }
+
+      db.exec('COMMIT')
+      success(res, { id: depletionId })
+    } catch (e: any) {
+      db.exec('ROLLBACK')
+      throw e
+    }
   } catch (err: any) { error(res, err.message) }
 })
 

@@ -1,20 +1,37 @@
+import React from 'react'
 import { X } from 'lucide-react'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
-import type { User } from '@/types'
-import type { FormData } from '../hooks/useUsersPage'
+import type { FormData, RoleItem } from '../hooks/useUsersPage'
+
+const PASSWORD_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'
+
+export function generateClientTemporaryPassword() {
+  if (!globalThis.crypto?.getRandomValues) {
+    throw new Error('浏览器不支持安全随机数')
+  }
+  const bytes = new Uint8Array(9)
+  globalThis.crypto.getRandomValues(bytes)
+  const suffix = Array.from(bytes, byte => PASSWORD_ALPHABET[byte % PASSWORD_ALPHABET.length]).join('')
+  return `Core@${suffix}`
+}
 
 interface Props {
   open: boolean
   type: 'create' | 'edit'
   form: FormData
+  roles: RoleItem[]
   onClose: () => void
   onChange: (form: FormData) => void
   onSubmit: () => void
   onResetPassword: () => void
 }
 
-export function UserFormModal({ open, type, form, onClose, onChange, onSubmit, onResetPassword }: Props) {
+export function UserFormModal({ open, type, form, roles, onClose, onChange, onSubmit, onResetPassword }: Props) {
   if (!open) return null
+  const roleOptions = roles.map(role => ({ value: role.code, label: role.name }))
+  if (form.role && !roleOptions.some(option => option.value === form.role)) {
+    roleOptions.unshift({ value: form.role, label: form.role })
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
@@ -53,11 +70,7 @@ export function UserFormModal({ open, type, form, onClose, onChange, onSubmit, o
               <SearchableSelect
                 value={form.role}
                 onChange={val => onChange({ ...form, role: val })}
-                options={[
-                  { value: 'admin', label: '系统管理员' },
-                  { value: 'operator', label: '操作员' },
-                  { value: 'viewer', label: '查看者' },
-                ]}
+                options={roleOptions}
                 placeholder="请选择"
               />
             </div>
@@ -110,12 +123,22 @@ export function UserFormModal({ open, type, form, onClose, onChange, onSubmit, o
           )}
           {type === 'create' && (
             <div>
-              <label className="block text-[13px] font-medium text-gray-700 mb-1.5">初始密码 <span className="text-red-500">*</span></label>
+              <label className="block text-[13px] font-medium text-gray-700 mb-1.5">初始密码</label>
               <div className="flex gap-2">
-                <input value="Abc@123456" readOnly className="flex-1 h-10 px-3 text-sm text-gray-900 bg-gray-50 border border-gray-300 rounded-md outline-none" />
-                <button className="h-10 px-4 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 shadow-sm transition-all">随机生成</button>
+                <input
+                  value={form.password}
+                  onChange={e => onChange({ ...form, password: e.target.value })}
+                  className="flex-1 h-10 px-3 text-sm text-gray-900 bg-white border border-gray-300 rounded-md outline-none transition-all focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10"
+                />
+                <button
+                  type="button"
+                  onClick={() => onChange({ ...form, password: generateClientTemporaryPassword() })}
+                  className="h-10 px-4 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 shadow-sm transition-all"
+                >
+                  随机生成
+                </button>
               </div>
-              <div className="text-xs text-gray-500 mt-1">初始密码将在用户首次登录时要求修改</div>
+              <div className="text-xs text-gray-500 mt-1">留空时由系统生成临时密码，并在创建成功后显示</div>
             </div>
           )}
         </div>

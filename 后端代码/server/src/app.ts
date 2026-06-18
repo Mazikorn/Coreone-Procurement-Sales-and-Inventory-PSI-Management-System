@@ -4,7 +4,7 @@ import cors from 'cors'
 import helmet from 'helmet'
 import { initializeDatabase } from './database/DatabaseManager.js'
 import { errorHandler } from './middleware/errorHandler.js'
-import { authenticateToken, requireRole } from './middleware/auth.js'
+import { authenticateToken, requireRole, requireStrictRole } from './middleware/auth.js'
 
 // 路由导入
 import authRoutes from './routes/auth.js'
@@ -39,10 +39,25 @@ import costAdjustmentRoutes from './routes/cost-adjustment-v1.1.js'
 
 const app = express()
 const PORT = process.env.PORT || 3001
+const configuredOrigins = (process.env.CORS_ORIGIN || 'http://localhost:8080,http://127.0.0.1:8080')
+  .split(',')
+  .map(origin => origin.trim())
+  .filter(Boolean)
+const allowedOrigins = Array.from(new Set([
+  ...configuredOrigins,
+  ...configuredOrigins.map(origin => origin.replace('://localhost:', '://127.0.0.1:')),
+  ...configuredOrigins.map(origin => origin.replace('://127.0.0.1:', '://localhost:')),
+]))
 
 // 中间件
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || 'http://localhost:8080',
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true)
+      return
+    }
+    callback(new Error('Not allowed by CORS'))
+  },
   credentials: true,
 }))
 app.use(helmet({
@@ -71,11 +86,11 @@ initializeDatabase()
 app.use('/api/v1/auth', authRoutes)
 
 // 路由注册 - admin专属
-app.use('/api/v1/users', authenticateToken, requireRole('admin'), userRoutes)
-app.use('/api/v1/roles', authenticateToken, requireRole('admin'), roleRoutes)
+app.use('/api/v1/users', authenticateToken, requireStrictRole('admin'), userRoutes)
+app.use('/api/v1/roles', authenticateToken, requireStrictRole('admin'), roleRoutes)
 
 // 路由注册 - finance可访问
-app.use('/api/v1/logs', authenticateToken, requireRole('admin'), logRoutes)
+app.use('/api/v1/logs', authenticateToken, requireRole('admin', 'finance'), logRoutes)
 app.use('/api/v1/reports', authenticateToken, requireRole('admin', 'pathologist', 'finance'), reportRoutes)
 app.use('/api/v1/depletion', authenticateToken, requireRole('admin', 'pathologist', 'finance'), depletionRoutes)
 
@@ -97,9 +112,9 @@ app.use('/api/v1/scraps', authenticateToken, requireRole('admin', 'warehouse_man
 app.use('/api/v1/transfers', authenticateToken, requireRole('admin', 'warehouse_manager'), transferRoutes)
 app.use('/api/v1/supplier-returns', authenticateToken, requireRole('admin', 'warehouse_manager', 'procurement'), supplierReturnRoutes)
 
-// 路由注册 - technician/pathologist共享
-app.use('/api/v1/projects', authenticateToken, requireRole('admin', 'technician', 'pathologist'), projectRoutes)
-app.use('/api/v1/boms', authenticateToken, requireRole('admin', 'technician', 'pathologist'), bomRoutes)
+// 路由注册 - 检测项目/BOM 主数据；仓管出库需要只读选择 BOM，写入仍由路由内 admin 守卫
+app.use('/api/v1/projects', authenticateToken, requireRole('admin', 'warehouse_manager', 'technician', 'pathologist'), projectRoutes)
+app.use('/api/v1/boms', authenticateToken, requireRole('admin', 'warehouse_manager', 'technician', 'pathologist'), bomRoutes)
 
 // 路由注册 - 成本对账 (admin/finance/pathologist可访问)
 app.use('/api/v1/reconciliation', authenticateToken, requireRole('admin', 'pathologist', 'finance'), reconciliationRoutes)
@@ -114,8 +129,8 @@ app.use('/api/v1/labor-times', authenticateToken, requireRole('admin', 'technici
 // 路由注册 - 间接成本中心 (admin/finance可访问)
 app.use('/api/v1/indirect-costs', authenticateToken, requireRole('admin', 'finance'), indirectCostRoutes)
 
-// 路由注册 - ABC作业成本法 (admin/finance可访问)
-app.use('/api/v1/abc', authenticateToken, requireRole('admin', 'finance'), abcRoutes)
+// 路由注册 - ABC作业成本法：财务可管理，主任可只读查看可信成本看板
+app.use('/api/v1/abc', authenticateToken, requireRole('admin', 'finance', 'pathologist'), abcRoutes)
 
 // 路由注册 - 季度成本调整 (admin/finance可访问)
 app.use('/api/v1/cost-adjustments', authenticateToken, requireRole('admin', 'finance'), costAdjustmentRoutes)

@@ -3,6 +3,9 @@ import { useMaterialsPage } from './hooks/useMaterialsPage'
 import { MaterialTable } from './components/MaterialTable'
 import { MaterialFormModal } from './components/MaterialFormModal'
 import { MaterialDetailModal } from './components/MaterialDetailModal'
+import { MaterialDeleteModal } from './components/MaterialDeleteModal'
+import { MaterialStatusModal } from './components/MaterialStatusModal'
+import { MaterialBatchImpactModal } from './components/MaterialBatchImpactModal'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 
 export default function Materials() {
@@ -16,10 +19,12 @@ export default function Materials() {
           <h1 className="text-[28px] font-semibold text-gray-900">物料管理</h1>
           <p className="text-sm text-gray-500 mt-1">管理耗材的基础配置信息、规格参数和供应商信息</p>
         </div>
-        <button onClick={page.openCreate} className="inline-flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 text-sm font-medium">
-          <Plus className="w-4 h-4" />
-          新建物料
-        </button>
+        {page.canWrite && (
+          <button onClick={page.openCreate} className="inline-flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 text-sm font-medium">
+            <Plus className="w-4 h-4" />
+            新建物料
+          </button>
+        )}
       </div>
 
       {/* Stats Cards */}
@@ -50,6 +55,7 @@ export default function Materials() {
         page={page.page}
         pageSize={page.pageSize}
         selectedIds={page.selectedIds}
+        canWrite={page.canWrite}
         keyword={page.keyword}
         categoryId={page.categoryId}
         supplierId={page.supplierId}
@@ -84,8 +90,8 @@ export default function Materials() {
         editingId={page.editingId}
         form={page.form}
         specPart={page.specPart}
-        categories={page.categories}
-        suppliers={page.suppliers}
+        categories={page.formCategories}
+        suppliers={page.formSuppliers}
         onClose={() => page.setModalOpen(false)}
         onChange={page.setForm}
         onSpecPartChange={page.setSpecPart}
@@ -104,6 +110,39 @@ export default function Materials() {
         statusBadge={page.statusBadge}
         onClose={() => page.setDetailModalOpen(false)}
         onEdit={page.openEdit}
+      />
+
+      <MaterialDeleteModal
+        open={Boolean(page.deleteTarget)}
+        target={page.deleteTarget}
+        deleteCheck={page.deleteCheck}
+        checkingDelete={page.checkingDelete}
+        deleting={page.deleting}
+        onClose={page.closeDeleteModal}
+        onConfirm={page.confirmDelete}
+      />
+
+      <MaterialStatusModal
+        open={Boolean(page.statusTarget)}
+        target={page.statusTarget}
+        targetStatus={page.statusTargetStatus}
+        statusCheck={page.statusCheck}
+        checkingStatus={page.checkingStatus}
+        updatingStatus={page.updatingStatus}
+        onClose={page.closeStatusModal}
+        onConfirm={page.confirmStatusChange}
+      />
+
+      <MaterialBatchImpactModal
+        open={Boolean(page.batchAction)}
+        action={page.batchAction}
+        targetsCount={page.batchTargets.length}
+        deleteResults={page.batchDeleteResults}
+        statusResults={page.batchStatusResults}
+        checking={page.checkingBatch}
+        submitting={page.submittingBatch}
+        onClose={page.closeBatchImpactModal}
+        onConfirm={page.confirmBatchAction}
       />
 
       {/* ConfirmDialog */}

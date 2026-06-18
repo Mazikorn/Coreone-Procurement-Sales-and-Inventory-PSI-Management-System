@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { Download, TrendingUp, DollarSign, BarChart3 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -36,9 +36,9 @@ export default function EquipmentDepreciationStats() {
   const chartData = useMemo(() =>
     stats.map(s => ({
       name: s.typeName || '未分类',
-      totalDepreciation: s.totalDepreciation || 0,
+      totalAnnualDepreciation: s.totalAnnualDepreciation || 0,
       equipmentCount: s.equipmentCount || 0,
-      totalPurchaseValue: s.totalPurchaseValue || 0,
+      totalPurchasePrice: s.totalPurchasePrice || 0,
     })),
     [stats]
   )
@@ -54,24 +54,23 @@ export default function EquipmentDepreciationStats() {
     },
     {
       label: '总购置价值',
-      value: summary?.totalPurchaseValue ?? stats.reduce((s, d) => s + (d.totalPurchaseValue || 0), 0),
+      value: summary?.totalPurchasePrice ?? stats.reduce((s, d) => s + (d.totalPurchasePrice || 0), 0),
       icon: DollarSign,
       color: 'text-green-600',
       bgColor: 'bg-green-50',
       format: formatCurrency,
     },
     {
-      label: '累计折旧',
-      value: summary?.totalDepreciation ?? stats.reduce((s, d) => s + (d.totalDepreciation || 0), 0),
+      label: '年折旧额',
+      value: summary?.totalAnnualDepreciation ?? stats.reduce((s, d) => s + (d.totalAnnualDepreciation || 0), 0),
       icon: TrendingUp,
       color: 'text-amber-600',
       bgColor: 'bg-amber-50',
       format: formatCurrency,
     },
     {
-      label: '净值',
-      value: (summary?.totalPurchaseValue ?? stats.reduce((s, d) => s + (d.totalPurchaseValue || 0), 0))
-        - (summary?.totalDepreciation ?? stats.reduce((s, d) => s + (d.totalDepreciation || 0), 0)),
+      label: '月折旧额',
+      value: summary?.totalMonthlyDepreciation ?? stats.reduce((s, d) => s + (d.totalMonthlyDepreciation || 0), 0),
       icon: DollarSign,
       color: 'text-purple-600',
       bgColor: 'bg-purple-50',
@@ -84,13 +83,13 @@ export default function EquipmentDepreciationStats() {
       toast.warning('暂无数据可导出')
       return
     }
-    const headers = ['设备类型', '设备数量', '总购置价值', '累计折旧', '净值']
+    const headers = ['设备类型', '设备数量', '总购置价值', '年折旧额', '月折旧额']
     const rows = stats.map(s => [
       s.typeName || '未分类',
       s.equipmentCount || 0,
-      s.totalPurchaseValue || 0,
-      s.totalDepreciation || 0,
-      (s.totalPurchaseValue || 0) - (s.totalDepreciation || 0),
+      s.totalPurchasePrice || 0,
+      s.totalAnnualDepreciation || 0,
+      s.totalMonthlyDepreciation || 0,
     ])
     const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n')
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
@@ -162,7 +161,7 @@ export default function EquipmentDepreciationStats() {
               />
               <Tooltip
                 formatter={(value: number, name: string) => {
-                  const label = name === 'totalDepreciation' ? '累计折旧' : '购置价值'
+                  const label = name === 'totalAnnualDepreciation' ? '年折旧额' : '购置价值'
                   return [formatCurrency(value), label]
                 }}
                 contentStyle={{ borderRadius: 8, border: '1px solid #e5e7eb' }}
@@ -170,16 +169,16 @@ export default function EquipmentDepreciationStats() {
               <Legend
                 formatter={(value) => (
                   <span className="text-xs text-gray-600">
-                    {value === 'totalDepreciation' ? '累计折旧' : '购置价值'}
+                    {value === 'totalAnnualDepreciation' ? '年折旧额' : '购置价值'}
                   </span>
                 )}
               />
-              <Bar dataKey="totalPurchaseValue" name="totalPurchaseValue" radius={[4, 4, 0, 0]}>
+              <Bar dataKey="totalPurchasePrice" name="totalPurchasePrice" radius={[4, 4, 0, 0]}>
                 {chartData.map((_, index) => (
                   <Cell key={index} fill={BAR_COLORS[index % BAR_COLORS.length]} opacity={0.4} />
                 ))}
               </Bar>
-              <Bar dataKey="totalDepreciation" name="totalDepreciation" radius={[4, 4, 0, 0]}>
+              <Bar dataKey="totalAnnualDepreciation" name="totalAnnualDepreciation" radius={[4, 4, 0, 0]}>
                 {chartData.map((_, index) => (
                   <Cell key={index} fill={BAR_COLORS[index % BAR_COLORS.length]} />
                 ))}
@@ -200,9 +199,9 @@ export default function EquipmentDepreciationStats() {
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">设备类型</th>
               <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">设备数量</th>
               <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">总购置价值</th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">累计折旧</th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">净值</th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">折旧率</th>
+              <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">年折旧额</th>
+              <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">月折旧额</th>
+              <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">年折旧率</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200">
@@ -216,17 +215,16 @@ export default function EquipmentDepreciationStats() {
               </tr>
             ) : (
               stats.map(s => {
-                const netValue = (s.totalPurchaseValue || 0) - (s.totalDepreciation || 0)
-                const depreciationRate = s.totalPurchaseValue
-                  ? ((s.totalDepreciation || 0) / s.totalPurchaseValue * 100)
+                const depreciationRate = s.totalPurchasePrice
+                  ? ((s.totalAnnualDepreciation || 0) / s.totalPurchasePrice * 100)
                   : 0
                 return (
                   <tr key={s.typeId || s.typeName} className="hover:bg-gray-50">
                     <td className="px-4 py-3 text-sm font-medium text-gray-900">{s.typeName || '未分类'}</td>
                     <td className="px-4 py-3 text-sm text-gray-900 text-right font-mono">{s.equipmentCount || 0}</td>
-                    <td className="px-4 py-3 text-sm text-gray-900 text-right font-mono">{formatCurrency(s.totalPurchaseValue || 0)}</td>
-                    <td className="px-4 py-3 text-sm text-gray-900 text-right font-mono">{formatCurrency(s.totalDepreciation || 0)}</td>
-                    <td className="px-4 py-3 text-sm text-gray-900 text-right font-mono">{formatCurrency(netValue)}</td>
+                    <td className="px-4 py-3 text-sm text-gray-900 text-right font-mono">{formatCurrency(s.totalPurchasePrice || 0)}</td>
+                    <td className="px-4 py-3 text-sm text-gray-900 text-right font-mono">{formatCurrency(s.totalAnnualDepreciation || 0)}</td>
+                    <td className="px-4 py-3 text-sm text-gray-900 text-right font-mono">{formatCurrency(s.totalMonthlyDepreciation || 0)}</td>
                     <td className={`px-4 py-3 text-sm text-right font-mono font-medium ${depreciationRate > 80 ? 'text-red-600' : depreciationRate > 50 ? 'text-amber-600' : 'text-green-600'}`}>
                       {depreciationRate.toFixed(1)}%
                     </td>

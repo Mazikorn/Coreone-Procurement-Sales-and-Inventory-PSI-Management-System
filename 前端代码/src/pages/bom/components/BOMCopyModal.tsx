@@ -1,3 +1,4 @@
+import React from 'react'
 import { X } from 'lucide-react'
 import type { CopyForm } from '../hooks/useBOMPage'
 import type { BOM } from '@/types'
@@ -24,6 +25,8 @@ export function BOMCopyModal({
   if (!open) return null
 
   const original = data.find((d) => d.id === editingId)
+  const originalMaterialCount = original?.materials?.length ?? original?.materialCount ?? 0
+  const cannotCopy = originalMaterialCount === 0
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -65,18 +68,23 @@ export function BOMCopyModal({
                   onChange={(e) => onChange({ ...copyForm, copyInfo: e.target.checked })}
                   className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                 />
-                <span className="text-sm text-gray-700">基本信息（描述、关联服务）</span>
+                <span className="text-sm text-gray-700">基础描述</span>
               </label>
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
-                  checked={copyForm.copyMaterials}
-                  onChange={(e) => onChange({ ...copyForm, copyMaterials: e.target.checked })}
+                  checked
+                  disabled
+                  onChange={() => onChange({ ...copyForm, copyMaterials: true })}
                   className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                 />
-                <span className="text-sm text-gray-700">物料清单（所有物料及用量）</span>
+                <span className="text-sm text-gray-700">物料清单（必选）</span>
               </label>
             </div>
+            <p className="mt-2 text-xs text-gray-500">复制后不会继承原检测服务绑定，请在新BOM中重新关联。</p>
+            {cannotCopy && (
+              <p className="mt-2 text-xs text-red-600">原BOM缺少物料清单，不能复制。</p>
+            )}
           </div>
         </div>
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200">
@@ -88,7 +96,8 @@ export function BOMCopyModal({
           </button>
           <button
             onClick={onConfirm}
-            className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 transition-colors shadow-sm"
+            disabled={cannotCopy}
+            className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 transition-colors shadow-sm disabled:bg-gray-300"
           >
             确认复制
           </button>

@@ -75,6 +75,45 @@ describe('usePagination', () => {
     })
   })
 
+  it('should not refetch endlessly when fetchFn is declared inline', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({
+      list: [],
+      pagination: { total: 0, page: 1, pageSize: 20 },
+    })
+
+    const { result } = renderHook(() =>
+      usePagination({
+        fetchFn: async params => fetchSpy(params),
+      })
+    )
+
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    await new Promise(resolve => setTimeout(resolve, 50))
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    expect(fetchSpy).toHaveBeenCalledWith({ page: 1, pageSize: 20 })
+  })
+
+  it('should fetch target page once when page changes', async () => {
+    const fetchFn = createMockFetchFn()
+    const { result } = renderHook(() => usePagination({ fetchFn }))
+
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    fetchFn.mockClear()
+
+    act(() => {
+      result.current.setPage(2)
+    })
+
+    await waitFor(() => {
+      expect(result.current.page).toBe(2)
+      expect(fetchFn).toHaveBeenCalledWith({ page: 2, pageSize: 20 })
+    })
+    await new Promise(resolve => setTimeout(resolve, 50))
+
+    expect(fetchFn).toHaveBeenCalledTimes(1)
+  })
+
   it('should reset page to 1 when pageSize changes', async () => {
     const fetchFn = createMockFetchFn()
     const { result } = renderHook(() => usePagination({ fetchFn }))
@@ -128,6 +167,31 @@ describe('usePagination', () => {
 
     expect(result.current.data).toEqual([])
     expect(result.current.total).toBe(0)
+    expect(result.current.error).toContain('network error')
+  })
+
+  it('should clear error after a successful refresh', async () => {
+    const fetchFn = vi.fn()
+      .mockRejectedValueOnce(new Error('network error'))
+      .mockResolvedValueOnce({
+        list: [{ id: 'item-after-retry' }],
+        pagination: { total: 1, page: 1, pageSize: 20 },
+      })
+    const { result } = renderHook(() => usePagination({ fetchFn }))
+
+    await waitFor(() => {
+      expect(result.current.error).toContain('network error')
+    })
+
+    act(() => {
+      result.current.refresh()
+    })
+
+    await waitFor(() => {
+      expect(result.current.error).toBeNull()
+      expect(result.current.data).toEqual([{ id: 'item-after-retry' }])
+      expect(result.current.total).toBe(1)
+    })
   })
 
   it('should refetch when deps change', async () => {

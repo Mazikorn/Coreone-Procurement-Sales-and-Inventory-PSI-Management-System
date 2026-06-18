@@ -51,8 +51,8 @@ export interface OutboundStats {
 }
 
 export function useDashboardPage() {
-  const [role, setRole] = useState<string | null>(null)
-  const [config, setConfig] = useState<DashboardRoleConfig>(() => getDashboardConfig(null))
+  const [role, setRole] = useState<string | null>(() => getUserRole())
+  const config = useMemo<DashboardRoleConfig>(() => getDashboardConfig(role), [role])
   const [inventoryStats, setInventoryStats] = useState<InventoryStats | null>(null)
   const [costSummary, setCostSummary] = useState<CostSummary | null>(null)
   const [inboundStats, setInboundStats] = useState<InboundStats | null>(null)
@@ -74,7 +74,6 @@ export function useDashboardPage() {
   useEffect(() => {
     const currentRole = getUserRole()
     setRole(currentRole)
-    setConfig(getDashboardConfig(currentRole))
   }, [])
 
   useEffect(() => {
@@ -84,7 +83,7 @@ export function useDashboardPage() {
     const fetchData = async () => {
       setLoading(true)
       try {
-        const cfg = getDashboardConfig(role)
+        const cfg = config
         const promises: Promise<any>[] = []
         const keys: string[] = []
 
@@ -110,11 +109,14 @@ export function useDashboardPage() {
           keys.push('abc-dashboard')
         }
 
-        // 始终获取最近活动数据
-        promises.push(inboundApi.getList({ page: 1, pageSize: 3 }).catch(() => null))
-        keys.push('recent-inbound')
-        promises.push(outboundApi.getList({ page: 1, pageSize: 3 }).catch(() => null))
-        keys.push('recent-outbound')
+        if (cfg.apiCalls.includes('inbound-stats')) {
+          promises.push(inboundApi.getList({ page: 1, pageSize: 3 }).catch(() => null))
+          keys.push('recent-inbound')
+        }
+        if (cfg.apiCalls.includes('outbound-stats')) {
+          promises.push(outboundApi.getList({ page: 1, pageSize: 3 }).catch(() => null))
+          keys.push('recent-outbound')
+        }
 
         if (signal.aborted) return
 
@@ -184,7 +186,7 @@ export function useDashboardPage() {
 
     fetchData()
     return () => controller.abort()
-  }, [role]) // H-7: role 变化时重新获取
+  }, [config]) // H-7: role 变化时重新获取
 
   // 合并最近活动
   const activities: ActivityItem[] = useMemo(() => {

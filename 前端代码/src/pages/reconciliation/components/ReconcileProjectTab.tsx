@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronUp } from 'lucide-react'
+import { AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react'
 import type { ProjectReconcile, MaterialDiff } from '../hooks/useReconciliationPage'
 
 interface Props {
@@ -9,6 +9,8 @@ interface Props {
   onToggleProject: (projectId: string) => void
   getDiffClass: (status: string) => string
   onFixBom: (mat: MaterialDiff, projectId: string) => void
+  onAuditProject: (projectId: string) => void
+  auditingProjectId: string | null
 }
 
 export function ReconcileProjectTab({
@@ -19,6 +21,8 @@ export function ReconcileProjectTab({
   onToggleProject,
   getDiffClass,
   onFixBom,
+  onAuditProject,
+  auditingProjectId,
 }: Props) {
   if (loading) {
     return <div className="text-center py-12 text-gray-400">加载中...</div>
@@ -66,7 +70,19 @@ export function ReconcileProjectTab({
                   该检测项目尚未关联BOM，无法计算理论消耗。请到 <strong>BOM清单</strong> 页面配置。
                 </div>
               ) : (
-                <div className="overflow-x-auto">
+                <div className="space-y-3">
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => onAuditProject(proj.id)}
+                      disabled={auditingProjectId === proj.id}
+                      className="inline-flex h-8 items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 text-xs font-medium text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <AlertTriangle className="h-3.5 w-3.5" />
+                      {auditingProjectId === proj.id ? '审计中...' : '审计差异'}
+                    </button>
+                  </div>
+                  <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-gray-50 text-xs text-gray-500 uppercase">
@@ -119,6 +135,7 @@ export function ReconcileProjectTab({
                       ))}
                     </tbody>
                   </table>
+                  </div>
                 </div>
               )}
             </div>

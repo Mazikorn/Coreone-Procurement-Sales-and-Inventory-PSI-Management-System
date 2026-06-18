@@ -1,7 +1,9 @@
-import { Search } from 'lucide-react'
+import React from 'react'
+import { CheckCircle2, Search, Trash2, XCircle } from 'lucide-react'
 import type { User } from '@/types'
 import { Pagination } from '@/components/ui/Pagination'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
+import { formatDateTime } from '@/lib/utils'
 import type { RoleItem } from '../hooks/useUsersPage'
 
 interface Props {
@@ -14,11 +16,17 @@ interface Props {
   roleFilter: string
   statusFilter: string
   selectedRoleId: string
+  selectedIds: Set<string>
   roles: RoleItem[]
   onKeywordChange: (v: string) => void
   onRoleFilterChange: (v: string) => void
   onStatusFilterChange: (v: string) => void
   onSelectedRoleIdChange: (v: string) => void
+  onToggleSelectAll: () => void
+  onToggleSelect: (id: string) => void
+  onClearSelection: () => void
+  onBatchToggleStatus: (status: 'active' | 'inactive') => void
+  onBatchDelete: () => void
   onSearch: () => void
   onReset: () => void
   onPageChange: (p: number) => void
@@ -32,8 +40,9 @@ interface Props {
 
 export function UsersTable({
   data, loading, total, page, pageSize,
-  keyword, roleFilter, statusFilter, selectedRoleId, roles,
+  keyword, roleFilter, statusFilter, selectedRoleId, selectedIds, roles,
   onKeywordChange, onRoleFilterChange, onStatusFilterChange, onSelectedRoleIdChange,
+  onToggleSelectAll, onToggleSelect, onClearSelection, onBatchToggleStatus, onBatchDelete,
   onSearch, onReset,
   onPageChange, onPageSizeChange,
   onOpenDetail, onOpenEdit, onToggleStatus, onResetPassword, onDelete,
@@ -77,6 +86,36 @@ export function UsersTable({
           )}
         </div>
       </div>
+
+      <div className="space-y-3">
+      {selectedIds.size > 0 && (
+        <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5">
+          <div className="flex items-center gap-2 text-sm text-blue-800">
+            <input
+              type="checkbox"
+              checked={data.length > 0 && selectedIds.size === data.length}
+              onChange={onToggleSelectAll}
+              className="w-4 h-4 rounded border-gray-300 text-blue-600"
+            />
+            <span>已选择 <strong>{selectedIds.size}</strong> 项</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={() => onBatchToggleStatus('active')} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-700 hover:bg-white rounded-md border border-transparent hover:border-gray-200 transition-colors">
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              批量启用
+            </button>
+            <button onClick={() => onBatchToggleStatus('inactive')} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-700 hover:bg-white rounded-md border border-transparent hover:border-gray-200 transition-colors">
+              <XCircle className="w-3.5 h-3.5" />
+              批量停用
+            </button>
+            <button onClick={onBatchDelete} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-red-600 hover:bg-white rounded-md border border-transparent hover:border-red-200 transition-colors">
+              <Trash2 className="w-3.5 h-3.5" />
+              批量删除
+            </button>
+            <button onClick={onClearSelection} className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700">取消选择</button>
+          </div>
+        </div>
+      )}
 
       {/* User Table */}
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
@@ -125,7 +164,12 @@ export function UsersTable({
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200">
                 <th className="px-4 py-3 text-left">
-                  <input type="checkbox" className="rounded border-gray-300 text-blue-500 focus:ring-blue-500" />
+                  <input
+                    type="checkbox"
+                    checked={data.length > 0 && selectedIds.size === data.length}
+                    onChange={onToggleSelectAll}
+                    className="rounded border-gray-300 text-blue-500 focus:ring-blue-500"
+                  />
                 </th>
                 {['用户名', '姓名', '部门', '角色', '状态', '最后登录', '操作'].map(h => (
                   <th key={h} className="px-4 py-3 text-left text-xs font-medium text-gray-700 tracking-wide">{h}</th>
@@ -138,9 +182,14 @@ export function UsersTable({
               ) : data.length === 0 ? (
                 <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-400">暂无数据</td></tr>
               ) : data.map(row => (
-                <tr key={row.id} className="hover:bg-gray-50 transition-colors">
+                <tr key={row.id} className={`hover:bg-gray-50 transition-colors ${selectedIds.has(row.id) ? 'bg-blue-50/50' : ''}`}>
                   <td className="px-4 py-3.5">
-                    <input type="checkbox" className="rounded border-gray-300 text-blue-500 focus:ring-blue-500" />
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(row.id)}
+                      onChange={() => onToggleSelect(row.id)}
+                      className="rounded border-gray-300 text-blue-500 focus:ring-blue-500"
+                    />
                   </td>
                   <td className="px-4 py-3.5 font-medium text-gray-900">{row.username}</td>
                   <td className="px-4 py-3.5 text-gray-900">{row.realName}</td>
@@ -151,7 +200,7 @@ export function UsersTable({
                       {row.status === 'active' ? '正常' : '禁用'}
                     </span>
                   </td>
-                  <td className="px-4 py-3.5 text-gray-500 text-sm">-</td>
+                  <td className="px-4 py-3.5 text-gray-500 text-sm">{formatDateTime(row.lastLogin || '')}</td>
                   <td className="px-4 py-3.5">
                     <div className="flex items-center gap-1">
                       <button onClick={() => onOpenDetail(row)} className="h-8 px-3 text-[13px] text-gray-700 hover:bg-gray-100 rounded-md transition-colors">详情</button>
@@ -179,6 +228,7 @@ export function UsersTable({
             onChangePageSize={onPageSizeChange}
           />
         </div>
+      </div>
       </div>
     </div>
   )

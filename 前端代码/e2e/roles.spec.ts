@@ -15,12 +15,16 @@ type RoleKey = keyof typeof ROLES
 const ROLE_KEYS: RoleKey[] = ['admin', 'warehouse_manager', 'technician', 'pathologist', 'procurement', 'finance']
 
 async function loginAs(page: Page, role: RoleKey) {
+  const cred = ROLES[role]
+  await loginWithCredentials(page, cred.username, cred.password)
+}
+
+async function loginWithCredentials(page: Page, username: string, password: string) {
   await page.goto(`${FE_BASE}/login`, { waitUntil: 'domcontentloaded' })
   await page.evaluate(() => { localStorage.clear(); sessionStorage.clear() })
   await page.goto(`${FE_BASE}/login`, { waitUntil: 'domcontentloaded' })
-  const cred = ROLES[role]
-  await page.fill('input[type="text"]', cred.username)
-  await page.fill('input[type="password"]', cred.password)
+  await page.fill('input[type="text"]', username)
+  await page.fill('input[type="password"]', password)
   await page.click('button[type="submit"]')
   await page.waitForURL(`${FE_BASE}/`, { timeout: 15000, waitUntil: 'domcontentloaded' })
 }
@@ -456,10 +460,20 @@ test.describe('角色权限 -> 角色权限矩阵补充', () => {
 // ───────────────────────────────────────────────
 test.describe('角色权限 -> 业务流程树', () => {
   test('BF-ROLE-01. 主路径：创建角色→配置权限→保存', async ({ page }) => {
+    const token = await apiLogin('admin')
+    const roleName = `测试角色-BF-${Date.now()}`
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/roles`); await page.waitForTimeout(1500)
     await page.click('text=/新建角色|新建/i'); await page.waitForTimeout(500)
-    const name = page.locator('input').filter({ hasText: /^$/ }).first()
-    if (await name.isVisible().catch(() => false)) { await name.fill(`测试角色-BF-${Date.now()}`); await page.click('text=/创建角色|保存/i'); await page.waitForTimeout(1000) }
+    await page.getByPlaceholder('请输入角色名称').fill(roleName)
+    await page.locator('tr', { hasText: '库存管理' }).getByRole('checkbox').first().check()
+    await page.click('text=/创建角色|保存/i')
+    await expect(page.locator('text=/创建成功|保存成功/i').first()).toBeVisible({ timeout: 5000 })
+
+    const res = await apiFetch(token, 'GET', `/roles?keyword=${encodeURIComponent(roleName)}&page=1&pageSize=20`)
+    expect(res.status).toBe(200)
+    const created = (res.data?.data?.list || []).find((item: any) => item.name === roleName)
+    expect(created).toBeTruthy()
+    expect(created.permissions).toContain('inventory:view')
   })
   test('BF-ROLE-02. 分支：创建角色时不填名称被阻止', async ({ page }) => {
     await loginAs(page, 'admin'); await page.goto(`${FE_BASE}/roles`); await page.waitForTimeout(1500)
@@ -501,6 +515,41 @@ test.describe('角色权限 -> 业务流程树', () => {
       const edit = page.locator('text=/编辑/i').first()
       if (await edit.isVisible().catch(() => false)) { await edit.click(); await page.waitForTimeout(800); await page.click('text=/取消|关闭/i'); await page.waitForTimeout(300) }
     }
+  })
+
+  test('BF-ROLE-09. 主路径：自定义角色权限驱动前端菜单与直链守卫', async ({ page }) => {
+    const token = await apiLogin('admin')
+    const suffix = Date.now()
+    const roleCode = `custom_inventory_${suffix}`
+    const username = `custom-user-${suffix}`
+    const password = 'CustomRole@123456'
+
+    const roleRes = await apiFetch(token, 'POST', '/roles', {
+      code: roleCode,
+      name: `自定义库存只读-${suffix}`,
+      permissions: ['inventory:view'],
+      status: 'active',
+      dataScope: 'self',
+    })
+    expect(roleRes.status).toBe(200)
+
+    const userRes = await apiFetch(token, 'POST', '/users', {
+      username,
+      password,
+      realName: '自定义角色用户',
+      role: roleCode,
+    })
+    expect(userRes.status).toBe(201)
+
+    await loginWithCredentials(page, username, password)
+    await expect(page.getByText('库存列表')).toBeVisible()
+    await expect(page.getByText('角色权限')).toHaveCount(0)
+
+    await page.goto(`${FE_BASE}/inventory`)
+    await expect.poll(() => new URL(page.url()).pathname, { timeout: 5000 }).toBe('/inventory')
+
+    await page.goto(`${FE_BASE}/roles`)
+    await expect.poll(() => new URL(page.url()).pathname, { timeout: 5000 }).toBe('/')
   })
 })
 

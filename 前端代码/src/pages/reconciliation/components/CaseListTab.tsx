@@ -17,6 +17,8 @@ interface Props {
   getStatusLabel: (status: string) => string
   onEditCase: (c: LisCase) => void
   onReset: () => void
+  onExport: () => void
+  exporting: boolean
 }
 
 export function CaseListTab({
@@ -32,6 +34,8 @@ export function CaseListTab({
   getStatusLabel,
   onEditCase,
   onReset,
+  onExport,
+  exporting,
 }: Props) {
   return (
     <div className="space-y-4">
@@ -74,9 +78,14 @@ export function CaseListTab({
             <button onClick={() => casePagination.setPage(1)} className="h-9 px-4 text-sm bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200">查询</button>
             <button onClick={onReset} className="h-9 px-4 text-sm text-gray-500 hover:text-gray-700">重置</button>
           </div>
-          <button className="inline-flex items-center gap-2 px-3 py-1.5 text-sm border border-gray-300 rounded-md hover:bg-gray-50">
+          <button
+            type="button"
+            onClick={onExport}
+            disabled={exporting}
+            className="inline-flex items-center gap-2 px-3 py-1.5 text-sm border border-gray-300 rounded-md hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
             <Download className="w-4 h-4" />
-            导出
+            {exporting ? '导出中...' : '导出'}
           </button>
         </div>
       </div>

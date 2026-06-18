@@ -483,7 +483,7 @@
 │   ├── /projects → 项目页面
 │   ├── /suppliers → 供应商页面
 │   ├── /purchase-orders → 采购订单页面
-│   └── /cost-analysis → 成本分析页面
+│   └── /abc/dashboard → ABC成本看板
 ├── 组件路径
 │   ├── 入库组件
 │   │   ├── InboundList → 入库列表

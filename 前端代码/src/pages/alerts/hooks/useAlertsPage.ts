@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { usePagination } from '@/hooks/usePagination'
 import { useUrlParams } from '@/hooks/useUrlParams'
 import { alertsApi } from '@/api/alerts'
@@ -13,7 +13,7 @@ export interface AlertItem extends Alert {
 }
 
 export type AlertTypeFilter = 'all' | 'low-stock' | 'expiry' | 'stagnant'
-export type AlertStatusFilter = 'all' | 'pending' | 'processed' | 'ignored'
+export type AlertStatusFilter = 'all' | 'pending' | 'processed' | 'ignored' | 'history'
 
 export interface FilterState {
   keyword: string
@@ -27,6 +27,24 @@ export interface ModalState {
   alert: AlertItem | null
 }
 
+export const ALERT_HANDLE_RESULT_MAP: Record<string, string> = {
+  purchase_followed: '采购跟进中',
+  no_action_needed: '已核实无需处理',
+  normal: '标记为正常波动',
+  observe: '关注观察，下季度再评估',
+  optimize: '已核实，需优化流程',
+  adjust_threshold_suggested: '建议调整预警阈值',
+  other: '其他处理',
+}
+
+export function buildAlertHandleRemark(form: { opinion: string; result: string }) {
+  const resultLabel = ALERT_HANDLE_RESULT_MAP[form.result] || ALERT_HANDLE_RESULT_MAP.other
+  const opinion = form.opinion.trim()
+  return opinion
+    ? `处理结论：${resultLabel}\n处理意见：${opinion}`
+    : `处理结论：${resultLabel}`
+}
+
 export const ALERT_TYPE_MAP: Record<string, { label: string; bg: string; text: string }> = {
   'low-stock': { label: '库存不足', bg: 'bg-red-50', text: 'text-red-600' },
   'expiry': { label: '即将过期', bg: 'bg-yellow-50', text: 'text-yellow-600' },
@@ -37,6 +55,9 @@ export const STATUS_MAP: Record<string, { label: string; bg: string; text: strin
   'pending': { label: '待处理', bg: 'bg-yellow-50', text: 'text-yellow-700' },
   'processed': { label: '已处理', bg: 'bg-green-50', text: 'text-green-700' },
   'ignored': { label: '已忽略', bg: 'bg-gray-50', text: 'text-gray-600' },
+  'auto_resolved': { label: '已处理', bg: 'bg-green-50', text: 'text-green-700' },
+  'dismissed': { label: '已忽略', bg: 'bg-gray-50', text: 'text-gray-600' },
+  'handled': { label: '已处理', bg: 'bg-green-50', text: 'text-green-700' },
 }
 
 export function useAlertsPage() {
@@ -55,26 +76,46 @@ export function useAlertsPage() {
     status: (url.get('status', 'all') as AlertStatusFilter) || 'all',
     dateRange: [url.get('startDate', ''), url.get('endDate', '')] as [string, string],
   })
+  const [debouncedKeyword, setDebouncedKeyword] = useState(filter.keyword)
   const [quickFilter, setQuickFilter] = useState<AlertStatusFilter>(
     (url.get('quickFilter', 'all') as AlertStatusFilter) || 'all'
   )
   const [handleForm, setHandleForm] = useState({
     opinion: '',
-    result: 'purchased',
+    result: 'purchase_followed',
+  })
+  const [stats, setStats] = useState({
+    pending: 0,
+    processed: 0,
+    ignored: 0,
+    today: 0,
+    month: 0,
+    total: 0,
   })
 
+  const normalizeStatus = (status: AlertStatusFilter) => {
+    if (status === 'all') return undefined
+    if (status === 'processed') return 'processed,auto_resolved,handled'
+    if (status === 'ignored') return 'ignored,dismissed'
+    if (status === 'history') return 'processed,ignored,auto_resolved,dismissed,handled'
+    return status
+  }
+
   const effectiveStatus = quickFilter !== 'all'
-    ? quickFilter
-    : filter.status !== 'all'
-      ? filter.status
-      : undefined
+    ? normalizeStatus(quickFilter)
+    : normalizeStatus(filter.status)
   const effectiveType = filter.type !== 'all' ? filter.type : undefined
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedKeyword(filter.keyword), 300)
+    return () => window.clearTimeout(timer)
+  }, [filter.keyword])
 
   const fetchFn = useCallback(
     async (params: { page: number; pageSize: number }) => {
       const res = await alertsApi.getList({
         ...params,
-        keyword: filter.keyword || undefined,
+        keyword: debouncedKeyword || undefined,
         type: effectiveType,
         status: effectiveStatus,
         startDate: filter.dateRange[0] || undefined,
@@ -86,7 +127,7 @@ export function useAlertsPage() {
       }
     },
     [
-      filter.keyword,
+      debouncedKeyword,
       filter.type,
       filter.status,
       filter.dateRange[0],
@@ -98,6 +139,7 @@ export function useAlertsPage() {
   const {
     data,
     loading,
+    error,
     page,
     pageSize,
     total,
@@ -109,7 +151,7 @@ export function useAlertsPage() {
     initialPage,
     initialPageSize,
     deps: [
-      filter.keyword,
+      debouncedKeyword,
       filter.type,
       filter.status,
       filter.dateRange[0],
@@ -132,18 +174,39 @@ export function useAlertsPage() {
     })
   }, [page, pageSize, filter.keyword, filter.type, filter.status, filter.dateRange, quickFilter])
 
-  // 统计数据
-  const stats = useMemo(() => {
-    const pending = data.filter((a) => a.status === 'pending').length
-    const processed = data.filter((a) => a.status === 'processed').length
-    const ignored = data.filter((a) => a.status === 'ignored').length
-    const today = data.filter((a) => {
-      const d = new Date(a.createdAt)
-      const now = new Date()
-      return d.toDateString() === now.toDateString()
-    }).length
-    return { pending, processed, ignored, today, total }
-  }, [data, total])
+  const loadStats = useCallback(async () => {
+    try {
+      const res: any = await alertsApi.getStats({
+        keyword: debouncedKeyword || undefined,
+        type: effectiveType,
+        status: effectiveStatus,
+        startDate: filter.dateRange[0] || undefined,
+        endDate: filter.dateRange[1] || undefined,
+      })
+      setStats({
+        pending: Number(res?.pending || 0),
+        processed: Number(res?.processed || 0),
+        ignored: Number(res?.ignored || 0),
+        today: Number(res?.today || 0),
+        month: Number(res?.month || 0),
+        total: Number(res?.total || 0),
+      })
+    } catch (e) {
+      console.error(e)
+      setStats((prev) => prev)
+    }
+  }, [
+    debouncedKeyword,
+    filter.type,
+    filter.status,
+    filter.dateRange[0],
+    filter.dateRange[1],
+    quickFilter,
+  ])
+
+  useEffect(() => {
+    loadStats()
+  }, [loadStats])
 
   // 清空选择当筛选/分页变化时
   useEffect(() => {
@@ -167,22 +230,24 @@ export function useAlertsPage() {
 
   const clearSelection = () => setSelectedIds(new Set())
 
-  const handleProcess = async (id: string) => {
+  const handleProcess = async (id: string, remark?: string) => {
     try {
-      await alertsApi.process(id)
+      await alertsApi.process(id, { remark })
       toast.success('处理成功')
       refresh()
+      loadStats()
       setModal({ type: null, alert: null })
     } catch {
       toast.error('处理失败')
     }
   }
 
-  const handleIgnore = async (id: string) => {
+  const handleIgnore = async (id: string, remark?: string) => {
     try {
-      await alertsApi.ignore(id)
+      await alertsApi.ignore(id, { remark })
       toast.success('已忽略')
       refresh()
+      loadStats()
     } catch {
       toast.error('操作失败')
     }
@@ -210,7 +275,7 @@ export function useAlertsPage() {
 
   const openModal = (type: ModalState['type'], alert: AlertItem) => {
     setModal({ type, alert })
-    setHandleForm({ opinion: '', result: 'purchased' })
+    setHandleForm({ opinion: '', result: type === 'consumption-handle' ? 'normal' : 'purchase_followed' })
   }
 
   const closeModal = () => setModal({ type: null, alert: null })
@@ -233,10 +298,22 @@ export function useAlertsPage() {
 
   const handleBatchProcess = async () => {
     const ids = Array.from(selectedIds)
-    for (const id of ids) {
-      await handleProcess(id)
+    if (ids.length === 0) return
+    try {
+      await alertsApi.batchHandle(ids, { action: 'processed', remark: '批量处理' })
+      toast.success(`已处理 ${ids.length} 条预警`)
+      clearSelection()
+      refresh()
+      loadStats()
+    } catch {
+      toast.error('批量处理失败')
     }
-    clearSelection()
+  }
+
+  const openHistory = () => {
+    setQuickFilter('history')
+    setFilter((prev) => ({ ...prev, status: 'all' }))
+    setPage(1)
   }
 
   return {
@@ -252,6 +329,7 @@ export function useAlertsPage() {
     setHandleForm,
     data,
     loading,
+    error,
     page,
     pageSize,
     total,
@@ -271,5 +349,6 @@ export function useAlertsPage() {
     isConsumption,
     formatDate,
     handleBatchProcess,
+    openHistory,
   }
 }

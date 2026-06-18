@@ -1,11 +1,14 @@
-import { Download } from 'lucide-react'
-import { useLogsPage, LOG_TYPES, MODULES, USERS } from './hooks/useLogsPage'
+import { Download, Trash2 } from 'lucide-react'
+import { useLogsPage, LOG_TYPES, MODULES } from './hooks/useLogsPage'
 import { LogsTable } from './components/LogsTable'
 import { LogDetailModal } from './components/LogDetailModal'
 import { LogExportModal } from './components/LogExportModal'
+import { LogCleanModal } from './components/LogCleanModal'
+import { getUserRole } from '@/lib/permissions'
 
 export default function Logs() {
   const page = useLogsPage()
+  const isAdmin = getUserRole() === 'admin'
 
   return (
     <div className="space-y-6">
@@ -15,9 +18,16 @@ export default function Logs() {
           <h1 className="text-[28px] font-semibold text-gray-900 tracking-tight leading-tight">操作日志</h1>
           <p className="text-sm text-gray-500 mt-1">查看系统操作记录，追踪用户行为</p>
         </div>
-        <button onClick={() => page.setShowExport(true)} className="inline-flex items-center gap-2 px-4 py-2.5 bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 text-sm font-medium shadow-sm transition-all">
-          <Download className="w-4 h-4" /> 导出日志
-        </button>
+        <div className="flex items-center gap-2">
+          {isAdmin && (
+            <button onClick={() => page.setShowClean(true)} className="inline-flex items-center gap-2 px-4 py-2.5 bg-white text-red-600 border border-red-200 rounded-md hover:bg-red-50 text-sm font-medium shadow-sm transition-all">
+              <Trash2 className="w-4 h-4" /> 清理日志
+            </button>
+          )}
+          <button onClick={page.openExport} className="inline-flex items-center gap-2 px-4 py-2.5 bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 text-sm font-medium shadow-sm transition-all">
+            <Download className="w-4 h-4" /> 导出日志
+          </button>
+        </div>
       </div>
 
       {/* Stats Grid */}
@@ -47,6 +57,7 @@ export default function Logs() {
         total={page.total}
         page={page.page}
         pageSize={page.pageSize}
+        keyword={page.keyword}
         typeFilter={page.typeFilter}
         moduleFilter={page.moduleFilter}
         userFilter={page.userFilter}
@@ -54,10 +65,11 @@ export default function Logs() {
         endDate={page.endDate}
         logTypes={LOG_TYPES}
         modules={MODULES}
-        users={USERS}
+        users={page.userOptions}
         getLogType={page.getLogType}
         getAvatarChar={page.getAvatarChar}
         getModuleLabel={page.getModuleLabel}
+        onKeywordChange={page.setKeyword}
         onTypeFilterChange={page.setTypeFilter}
         onModuleFilterChange={page.setModuleFilter}
         onUserFilterChange={page.setUserFilter}
@@ -86,6 +98,15 @@ export default function Logs() {
         onClose={() => page.setShowExport(false)}
         onChange={page.setExportForm}
         onExport={page.handleExport}
+      />
+
+      <LogCleanModal
+        open={page.showClean}
+        range={page.cleanRange}
+        beforeDate={page.getCleanBeforeDate(page.cleanRange)}
+        onClose={() => page.setShowClean(false)}
+        onChange={page.setCleanRange}
+        onConfirm={page.handleClean}
       />
     </div>
   )

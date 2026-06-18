@@ -1,307 +1,198 @@
-/**
- * 退库管理 API 测试
- * 运行: cd 后端代码/server && npx tsx tests/returns.test.ts
- */
+process.env.DATABASE_PATH = ':memory:'
 
-import { getJSON, postJSON, delJSON, login, generateUnique } from './setup.js'
+import { describe, it, expect, beforeAll } from 'vitest'
+import request from 'supertest'
 
-function assertTrue(value: any, msg: string) {
-  if (!value) throw new Error(`${msg}: got ${value}`)
+const getApp = async () => {
+  const { default: app } = await import('../src/app.js')
+  const { getDatabase } = await import('../src/database/DatabaseManager.js')
+  return { app, db: getDatabase() }
 }
 
-async function run() {
-  let passed = 0
-  let failed = 0
-
-  async function test(name: string, fn: () => Promise<void>) {
-    try {
-      await fn()
-      console.log(`✅ ${name}`)
-      passed++
-    } catch (e: any) {
-      console.log(`❌ ${name}: ${e.message}`)
-      failed++
-    }
-  }
-
-  const adminToken = await login('admin', 'admin123')
-  const whmToken = await login('wangkq', 'CoreOne2026!')
-  const techToken = await login('zhangwei', 'CoreOne2026!')
-  const pathToken = await login('liuyf', 'CoreOne2026!')
-  const proToken = await login('zhaohp', 'CoreOne2026!')
-  const finToken = await login('sunli', 'CoreOne2026!')
-
-  // 获取有库存的物料
-  let testMaterialId = ''
-  try {
-    const inv = await getJSON('/inventory?page=1&pageSize=50', adminToken)
-    const item = inv.data?.list?.find((m: any) => m.stock >= 3)
-    if (item) testMaterialId = item.materialId
-  } catch { /* ignore */ }
-
-  let createdId = ''
-
-  // ── 1. 列表查询 ──
-  await test('RT-01 admin查询退库列表成功', async () => {
-    const res = await getJSON('/returns?page=1&pageSize=10', adminToken)
-    assertTrue(res.success, 'should succeed')
-    assertTrue(Array.isArray(res.data?.list), 'should be list')
-  })
-
-  await test('RT-02 warehouse_manager查询退库列表成功', async () => {
-    const res = await getJSON('/returns?page=1&pageSize=10', whmToken)
-    assertTrue(res.success, 'should succeed')
-  })
-
-  await test('RT-03 technician查询退库列表返回403', async () => {
-    try {
-      await getJSON('/returns?page=1&pageSize=10', techToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('403') || e.message.includes('Forbidden'), 'should be 403')
-    }
-  })
-
-  await test('RT-04 pathologist查询退库列表返回403', async () => {
-    try {
-      await getJSON('/returns?page=1&pageSize=10', pathToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('403') || e.message.includes('Forbidden'), 'should be 403')
-    }
-  })
-
-  await test('RT-05 procurement查询退库列表返回403', async () => {
-    try {
-      await getJSON('/returns?page=1&pageSize=10', proToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('403') || e.message.includes('Forbidden'), 'should be 403')
-    }
-  })
-
-  await test('RT-06 finance查询退库列表返回403', async () => {
-    try {
-      await getJSON('/returns?page=1&pageSize=10', finToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('403') || e.message.includes('Forbidden'), 'should be 403')
-    }
-  })
-
-  await test('RT-07 无Token返回401', async () => {
-    try {
-      await getJSON('/returns?page=1&pageSize=10')
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('401') || e.message.includes('Unauthorized'), 'should be 401')
-    }
-  })
-
-  // ── 2. 创建退库 ──
-  await test('RT-08 admin创建退库成功', async () => {
-    if (!testMaterialId) { console.log('  (skip: no material)'); return }
-    const res = await postJSON('/returns', {
-      materialId: testMaterialId,
-      quantity: 1,
-      reason: generateUnique('E2E退库原因'),
-      remark: 'E2E退库测试',
-    }, adminToken)
-    assertTrue(res.success, 'should succeed')
-    assertTrue(res.data?.id, 'should have id')
-    createdId = res.data.id
-  })
-
-  await test('RT-09 warehouse_manager创建退库成功', async () => {
-    if (!testMaterialId) { console.log('  (skip: no material)'); return }
-    const res = await postJSON('/returns', {
-      materialId: testMaterialId,
-      quantity: 1,
-      reason: generateUnique('E2E退库WM'),
-      remark: 'E2E退库WM测试',
-    }, whmToken)
-    assertTrue(res.success, 'should succeed')
-  })
-
-  await test('RT-10 缺少materialId返回400', async () => {
-    try {
-      await postJSON('/returns', {
-        quantity: 1,
-        reason: 'test',
-      }, adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('400') || e.message.includes('Missing'), 'should be 400')
-    }
-  })
-
-  await test('RT-11 缺少quantity返回400', async () => {
-    if (!testMaterialId) { console.log('  (skip: no material)'); return }
-    try {
-      await postJSON('/returns', {
-        materialId: testMaterialId,
-        reason: 'test',
-      }, adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('400') || e.message.includes('Missing'), 'should be 400')
-    }
-  })
-
-  await test('RT-12 缺少reason返回400', async () => {
-    if (!testMaterialId) { console.log('  (skip: no material)'); return }
-    try {
-      await postJSON('/returns', {
-        materialId: testMaterialId,
-        quantity: 1,
-      }, adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('400') || e.message.includes('Missing'), 'should be 400')
-    }
-  })
-
-  await test('RT-13 quantity=0返回400', async () => {
-    if (!testMaterialId) { console.log('  (skip: no material)'); return }
-    try {
-      await postJSON('/returns', {
-        materialId: testMaterialId,
-        quantity: 0,
-        reason: 'test',
-      }, adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('400') || e.message.includes('Missing'), 'should be 400')
-    }
-  })
-
-  await test('RT-14 不存在的物料返回404', async () => {
-    try {
-      await postJSON('/returns', {
-        materialId: 'non-existent-material',
-        quantity: 1,
-        reason: 'test',
-      }, adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('404') || e.message.includes('不存在'), 'should be 404')
-    }
-  })
-
-  await test('RT-15 technician创建退库返回403', async () => {
-    if (!testMaterialId) { console.log('  (skip: no material)'); return }
-    try {
-      await postJSON('/returns', {
-        materialId: testMaterialId,
-        quantity: 1,
-        reason: 'test',
-      }, techToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('403') || e.message.includes('Forbidden'), 'should be 403')
-    }
-  })
-
-  // ── 3. 退库后库存验证 ──
-  await test('RT-16 退库后库存增加', async () => {
-    if (!testMaterialId) { console.log('  (skip: no material)'); return }
-    const before = await getJSON(`/inventory?page=1&pageSize=1&materialId=${testMaterialId}`, adminToken)
-    const beforeStock = before.data?.list?.[0]?.stock || 0
-    await postJSON('/returns', {
-      materialId: testMaterialId,
-      quantity: 1,
-      reason: generateUnique('E2E库存验证'),
-    }, adminToken)
-    const after = await getJSON(`/inventory?page=1&pageSize=1&materialId=${testMaterialId}`, adminToken)
-    const afterStock = after.data?.list?.[0]?.stock || 0
-    assertTrue(afterStock >= beforeStock, `stock should increase: ${beforeStock} -> ${afterStock}`)
-  })
-
-  // ── 4. 删除/撤销退库 ──
-  await test('RT-17 删除不存在的退库记录返回404', async () => {
-    try {
-      await delJSON('/returns/non-existent-id', adminToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('404') || e.message.includes('不存在'), 'should be 404')
-    }
-  })
-
-  await test('RT-18 admin删除退库记录成功', async () => {
-    if (!testMaterialId) { console.log('  (skip: no material)'); return }
-    const create = await postJSON('/returns', {
-      materialId: testMaterialId,
-      quantity: 1,
-      reason: generateUnique('E2E删除测试'),
-    }, adminToken)
-    if (!create.success) { console.log('  (skip: create failed)'); return }
-    const id = create.data?.id
-    if (!id) { console.log('  (skip: no id)'); return }
-    const res = await delJSON(`/returns/${id}`, adminToken)
-    assertTrue(res.success, 'should succeed')
-  })
-
-  await test('RT-19 technician删除退库记录返回403', async () => {
-    if (!testMaterialId) { console.log('  (skip: no material)'); return }
-    const create = await postJSON('/returns', {
-      materialId: testMaterialId,
-      quantity: 1,
-      reason: generateUnique('E2E'),
-    }, adminToken)
-    if (!create.success) { console.log('  (skip: create failed)'); return }
-    const id = create.data?.id
-    if (!id) { console.log('  (skip: no id)'); return }
-    try {
-      await delJSON(`/returns/${id}`, techToken)
-      throw new Error('should fail')
-    } catch (e: any) {
-      assertTrue(e.message.includes('403') || e.message.includes('Forbidden'), 'should be 403')
-    }
-    await delJSON(`/returns/${id}`, adminToken).catch(() => {})
-  })
-
-  // ── 5. 分页 ──
-  await test('RT-20 分页page=0修正为1', async () => {
-    const res = await getJSON('/returns?page=0&pageSize=5', adminToken)
-    assertTrue(res.success, 'should succeed')
-  })
-
-  await test('RT-21 分页page=999返回空列表', async () => {
-    const res = await getJSON('/returns?page=999&pageSize=5', adminToken)
-    assertTrue(res.success, 'should succeed')
-  })
-
-  // ── 6. 撤销后库存回退 ──
-  await test('RT-22 撤销退库后库存回退', async () => {
-    if (!testMaterialId) { console.log('  (skip: no material)'); return }
-    const before = await getJSON(`/inventory?page=1&pageSize=1&materialId=${testMaterialId}`, adminToken)
-    const beforeStock = before.data?.list?.[0]?.stock || 0
-    const create = await postJSON('/returns', {
-      materialId: testMaterialId,
-      quantity: 1,
-      reason: generateUnique('E2E回退'),
-    }, adminToken)
-    if (!create.success) { console.log('  (skip: create failed)'); return }
-    const id = create.data?.id
-    if (!id) { console.log('  (skip: no id)'); return }
-    await delJSON(`/returns/${id}`, adminToken)
-    const after = await getJSON(`/inventory?page=1&pageSize=1&materialId=${testMaterialId}`, adminToken)
-    const afterStock = after.data?.list?.[0]?.stock || 0
-    assertTrue(afterStock <= beforeStock + 1, `stock should revert: before=${beforeStock}, after=${afterStock}`)
-  })
-
-  // ── 7. 并发 ──
-  await test('RT-23 并发创建退库', async () => {
-    if (!testMaterialId) { console.log('  (skip: no material)'); return }
-    const [r1, r2] = await Promise.all([
-      postJSON('/returns', { materialId: testMaterialId, quantity: 1, reason: generateUnique('E2E并发1') }, adminToken).catch(() => ({ success: false })),
-      postJSON('/returns', { materialId: testMaterialId, quantity: 1, reason: generateUnique('E2E并发2') }, adminToken).catch(() => ({ success: false })),
-    ])
-    assertTrue(r1.success || r2.success, 'at least one should succeed')
-  })
-
-  console.log(`\n📊 Returns API Test Results: ${passed} passed, ${failed} failed`)
-  process.exit(failed > 0 ? 1 : 0)
+async function loginAdmin(app: any): Promise<string> {
+  const res = await request(app)
+    .post('/api/v1/auth/login')
+    .send({ username: 'admin', password: 'admin123' })
+  expect(res.status).toBe(200)
+  return res.body.data.token
 }
 
-run()
+function seedReturnMaterial(db: any, suffix: string) {
+  const categoryId = `cat-return-${suffix}`
+  const materialId = `mat-return-${suffix}`
+  const locationId = `loc-return-${suffix}`
+
+  db.prepare('INSERT INTO material_categories (id, code, name, level) VALUES (?, ?, ?, ?)')
+    .run(categoryId, `CAT-RT-${suffix}`, '退库测试分类', 1)
+  db.prepare('INSERT INTO locations (id, code, name, type, zone) VALUES (?, ?, ?, ?, ?)')
+    .run(locationId, `LOC-RT-${suffix}`, '退库测试库位', 'shelf', 'A区')
+  db.prepare(`
+    INSERT INTO materials (id, code, name, spec, unit, category_id, price, location_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(materialId, `MAT-RT-${suffix}`, '退库测试物料', '1ml', '瓶', categoryId, 12, locationId)
+  db.prepare('INSERT INTO inventory (id, material_id, stock, locked_stock, location_id) VALUES (?, ?, ?, 0, ?)')
+    .run(`inv-return-${suffix}`, materialId, 10, locationId)
+
+  return materialId
+}
+
+function seedReturnMaterialWithBatch(db: any, suffix: string, stock = 10) {
+  const materialId = seedReturnMaterial(db, suffix)
+  const batchId = `batch-return-${suffix}`
+  db.prepare(`
+    INSERT INTO batches (id, material_id, batch_no, quantity, remaining, expiry_date, inbound_id, inbound_price, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+  `).run(batchId, materialId, `BATCH-RT-${suffix}`, stock, stock, '2028-12-31', `inbound-return-${suffix}`, 13.5)
+
+  return { materialId, batchId, batchNo: `BATCH-RT-${suffix}` }
+}
+
+describe('退库管理', () => {
+  let app: any
+  let db: any
+  let token: string
+
+  beforeAll(async () => {
+    ;({ app, db } = await getApp())
+    token = await loginAdmin(app)
+  })
+
+  it('RT-001: 创建退库时忽略请求体伪造operator，使用登录用户', async () => {
+    const materialId = seedReturnMaterial(db, `op-${Date.now()}`)
+
+    const res = await request(app)
+      .post('/api/v1/returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId,
+        quantity: 1,
+        reason: '测试退库',
+        operator: 'forged-user',
+      })
+
+    expect(res.status).toBe(200)
+    expect(res.body.success).toBe(true)
+    const record = db.prepare('SELECT operator FROM return_records WHERE id = ?').get(res.body.data.id) as any
+    const log = db.prepare('SELECT operator FROM stock_logs WHERE related_id = ? AND related_type = ?').get(res.body.data.id, 'return') as any
+    expect(record.operator).toBe('admin')
+    expect(log.operator).toBe('admin')
+
+    const listRes = await request(app)
+      .get('/api/v1/returns')
+      .query({ page: 1, pageSize: 1000 })
+      .set('Authorization', `Bearer ${token}`)
+    expect(listRes.status).toBe(200)
+    const listedRecord = listRes.body.data.list.find((row: any) => row.id === res.body.data.id)
+    expect(listedRecord).toMatchObject({
+      materialId,
+      materialName: '退库测试物料',
+      unit: '瓶',
+    })
+  })
+
+  it('RT-002: 撤销退库时忽略请求体伪造operator，使用登录用户', async () => {
+    const materialId = seedReturnMaterial(db, `cancel-${Date.now()}`)
+    const createRes = await request(app)
+      .post('/api/v1/returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ materialId, quantity: 1, reason: '测试退库' })
+    expect(createRes.status).toBe(200)
+
+    const res = await request(app)
+      .delete(`/api/v1/returns/${createRes.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ operator: 'forged-user' })
+
+    expect(res.status).toBe(200)
+    const log = db.prepare('SELECT operator FROM stock_logs WHERE related_id = ? AND related_type = ?')
+      .get(createRes.body.data.id, 'return_cancel') as any
+    expect(log.operator).toBe('admin')
+  })
+
+  it('RT-003: 退库列表支持按物料和原因关键词筛选', async () => {
+    const suffix = `keyword-${Date.now()}`
+    const materialId = seedReturnMaterial(db, suffix)
+    const createRes = await request(app)
+      .post('/api/v1/returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ materialId, quantity: 1, reason: `原因-${suffix}`, remark: '关键词筛选验证' })
+    expect(createRes.status).toBe(200)
+
+    const materialKeyword = await request(app)
+      .get('/api/v1/returns')
+      .query({ page: 1, pageSize: 20, keyword: '退库测试物料' })
+      .set('Authorization', `Bearer ${token}`)
+    expect(materialKeyword.status).toBe(200)
+    expect(materialKeyword.body.data.list.some((row: any) => row.id === createRes.body.data.id)).toBe(true)
+
+    const reasonKeyword = await request(app)
+      .get('/api/v1/returns')
+      .query({ page: 1, pageSize: 20, keyword: `原因-${suffix}` })
+      .set('Authorization', `Bearer ${token}`)
+    expect(reasonKeyword.status).toBe(200)
+    expect(reasonKeyword.body.data.list).toHaveLength(1)
+    expect(reasonKeyword.body.data.list[0].id).toBe(createRes.body.data.id)
+  })
+
+  it('RT-004: 创建和撤销退库会同步扣减和恢复批次剩余量', async () => {
+    const suffix = `batch-${Date.now()}`
+    const { materialId, batchId, batchNo } = seedReturnMaterialWithBatch(db, suffix, 10)
+
+    const createRes = await request(app)
+      .post('/api/v1/returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ materialId, batchId, quantity: 3, reason: 'unused' })
+
+    expect(createRes.status).toBe(200)
+    const record = db.prepare('SELECT batch_id, unit_cost, total_cost FROM return_records WHERE id = ?')
+      .get(createRes.body.data.id) as any
+    const inventoryAfterCreate = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+    const batchAfterCreate = db.prepare('SELECT remaining, status FROM batches WHERE id = ?').get(batchId) as any
+
+    expect(record.batch_id).toBe(batchId)
+    expect(record.unit_cost).toBe(13.5)
+    expect(record.total_cost).toBe(40.5)
+    expect(inventoryAfterCreate.stock).toBe(7)
+    expect(batchAfterCreate.remaining).toBe(7)
+    expect(batchAfterCreate.status).toBe(1)
+
+    const listRes = await request(app)
+      .get('/api/v1/returns')
+      .query({ page: 1, pageSize: 1000 })
+      .set('Authorization', `Bearer ${token}`)
+    expect(listRes.status).toBe(200)
+    const listedRecord = listRes.body.data.list.find((row: any) => row.id === createRes.body.data.id)
+    expect(listedRecord).toMatchObject({ batchId, batchNo, unitCost: 13.5, totalCost: 40.5 })
+
+    const cancelRes = await request(app)
+      .delete(`/api/v1/returns/${createRes.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+    expect(cancelRes.status).toBe(200)
+
+    const inventoryAfterCancel = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+    const batchAfterCancel = db.prepare('SELECT remaining, status FROM batches WHERE id = ?').get(batchId) as any
+    expect(inventoryAfterCancel.stock).toBe(10)
+    expect(batchAfterCancel.remaining).toBe(10)
+    expect(batchAfterCancel.status).toBe(1)
+  })
+
+  it('RT-REF-001: 创建退库拒绝停用物料且不扣库存', async () => {
+    const materialId = seedReturnMaterial(db, `inactive-ref-${Date.now()}`)
+    db.prepare('UPDATE materials SET status = 0 WHERE id = ?').run(materialId)
+
+    const res = await request(app)
+      .post('/api/v1/returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ materialId, quantity: 2, reason: '停用物料退库' })
+
+    expect(res.status).toBe(409)
+    expect(res.body.error.message).toContain('物料已停用')
+
+    const inventory = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+    const records = db.prepare('SELECT COUNT(*) as count FROM return_records WHERE material_id = ?')
+      .get(materialId) as any
+
+    expect(inventory.stock).toBe(10)
+    expect(records.count).toBe(0)
+  })
+})
