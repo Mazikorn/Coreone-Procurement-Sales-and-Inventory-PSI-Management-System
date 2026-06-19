@@ -15008,7 +15008,56 @@ git diff --check
 
 - 当前修复让成本结构与既有全成本/差异报表的 QC 实际成本口径一致；若后续产品决定把标准 QC 从标准材料中拆成独立标准成本项，需要另做字段设计和历史兼容评估。
 
-## 三百零六、结论
+## 三百零六、批次 351: 供应商退货必须保留来源入库供应商
+
+**发现的问题**
+
+- 本轮按库存主链路继续复核供应商退货，聚焦“来源单据、供应商和后续净额报表不能被 API 绕过时静默清空”不变量。
+- 供应商退货创建接口允许关联 `inboundRecordId`，但当请求体省略 `supplierId` 时，旧逻辑只校验入库记录存在和物料匹配，没有把入库记录上的 `supplier_id` 回填到退货单。
+- 结果是退货单保留了入库来源，却丢失供应商来源；同一笔退款也不会进入 `/reports/cost-by-supplier` 的供应商净额扣减，导致供应商采购成本报表高估。
+- 这属于库存/采购上游事实链问题，不是旧版 `/cost-analysis`，也不需要修改 ABC 本体。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/supplier-returns-v1.1.ts`
+  - `validateSupplierReturnReferences` 返回有效来源供应商：显式 `supplierId` 优先，其次采购订单供应商，再其次入库记录供应商。
+  - 如果同时关联采购订单和入库记录，且二者供应商不一致，返回 `409 SUPPLIER_RETURN_REFERENCE_MISMATCH`。
+  - 创建供应商退货时使用 `effectiveSupplierId` 写入 `supplier_returns.supplier_id`，并继续校验该供应商存在、未删除且启用。
+- `后端代码/server/tests/supplier-returns.test.ts`
+  - 新增 `SR-REF-003` 红绿测试：关联入库记录创建供应商退货但省略供应商时，退货单必须保留入库供应商；供应商成本报表必须将 120 入库金额扣减 50 退款后显示 70 净额。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 供应商退货接口和供应商退货测试，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 供应商退货会扣减库存总账、批次余额、库位库存，并影响供应商采购成本净额解释，是 ABC 输入侧可信库存/成本事实的上游说明面。
+- 本批只补齐来源供应商写入，不改变合法库存扣减、批次扣减、库位扣减、出库或 ABC 明细写入口。
+- 已补跑供应商退货全套、供应商成本报表、采购入库、库存、出库和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+- 已确认本批 diff 不涉及 `前端代码/deprecated/legacy-cost-analysis/`、`后端代码/server/src/routes/abc-v1.1.ts`、`后端代码/server/src/utils/abc-calculator.test.ts` 或前端 ABC 本体页面。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npx vitest run --config vitest.supplier-returns.config.ts --run tests/supplier-returns.test.ts -t "SR-REF-003"` 修复前失败：退货记录 `supplier_id` 为 `null`，期望为来源入库供应商。
+- 修复后验证:
+  - `后端代码/server npx vitest run --config vitest.supplier-returns.config.ts --run tests/supplier-returns.test.ts -t "SR-REF-003"` 通过，1 test passed / 15 skipped；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `后端代码/server npx vitest run --config vitest.supplier-returns.config.ts --run tests/supplier-returns.test.ts` 通过，1 file / 16 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `后端代码/server npm test -- --run tests/integration/reports-cost-by-supplier.test.ts tests/purchase-order-inbound.test.ts tests/integration/inventory.test.ts` 通过，3 files / 35 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `后端代码/server npm test -- --run tests/integration/outbound.test.ts tests/integration/cost-exceptions.test.ts` 通过，2 files / 40 tests passed；`cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr 为既有异常台账测试场景，最终通过。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+- 浏览器复核:
+  - 本批为供应商退货 API 来源字段与后续报表净额修复，不新增或改变页面组件、弹窗或可见交互；核心风险是 API 绕过时是否静默清空供应商以及报表是否扣减，已用接口级真实副作用测试覆盖，不新增截图证据。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 本批只处理“已有关联采购订单/入库记录时，来源供应商不能丢失”。直接入库或直接供应商退货在完全未传供应商时，是否应自动归属到物料默认供应商属于业务规则判断，先登记为待评估，不在本批擅自扩展。
+
+## 三百零七、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

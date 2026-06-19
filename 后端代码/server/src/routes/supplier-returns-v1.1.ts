@@ -45,6 +45,7 @@ function validateSupplierReturnReferences(db: any, payload: {
   const purchaseOrderId = normalizeOptionalId(payload.purchaseOrderId)
   const inboundRecordId = normalizeOptionalId(payload.inboundRecordId)
   let purchaseOrder: any = null
+  let sourceSupplierId: string | null = null
 
   if (purchaseOrderId) {
     purchaseOrder = db.prepare(`
@@ -61,6 +62,7 @@ function validateSupplierReturnReferences(db: any, payload: {
     if (purchaseOrder.status === 'cancelled') {
       return { ok: false, status: 409, code: 'CONFLICT', message: '已取消采购订单不能关联供应商退货' }
     }
+    sourceSupplierId = purchaseOrder.supplier_id || null
   }
 
   if (inboundRecordId) {
@@ -78,12 +80,16 @@ function validateSupplierReturnReferences(db: any, payload: {
     if (inbound.material_id !== payload.materialId || (supplierId && inbound.supplier_id && inbound.supplier_id !== supplierId)) {
       return { ok: false, status: 409, code: 'SUPPLIER_RETURN_REFERENCE_MISMATCH', message: '关联入库记录与退货物料或供应商不一致' }
     }
+    if (sourceSupplierId && inbound.supplier_id && inbound.supplier_id !== sourceSupplierId) {
+      return { ok: false, status: 409, code: 'SUPPLIER_RETURN_REFERENCE_MISMATCH', message: '关联入库记录与采购订单供应商不一致' }
+    }
     if (purchaseOrder && inbound.purchase_order_id && inbound.purchase_order_id !== purchaseOrder.id) {
       return { ok: false, status: 409, code: 'SUPPLIER_RETURN_REFERENCE_MISMATCH', message: '关联入库记录与采购订单不一致' }
     }
+    sourceSupplierId = sourceSupplierId || inbound.supplier_id || null
   }
 
-  return { ok: true }
+  return { ok: true, supplierId: supplierId || sourceSupplierId || null }
 }
 
 function handleSupplierReturnStockError(res: any, err: any): boolean {
@@ -226,11 +232,6 @@ router.post('/', (req, res) => {
     const material = db.prepare('SELECT * FROM materials WHERE id = ? AND is_deleted = 0').get(materialId) as any
     if (!material) { error(res, '物料不存在或已删除', 'NOT_FOUND', 404); return }
     if (Number(material.status) !== 1) { error(res, '物料已停用，不能创建供应商退货', 'CONFLICT', 409); return }
-    if (supplierId) {
-      const supplier = db.prepare('SELECT id, status FROM suppliers WHERE id = ? AND is_deleted = 0').get(supplierId) as any
-      if (!supplier) { error(res, '供应商不存在或已删除', 'NOT_FOUND', 404); return }
-      if (Number(supplier.status) !== 1) { error(res, '供应商已停用，不能创建供应商退货', 'CONFLICT', 409); return }
-    }
     const refValidation = validateSupplierReturnReferences(db, {
       materialId,
       supplierId,
@@ -240,6 +241,12 @@ router.post('/', (req, res) => {
     if (!refValidation.ok) {
       error(res, refValidation.message, refValidation.code, refValidation.status)
       return
+    }
+    const effectiveSupplierId = refValidation.supplierId
+    if (effectiveSupplierId) {
+      const supplier = db.prepare('SELECT id, status FROM suppliers WHERE id = ? AND is_deleted = 0').get(effectiveSupplierId) as any
+      if (!supplier) { error(res, '供应商不存在或已删除', 'NOT_FOUND', 404); return }
+      if (Number(supplier.status) !== 1) { error(res, '供应商已停用，不能创建供应商退货', 'CONFLICT', 409); return }
     }
 
     db.exec('BEGIN IMMEDIATE')
@@ -296,7 +303,7 @@ router.post('/', (req, res) => {
       db.prepare(`
         INSERT INTO supplier_returns (id, return_no, material_id, batch_id, batch_no, quantity, supplier_id, purchase_order_id, inbound_record_id, reason, refund_amount, tracking_no, status, operator, remark)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-      `).run(id, returnNo, materialId, batch?.id || null, batch?.batch_no || null, qty, supplierId || null, purchaseOrderId || null, inboundRecordId || null, reason, normalizedRefundAmount, trackingNo || null, operator, remark || null)
+      `).run(id, returnNo, materialId, batch?.id || null, batch?.batch_no || null, qty, effectiveSupplierId || null, purchaseOrderId || null, inboundRecordId || null, reason, normalizedRefundAmount, trackingNo || null, operator, remark || null)
 
       // 扣减库存
       const beforeStock = Number(inv.stock)

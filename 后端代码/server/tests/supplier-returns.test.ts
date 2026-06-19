@@ -622,4 +622,55 @@ describe('供应商退货', () => {
     expect(Number(inv.stock)).toBe(10)
     expect(Number(records.count)).toBe(0)
   })
+
+  it('SR-REF-003: 关联入库记录创建供应商退货时不得静默清空入库供应商', async () => {
+    const suffix = `ref-inbound-supplier-${Date.now()}`
+    const seed = seedSupplierReturnMaterialWithBatch(db, suffix)
+    const inboundRecordId = `inbound-sr-supplier-${suffix}`
+
+    db.prepare(`
+      INSERT INTO inbound_records (
+        id, inbound_no, type, material_id, batch_no, quantity, unit, price,
+        amount, supplier_id, location_id, operator, status, created_at
+      ) VALUES (?, ?, 'purchase', ?, ?, 10, '瓶', 12, 120, ?, ?, 'admin', 'completed', '2034-02-10T09:00:00')
+    `).run(
+      inboundRecordId,
+      `IN-SR-SUP-${suffix}`,
+      seed.materialId,
+      seed.batchNo,
+      seed.supplierId,
+      seed.locationId,
+    )
+
+    const createRes = await request(app)
+      .post('/api/v1/supplier-returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId: seed.materialId,
+        batchId: seed.batchId,
+        inboundRecordId,
+        quantity: 2,
+        refundAmount: 50,
+        reason: '按入库记录退货但省略供应商',
+      })
+
+    expect(createRes.status).toBe(200)
+    const record = db.prepare('SELECT supplier_id, inbound_record_id FROM supplier_returns WHERE id = ?')
+      .get(createRes.body.data.id) as any
+    expect(record).toMatchObject({
+      supplier_id: seed.supplierId,
+      inbound_record_id: inboundRecordId,
+    })
+
+    const reportRes = await request(app)
+      .get('/api/v1/reports/cost-by-supplier')
+      .set('Authorization', `Bearer ${token}`)
+    expect(reportRes.status).toBe(200)
+    const supplierCost = reportRes.body.data.suppliers.find((row: any) => row.id === seed.supplierId)
+    expect(supplierCost).toMatchObject({
+      id: seed.supplierId,
+      amount: 70,
+      orderCount: 1,
+    })
+  })
 })
