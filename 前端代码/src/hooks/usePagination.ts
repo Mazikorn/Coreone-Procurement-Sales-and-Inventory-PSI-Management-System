@@ -36,6 +36,11 @@ function getErrorMessage(error: unknown) {
   return '加载失败'
 }
 
+function normalizePositiveInteger(value: unknown) {
+  const num = Number(value)
+  return Number.isInteger(num) && num > 0 ? num : undefined
+}
+
 export function usePagination<T>({
   fetchFn,
   initialPage = 1,
@@ -65,6 +70,14 @@ export function usePagination<T>({
         })
         setData(res.list || [])
         setTotal(res.pagination?.total || 0)
+        const serverPage = normalizePositiveInteger(res.pagination?.page)
+        const serverPageSize = normalizePositiveInteger(res.pagination?.pageSize)
+        if (serverPageSize !== undefined && serverPageSize !== pageSize) {
+          setPageSize(serverPageSize)
+        }
+        if (serverPage !== undefined && serverPage !== page) {
+          setPage(serverPage)
+        }
         setError(null)
       } catch (e) {
         setData([])

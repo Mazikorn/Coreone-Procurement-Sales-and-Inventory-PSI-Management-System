@@ -134,6 +134,32 @@ describe('usePagination', () => {
     expect(result.current.pageSize).toBe(50)
   })
 
+  it('should sync page and pageSize from server pagination metadata', async () => {
+    const fetchFn = vi.fn().mockImplementation(async ({ page, pageSize }: { page: number; pageSize: number }) => ({
+      list: [],
+      pagination: {
+        total: 25,
+        page: page === 999 ? 3 : page,
+        pageSize: pageSize === 999 ? 100 : pageSize,
+      },
+    }))
+
+    const { result } = renderHook(() =>
+      usePagination({
+        fetchFn,
+        initialPage: 999,
+        initialPageSize: 999,
+      })
+    )
+
+    await waitFor(() => {
+      expect(result.current.page).toBe(3)
+      expect(result.current.pageSize).toBe(100)
+    })
+    expect(fetchFn).toHaveBeenCalledWith({ page: 999, pageSize: 999 })
+    expect(fetchFn).toHaveBeenCalledWith({ page: 3, pageSize: 100 })
+  })
+
   it('should refresh with current page', async () => {
     const fetchFn = createMockFetchFn()
     const { result } = renderHook(() => usePagination({ fetchFn }))

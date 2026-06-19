@@ -760,13 +760,131 @@ test.describe('预警中心 -> 预警规则', () => {
 test.describe('预警中心 -> 分页切换', () => {
   test('ALERT-PAGE-01. 正常用例：切换到第2页', async ({ page }) => {
     await loginAs(page, 'admin')
-    await page.goto(`${FE_BASE}/alerts?page=2`)
-    await page.waitForTimeout(800)
+    const listRequests: URL[] = []
+    await page.route('**/api/v1/alerts**', async (route) => {
+      const url = new URL(route.request().url())
+      if (url.pathname.endsWith('/alerts/stats')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: { total: 25, pending: 25, processed: 0, ignored: 0, today: 25, month: 25 },
+          }),
+        })
+        return
+      }
+
+      if (!url.pathname.endsWith('/alerts')) {
+        await route.fallback()
+        return
+      }
+
+      listRequests.push(url)
+      const currentPage = Number(url.searchParams.get('page') || '1')
+      const pageSize = Number(url.searchParams.get('pageSize') || '10')
+      const offset = (currentPage - 1) * pageSize
+      const list = Array.from({ length: Math.max(0, Math.min(pageSize, 25 - offset)) }, (_, index) => ({
+        id: `page-click-alert-${currentPage}-${index}`,
+        type: 'low-stock',
+        level: 'warning',
+        materialName: `点击分页Mock物料-${currentPage}-${index}`,
+        currentStock: 0,
+        threshold: 6,
+        message: `mock click page=${currentPage}, pageSize=${pageSize}`,
+        status: 'pending',
+        createdAt: '2026-06-17T00:00:00Z',
+      }))
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          data: {
+            list,
+            pagination: { total: 25, page: currentPage, pageSize },
+          },
+        }),
+      })
+    })
+
+    await page.goto(`${FE_BASE}/alerts`, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByRole('heading', { name: '预警中心' })).toBeVisible({ timeout: 15000 })
+    await expect(page.getByText('点击分页Mock物料-1-0')).toBeVisible()
+
+    await page.getByRole('button', { name: '2' }).click()
+
+    await expect(page.getByText('点击分页Mock物料-2-0')).toBeVisible()
+    await expect.poll(() => new URL(page.url()).searchParams.get('page')).toBe('2')
+    await expect.poll(() => listRequests.some((url) =>
+      url.searchParams.get('page') === '2' &&
+      url.searchParams.get('pageSize') === '10'
+    )).toBe(true)
   })
   test('ALERT-PAGE-02. 边界：仅1页', async ({ page }) => {
     await loginAs(page, 'admin')
-    await page.goto(`${FE_BASE}/alerts`)
-    await page.waitForTimeout(800)
+    const listRequests: URL[] = []
+    await page.route('**/api/v1/alerts**', async (route) => {
+      const url = new URL(route.request().url())
+      if (url.pathname.endsWith('/alerts/stats')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: { total: 25, pending: 25, processed: 0, ignored: 0, today: 25, month: 25 },
+          }),
+        })
+        return
+      }
+
+      if (!url.pathname.endsWith('/alerts')) {
+        await route.fallback()
+        return
+      }
+
+      listRequests.push(url)
+      const requestedPage = Number(url.searchParams.get('page') || '1')
+      const pageSize = Number(url.searchParams.get('pageSize') || '10')
+      const currentPage = requestedPage > 3 ? 3 : requestedPage
+      const offset = (currentPage - 1) * pageSize
+      const list = Array.from({ length: Math.max(0, Math.min(pageSize, 25 - offset)) }, (_, index) => ({
+        id: `page-corrected-alert-${currentPage}-${index}`,
+        type: 'low-stock',
+        level: 'warning',
+        materialName: `纠正分页Mock物料-${currentPage}-${index}`,
+        currentStock: 0,
+        threshold: 6,
+        message: `mock corrected page=${currentPage}, requested=${requestedPage}`,
+        status: 'pending',
+        createdAt: '2026-06-17T00:00:00Z',
+      }))
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          data: {
+            list,
+            pagination: { total: 25, page: currentPage, pageSize },
+          },
+        }),
+      })
+    })
+
+    await page.goto(`${FE_BASE}/alerts?page=999`, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByRole('heading', { name: '预警中心' })).toBeVisible({ timeout: 15000 })
+    await expect(page.getByText('纠正分页Mock物料-3-0')).toBeVisible()
+
+    await expect.poll(() => new URL(page.url()).searchParams.get('page')).toBe('3')
+    await expect.poll(() => listRequests.some((url) =>
+      url.searchParams.get('page') === '999'
+    )).toBe(true)
+    await expect.poll(() => listRequests.some((url) =>
+      url.searchParams.get('page') === '3'
+    )).toBe(true)
   })
   test('ALERT-PAGE-03. 表单校验：page=0', async () => {
     const token = await apiLogin('admin')
@@ -872,7 +990,7 @@ test.describe('预警中心 -> 分页切换', () => {
         pageSize: url.searchParams.get('pageSize'),
         type: url.searchParams.get('type'),
       }
-    }).toEqual({ page: null, pageSize: null, type: 'low-stock' })
+    }).toEqual({ page: null, pageSize: null, type: 'stock_low' })
     await expect.poll(() => listRequests.some((url) =>
       url.searchParams.get('page') === '1' &&
       url.searchParams.get('pageSize') === '10' &&
@@ -888,7 +1006,7 @@ test.describe('预警中心 -> 分页切换', () => {
         pageSize: url.searchParams.get('pageSize'),
         type: url.searchParams.get('type'),
       }
-    }).toEqual({ page: null, pageSize: '20', type: 'low-stock' })
+    }).toEqual({ page: null, pageSize: '20', type: 'stock_low' })
     await expect.poll(() => listRequests.some((url) =>
       url.searchParams.get('page') === '1' &&
       url.searchParams.get('pageSize') === '20' &&

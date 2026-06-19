@@ -11891,7 +11891,7 @@ git diff --check
 
 **后续风险**
 
-- AL-21 翻页 URL/服务端分页仍需独立批次复核；本批不扩大到翻页行为。
+- AL-21 翻页 URL/服务端分页已在批次 288 承接；本批不扩大到翻页行为。
 
 ## 二百四十二、批次 287: 预警重置筛选必须清空规范 URL
 
@@ -11937,10 +11937,61 @@ git diff --check
 
 **后续风险**
 
-- AL-21 翻页 URL/服务端分页仍需独立批次复核；本批不扩大到分页控件和服务端分页行为。
+- AL-21 翻页 URL/服务端分页已在批次 288 承接；本批不扩大到分页控件和服务端分页行为。
 - 旧 `ALERT-TYPE-04` 仍是浅层等待用例，但其语义已被 `ALERT-STATUS-04` 覆盖；是否清理或重命名旧用例作为测试债另列待评估，不在本批扩范围。
 
-## 二百四十三、结论
+## 二百四十三、批次 288: 预警分页必须吸收服务端规范分页元数据
+
+**发现的问题**
+
+- `alerts.md` 的 AL-21 要求分页参数传给后端、后端返回 `{ list, pagination: { total, page, pageSize } }`，并在页面 URL 中同步实际页码。
+- 当前预警页已经能把普通点击页码传给后端，也能显示后端 `total`，但通用 `usePagination` 只采纳 `pagination.total`，忽略服务端返回的 `page/pageSize`。
+- 当用户从异常 URL 进入，例如 `?page=999`，服务端按规范纠正为最后一页时，表格会显示纠正后的数据，但前端状态和 URL 仍保留 `page=999`，造成数据、分页控件和 URL 不一致。
+- 旧 `ALERT-PAGE-01/02` 只是打开页面等待，不能证明点击页码、后端请求参数、URL 同步和服务端纠正元数据一致。
+
+**已完成修复**
+
+- `前端代码/src/hooks/usePagination.ts`
+  - 新增正整数分页元数据归一函数。
+  - 请求成功后继续写入列表和总数，同时吸收服务端返回的有效 `pagination.page` 与 `pagination.pageSize`。
+  - 只有服务端返回值与当前状态不一致时才更新，避免正常分页路径产生额外循环。
+- `前端代码/src/hooks/usePagination.test.ts`
+  - 新增共享 hook 测试，覆盖服务端把 `page=999/pageSize=999` 纠正为 `page=3/pageSize=100` 后，前端状态同步并使用纠正后的分页参数再请求一次。
+- `前端代码/e2e/alerts.spec.ts`
+  - 将 `ALERT-PAGE-01` 从浅等待升级为真实点击第 2 页：确认表格显示第 2 页 mock 数据、URL 为 `page=2`、列表请求带 `page=2&pageSize=10`。
+  - 将 `ALERT-PAGE-02` 从浅等待升级为服务端纠正页码场景：从 `?page=999` 进入，mock 后端返回 `pagination.page=3`，确认页面显示第 3 页数据、URL 同步为 `page=3`，并复核先请求 999 后请求 3。
+  - 校正 `ALERT-PAGE-09` 的 URL 断言为规范类型值 `stock_low`，同时保留 API 请求参数 `low-stock` 的映射验证。
+
+**ABC 影响评估**
+
+- 本批修改共享前端分页 hook 和预警分页 E2E，不修改后端接口、库存写入、出库、入库、BOM、成本异常、ABC API 或 ABC 本体。
+- `usePagination` 被多个非 ABC 列表页复用，本批只让前端吸收服务端返回的规范分页元数据；它不改变任何业务写入副作用，也不改变库存、批次、出库或成本事实。
+- 因不触碰 ABC 上游写入链，本批不补跑 ABC 输入侧成本回归；已通过共享 hook 单测和前端构建降低跨页面分页风险。
+- 未触碰废弃 `/cost-analysis` 或 `前端代码/deprecated/legacy-cost-analysis/`。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/hooks/usePagination.test.ts -t "server pagination metadata"` 修复前失败：`result.current.page` 仍为 `999`，未同步服务端返回的 `3`。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npm run test:e2e -- alerts.spec.ts -g "ALERT-PAGE-02"` 修复前失败：表格显示第 3 页数据，但 URL 仍为 `page=999`。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/hooks/usePagination.test.ts -t "server pagination metadata"` 通过，1 test passed / 12 skipped。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npm run test:e2e -- alerts.spec.ts -g "ALERT-PAGE-02"` 通过，1 test passed。
+  - `前端代码 npm test -- --run src/hooks/usePagination.test.ts src/pages/alerts/hooks/useAlertsPage.test.ts` 通过，2 files / 20 tests passed。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npm run test:e2e -- alerts.spec.ts -g "ALERT-PAGE-01|ALERT-PAGE-02|ALERT-PAGE-09|ALERT-STATUS-04"` 初次 3 passed / 1 failed，失败原因为 `ALERT-PAGE-09` 仍期待旧 URL 类型值 `low-stock`。
+  - 校正测试预期后，同一 Playwright 命令通过，4 tests passed。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only | rg "deprecated/legacy-cost-analysis|前端代码/deprecated|/cost-analysis"` 无匹配，确认未改废弃范围。
+- 浏览器复核:
+  - 使用用户已验证的 Chrome for Testing 路径完成 headless Playwright 复核；验证重点为点击页码真实请求、URL 同步、服务端纠正分页元数据后 URL 和二次请求同步。
+
+**后续风险**
+
+- 预警中心 AL-05~AL-11 和 AL-21 的规范 URL/分页主路径已分批收口；下一批应按原总计划切回基础资料或库存主链路，不再在预警筛选分页里随机扩范围。
+- 旧 `ALERT-TYPE-04` 仍是浅层等待用例，已记录为测试债，不在本批处理。
+
+## 二百四十四、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 
