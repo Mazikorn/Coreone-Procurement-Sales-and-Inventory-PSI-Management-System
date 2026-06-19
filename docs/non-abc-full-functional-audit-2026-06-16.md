@@ -12662,7 +12662,55 @@ git diff --check
 - 本批未处理出库编辑入口中 `openEdit` 对无明细记录使用 `materials[0]` 作为 fallback 的边界；如后续计划继续 MAT-16 编辑态候选保护，应单独开批验证，不在本批扩展。
 - 下一步可继续按计划进入基础资料剩余验收项或库存主链路下一项，发现计划外问题先登记到待评估。
 
-## 二百五十八、结论
+## 二百五十八、批次 303: BOM 前端必须阻断跨分组重复物料
+
+**发现的问题**
+
+- 本轮计划要求 BOM 覆盖核心/通用/耗材/QC 分组唯一性，避免同一物料在不同用量分组中被重复配置。
+- 后端 `bom-v1.1` 已有跨分组重复物料保护，并通过 `BOM-MATERIAL-001/002` 覆盖创建和编辑拒绝。
+- 前端 `validateBomForm` 只检查单个分组内部重复；同一物料可同时出现在特异性试剂和通用试剂中，前端会放行到后端再被拒绝。
+- 这会让 BOM 页面表现成“可提交后报错”，缺少提交前可解释拦截，也削弱 BOM 作为出库和 ABC 上游标准用量输入的前端证据。
+
+**已完成修复**
+
+- `前端代码/src/pages/bom/hooks/useBOMPage.ts`
+  - 新增 `validateCrossGroupUnique`，统一检查特异性试剂、通用试剂、通用耗材和质控品之间的物料 ID 是否重复。
+  - `validateBomForm` 在保留原有必填、数值和组内重复校验优先级后，新增跨分组唯一性拦截。
+  - 阻断文案明确指出冲突分组，例如 `特异性试剂与通用试剂存在重复物料`。
+- `前端代码/src/pages/bom/hooks/useBOMPage.test.ts`
+  - 新增红绿测试：同一物料同时出现在特异性试剂和通用试剂时，前端 toast 报错且不调用 `bomApi.create`。
+- `前端代码/e2e/bom.spec.ts`
+  - 新增 `BOM-MAT-GROUP-01` 页面级验收：使用真实 BOM 页面选择同一启用物料到两个分组，点击创建后只显示前端阻断提示，不发送 `POST /boms`。
+
+**ABC 影响评估**
+
+- BOM 是出库扣减、项目归集、标准用量和 ABC 上游成本事实的关键输入；跨分组重复物料若进入 BOM，会污染后续用量解释和成本归因。
+- 本批只补前端提交前阻断，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 后端已有跨分组拒绝保护仍保持不变；本批补齐页面侧真实副作用证据，确认重复配置不会从 UI 提交到后端。
+- 已补跑 BOM、出库、入库和物料保护输入链回归，覆盖 BOM 作为 ABC 上游输入的主要相邻链路。
+- 未触碰 `前端代码/deprecated/legacy-cost-analysis/`。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/bom/hooks/useBOMPage.test.ts -t "duplicated across BOM groups"` 修复前失败：旧前端没有调用 `toast.error`，也没有阻断重复跨分组物料。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/bom/hooks/useBOMPage.test.ts -t "duplicated across BOM groups"` 通过，1 test passed / 13 skipped。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/bom.spec.ts -g "BOM-MAT-GROUP-01" --project=chromium` 通过，1 test passed。
+  - `前端代码 npm test -- --run src/pages/bom/hooks/useBOMPage.test.ts src/pages/bom/components/BOMCopyModal.test.tsx src/pages/bom/components/BOMBatchImpactModal.test.tsx src/hooks/usePagination.test.ts` 通过，4 files / 29 tests passed。
+  - `后端代码/server npm run test:node -- --run tests/bom-batch.test.ts tests/integration/bom.test.ts tests/integration/outbound.test.ts tests/materials-guard.test.ts tests/inbound-batch.test.ts` 通过，5 files / 101 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/bom.spec.ts -g "BOM-MAT-GROUP-01|BOM-CREATE-01|BOM-CREATE-02|BOM-CREATE-15|BOM-EDIT-01|BOM-EDIT-09|BOM-DETAIL-03" --project=chromium` 通过，7 tests passed。
+- 浏览器复核:
+  - 使用用户已验证的 Chrome for Testing 路径完成 headless Playwright 复核；验证重点为重复物料跨分组选择后前端阻断、创建请求未发送，以及 BOM 新建、多物料、编辑后列表刷新和详情弹窗回归。
+
+**后续风险**
+
+- 本批只处理 BOM 前端跨分组唯一性，不扩展到计划外的 BOM 编辑态历史版本保护或服务绑定规则。
+- 后续可继续按基础资料阶段检查 BOM 启停用依赖、复制版本、服务绑定和历史使用后保护；若发现跨模块问题，先进入待评估清单。
+
+## 二百五十九、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

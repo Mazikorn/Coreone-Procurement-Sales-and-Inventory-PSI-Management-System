@@ -251,6 +251,32 @@ describe('useBOMPage', () => {
     expect(bomApi.create).not.toHaveBeenCalled()
   })
 
+  it('blocks submit when the same material is duplicated across BOM groups', async () => {
+    const { result } = renderHook(() => useBOMPage())
+
+    act(() => {
+      result.current.openCreate()
+      result.current.setForm({
+        ...result.current.form,
+        code: 'BOM-CROSS-DUP',
+        name: '跨分组重复物料BOM',
+        materials: [
+          { materialId: 'mat-1', name: '试剂', spec: '1ml', usagePerSample: 1, unit: '瓶' },
+        ],
+        generalReagents: [
+          { materialId: 'mat-1', name: '试剂', spec: '1ml', usagePerSample: 0.5, unit: 'ml' },
+        ],
+      })
+    })
+
+    await act(async () => {
+      await result.current.handleSubmit()
+    })
+
+    expect(toast.error).toHaveBeenCalledWith('特异性试剂与通用试剂存在重复物料')
+    expect(bomApi.create).not.toHaveBeenCalled()
+  })
+
   it('does not copy the original service binding when copying a BOM', async () => {
     vi.mocked(bomApi.getDetail).mockResolvedValue(serviceBoundBom as any)
     vi.mocked(bomApi.create).mockResolvedValue({ id: 'bom-copy-1' } as any)

@@ -116,6 +116,84 @@ test.beforeEach(async () => {
   await cleanupTestData(token)
 })
 
+test.describe('BOM清单 -> 物料分组唯一性', () => {
+  test('BOM-MAT-GROUP-01. 新建BOM时同一物料不能跨特异性试剂和通用试剂重复提交', async ({ page }) => {
+    const duplicateMaterial = {
+      id: 'mat-bom-cross-dup',
+      code: 'MAT-CROSS-DUP',
+      name: 'E2E重复物料',
+      spec: '10ml',
+      unit: '瓶',
+      price: 12,
+      status: 'active',
+    }
+    const createBodies: any[] = []
+
+    await loginAs(page, 'admin')
+    await page.route('**/api/v1/alerts**', async route => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: { list: [], items: [], pagination: { total: 0, page: 1, pageSize: 5 } } }),
+      })
+    })
+    await page.route('**/api/v1/materials**', async route => {
+      const url = new URL(route.request().url())
+      if (route.request().method() !== 'GET') return route.fallback()
+      expect(url.searchParams.get('status')).toBe('active')
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: { list: [duplicateMaterial], pagination: { total: 1, page: 1, pageSize: 1000 } } }),
+      })
+    })
+    await page.route('**/api/v1/projects**', async route => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: { list: [], pagination: { total: 0, page: 1, pageSize: 1000 } } }),
+      })
+    })
+    await page.route('**/api/v1/boms**', async route => {
+      const url = new URL(route.request().url())
+      if (route.request().method() === 'GET' && url.pathname.endsWith('/boms')) {
+        await route.fulfill({
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true, data: { list: [], pagination: { total: 0, page: 1, pageSize: 20 } } }),
+        })
+        return
+      }
+      if (route.request().method() === 'POST' && url.pathname.endsWith('/boms')) {
+        createBodies.push(await route.request().postDataJSON())
+        await route.fulfill({
+          status: 409,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: false, error: { message: '重复物料不应提交到后端' } }),
+        })
+        return
+      }
+      await route.fallback()
+    })
+
+    await page.goto(`${FE_BASE}/bom`, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByRole('heading', { name: 'BOM清单' })).toBeVisible({ timeout: 15000 })
+    await page.getByRole('button', { name: '新建BOM' }).click()
+    await expect(page.getByText('新建BOM').last()).toBeVisible({ timeout: 10000 })
+
+    await page.getByPlaceholder('请输入BOM名称').fill('跨分组重复BOM')
+    await page.getByPlaceholder('请输入BOM编号').fill('BOM-CROSS-DUP-E2E')
+    await page.getByRole('button', { name: '添加物料' }).click()
+    await page.getByText('选择物料').click()
+    await page.getByText('E2E重复物料 (10ml)').click()
+    await page.getByRole('button', { name: '通用试剂' }).click()
+    await page.getByRole('button', { name: '添加' }).click()
+    await page.getByText('选择物料').click()
+    await page.getByText('E2E重复物料 (10ml)').click()
+    await page.getByRole('button', { name: '创建BOM' }).click()
+
+    await expect(page.getByText('特异性试剂与通用试剂存在重复物料')).toBeVisible({ timeout: 10000 })
+    await page.waitForTimeout(300)
+    expect(createBodies).toEqual([])
+  })
+})
+
 // 1. 查看BOM列表 (10)
 test.describe('BOM清单 -> 查看BOM列表', () => {
   for (const role of BOM_READ_ROLES) {

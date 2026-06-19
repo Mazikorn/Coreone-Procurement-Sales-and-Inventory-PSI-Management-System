@@ -129,12 +129,37 @@ function validateQualityControls(items: BOMQualityItem[]) {
   return null
 }
 
+function validateCrossGroupUnique(form: BOMForm) {
+  const groups = [
+    { label: '特异性试剂', items: form.materials },
+    { label: '通用试剂', items: form.generalReagents },
+    { label: '通用耗材', items: form.generalConsumables },
+    { label: '质控品', items: form.qualityControls },
+  ]
+  const firstGroupByMaterial = new Map<string, string>()
+
+  for (const group of groups) {
+    for (const item of group.items) {
+      const materialId = String(item.materialId || '').trim()
+      if (!materialId) continue
+      const previousLabel = firstGroupByMaterial.get(materialId)
+      if (previousLabel && previousLabel !== group.label) {
+        return `${previousLabel}与${group.label}存在重复物料`
+      }
+      firstGroupByMaterial.set(materialId, group.label)
+    }
+  }
+
+  return null
+}
+
 function validateBomForm(form: BOMForm) {
   return (
     validateMaterialGroup(form.materials, '特异性试剂', { required: true }) ||
     validateMaterialGroup(form.generalReagents, '通用试剂') ||
     validateMaterialGroup(form.generalConsumables, '通用耗材') ||
-    validateQualityControls(form.qualityControls)
+    validateQualityControls(form.qualityControls) ||
+    validateCrossGroupUnique(form)
   )
 }
 
