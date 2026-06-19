@@ -12176,10 +12176,54 @@ git diff --check
 
 **后续风险**
 
-- MAT-09~12 的关键词、分类、供应商筛选 URL 与分页重置主路径已收口；筛选“重置清空所有条件 + URL query”仍可继续按独立批次做更强页面级复核。
+- MAT-09~12 的关键词、分类、供应商筛选 URL 与分页重置主路径已收口；筛选“重置清空所有条件 + URL query”已在批次 293 承接。
 - MAT-31 物料分页 URL/服务端分页仍需结合本轮共享 `usePagination` 修复继续做页面级证据；本批不扩大到物料分页控件。
 
-## 二百四十八、结论
+## 二百四十八、批次 293: 物料重置筛选必须清空全部 URL query
+
+**发现的问题**
+
+- `materials.md` 的 MAT-09~12 要求“重置”按钮清空所有筛选条件和 URL query。
+- 当前物料页重置会清空关键词、分类、供应商、快速筛选和页码，但不会把 `pageSize` 恢复为默认值。
+- 当用户从 `/materials?page=5&pageSize=50&keyword=HER2&categoryId=cat-1&supplierId=sup-1&quick=inactive` 点击重置时，URL 最终仍残留 `?pageSize=50`，不能证明 URL query 已清空。
+
+**已完成修复**
+
+- `前端代码/src/pages/master/hooks/useMaterialsPage.tsx`
+  - `handleReset` 在清空筛选条件时同步调用 `setPageSize(20)`，让 URL 同步 effect 移除非默认 `pageSize`。
+  - 保留既有 `setPage(1)`、关键词防抖清空、分类/供应商/快速筛选清空逻辑。
+- `前端代码/src/pages/master/hooks/useMaterialsPage.test.tsx`
+  - 新增红绿测试，覆盖复杂 query 入参后调用 `handleReset()`，最终 `window.location.search` 为空，页码为 1，每页条数恢复 20，所有筛选状态清空。
+- `前端代码/e2e/materials.spec.ts`
+  - 增强 `MAT-FILTER-01`：真实浏览器选择分类和供应商后点击“重置”，确认 URL 完全为空、下拉恢复“全部分类/全部供应商”、列表请求恢复默认 `page=1&pageSize=20` 且不带分类/供应商筛选。
+
+**ABC 影响评估**
+
+- 本批只修改物料页只读筛选重置状态，不修改物料事实字段、供应商事实、库存、入库、出库、BOM、成本异常、ABC API 或 ABC 本体。
+- 物料、分类和供应商是 ABC 上游主数据维度，但本批不改变任何写入副作用，也不改变库存数量、批次成本或出库扣减。
+- 因不触碰 ABC 上游写入链，本批不补跑 ABC 输入侧成本回归；通过物料 hook、共享分页 hook、材料页 E2E 和前端构建验证读路径。
+- 未触碰废弃 `/cost-analysis` 或 `前端代码/deprecated/legacy-cost-analysis/`。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/master/hooks/useMaterialsPage.test.tsx -t "clears all filter URL"` 修复前失败：重置后 `window.location.search` 仍为 `?pageSize=50`。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/master/hooks/useMaterialsPage.test.tsx -t "clears all filter URL"` 通过，1 test passed / 5 skipped。
+  - `前端代码 npm test -- --run src/pages/master/hooks/useMaterialsPage.test.tsx src/hooks/usePagination.test.ts` 通过，2 files / 19 tests passed。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/materials.spec.ts -g "MAT-FILTER-01|MAT-SEARCH-03|MAT-LIST-11|MAT-PAGE-01" --project=chromium` 通过，4 tests passed。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only | rg "deprecated/legacy-cost-analysis|前端代码/deprecated|/cost-analysis"` 无匹配，确认未改废弃范围。
+- 浏览器复核:
+  - 使用用户已验证的 Chrome for Testing 路径完成 headless Playwright 复核；验证重点为重置按钮真实点击、URL query 为空、下拉恢复默认、列表请求回到 `page=1&pageSize=20`，以及快速筛选/搜索/分页回归。
+
+**后续风险**
+
+- MAT-09~12 的关键词、分类、供应商筛选、分页重置和重置清空 URL 主路径已收口。
+- MAT-31 物料分页 URL/服务端分页仍需结合本轮共享 `usePagination` 修复继续做页面级证据；本批不扩大到物料分页控件。
+
+## 二百四十九、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

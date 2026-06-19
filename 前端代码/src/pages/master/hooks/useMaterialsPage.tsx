@@ -539,6 +539,7 @@ export function useMaterialsPage() {
     setCategoryIdState('')
     setSupplierIdState('')
     setQuickFilter('all')
+    setPageSize(20)
     setPage(1)
   }
 

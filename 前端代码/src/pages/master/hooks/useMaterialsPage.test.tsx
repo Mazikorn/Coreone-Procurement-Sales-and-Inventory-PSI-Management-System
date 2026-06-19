@@ -157,4 +157,31 @@ describe('useMaterialsPage', () => {
       supplierId: 'sup-1',
     }))
   })
+
+  it('clears all filter URL query parameters when reset is clicked', async () => {
+    window.history.replaceState(
+      null,
+      '',
+      '/materials?page=5&pageSize=50&keyword=HER2&categoryId=cat-1&supplierId=sup-1&quick=inactive'
+    )
+    vi.mocked(materialApi.getList).mockImplementation(async (params: any) => ({
+      list: [],
+      pagination: { total: 100, page: params.page, pageSize: params.pageSize },
+    } as any))
+
+    const { result } = renderHook(() => useMaterialsPage())
+    await waitFor(() => expect(result.current.pageSize).toBe(50))
+
+    act(() => {
+      result.current.handleReset()
+    })
+
+    await waitFor(() => expect(window.location.search).toBe(''))
+    expect(result.current.page).toBe(1)
+    expect(result.current.pageSize).toBe(20)
+    expect(result.current.keyword).toBe('')
+    expect(result.current.categoryId).toBe('')
+    expect(result.current.supplierId).toBe('')
+    expect(result.current.quickFilter).toBe('all')
+  })
 })

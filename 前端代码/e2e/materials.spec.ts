@@ -439,6 +439,19 @@ test.describe('耗材管理 -> 筛选栏联动', () => {
       url.searchParams.get('supplierId') === 'sup-filter' &&
       url.searchParams.get('page') === '1'
     )).toBe(true)
+
+    materialRequests.length = 0
+    await page.getByRole('button', { name: '重置' }).click()
+    await expect(page.getByText('全部Mock物料')).toBeVisible()
+    await expect.poll(() => new URL(page.url()).search).toBe('')
+    await expect(page.getByText('全部分类')).toBeVisible()
+    await expect(page.getByText('全部供应商')).toBeVisible()
+    expect(materialRequests.some(url =>
+      url.searchParams.get('page') === '1' &&
+      url.searchParams.get('pageSize') === '20' &&
+      !url.searchParams.get('categoryId') &&
+      !url.searchParams.get('supplierId')
+    )).toBe(true)
   })
 })
 
