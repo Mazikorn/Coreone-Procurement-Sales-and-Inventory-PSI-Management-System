@@ -14333,7 +14333,53 @@ git diff --check
 
 - 当前修复覆盖系统操作日志导出弹窗的日期和内容选择错误；其它导出弹窗若存在“导出参数为空、缺少弹窗内稳定解释”的入口，应继续按同一不变量复核。
 
-## 二百九十二、结论
+## 二百九十二、批次 337: 人员效率报表必须拒绝非法角色筛选
+
+**发现的问题**
+
+- 本轮转入非 ABC 报表参数有效性复核，聚焦“固定筛选项必须拒绝非法值，不能伪装成空报表”不变量。
+- `/api/v1/reports/personnel-efficiency` 已经统一校验日期范围，但 `role` 参数没有白名单校验。
+- 当调用 `role=not-a-role` 时，旧接口返回 200 空人员效率报表，用户可能误以为该角色没有产出，而不是筛选条件错误。
+- 人员效率报表解释出库人员产出、标准工时、人工成本和单位产出成本，是出库成本事实和 ABC 上游成本输入的说明面，非法枚举必须显式拒绝。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/reports-v1.1.ts`
+  - 新增 `PERSONNEL_EFFICIENCY_ROLES` 白名单，保留前端现有选项 `all / technician / pathologist / warehouse_manager`。
+  - 新增 `rejectInvalidPersonnelEfficiencyRole`，非法角色筛选统一返回 `400 INVALID_PARAMETER`。
+  - 在 `/reports/personnel-efficiency` 查询入口执行角色校验，避免非法角色进入 SQL 条件后变成空结果。
+- `后端代码/server/tests/integration/personnel-efficiency.test.ts`
+  - 新增 `REPORT-EFFICIENCY-003` 红绿测试，覆盖非法 `role=not-a-role` 必须返回 `400 INVALID_PARAMETER`。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 人员效率报表的 API 参数校验和集成测试，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 人员效率报表依赖出库记录、项目类型、操作人角色和标准工时，是 ABC 输入侧可信成本事实的上游说明面；本批只阻断非法筛选条件，不改变合法角色范围内的统计口径。
+- 已补跑人员效率、非 ABC 报表日期、项目成本、物料成本、出库和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+- 已确认本批 diff 不涉及 `前端代码/deprecated/legacy-cost-analysis/`、`后端代码/server/src/routes/abc-v1.1.ts`、`后端代码/server/src/utils/abc-calculator.test.ts` 或前端 ABC 本体页面。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/integration/personnel-efficiency.test.ts -t "REPORT-EFFICIENCY-003"` 修复前失败：非法 `role=not-a-role` 返回 200，期望 400。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/integration/personnel-efficiency.test.ts -t "REPORT-EFFICIENCY-003"` 通过，1 test passed / 4 skipped。
+  - `后端代码/server npm test -- --run tests/integration/personnel-efficiency.test.ts tests/integration/reports-date-validation.test.ts tests/integration/reports-cost-by-project.test.ts tests/integration/reports-cost-by-material.test.ts` 通过，4 files / 15 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `后端代码/server npm test -- --run tests/integration/outbound.test.ts tests/integration/cost-exceptions.test.ts` 通过，2 files / 40 tests passed；`cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr 为既有异常台账测试场景，最终通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `后端代码/server npm run build` 通过。
+- 浏览器复核:
+  - 本批是非 ABC 报表 API 参数校验修复，不新增或改变页面组件、弹窗或可见交互；核心风险是接口是否拒绝非法枚举，已用接口级红绿测试覆盖，不新增截图证据。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 当前修复只覆盖人员效率报表的 `role` 枚举；其它非 ABC 报表若存在固定筛选项但后端未校验的入口，应继续按同一不变量逐项处理。
+
+## 二百九十三、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

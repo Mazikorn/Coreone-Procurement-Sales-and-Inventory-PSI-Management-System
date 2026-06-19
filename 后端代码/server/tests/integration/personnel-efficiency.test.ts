@@ -139,6 +139,16 @@ describe('集成测试：人员效率报表', () => {
     expect(res.body.data.trend).toEqual([])
   })
 
+  it('REPORT-EFFICIENCY-003: 拒绝非法角色筛选，避免伪装成空效率报表', async () => {
+    const res = await request(app)
+      .get('/api/v1/reports/personnel-efficiency?startDate=2026-06-01&endDate=2026-06-30&role=not-a-role')
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(400)
+    expect(res.body.success).toBe(false)
+    expect(res.body.error.code).toBe('INVALID_PARAMETER')
+  })
+
   it('REPORT-EFFICIENCY-001: 人员效率不因项目后续软删除而丢失历史项目类型工时', async () => {
     const suffix = Date.now()
     const operator = `pe-deleted-project-tech-${suffix}`

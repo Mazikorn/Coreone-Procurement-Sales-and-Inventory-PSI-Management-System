@@ -50,6 +50,16 @@ function rejectInvalidDateRange(req: any, res: any) {
   return false
 }
 
+const PERSONNEL_EFFICIENCY_ROLES = new Set(['all', 'technician', 'pathologist', 'warehouse_manager'])
+
+function rejectInvalidPersonnelEfficiencyRole(role: string, res: any) {
+  if (!PERSONNEL_EFFICIENCY_ROLES.has(role)) {
+    error(res, '人员角色筛选无效', 'INVALID_PARAMETER', 400)
+    return true
+  }
+  return false
+}
+
 function getDateRange(query: any) {
   const timeRange = String(query.timeRange || '').trim()
   const monthMatch = timeRange.match(/^(\d+)m$/)
@@ -1032,6 +1042,7 @@ router.get('/personnel-efficiency', (req, res) => {
     const db = getDatabase()
     const { startDate, endDate } = getDateRange(req.query)
     const role = String(req.query.role || 'all').trim()
+    if (rejectInvalidPersonnelEfficiencyRole(role, res)) return
 
     let where = "r.status = 'completed' AND r.is_deleted = 0"
     const params: any[] = []
