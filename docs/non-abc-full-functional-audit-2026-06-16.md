@@ -13074,7 +13074,58 @@ git diff --check
 - 本批只处理项目复制弹窗的编号/描述编辑与 BOM 绑定默认复制，不扩展到复制后列表定位或 technician 角色权限差异。
 - 后续可继续按基础资料阶段检查项目导入、删除和历史出库/LIS 引用保护；发现计划外问题先登记到待评估清单。
 
-## 二百六十六、结论
+## 二百六十六、批次 311: 检测服务导入必须预拦截停用 BOM
+
+**发现的问题**
+
+- 本轮计划要求项目/检测服务导入覆盖候选来源必须存在、有效、匹配服务类型和 BOM。
+- `ProjectImportModal` 的错误文案已经说明 BOM ID “不存在或未启用”时应拦截，但解析逻辑只检查 `boms.find(id)` 是否存在，没有检查 `bom.status`。
+- 如果前端引用数据中包含停用 BOM，导入预览会把该行当作有效行，用户点击导入后才由后端失败。
+- 这会让导入预检和真实业务规则不一致，也会增加用户批量导入后的失败修正成本。
+
+**已完成修复**
+
+- `前端代码/src/pages/master/components/ProjectImportModal.tsx`
+  - `parseProjectImportRows` 在校验 BOM ID 时同时要求 `bom.status === 'active'`。
+  - 停用 BOM 和不存在 BOM 统一进入“BOM ID不存在或未启用”行级错误，不进入可导入 rows。
+- `前端代码/src/pages/master/components/ProjectImportModal.test.ts`
+  - 新增停用 BOM fixture，红绿测试覆盖导入前必须拦截停用 BOM。
+- `前端代码/e2e/projects.spec.ts`
+  - 新增 `PROJECT-IMPORT-01` 页面级验收：创建并停用 BOM，上传包含该 BOM ID 的 CSV，页面显示行级错误，开始导入按钮保持禁用，且未发送 `POST /projects` 创建请求。
+
+**ABC 影响评估**
+
+- 检测服务导入的 BOM 绑定会影响出库候选、标准 BOM 出库、成本异常解释和 ABC 上游成本事实。
+- 本批把导入预检和后端 BOM 有效性规则对齐，避免停用 BOM 通过批量导入入口进入待创建检测服务。
+- 本批只修改非 ABC 的项目/检测服务导入解析和测试，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 已补跑项目、BOM 和出库后端回归，覆盖检测服务/BOM 绑定对相邻库存和成本输入链的影响。
+- 未触碰 `前端代码/deprecated/legacy-cost-analysis/`。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/master/components/ProjectImportModal.test.ts -t "BOM是否存在启用"` 修复前失败：`PRJ-INACTIVE` 进入有效 rows。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/master/components/ProjectImportModal.test.ts -t "BOM是否存在启用"` 通过，1 test passed / 1 skipped。
+  - `前端代码 npm test -- --run src/pages/master/components/ProjectImportModal.test.ts` 通过，2 tests passed。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/projects.spec.ts --project=chromium --grep "PROJECT-IMPORT-01"` 通过，1 test passed。
+  - `前端代码 npm test -- --run src/pages/master/components/ProjectImportModal.test.ts src/pages/master/components/ProjectCopyModal.test.tsx src/pages/master/hooks/useProjectsPage.test.tsx src/pages/master/components/ProjectStatusModal.test.tsx` 通过，4 files / 9 tests passed。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/projects.spec.ts --project=chromium` 单独重跑通过，3 tests passed。并行回归时曾因后端 Vitest 和 Playwright 同抢 3001 导致一次 `ECONNREFUSED`，端口释放后单独重跑通过。
+  - `后端代码/server npm test -- --run tests/projects-batch.test.ts tests/integration/outbound.test.ts tests/integration/bom.test.ts` 通过，3 files / 61 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `后端代码/server npm run build` 通过。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis ':(glob)**/*cost-analysis*'` 无输出，确认未改废弃范围。
+  - `lsof -nP -iTCP:3001 -sTCP:LISTEN` 和 `lsof -nP -iTCP:8080 -sTCP:LISTEN` 均无监听残留。
+- 浏览器复核:
+  - 使用用户已验证的 Chrome for Testing 路径完成 headless Playwright 复核；验证重点为真实 CSV 上传、停用 BOM 行级错误、导入按钮禁用和没有创建请求。
+
+**后续风险**
+
+- 本批只处理导入预检中的停用 BOM，不扩展到导入事务化或导入后定位。
+- 后续可继续按基础资料阶段检查项目删除和历史出库/LIS 引用保护；发现计划外问题先登记到待评估清单。
+
+## 二百六十七、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

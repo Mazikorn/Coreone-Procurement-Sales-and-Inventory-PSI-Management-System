@@ -92,7 +92,7 @@ export function parseProjectImportRows(rawRows: Record<string, unknown>[], boms?
     }
     if (parsed.bomId && boms) {
       const bom = boms.find(item => item.id === parsed.bomId)
-      if (!bom) {
+      if (!bom || bom.status !== 'active') {
         errors.push(`第 ${rowNumber} 行BOM ID不存在或未启用：${parsed.bomId}`)
         return
       }

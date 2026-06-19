@@ -169,4 +169,38 @@ test.describe('检测服务状态影响检查', () => {
       bomId,
     })
   })
+
+  test('PROJECT-IMPORT-01. 导入检测服务时停用BOM必须在预校验阶段拦截', async ({ page }) => {
+    const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+    await createProjectBom(suffix)
+    const disabledBom = await apiFetch(token, 'PATCH', `/boms/${bomId}/status`, { status: 'inactive' })
+    expect(disabledBom.status, `停用导入测试BOM失败: ${JSON.stringify(disabledBom.data)}`).toBe(200)
+
+    await loginAs(page, 'admin')
+    await page.goto(`${FE_BASE}/projects`, { waitUntil: 'domcontentloaded' })
+    await page.getByRole('button', { name: '导入' }).click()
+    await expect(page.getByText('导入检测服务')).toBeVisible({ timeout: 10000 })
+
+    const postBodies: string[] = []
+    await page.route('**/api/v1/projects', async route => {
+      if (route.request().method() === 'POST') {
+        postBodies.push(route.request().postData() || '')
+      }
+      await route.continue()
+    })
+
+    const csv = [
+      'code,name,type,cycle,manager,status,description,bomId',
+      `E2E-PRJ-IMPORT-${suffix},停用BOM导入服务,ihc,1天,E2E,启用,应被拦截,${bomId}`,
+    ].join('\n')
+    await page.locator('input[type="file"]').setInputFiles({
+      name: `project-import-inactive-bom-${suffix}.csv`,
+      mimeType: 'text/csv',
+      buffer: Buffer.from(csv, 'utf8'),
+    })
+
+    await expect(page.getByText(`第 2 行BOM ID不存在或未启用：${bomId}`)).toBeVisible({ timeout: 10000 })
+    await expect(page.getByRole('button', { name: /^开始导入/ })).toBeDisabled()
+    expect(postBodies).toHaveLength(0)
+  })
 })
