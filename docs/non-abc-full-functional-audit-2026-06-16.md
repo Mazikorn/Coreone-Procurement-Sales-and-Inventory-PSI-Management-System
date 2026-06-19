@@ -14075,7 +14075,53 @@ git diff --check
 
 - 当前修复只覆盖消耗对账页面日期控件层的可见提示；其它报表页面若存在同类“后端已拒绝但前端无解释”的日期筛选入口，应在后续页面级复核中按同一不变量逐项检查。
 
-## 二百八十七、结论
+## 二百八十七、批次 332: 非 ABC 报表接口必须一致拒绝非法日期范围
+
+**发现的问题**
+
+- 本轮继续复核非废弃报表、效率、LIS、对账、异常和成本展示链路，聚焦“报表日期筛选不能让倒置范围进入业务查询并伪装成空结果”不变量。
+- `reports-v1.1` 中多个非 ABC 报表接口直接使用 `startDate/endDate` 拼接查询条件，没有统一校验日期格式或开始日期晚于结束日期。
+- 当调用 `/reports/cost-by-project?startDate=2026-06-30&endDate=2026-06-01` 时，旧行为返回 200 空报表，用户可能误以为当前期间没有成本、趋势、效率或供应商金额。
+- 这些报表会解释出库成本、物料成本、供应商净额、全成本结构、成本趋势和人员效率，是 ABC 输入侧可信成本事实的上游说明面，非法日期必须显式拒绝。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/reports-v1.1.ts`
+  - 新增统一 `validateReportDateRange` / `rejectInvalidDateRange`。
+  - 严格校验 `YYYY-MM-DD`，拒绝不存在日期和倒置日期范围。
+  - 在 `cost-by-project`、`cost-by-material`、`cost-by-supplier`、`cost-trend`、`cost-by-project-group`、`full-cost-by-project`、`cost-structure`、`cost-variance`、`personnel-efficiency` 入口统一返回 `400 INVALID_PARAMETER`。
+- `后端代码/server/tests/integration/reports-date-validation.test.ts`
+  - 新增 `REPORT-DATE-001` 红绿测试，覆盖 9 个非 ABC 报表日期入口必须一致拒绝 `2026-06-30` 至 `2026-06-01`。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 报表接口日期参数校验和报表测试，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 出库、BOM、成本异常、成本趋势和人员效率报表是 ABC 输入侧可信成本事实的上游说明面；本批阻断非法筛选条件，不改变正常日期范围内的成本计算口径。
+- 已补跑报表族正常路径、出库和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+- 已确认本批 diff 不涉及 `前端代码/deprecated/legacy-cost-analysis/`、`后端代码/server/src/routes/abc-v1.1.ts`、`后端代码/server/src/utils/abc-calculator.test.ts` 或前端 ABC 页面。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/integration/reports-date-validation.test.ts -t "REPORT-DATE-001"` 修复前失败：`/api/v1/reports/cost-by-project` 对倒置日期返回 200，期望 400。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/integration/reports-date-validation.test.ts -t "REPORT-DATE-001"` 通过，1 test passed。
+  - `后端代码/server npm test -- --run tests/integration/reports-date-validation.test.ts tests/integration/reports-cost-by-material.test.ts tests/integration/reports-cost-by-project.test.ts tests/integration/full-cost.test.ts tests/integration/reports-cost-trend.test.ts tests/integration/reports-cost-by-supplier.test.ts tests/integration/reports-cost-by-project-group.test.ts tests/integration/reports-monthly-comparison.test.ts tests/integration/personnel-efficiency.test.ts` 通过，9 files / 28 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `后端代码/server npm test -- --run tests/integration/outbound.test.ts tests/integration/cost-exceptions.test.ts` 串行重跑通过，2 files / 40 tests passed；并行首跑曾因 SQLite `database is locked` 在 global setup 阶段失败，未进入业务断言。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+- 浏览器复核:
+  - 本批是非 ABC 报表 API 参数校验修复，不新增或改变页面组件和弹窗交互；核心风险在接口是否拒绝非法日期范围，已用接口级红绿测试覆盖，不新增截图证据。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 当前修复统一了报表 API 日期入口；前端报表页面若存在“后端已拒绝但页面无可见解释”的日期控件，需要在后续页面级复核中继续按批次处理。
+
+## 二百八十八、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

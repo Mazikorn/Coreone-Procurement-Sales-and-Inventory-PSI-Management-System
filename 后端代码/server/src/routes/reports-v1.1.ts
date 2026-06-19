@@ -20,6 +20,36 @@ function formatYearMonth(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
 }
 
+function isValidDateOnly(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const date = new Date(`${value}T00:00:00Z`)
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value
+}
+
+function validateReportDateRange(query: any) {
+  const startDate = String(query.startDate || '').trim()
+  const endDate = String(query.endDate || '').trim()
+  if (startDate && !isValidDateOnly(startDate)) {
+    return { valid: false, message: '日期格式必须为 YYYY-MM-DD' }
+  }
+  if (endDate && !isValidDateOnly(endDate)) {
+    return { valid: false, message: '日期格式必须为 YYYY-MM-DD' }
+  }
+  if (startDate && endDate && startDate > endDate) {
+    return { valid: false, message: '开始日期不能晚于结束日期' }
+  }
+  return { valid: true, message: '' }
+}
+
+function rejectInvalidDateRange(req: any, res: any) {
+  const validation = validateReportDateRange(req.query)
+  if (!validation.valid) {
+    error(res, validation.message, 'INVALID_PARAMETER', 400)
+    return true
+  }
+  return false
+}
+
 function getDateRange(query: any) {
   const timeRange = String(query.timeRange || '').trim()
   const monthMatch = timeRange.match(/^(\d+)m$/)
@@ -38,6 +68,7 @@ function getDateRange(query: any) {
 
 router.get('/cost-by-project', (req, res) => {
   try {
+    if (rejectInvalidDateRange(req, res)) return
     const { startDate, endDate } = req.query
     const db = getDatabase()
     let where = "r.status = 'completed' AND r.is_deleted = 0"
@@ -73,6 +104,7 @@ router.get('/cost-by-project', (req, res) => {
 
 router.get('/cost-by-material', (req, res) => {
   try {
+    if (rejectInvalidDateRange(req, res)) return
     const { startDate, endDate, categoryId } = req.query
     const db = getDatabase()
     let where = "o.status = 'completed' AND o.is_deleted = 0"
@@ -130,6 +162,7 @@ router.get('/cost-by-material', (req, res) => {
 
 router.get('/cost-by-supplier', (req, res) => {
   try {
+    if (rejectInvalidDateRange(req, res)) return
     const { startDate, endDate } = req.query
     const db = getDatabase()
     let where = "r.status = 'completed' AND r.is_deleted = 0"
@@ -177,6 +210,7 @@ router.get('/cost-by-supplier', (req, res) => {
 
 router.get('/cost-trend', (req, res) => {
   try {
+    if (rejectInvalidDateRange(req, res)) return
     const { startDate, endDate, dimension = 'monthly', projectType } = req.query
     const db = getDatabase()
     let where = "r.status = 'completed' AND r.is_deleted = 0"
@@ -256,6 +290,7 @@ router.get('/cost-trend', (req, res) => {
 
 router.get('/cost-by-project-group', (req, res) => {
   try {
+    if (rejectInvalidDateRange(req, res)) return
     const { startDate, endDate, projectId } = req.query
     const db = getDatabase()
 
@@ -386,6 +421,7 @@ router.get('/cost-by-project-group', (req, res) => {
 
 router.get('/full-cost-by-project', (req, res) => {
   try {
+    if (rejectInvalidDateRange(req, res)) return
     const { startDate, endDate } = req.query
     const db = getDatabase()
     let where = "r.status = 'completed' AND r.is_deleted = 0"
@@ -633,6 +669,7 @@ router.get('/full-cost-by-project', (req, res) => {
 // ===== Phase 3.5: 成本结构（按成本类型） =====
 router.get('/cost-structure', (req, res) => {
   try {
+    if (rejectInvalidDateRange(req, res)) return
     const { startDate, endDate } = req.query
     const db = getDatabase()
     let where = "r.status = 'completed' AND r.is_deleted = 0"
@@ -730,6 +767,7 @@ router.get('/cost-structure', (req, res) => {
 // ===== Phase 2.4: 成本差异分析 =====
 router.get('/cost-variance', (req, res) => {
   try {
+    if (rejectInvalidDateRange(req, res)) return
     const { startDate, endDate } = req.query
     const compareType = ['project', 'month', 'material'].includes(String(req.query.compareType))
       ? String(req.query.compareType)
@@ -990,6 +1028,7 @@ router.get('/cost-monthly-comparison', (req, res) => {
 
 router.get('/personnel-efficiency', (req, res) => {
   try {
+    if (rejectInvalidDateRange(req, res)) return
     const db = getDatabase()
     const { startDate, endDate } = getDateRange(req.query)
     const role = String(req.query.role || 'all').trim()
