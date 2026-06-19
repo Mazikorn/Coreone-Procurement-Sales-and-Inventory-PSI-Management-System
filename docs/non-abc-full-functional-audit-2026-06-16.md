@@ -14171,7 +14171,61 @@ git diff --check
 
 - 当前修复只覆盖成本差异页面；其它带日期或月份筛选的非 ABC 报表页面若存在同类“后端已拒绝但页面无可见解释”的入口，应在后续页面级复核中按同一不变量逐项处理。
 
-## 二百八十九、结论
+## 二百八十九、批次 334: 操作日志日期筛选必须可见阻断倒置范围
+
+**发现的问题**
+
+- 本轮继续复核非废弃运营与审计页面，聚焦“筛选条件无效时，页面必须给出可见解释，不能让空列表被误读为事实”不变量。
+- `useLogsPage` 已经在 hook 层阻断倒置日期范围，并且导出弹窗也会 toast 报错，但 `LogsTable` 日期输入区没有展示稳定的页面内错误。
+- 当用户在操作日志页填写 `2026-06-30` 至 `2026-06-01` 时，旧页面只能显示空列表或依赖临时 toast，缺少 `role="alert"` 和输入无效状态，审计人员可能误以为该时间段没有日志。
+- 操作日志是非 ABC 写操作、导入导出、库存主链路和报表异常追溯的证据面，日期筛选错误必须在页面层可解释、可复查。
+
+**已完成修复**
+
+- `前端代码/src/pages/system/hooks/useLogsPage.ts`
+  - 复用现有日期范围校验结果，新增 `dateError` 返回给页面组件。
+  - `handleSearch` 使用同一 `dateError`，避免 hook 校验和页面提示出现两套口径。
+- `前端代码/src/pages/system/Logs.tsx`
+  - 将 `dateError` 传入日志表格。
+- `前端代码/src/pages/system/components/LogsTable.tsx`
+  - 新增页面内 `role="alert"` 错误提示，显示 `开始日期不能晚于结束日期`。
+  - 两个日期输入在非法范围时设置 `aria-invalid=true` 并关联错误提示。
+  - 补齐组件渲染测试所需的 `React` import。
+- `前端代码/src/pages/system/components/LogsTable.test.tsx`
+  - 新增页面组件红绿测试，覆盖倒置日期必须可见提示，并且两个日期输入必须标记为无效。
+
+**ABC 影响评估**
+
+- 本批只修改系统操作日志页面的日期错误呈现和页面测试，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 操作日志属于审计证据面，会辅助追溯库存、出库、BOM、报表和成本异常相关操作；本批只增强非法筛选解释，不改变任何库存、出库、BOM、成本异常或 ABC 输入数据。
+- 已补跑系统日志前端、后端日志 API 和构建验证；浏览器复核确认倒置日期不会发出反向范围请求。
+- 已确认本批 diff 不涉及 `前端代码/deprecated/legacy-cost-analysis/`、`后端代码/server/src/routes/abc-v1.1.ts`、`后端代码/server/src/utils/abc-calculator.test.ts` 或前端 ABC 本体页面。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/system/components/LogsTable.test.tsx` 修复前业务红灯失败：页面找不到 `role="alert"` 的 `开始日期不能晚于结束日期`。
+  - 首次运行该测试先暴露 `React is not defined` 渲染前提问题，已补齐 import 后重跑，确认失败点转为真实业务缺口。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/system/components/LogsTable.test.tsx src/pages/system/hooks/useLogsPage.test.ts` 通过，2 files / 9 tests passed。
+  - `前端代码 npm test -- --run src/pages/system/components/LogsTable.test.tsx src/pages/system/hooks/useLogsPage.test.ts src/pages/system/components/LogExportModal.tsx src/pages/system/components/LogCleanModal.test.tsx src/pages/system/components/UserLastLoginDisplay.test.ts src/pages/system/hooks/useUsersPage.test.ts` 通过，5 files / 19 tests passed。
+  - `后端代码/server npm test -- --run tests/logs.test.ts` 通过，1 file / 10 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `后端代码/server npm run build` 通过。
+- 浏览器复核:
+  - 使用用户指定 Chrome for Testing 路径 `/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing` 跑一次性 headless Playwright。
+  - 真实登录 admin，进入 `/logs`，填写 `2026-06-30` 至 `2026-06-01` 并点击查询后，`role=alert` 可见显示 `开始日期不能晚于结束日期`，两个日期输入均为 `aria-invalid=true`。
+  - 请求明细确认输入和查询期间没有发送 `startDate=2026-06-30&endDate=2026-06-01` 的反向范围请求；仅在输入第一个日期时出现合法单端查询。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 当前修复只覆盖系统操作日志列表筛选；其它审计或报表页面若存在“后端/Hook 已拒绝但页面无稳定可见解释”的筛选入口，应继续按同一不变量逐项处理。
+
+## 二百九十、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

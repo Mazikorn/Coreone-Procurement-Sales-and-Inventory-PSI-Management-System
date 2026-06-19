@@ -1,3 +1,4 @@
+import React from 'react'
 import { Search } from 'lucide-react'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { OperationLog } from '@/types'
@@ -15,6 +16,7 @@ interface Props {
   userFilter: string
   startDate: string
   endDate: string
+  dateError?: string
   logTypes: { value: string; label: string }[]
   modules: { value: string; label: string }[]
   users: { value: string; label: string }[]
@@ -36,7 +38,7 @@ interface Props {
 
 export function LogsTable({
   data, loading, total, page, pageSize,
-  keyword, typeFilter, moduleFilter, userFilter, startDate, endDate,
+  keyword, typeFilter, moduleFilter, userFilter, startDate, endDate, dateError = '',
   logTypes, modules, users,
   getLogType, getAvatarChar, getModuleLabel,
   onKeywordChange, onTypeFilterChange, onModuleFilterChange, onUserFilterChange,
@@ -89,19 +91,28 @@ export function LogsTable({
             type="date"
             value={startDate}
             onChange={e => onStartDateChange(e.target.value)}
-            className="h-10 px-3 text-sm text-gray-900 bg-white border border-gray-200 rounded-md outline-none transition-all focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10"
+            aria-invalid={Boolean(dateError)}
+            aria-describedby={dateError ? 'logs-date-error' : undefined}
+            className="h-10 px-3 text-sm text-gray-900 bg-white border border-gray-200 rounded-md outline-none transition-all focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 aria-[invalid=true]:border-red-500"
           />
           <span className="text-gray-500">至</span>
           <input
             type="date"
             value={endDate}
             onChange={e => onEndDateChange(e.target.value)}
-            className="h-10 px-3 text-sm text-gray-900 bg-white border border-gray-200 rounded-md outline-none transition-all focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10"
+            aria-invalid={Boolean(dateError)}
+            aria-describedby={dateError ? 'logs-date-error' : undefined}
+            className="h-10 px-3 text-sm text-gray-900 bg-white border border-gray-200 rounded-md outline-none transition-all focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 aria-[invalid=true]:border-red-500"
           />
           <button onClick={onSearch} className="h-10 px-4 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 shadow-sm transition-all">查询</button>
           <button onClick={onReset} className="h-10 px-4 text-sm font-medium text-gray-700 bg-transparent hover:bg-gray-100 rounded-md transition-all">重置</button>
         </div>
       </div>
+      {dateError && (
+        <p id="logs-date-error" role="alert" className="px-5 pt-3 text-sm text-red-600">
+          {dateError}
+        </p>
+      )}
 
       <div className="overflow-x-auto">
         <table className="w-full border-collapse">

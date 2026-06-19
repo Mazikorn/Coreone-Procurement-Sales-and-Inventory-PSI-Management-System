@@ -181,11 +181,11 @@ export function useLogsPage() {
     startDate: '', endDate: '', format: 'csv',
     includeBasic: true, includeDetail: true, includeIP: false, includeDiff: false,
   })
+  const dateError = getDateRangeError(startDate, endDate)
 
   const handleSearch = () => {
-    const message = getDateRangeError(startDate, endDate)
-    if (message) {
-      toast.error(message)
+    if (dateError) {
+      toast.error(dateError)
       setPage(1)
       return
     }
@@ -307,6 +307,7 @@ export function useLogsPage() {
     cleanRange, setCleanRange,
     stats,
     userOptions,
+    dateError,
     handleSearch, handleReset,
     openDetail, openExport,
     getLogType, getAvatarChar, getModuleLabel,

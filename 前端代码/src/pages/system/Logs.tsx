@@ -63,6 +63,7 @@ export default function Logs() {
         userFilter={page.userFilter}
         startDate={page.startDate}
         endDate={page.endDate}
+        dateError={page.dateError}
         logTypes={LOG_TYPES}
         modules={MODULES}
         users={page.userOptions}
