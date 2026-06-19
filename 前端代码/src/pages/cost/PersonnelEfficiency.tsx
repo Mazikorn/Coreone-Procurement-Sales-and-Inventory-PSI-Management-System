@@ -54,6 +54,10 @@ const ROLE_OPTIONS = [
   { value: 'warehouse_manager', label: '仓库管理员' },
 ]
 
+function getRoleLabel(roleValue: string) {
+  return ROLE_OPTIONS.find(option => option.value === roleValue)?.label || roleValue
+}
+
 export default function PersonnelEfficiency() {
   const [timeRange, setTimeRange] = useState('6m')
   const [role, setRole] = useState('all')
@@ -119,7 +123,7 @@ export default function PersonnelEfficiency() {
       const header = ['姓名', '角色', '效率值', '标准小时', '产出数', '总人工成本', '单位产出成本']
       const rows = filteredRanking.map(item => [
         item.name,
-        item.role,
+        getRoleLabel(item.role),
         item.efficiency.toFixed(2),
         (item.standardHours || 0).toFixed(2),
         String(item.outputCount || 0),
@@ -234,10 +238,7 @@ export default function PersonnelEfficiency() {
                     <td className="px-4 py-3 text-sm font-medium text-gray-900">{item.name}</td>
                     <td className="px-4 py-3 text-sm text-gray-500">
                       <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700">
-                        {item.role === 'technician' ? '技术人员'
-                          : item.role === 'pathologist' ? '病理医师'
-                            : item.role === 'warehouse_manager' ? '仓库管理员'
-                              : item.role}
+                        {getRoleLabel(item.role)}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-sm text-right">

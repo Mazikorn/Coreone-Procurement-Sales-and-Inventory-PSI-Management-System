@@ -16393,9 +16393,57 @@ git diff --check
 
 **后续风险**
 
-- 人员效率统计卡片权威口径和跨筛选乱序响应已阶段性保护；后续可继续复核效率/报表展示页中的导出内容、趋势图口径，或转入其他依赖历史事实的非 ABC 成本读面。
+- 人员效率统计卡片权威口径和跨筛选乱序响应已阶段性保护；下一批继续处理人员效率导出内容，确认导出归档与页面可见口径一致，避免把内部枚举泄露到业务文件。
 
-## 三百三十五、结论
+## 三百三十五、批次 380: 人员效率导出角色必须使用页面显示口径
+
+**发现的问题**
+
+- 本轮继续复核 ABC 之外的效率/报表展示页，聚焦“导出归档内容必须与页面可见业务口径一致”不变量。
+- `PersonnelEfficiency` 页面表格会把人员角色枚举 `technician / pathologist / warehouse_manager` 显示为 `技术人员 / 病理医师 / 仓库管理员`。
+- 旧导出逻辑直接把 `item.role` 写入 CSV，导致同一条排名在页面中显示为中文业务角色，导出文件却落成内部枚举。
+- 人员效率 CSV 是运营归档和复核材料，导出内部枚举会削弱报表可解释性，也可能让非技术用户误判角色口径。
+
+**已完成修复**
+
+- `前端代码/src/pages/cost/PersonnelEfficiency.tsx`
+  - 新增 `getRoleLabel`，统一从 `ROLE_OPTIONS` 解析角色显示名。
+  - 表格角色列改为使用 `getRoleLabel`，保留未知角色回退原值的兼容行为。
+  - CSV 导出角色列改为使用同一 `getRoleLabel`，确保导出与页面显示一致。
+- `前端代码/src/pages/cost/PersonnelEfficiency.render.test.tsx`
+  - Mock `downloadTextFile`，避免测试触发真实下载副作用。
+  - 新增红绿测试：人员角色为 `technician` 时，页面表格和导出 CSV 都必须使用 `技术人员`，并断言 CSV 不再包含内部枚举 `technician`。
+  - 保留批次 378/379 的后端 `summary` 权威口径和跨筛选乱序响应测试，确认三个读面保护点同时成立。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 人员效率报表页面导出展示口径和前端测试，不修改 ABC 本体、ABC API、成本算法、库存、出库或废弃 `/cost-analysis`。
+- 人员效率报表依赖出库、人员、项目类型和标准工时等历史事实；本批不改变事实写入、后端汇总、成本异常或 ABC 输入，只让导出文件使用与页面一致的角色解释。
+- 已补跑人员效率后端专项和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/cost/PersonnelEfficiency.render.test.tsx -t "exports role labels"` 修复前失败：CSV 内容为 `"技术员A","technician","1.29"...`，期望导出 `技术人员`。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/cost/PersonnelEfficiency.render.test.tsx` 通过，3 tests passed。
+  - `后端代码/server npm test -- --run tests/integration/personnel-efficiency.test.ts tests/integration/cost-exceptions.test.ts` 通过，2 files / 17 tests passed；命令退出码为 0，保留既有 Vite close timeout 提示和 `cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis` 无输出，确认未改废弃范围。
+- 浏览器复核:
+  - 本批为人员效率 CSV 导出内容口径修复，不新增路由、弹窗或接口；核心风险是导出内容是否与页面角色显示一致，已用页面级红绿测试覆盖按钮点击和 `downloadTextFile` 文件内容，不新增截图证据。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 人员效率统计卡片、跨筛选刷新和导出角色口径已阶段性保护；后续可继续复核人员效率趋势图口径，或转入其它依赖历史事实的非 ABC 成本读面。
+
+## 三百三十六、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

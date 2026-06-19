@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { reportsApi } from '@/api/reports'
+import { downloadTextFile } from '@/lib/utils'
 import PersonnelEfficiency from './PersonnelEfficiency'
 
 function deferred<T>() {
@@ -25,6 +26,17 @@ vi.mock('sonner', () => ({
   },
 }))
 
+vi.mock('@/lib/utils', () => ({
+  downloadTextFile: vi.fn(),
+  formatCurrency: (num: number | undefined) => {
+    if (num === undefined || num === null) return '-'
+    return '¥' + num.toLocaleString('zh-CN', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })
+  },
+}))
+
 vi.mock('recharts', () => {
   const passthrough = ({ children }: { children?: React.ReactNode }) => <div>{children}</div>
   return {
@@ -44,6 +56,7 @@ vi.mock('recharts', () => {
 describe('PersonnelEfficiency', () => {
   beforeEach(() => {
     vi.mocked(reportsApi.getPersonnelEfficiency).mockReset()
+    vi.mocked(downloadTextFile).mockReset()
   })
 
   it('uses backend summary instead of recalculating report totals from ranking rows', async () => {
@@ -144,5 +157,44 @@ describe('PersonnelEfficiency', () => {
 
     expect(screen.getByText('人员数量').parentElement).toHaveTextContent('2')
     expect(screen.getByText('总人工成本').parentElement).toHaveTextContent('¥240.00')
+  })
+
+  it('exports role labels with the same display vocabulary as the ranking table', async () => {
+    vi.mocked(reportsApi.getPersonnelEfficiency).mockResolvedValue({
+      summary: {
+        personCount: 1,
+        totalOutput: 5,
+        totalLaborCost: 125,
+        totalStandardHours: 1.25,
+        avgEfficiency: 1.29,
+        costPerOutput: 25,
+      },
+      ranking: [
+        {
+          id: 'tech-a',
+          name: '技术员A',
+          role: 'technician',
+          efficiency: 1.29,
+          totalCost: 125,
+          outputCount: 5,
+          standardHours: 1.25,
+          outputPerHour: 4,
+          costPerOutput: 25,
+        },
+      ],
+      trend: [],
+    } as any)
+
+    render(<PersonnelEfficiency />)
+
+    await waitFor(() => expect(screen.getByText('技术人员')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('button', { name: /导出/ }))
+
+    expect(downloadTextFile).toHaveBeenCalledTimes(1)
+    const [, content, mimeType] = vi.mocked(downloadTextFile).mock.calls[0]
+    expect(mimeType).toBe('text/csv;charset=utf-8')
+    expect(content).toContain('"技术员A","技术人员","1.29"')
+    expect(content).not.toContain('technician')
   })
 })
