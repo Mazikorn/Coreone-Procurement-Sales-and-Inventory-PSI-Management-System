@@ -375,6 +375,30 @@ describe('预警处理', () => {
     expect(ids).not.toContain(warningId)
   })
 
+  it('ALERT-014: 列表和统计拒绝非法状态、类型和级别筛选', async () => {
+    const invalidListStatus = await request(app)
+      .get('/api/v1/alerts')
+      .query({ status: 'archived' })
+      .set('Authorization', `Bearer ${token}`)
+
+    const invalidListType = await request(app)
+      .get('/api/v1/alerts')
+      .query({ type: 'ghost' })
+      .set('Authorization', `Bearer ${token}`)
+
+    const invalidStatsLevel = await request(app)
+      .get('/api/v1/alerts/stats')
+      .query({ level: 'critical' })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(invalidListStatus.status).toBe(400)
+    expect(invalidListStatus.body.error.code).toBe('INVALID_PARAMETER')
+    expect(invalidListType.status).toBe(400)
+    expect(invalidListType.body.error.code).toBe('INVALID_PARAMETER')
+    expect(invalidStatsLevel.status).toBe(400)
+    expect(invalidStatsLevel.body.error.code).toBe('INVALID_PARAMETER')
+  })
+
   it('ALERT-009: 非处理角色不能处理、忽略、批量处理或手动扫描预警', async () => {
     const techToken = await loginRole(app, 'zhangwei')
     const firstId = seedAlert(db, `forbidden-a-${Date.now()}`)

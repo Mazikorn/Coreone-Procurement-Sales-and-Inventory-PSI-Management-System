@@ -5,6 +5,20 @@ import { success, successList, error } from '../utils/response.js'
 
 const router = Router()
 
+const ALERT_STATUSES = new Set(['pending', 'processed', 'ignored', 'auto_resolved', 'dismissed', 'handled'])
+const ALERT_TYPES = new Set(['low-stock', 'expiry', 'stagnant'])
+const ALERT_TYPE_ALIASES: Record<string, string> = {
+  stock_low: 'low-stock',
+  expiring: 'expiry',
+  consumption_anomaly: 'stagnant',
+}
+const ALERT_LEVELS = new Set(['danger', 'warning', 'info'])
+const ALERT_LEVEL_ALIASES: Record<string, string> = {
+  urgent: 'danger',
+  important: 'warning',
+  normal: 'info',
+}
+
 function canHandleAlerts(req: any) {
   const role = req.user?.role
   return role === 'admin' || role === 'warehouse_manager'
@@ -44,18 +58,36 @@ function appendStatusFilter(where: string, params: any[], status: unknown) {
 
 function normalizeAlertTypeFilter(value: unknown) {
   const raw = String(value || '').trim()
-  if (raw === 'stock_low') return 'low-stock'
-  if (raw === 'expiring') return 'expiry'
-  if (raw === 'consumption_anomaly') return 'stagnant'
+  if (ALERT_TYPE_ALIASES[raw]) return ALERT_TYPE_ALIASES[raw]
   return raw
 }
 
 function normalizeAlertLevelFilter(value: unknown) {
   const raw = String(value || '').trim()
-  if (raw === 'urgent') return 'danger'
-  if (raw === 'important') return 'warning'
-  if (raw === 'normal') return 'info'
+  if (ALERT_LEVEL_ALIASES[raw]) return ALERT_LEVEL_ALIASES[raw]
   return raw
+}
+
+function validateAlertFilters(query: any) {
+  const status = String(query.status || '').trim()
+  if (status) {
+    const statuses = status.split(',').map((s) => s.trim()).filter(Boolean)
+    if (statuses.some((item) => !ALERT_STATUSES.has(item))) {
+      return { ok: false, message: '预警状态筛选无效' }
+    }
+  }
+
+  const type = normalizeAlertTypeFilter(query.type)
+  if (type && !ALERT_TYPES.has(type)) {
+    return { ok: false, message: '预警类型筛选无效' }
+  }
+
+  const level = normalizeAlertLevelFilter(query.level)
+  if (level && !ALERT_LEVELS.has(level)) {
+    return { ok: false, message: '预警级别筛选无效' }
+  }
+
+  return { ok: true }
 }
 
 function buildAlertWhere(query: any) {
@@ -126,6 +158,11 @@ router.get('/', (req, res) => {
     let { page = 1, pageSize = 20 } = req.query
     page = Math.max(1, Number(page) || 1) as any
     pageSize = Math.max(1, Math.min(100, Number(pageSize) || 20)) as any
+    const filterValidation = validateAlertFilters(req.query)
+    if (!filterValidation.ok) {
+      error(res, filterValidation.message, 'INVALID_PARAMETER', 400)
+      return
+    }
     const db = getDatabase()
     const { where, params } = buildAlertWhere(req.query)
 
@@ -147,6 +184,11 @@ router.get('/', (req, res) => {
 
 router.get('/stats', (req, res) => {
   try {
+    const filterValidation = validateAlertFilters(req.query)
+    if (!filterValidation.ok) {
+      error(res, filterValidation.message, 'INVALID_PARAMETER', 400)
+      return
+    }
     const db = getDatabase()
     const { where, params } = buildAlertWhere(req.query)
     const row = db.prepare(`
