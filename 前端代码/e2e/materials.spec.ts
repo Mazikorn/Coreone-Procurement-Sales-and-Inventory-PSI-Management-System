@@ -130,6 +130,88 @@ test.describe('耗材管理 -> 查看物料列表', () => {
     expect(res.status).toBe(200)
     expect(res.data?.data?.pagination?.pageSize ?? res.data?.data?.pageSize).toBe(20)
   })
+  test('MAT-LIST-11. 快速筛选同步规范quick参数并重置分页', async ({ page }) => {
+    await loginAs(page, 'admin')
+
+    const materialRequests: URL[] = []
+    await page.route('**/api/v1/materials**', async (route) => {
+      const url = new URL(route.request().url())
+
+      if (url.pathname.endsWith('/materials/stats')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: { total: 2, active: 1, inactive: 1, lowStock: 1 },
+          }),
+        })
+        return
+      }
+
+      if (url.pathname.endsWith('/materials')) {
+        materialRequests.push(url)
+        const isLowStock = url.searchParams.get('lowStock') === 'true'
+        const status = url.searchParams.get('status')
+        const name = isLowStock
+          ? '低库存Mock物料'
+          : status === 'inactive'
+            ? '停用Mock物料'
+            : '全部Mock物料'
+
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              list: [{
+                id: `mock-material-${name}`,
+                code: `MOCK-${Date.now()}`,
+                name,
+                spec: '1ml',
+                unit: '瓶',
+                categoryId: 'cat-mock',
+                supplierId: 'sup-mock',
+                price: 1,
+                stock: isLowStock ? 1 : 20,
+                minStock: 5,
+                status: status === 'inactive' ? 'inactive' : 'active',
+              }],
+              pagination: { total: 2, page: Number(url.searchParams.get('page') || '1'), pageSize: Number(url.searchParams.get('pageSize') || '20') },
+            },
+          }),
+        })
+        return
+      }
+
+      await route.fallback()
+    })
+
+    await page.goto(`${FE_BASE}/materials?quick=low&page=3`, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByRole('heading', { name: '物料管理' })).toBeVisible({ timeout: 15000 })
+    await expect(page.getByText('低库存Mock物料')).toBeVisible()
+    await expect.poll(() => materialRequests.some(url =>
+      url.searchParams.get('page') === '3' &&
+      url.searchParams.get('lowStock') === 'true'
+    )).toBe(true)
+
+    await page.getByRole('button', { name: '已停用' }).click()
+
+    await expect(page.getByText('停用Mock物料')).toBeVisible()
+    await expect.poll(() => {
+      const url = new URL(page.url())
+      return {
+        quick: url.searchParams.get('quick'),
+        status: url.searchParams.get('status'),
+        page: url.searchParams.get('page'),
+      }
+    }).toEqual({ quick: 'inactive', status: null, page: null })
+    await expect.poll(() => materialRequests.some(url =>
+      url.searchParams.get('page') === '1' &&
+      url.searchParams.get('status') === 'inactive'
+    )).toBe(true)
+  })
   test('MAT-LIST-08. 并发：快速刷新页面', async ({ page }) => {
     await loginAs(page, 'admin')
     await page.goto(`${FE_BASE}/materials`)

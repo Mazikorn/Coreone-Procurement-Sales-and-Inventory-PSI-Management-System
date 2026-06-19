@@ -11988,10 +11988,61 @@ git diff --check
 
 **后续风险**
 
-- 预警中心 AL-05~AL-11 和 AL-21 的规范 URL/分页主路径已分批收口；下一批应按原总计划切回基础资料或库存主链路，不再在预警筛选分页里随机扩范围。
+- 预警中心 AL-05~AL-11 和 AL-21 的规范 URL/分页主路径已分批收口；基础资料物料筛选已在批次 289 承接，不再在预警筛选分页里随机扩范围。
 - 旧 `ALERT-TYPE-04` 仍是浅层等待用例，已记录为测试债，不在本批处理。
 
-## 二百四十四、结论
+## 二百四十四、批次 289: 物料快速筛选必须同步规范 quick 参数
+
+**发现的问题**
+
+- `materials.md` 的 MAT-02 要求快速筛选点击后更新 URL：`?quick=all|active|inactive|low`，并在筛选变化时重置分页。
+- 当前物料页已经能调用服务端分页接口，也能用内部状态筛选启用/停用/低库存，但 URL 读写使用旧参数 `status=active|inactive|low-stock`。
+- 当用户按规范 URL 打开 `/materials?quick=low&page=4` 时，页面不会识别为低库存筛选，接口不会收到 `lowStock=true`。
+- 点击“已停用”筛选后，URL 写回为 `status=inactive`，不是规范要求的 `quick=inactive`。
+
+**已完成修复**
+
+- `前端代码/src/pages/master/hooks/useMaterialsPage.tsx`
+  - 新增物料快速筛选 URL 映射：规范 `quick=low` 读入内部 `low-stock`。
+  - URL 写回时使用规范参数 `quick`，并把内部 `low-stock` 写为 `low`。
+  - 保留旧 `status` 参数兼容读取，但写回时清理旧 `status`，避免新旧参数并存。
+  - 后端 API 参数保持既有口径：`active/inactive` 仍传 `status`，低库存仍传 `lowStock=true`。
+- `前端代码/src/pages/master/hooks/useMaterialsPage.test.tsx`
+  - 新增 Hook 测试，覆盖 `?quick=low&page=4` 读入低库存筛选并传 `lowStock=true`。
+  - 新增 Hook 测试，覆盖筛选切到停用后 URL 写为 `quick=inactive`，清理旧 `status` 和旧页码。
+- `前端代码/e2e/materials.spec.ts`
+  - 新增 `MAT-LIST-11`，真实浏览器从 `?quick=low&page=3` 进入物料页，通过 mock API 验证低库存请求与列表渲染。
+  - 点击“已停用”后确认 URL 为 `quick=inactive`、无旧 `status` 和旧页码，并确认接口请求 `status=inactive&page=1`。
+
+**ABC 影响评估**
+
+- 本批只修改物料页只读筛选 URL 与前端请求映射，不修改物料创建/编辑/删除/启停用写入，不修改库存、入库、出库、BOM、成本异常或 ABC 本体。
+- 物料是 ABC 上游主数据，但本批不改变任何物料事实字段、库存数量、批次成本或出库扣减，属于 A1 查询体验与筛选口径修复。
+- 因不触碰 ABC 上游写入链，本批不补跑 ABC 输入侧成本回归；通过物料 hook、分页 hook、材料 E2E 和前端构建验证前端读路径。
+- 未触碰废弃 `/cost-analysis` 或 `前端代码/deprecated/legacy-cost-analysis/`。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/master/hooks/useMaterialsPage.test.tsx -t "quick"` 修复前 2 tests failed：`quick=low` 被读成 `all`，筛选写回为 `?status=inactive` 而不是 `quick=inactive`。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npm run test:e2e -- materials.spec.ts -g "MAT-LIST-11"` 修复前失败：从 `quick=low` 进入后没有渲染低库存 mock 行。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/master/hooks/useMaterialsPage.test.tsx -t "quick"` 通过，2 tests passed。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npm run test:e2e -- materials.spec.ts -g "MAT-LIST-11"` 通过，1 test passed。
+  - `前端代码 npm test -- --run src/pages/master/hooks/useMaterialsPage.test.tsx src/hooks/usePagination.test.ts` 通过，2 files / 15 tests passed。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npm run test:e2e -- materials.spec.ts -g "MAT-LIST-07|MAT-LIST-11|MAT-PAGE-01"` 通过，3 tests passed。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only | rg "deprecated/legacy-cost-analysis|前端代码/deprecated|/cost-analysis"` 无匹配，确认未改废弃范围。
+- 浏览器复核:
+  - 使用用户已验证的 Chrome for Testing 路径完成 headless Playwright 复核；验证重点为规范 `quick` 入参、低库存接口映射、筛选点击后 URL 写回和分页重置。
+
+**后续风险**
+
+- MAT-09~12 的关键词、分类、供应商筛选 URL 与重置行为仍可继续按独立批次复核；本批只处理快速筛选 `quick` 不变量。
+- MAT-31 物料分页 URL/服务端分页仍需结合本轮共享 `usePagination` 修复继续做页面级证据；本批不扩大到物料分页控件。
+
+## 二百四十五、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

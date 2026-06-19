@@ -1,0 +1,69 @@
+import { act, renderHook, waitFor } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { categoryApi, materialApi, supplierApi } from '@/api/master'
+import { useMaterialsPage } from './useMaterialsPage'
+
+vi.mock('@/api/master')
+vi.mock('sonner', () => ({
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+  },
+}))
+
+describe('useMaterialsPage', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    window.history.replaceState(null, '', '/materials')
+    window.localStorage.setItem('user', JSON.stringify({ role: 'admin', username: 'admin' }))
+
+    vi.mocked(materialApi.getList).mockResolvedValue({
+      list: [],
+      pagination: { total: 0, page: 1, pageSize: 20 },
+    } as any)
+    vi.mocked(materialApi.getStats).mockResolvedValue({
+      total: 0,
+      active: 0,
+      inactive: 0,
+      lowStock: 0,
+    } as any)
+    vi.mocked(categoryApi.getList).mockResolvedValue({
+      list: [],
+      pagination: { total: 0 },
+    } as any)
+    vi.mocked(supplierApi.getList).mockResolvedValue({
+      list: [],
+      pagination: { total: 0 },
+    } as any)
+  })
+
+  it('reads the spec quick URL parameter and maps low to low stock API params', async () => {
+    window.history.replaceState(null, '', '/materials?quick=low&page=4')
+
+    const { result } = renderHook(() => useMaterialsPage())
+
+    await waitFor(() => expect(materialApi.getList).toHaveBeenCalled())
+    expect(result.current.quickFilter).toBe('low-stock')
+    expect(materialApi.getList).toHaveBeenCalledWith(expect.objectContaining({
+      page: 4,
+      pageSize: 20,
+      lowStock: true,
+    }))
+  })
+
+  it('writes quick filter changes to the spec quick URL parameter and resets pagination', async () => {
+    window.history.replaceState(null, '', '/materials?page=5&status=active')
+
+    const { result } = renderHook(() => useMaterialsPage())
+    await waitFor(() => expect(materialApi.getList).toHaveBeenCalled())
+
+    act(() => {
+      result.current.setQuickFilter('inactive')
+      result.current.setPage(1)
+    })
+
+    await waitFor(() => expect(window.location.search).toContain('quick=inactive'))
+    expect(window.location.search).not.toContain('status=')
+    expect(window.location.search).not.toContain('page=5')
+  })
+})

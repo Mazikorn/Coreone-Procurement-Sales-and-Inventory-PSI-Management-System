@@ -22,8 +22,19 @@ export interface FormData {
 }
 
 export type QuickFilter = 'all' | 'active' | 'inactive' | 'low-stock'
+type QuickUrlValue = QuickFilter | 'low'
 
 const QUICK_FILTERS: QuickFilter[] = ['all', 'active', 'inactive', 'low-stock']
+
+function normalizeQuickFilter(value: string): QuickFilter {
+  if (value === 'low') return 'low-stock'
+  if (QUICK_FILTERS.includes(value as QuickFilter)) return value as QuickFilter
+  return 'all'
+}
+
+function toQuickUrlValue(value: QuickFilter): QuickUrlValue {
+  return value === 'low-stock' ? 'low' : value
+}
 
 function canAccessSuppliers(role: string | null): boolean {
   return role === 'admin' || role === 'warehouse_manager' || role === 'procurement'
@@ -54,9 +65,7 @@ export function useMaterialsPage() {
   const { get, getNumber, setMultiple } = useUrlParams()
   const canWrite = getUserRole() === 'admin'
 
-  const initialQuickFilter = QUICK_FILTERS.includes(get('status') as QuickFilter)
-    ? get('status') as QuickFilter
-    : 'all'
+  const initialQuickFilter = normalizeQuickFilter(get('quick', get('status', 'all')))
 
   const [keyword, setKeyword] = useState(get('keyword') || '')
   const [categoryId, setCategoryId] = useState(get('categoryId') || '')
@@ -109,7 +118,8 @@ export function useMaterialsPage() {
       keyword: keyword || null,
       categoryId: categoryId || null,
       supplierId: supplierId || null,
-      status: quickFilter !== 'all' ? quickFilter : null,
+      quick: quickFilter !== 'all' ? toQuickUrlValue(quickFilter) : null,
+      status: null,
     })
   }, [page, pageSize, keyword, categoryId, supplierId, quickFilter, setMultiple])
 
