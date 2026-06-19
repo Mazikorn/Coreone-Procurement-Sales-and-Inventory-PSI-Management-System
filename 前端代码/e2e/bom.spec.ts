@@ -194,6 +194,95 @@ test.describe('BOM清单 -> 物料分组唯一性', () => {
   })
 })
 
+test.describe('BOM清单 -> 单行启停用影响检查', () => {
+  test('BOM-STATUS-SINGLE-01. 单行停用被引用BOM时先检查影响且不提交状态更新', async ({ page }) => {
+    const referencedBom = {
+      id: 'bom-single-status-blocked',
+      code: 'BOM-SINGLE-STATUS',
+      name: '单行停用阻断BOM',
+      version: 'v1.0',
+      type: 'ihc',
+      materialCount: 1,
+      supportableSamples: 20,
+      unitCost: 12,
+      status: 'active',
+      updatedAt: '2026-06-19T00:00:00.000Z',
+    }
+    const statusUpdates: any[] = []
+
+    await loginAs(page, 'admin')
+    await page.route('**/api/v1/alerts**', async route => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: { list: [], items: [], pagination: { total: 0, page: 1, pageSize: 5 } } }),
+      })
+    })
+    await page.route('**/api/v1/materials**', async route => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: { list: [], pagination: { total: 0, page: 1, pageSize: 1000 } } }),
+      })
+    })
+    await page.route('**/api/v1/projects**', async route => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: { list: [], pagination: { total: 0, page: 1, pageSize: 1000 } } }),
+      })
+    })
+    await page.route('**/api/v1/boms**', async route => {
+      const url = new URL(route.request().url())
+      if (route.request().method() === 'GET' && url.pathname.endsWith('/boms')) {
+        await route.fulfill({
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true, data: { list: [referencedBom], pagination: { total: 1, page: 1, pageSize: 20 } } }),
+        })
+        return
+      }
+      if (route.request().method() === 'GET' && url.pathname.endsWith('/boms/bom-single-status-blocked/check-status')) {
+        expect(url.searchParams.get('status')).toBe('inactive')
+        await route.fulfill({
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              bom: { id: referencedBom.id, code: referencedBom.code, name: referencedBom.name },
+              targetStatus: 'inactive',
+              canChange: false,
+              impacts: {
+                activeProjectCount: 1,
+                inactiveMaterialCount: 0,
+                inactiveEquipmentCount: 0,
+                inactiveEquipmentTypeCount: 0,
+              },
+              reasons: ['存在 1 个启用检测项目引用'],
+            },
+          }),
+        })
+        return
+      }
+      if (route.request().method() === 'PATCH' && url.pathname.endsWith('/boms/batch-status')) {
+        statusUpdates.push(await route.request().postDataJSON())
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true, data: { updatedCount: 1 } }),
+        })
+        return
+      }
+      await route.fallback()
+    })
+
+    await page.goto(`${FE_BASE}/bom`, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByRole('heading', { name: 'BOM清单' })).toBeVisible({ timeout: 15000 })
+    await expect(page.getByText('BOM-SINGLE-STATUS')).toBeVisible({ timeout: 10000 })
+    await page.getByRole('row', { name: /BOM-SINGLE-STATUS/ }).getByRole('button', { name: '停用' }).click()
+
+    await expect(page.getByText('存在 1 个启用检测项目引用')).toBeVisible({ timeout: 10000 })
+    await page.waitForTimeout(300)
+    expect(statusUpdates).toEqual([])
+  })
+})
+
 // 1. 查看BOM列表 (10)
 test.describe('BOM清单 -> 查看BOM列表', () => {
   for (const role of BOM_READ_ROLES) {

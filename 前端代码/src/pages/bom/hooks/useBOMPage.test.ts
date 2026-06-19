@@ -180,6 +180,31 @@ describe('useBOMPage', () => {
     expect(result.current.batchStatusResults[0].check?.canChange).toBe(false)
   })
 
+  it('checks single-row status impacts before disabling a referenced BOM', async () => {
+    vi.mocked(bomApi.checkStatus).mockResolvedValue({
+      bom: { id: 'bom-1', code: 'BOM-001', name: '原BOM' },
+      targetStatus: 'inactive',
+      canChange: false,
+      impacts: {
+        activeProjectCount: 1,
+        inactiveMaterialCount: 0,
+        inactiveEquipmentCount: 0,
+        inactiveEquipmentTypeCount: 0,
+      },
+      reasons: ['存在 1 个启用检测项目引用'],
+    } as any)
+
+    const { result } = renderHook(() => useBOMPage())
+
+    await act(async () => {
+      await result.current.toggleStatus(activeBom as any)
+    })
+
+    expect(bomApi.checkStatus).toHaveBeenCalledWith('bom-1', 'inactive')
+    expect(bomApi.batchStatus).not.toHaveBeenCalled()
+    expect(toast.error).toHaveBeenCalledWith('存在 1 个启用检测项目引用')
+  })
+
   it('blocks submit when core BOM materials are missing', async () => {
     const { result } = renderHook(() => useBOMPage())
 

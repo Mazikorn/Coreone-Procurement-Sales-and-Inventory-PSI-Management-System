@@ -611,8 +611,14 @@ export function useBOMPage() {
       await openBatchImpact(status)
       return
     }
+    const targetId = ids[0]
     setSubmitting(true)
     try {
+      const check = await bomApi.checkStatus(targetId, status)
+      if (!check.canChange) {
+        toast.error(check.reasons?.join('；') || (status === 'active' ? 'BOM存在不可用依赖，不可启用' : 'BOM已被启用检测项目引用，不可停用'))
+        return
+      }
       await bomApi.batchStatus(ids, status)
       toast.success(status === 'active' ? 'BOM已启用' : 'BOM已停用')
       setSelectedIds(new Set())
