@@ -635,12 +635,14 @@ router.get('/stats', (req, res) => {
     `).get(...stockParams, ...params) as any)?.v || 0
 
     const catDist = db.prepare(`
-      SELECT c.id as category_id, c.name as category_name, COUNT(m.id) as count
-      FROM material_categories c
-      LEFT JOIN materials m ON c.id = m.category_id AND m.is_deleted = 0
-      WHERE c.is_deleted = 0 AND c.level = 1
-      GROUP BY c.id
-    `).all() as any[]
+      SELECT m.category_id, COALESCE(c.name, '未分类') as category_name, COUNT(DISTINCT i.material_id) as count
+      FROM inventory i
+      JOIN materials m ON i.material_id = m.id
+      LEFT JOIN material_categories c ON c.id = m.category_id AND c.is_deleted = 0
+      WHERE ${where}
+      GROUP BY m.category_id, c.name
+      ORDER BY count DESC, category_name ASC
+    `).all(...params) as any[]
 
     success(res, {
       totalMaterials,

@@ -171,6 +171,9 @@ describe('集成测试：库存管理', () => {
       expect(statsRes.body.data.totalMaterials).toBe(2)
       expect(statsRes.body.data.totalStockCount).toBe(2)
       expect(statsRes.body.data.totalQuantity).toBe(15)
+      expect(statsRes.body.data.categoryDistribution).toEqual([
+        { categoryId, categoryName: '库存筛选分类', count: 2 },
+      ])
     })
 
     it('按库位筛选库存统计时数量、金额和低库存判断使用该库位库存', async () => {
