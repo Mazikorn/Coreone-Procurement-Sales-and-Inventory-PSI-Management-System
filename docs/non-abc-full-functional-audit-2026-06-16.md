@@ -16539,9 +16539,61 @@ git diff --check
 
 **后续风险**
 
-- 盈利性分析导出月份和项目类型显示口径已阶段性保护；下一批可继续复核切片成本明细导出月份与分页口径，或其它依赖历史事实的非废弃成本读面。
+- 盈利性分析导出月份和项目类型显示口径已阶段性保护；下一批转入切片成本明细项目类型读面，确认同类成本明细表格不泄露内部枚举。
 
-## 三百三十八、结论
+## 三百三十八、批次 383: 切片成本明细项目类型必须使用业务显示口径
+
+**发现的问题**
+
+- 本轮按上一批后续风险继续复核切片成本明细页，聚焦“成本读面表格必须使用业务解释口径，而不是内部枚举”不变量。
+- `SlideCostAnalysis` 的项目类型筛选器会显示 `HE染色 / 免疫组化 / 特殊染色` 等业务标签。
+- 旧表格项目类型列直接渲染 `item.projectType`，导致 `HE检测` 所在行显示 `he`，与筛选器、盈利性分析表格和业务归档口径不一致。
+- 页面级红灯测试还暴露 `SlideCostAnalysis.tsx` 与共享 `ProfitBadge.tsx` 在当前 Vitest/JSX 配置下缺少 React 导入，导致真实页面组件无法稳定渲染测试。
+
+**已完成修复**
+
+- `前端代码/src/pages/cost/SlideCostAnalysis.tsx`
+  - 补充 React 导入，让页面在当前 Vitest/JSX 配置下可被页面级测试渲染。
+  - 新增 `getProjectTypeLabel`，复用既有 `PROJECT_TYPE_OPTIONS` 把内部项目类型枚举转换成业务标签。
+  - 表格项目类型列改为显示业务标签，未知类型保留原值回退。
+  - 不改变列表加载、月份筛选、项目类型筛选、分页、导出参数、后端接口或成本聚合逻辑。
+- `前端代码/src/components/ui/ProfitBadge.tsx`
+  - 补充 React 导入，修复切片成本页首屏统计卡片和表格利润率徽章在页面级测试中的渲染前置问题。
+- `前端代码/src/pages/cost/SlideCostAnalysis.test.ts`
+  - 新增页面级红绿测试：接口返回 `projectType: 'he'` 时，`HE检测` 所在行必须显示 `HE染色`，且不能显示内部枚举 `he`。
+  - 保留原有归一化测试，继续覆盖月份/项目类型过滤和物料/作业成本拆分。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 切片成本明细页面的前端显示口径、共享利润率徽章的 React 导入和前端测试，不修改 ABC 本体、ABC API 后端、成本算法、库存、出库或废弃 `/cost-analysis`。
+- 切片成本明细依赖既有出库 ABC 成本事实、BOM/项目类型字段和费用归集结果；本批不改变事实写入、出库扣减、成本异常、重算或导出数据，只提升页面读面的可解释性。
+- 已补跑全成本和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/cost/SlideCostAnalysis.test.ts -t "displays project type labels"` 首次暴露 `SlideCostAnalysis.tsx` 缺少 React 导入；补充后再次暴露 `ProfitBadge.tsx` 缺少 React 导入。
+  - 清掉渲染前置问题后，同一命令按预期失败：`HE检测` 所在行显示内部枚举 `he`，找不到 `HE染色`。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/cost/SlideCostAnalysis.test.ts` 通过，2 tests passed。
+  - `前端代码 npm test -- --run src/pages/cost/SlideCostAnalysis.test.ts src/pages/cost/ProfitabilityAnalysis.test.ts src/pages/cost/CostTrend.test.ts src/pages/cost/PersonnelEfficiency.render.test.tsx` 通过，4 files / 10 tests passed。
+  - `后端代码/server npm test -- --run tests/integration/full-cost.test.ts tests/integration/cost-exceptions.test.ts` 通过，2 files / 14 tests passed；命令退出码为 0，保留既有 Vite close timeout 提示和 `cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis` 无输出，确认未改废弃范围。
+- 浏览器复核:
+  - 本批为切片成本明细表格显示口径修复，不新增路由、表单、弹窗或接口；核心风险是可见行内容是否从内部枚举变为业务标签，已用页面级红绿测试覆盖接口数据、页面渲染和行内断言，不新增截图证据。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 切片成本明细项目类型显示口径已阶段性保护；下一批可继续复核切片成本明细导出归档与页面读面是否同口径，特别是导出项目类型标签、月份筛选和分页/全量导出的业务预期。
+
+## 三百三十九、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

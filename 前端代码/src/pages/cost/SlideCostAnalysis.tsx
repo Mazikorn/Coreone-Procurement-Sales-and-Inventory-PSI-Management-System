@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect, useMemo } from 'react'
+import React, { Fragment, useState, useEffect, useMemo } from 'react'
 import { ChevronDown, ChevronRight, Download } from 'lucide-react'
 import { toast } from 'sonner'
 import { abcApi } from '@/api/abc'
@@ -30,6 +30,10 @@ const PROJECT_TYPE_OPTIONS = [
   { value: 'mp', label: '分子病理' },
   { value: 'cyto', label: '细胞病理' },
 ]
+
+function getProjectTypeLabel(projectTypeValue: string) {
+  return PROJECT_TYPE_OPTIONS.find(option => option.value === projectTypeValue)?.label || projectTypeValue
+}
 
 export function normalizeProfitabilityRows(rows: any[], month: string, projectType: string): BomProfit[] {
   const groups = new Map<string, BomProfit>()
@@ -230,7 +234,7 @@ export default function SlideCostAnalysis() {
                         : <ChevronRight className="h-4 w-4 text-gray-400" />}
                     </td>
                     <td className="px-4 py-3 text-sm font-medium text-gray-900">{item.bomName}</td>
-                    <td className="px-4 py-3 text-sm text-gray-500">{item.projectType}</td>
+                    <td className="px-4 py-3 text-sm text-gray-500">{getProjectTypeLabel(item.projectType)}</td>
                     <td className="px-4 py-3 text-sm text-right text-gray-500">{item.sampleCount?.toLocaleString()}</td>
                     <td className="px-4 py-3 text-sm text-right text-gray-500">{formatCurrency(item.avgCostPerSlide)}</td>
                     <td className="px-4 py-3 text-sm text-right font-medium text-gray-900">{formatCurrency(item.totalCost)}</td>
