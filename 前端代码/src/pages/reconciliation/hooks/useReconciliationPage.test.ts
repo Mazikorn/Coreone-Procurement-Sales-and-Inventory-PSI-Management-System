@@ -296,4 +296,38 @@ describe('parseLisImportData', () => {
       endDate: '2026-06-30',
     })))
   })
+
+  it('refreshes reconciliation summary and project counts after editing a LIS case project', async () => {
+    const { result } = renderHook(() => useReconciliationPage())
+    await waitFor(() => expect(reconciliationApi.getProjects).toHaveBeenCalled())
+    vi.mocked(reconciliationApi.getSummary).mockClear()
+    vi.mocked(reconciliationApi.getProjects).mockClear()
+    vi.mocked(reconciliationApi.updateCase).mockResolvedValueOnce({} as any)
+
+    act(() => {
+      result.current.openEditCaseModal({
+        id: 'case-1',
+        case_no: 'CASE-001',
+        project_id: 'project-old',
+        project_name: '旧项目',
+        projectName: '旧项目',
+        operator: '张三',
+        operate_time: '2026-06-16 09:00:00',
+        status: 'normal',
+        hasBom: true,
+      })
+      result.current.setEditCaseProjectId('project-new')
+    })
+
+    await act(async () => {
+      await result.current.handleEditCase()
+    })
+
+    expect(reconciliationApi.updateCase).toHaveBeenCalledWith('case-1', expect.objectContaining({
+      projectId: 'project-new',
+    }))
+    await waitFor(() => expect(reconciliationApi.getSummary).toHaveBeenCalled())
+    expect(reconciliationApi.getProjects).toHaveBeenCalled()
+    expect(toast.success).toHaveBeenCalledWith('病例信息已更新')
+  })
 })

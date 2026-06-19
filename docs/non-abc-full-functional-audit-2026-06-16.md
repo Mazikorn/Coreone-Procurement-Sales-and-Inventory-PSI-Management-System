@@ -16156,9 +16156,54 @@ git diff --check
 
 **后续风险**
 
-- 间接成本中心配置页的分页、状态筛选、分摊录入 API、停用来源提交、删除引用保护解释和写操作后统计刷新已阶段性保护；后续可转入下一非 ABC 模块或按审计报告剩余风险继续成本相关展示页。
+- 间接成本中心配置页的分页、状态筛选、分摊录入 API、停用来源提交、删除引用保护解释和写操作后统计刷新已阶段性保护；下一批转入 LIS/对账页面，继续按“写操作后真实副作用必须刷新”不变量推进。
 
-## 三百三十、结论
+## 三百三十、批次 375: LIS 病例编辑后必须刷新对账汇总
+
+**发现的问题**
+
+- 本轮转入 ABC 之外的 LIS/对账页面，聚焦“病例项目归属被编辑后，对账 summary 和项目计数必须同步刷新”不变量。
+- `handleEditCase` 成功更新病例后只调用 `casePagination.refresh()`，病例列表能刷新，但顶部 summary 和项目对账列表仍可能保留编辑前的项目归属计数。
+- 当用户把未匹配病例改到正确项目，或把病例从旧项目改到新项目后，项目对账页可能继续展示旧 `case_count`，削弱 LIS 病例量、BOM 理论消耗、实际出库和成本异常解释链的一致性。
+
+**已完成修复**
+
+- `前端代码/src/pages/reconciliation/hooks/useReconciliationPage.ts`
+  - `handleEditCase` 在更新成功、关闭弹窗后，新增 `Promise.all([fetchSummary(), fetchProjects()])`。
+  - 保留原有病例列表刷新，避免修复项目对账计数时丢掉当前病例列表更新。
+- `前端代码/src/pages/reconciliation/hooks/useReconciliationPage.test.ts`
+  - 新增红绿测试：编辑病例项目后，断言 `updateCase` 成功调用，并重新请求 `getSummary` 和 `getProjects`。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 对账页面 hook 和前端测试，不修改 ABC 本体、ABC API、成本算法、库存、出库或废弃 `/cost-analysis`。
+- LIS 病例项目归属会影响 BOM 出库归属、对账差异解释和成本异常输入侧判断；本批不改变后端病例编辑、出库或成本异常写入规则，只保证页面写操作后的读面不会停留在旧归属。
+- 已补跑对账专项、出库和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/reconciliation/hooks/useReconciliationPage.test.ts -t "refreshes reconciliation summary"` 修复前失败：病例编辑成功后 `getSummary` 未被调用。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/reconciliation/hooks/useReconciliationPage.test.ts -t "refreshes reconciliation summary"` 通过。
+  - `前端代码 npm test -- --run src/pages/reconciliation/hooks/useReconciliationPage.test.ts` 通过，16 tests passed。
+  - `后端代码/server npm test -- --run tests/integration/reconciliation.test.ts tests/integration/outbound.test.ts tests/integration/cost-exceptions.test.ts` 通过，3 files / 62 tests passed；命令退出码为 0，保留既有 Vite close timeout 提示和 `cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis` 无输出，确认未改废弃范围。
+- 浏览器复核:
+  - 本批为对账页面 hook 写操作后的数据刷新修复，不新增组件结构、路由或接口；核心风险是病例编辑成功后是否重新请求 summary 和项目对账数据，已用 hook 级红绿测试覆盖真实调用副作用，不新增截图证据。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 对账页面导入、导出、日期筛选、日志筛选和病例编辑后的 summary/project 刷新已有阶段性保护；后续可继续复核 BOM 修正弹窗提交后的物料汇总/异常台账提示、或转入效率/报表展示页。
+
+## 三百三十一、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

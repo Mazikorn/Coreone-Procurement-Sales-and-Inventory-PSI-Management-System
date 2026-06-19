@@ -705,6 +705,7 @@ export function useReconciliationPage() {
       toast.success('病例信息已更新')
       setEditCaseModalOpen(false)
       setEditCaseTarget(null)
+      await Promise.all([fetchSummary(), fetchProjects()])
       casePagination.refresh()
     } catch (e: any) {
       toast.error(e?.message || '更新失败')
