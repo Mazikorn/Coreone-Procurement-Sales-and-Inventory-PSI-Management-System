@@ -1,4 +1,5 @@
 import { Download, Upload } from 'lucide-react'
+import React from 'react'
 import { CaseListTab } from './components/CaseListTab'
 import { EditCaseModal } from './components/EditCaseModal'
 import { FixBomModal } from './components/FixBomModal'
@@ -23,6 +24,14 @@ const periods: Array<{ key: PeriodType; label: string }> = [
 
 export default function Reconciliation() {
   const page = useReconciliationPage()
+  const [exportModalOpen, setExportModalOpen] = React.useState(false)
+
+  const activeTabLabel = tabs.find(tab => tab.key === page.activeTab)?.label || '当前页面'
+  const openExportModal = () => setExportModalOpen(true)
+  const confirmExport = async () => {
+    await page.handleExport()
+    setExportModalOpen(false)
+  }
 
   const stats = [
     { label: 'LIS病例总数', value: page.summary?.totalCases || 0 },
@@ -41,7 +50,7 @@ export default function Reconciliation() {
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={page.handleExport}
+            onClick={openExportModal}
             disabled={page.exporting}
             className="inline-flex h-9 items-center gap-2 rounded-md border border-gray-300 bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
           >
@@ -184,7 +193,7 @@ export default function Reconciliation() {
           getStatusLabel={page.getStatusLabel}
           onEditCase={page.openEditCaseModal}
           onReset={page.resetCaseFilters}
-          onExport={page.handleExport}
+          onExport={openExportModal}
           exporting={page.exporting}
         />
       )}
@@ -223,6 +232,66 @@ export default function Reconciliation() {
         onClose={() => page.setEditCaseModalOpen(false)}
         onConfirm={page.handleEditCase}
       />
+
+      {exportModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="导出对账报表"
+            className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">导出对账报表</h2>
+                <p className="mt-1 text-sm text-gray-500">确认导出当前筛选结果。</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setExportModalOpen(false)}
+                className="rounded-md px-2 py-1 text-sm text-gray-500 hover:bg-gray-100"
+                aria-label="关闭导出弹窗"
+              >
+                ×
+              </button>
+            </div>
+
+            <dl className="mt-5 space-y-3 text-sm">
+              <div className="flex items-center justify-between gap-4">
+                <dt className="text-gray-500">内容</dt>
+                <dd className="font-medium text-gray-900">{activeTabLabel}</dd>
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <dt className="text-gray-500">范围</dt>
+                <dd className="font-medium text-gray-900">{page.startDate} 至 {page.endDate}</dd>
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <dt className="text-gray-500">格式</dt>
+                <dd className="font-medium text-gray-900">CSV</dd>
+              </div>
+            </dl>
+
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setExportModalOpen(false)}
+                className="h-9 rounded-md border border-gray-300 px-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={confirmExport}
+                disabled={page.exporting}
+                className="inline-flex h-9 items-center gap-2 rounded-md bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <Download className="h-4 w-4" />
+                {page.exporting ? '导出中...' : '确认导出'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

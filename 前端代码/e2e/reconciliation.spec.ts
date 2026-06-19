@@ -261,6 +261,24 @@ test.describe('消耗对账 -> 时间段筛选', () => {
     await page.goto(`${FE_BASE}/reconciliation`)
     await expect(page.locator('text=导出报表').first()).toBeVisible()
   })
+
+  test('RECON-EXPORT-01. 导出报表需确认后下载真实CSV', async ({ page }) => {
+    await loginAs(page, 'admin')
+    await page.goto(`${FE_BASE}/reconciliation`)
+    await page.getByRole('button', { name: '导出报表' }).click()
+
+    const dialog = page.getByRole('dialog', { name: '导出对账报表' })
+    await expect(dialog).toBeVisible()
+    await expect(dialog.getByText('按项目对账')).toBeVisible()
+    await expect(dialog.getByText(/\d{4}-\d{2}-\d{2} 至 \d{4}-\d{2}-\d{2}/)).toBeVisible()
+
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      dialog.getByRole('button', { name: '确认导出' }).click(),
+    ])
+    expect(download.suggestedFilename()).toMatch(/^reconciliation-project-.*\.csv$/)
+    await expect(dialog).toBeHidden()
+  })
 })
 
 // ── 4. 按项目对账 ──
