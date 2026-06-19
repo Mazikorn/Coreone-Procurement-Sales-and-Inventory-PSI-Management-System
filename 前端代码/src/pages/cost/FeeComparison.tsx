@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { Download, AlertTriangle } from 'lucide-react'
 import { toast } from 'sonner'
 import { abcApi } from '@/api/abc'
@@ -53,6 +53,56 @@ const MAPPING_FILTER_OPTIONS = [
   { value: 'mapped', label: '已映射' },
 ]
 
+function getProjectTypeLabel(projectTypeValue: string) {
+  return PROJECT_TYPE_OPTIONS.find(option => option.value === projectTypeValue)?.label || projectTypeValue
+}
+
+function escapeCsvValue(value: string | number | undefined | null) {
+  const text = String(value ?? '')
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
+}
+
+function normalizeFeeComparisonResponse(res: any) {
+  const list = Array.isArray(res) ? res : res?.list || []
+  const summary = Array.isArray(res) ? null : res?.summary || null
+  const total = Array.isArray(res) ? list.length : res?.pagination?.total || list.length
+  return { list, summary, total }
+}
+
+function buildFeeComparisonExportCsv(rows: FeeRecord[]) {
+  const headers = [
+    '出库单号',
+    '日期',
+    '项目',
+    '项目类型',
+    '样本数',
+    '物料成本',
+    '作业成本',
+    '总成本',
+    '收费',
+    '利润',
+    '利润率',
+    '收费标准',
+  ]
+  const body = rows.map(item => [
+    item.outboundNo,
+    formatDate(item.date),
+    item.projectName,
+    getProjectTypeLabel(item.projectType),
+    item.sampleCount,
+    item.materialCost,
+    item.activityCost,
+    item.totalCost,
+    item.feeAmount,
+    item.profit,
+    `${(item.profitRate * 100).toFixed(1)}%`,
+    item.feeStandardName || '未映射',
+  ])
+  return [headers, ...body]
+    .map(row => row.map(escapeCsvValue).join(','))
+    .join('\n')
+}
+
 export default function FeeComparison() {
   const [loading, setLoading] = useState(true)
   const [list, setList] = useState<FeeRecord[]>([])
@@ -80,9 +130,10 @@ export default function FeeComparison() {
       if (mappingFilter !== 'all') params.mappingFilter = mappingFilter
 
       const res = await abcApi.getFeeComparison(params)
-      setList(res?.list || [])
-      setSummary(res?.summary || null)
-      setTotal(res?.pagination?.total || 0)
+      const normalized = normalizeFeeComparisonResponse(res)
+      setList(normalized.list)
+      setSummary(normalized.summary)
+      setTotal(normalized.total)
     } catch {
       toast.error('加载收费对照数据失败')
     } finally {
@@ -102,15 +153,21 @@ export default function FeeComparison() {
   const handleExport = async () => {
     try {
       setExporting(true)
-      const data = await abcApi.exportData({
-        startMonth: startDate ? startDate.slice(0, 7) : undefined,
-        endMonth: endDate ? endDate.slice(0, 7) : undefined,
-        projectType: projectType !== 'all' ? projectType : undefined,
-      })
-      downloadTextFile(data.filename || 'abc-fee-comparison.csv', data.content || '', data.mimeType)
+      const params: Record<string, string | number> = {
+        page: 1,
+        pageSize: Math.max(total || list.length || pageSize, pageSize),
+      }
+      if (startDate) params.startDate = startDate
+      if (endDate) params.endDate = endDate
+      if (projectType !== 'all') params.projectType = projectType
+      if (profitFilter !== 'all') params.profitFilter = profitFilter
+      if (mappingFilter !== 'all') params.mappingFilter = mappingFilter
+      const res = await abcApi.getFeeComparison(params)
+      const rows = normalizeFeeComparisonResponse(res).list
+      downloadTextFile('abc-fee-comparison.csv', buildFeeComparisonExportCsv(rows), 'text/csv;charset=utf-8')
       toast.success('导出完成')
     } catch {
-      // 统一错误提示已在请求拦截器处理
+      toast.error('导出收费对照数据失败')
     } finally {
       setExporting(false)
     }
@@ -275,7 +332,7 @@ export default function FeeComparison() {
                     <td className="px-4 py-3 text-sm text-gray-500">{formatDate(item.date)}</td>
                     <td className="px-4 py-3">
                       <div className="text-sm font-medium text-gray-900">{item.projectName}</div>
-                      <div className="text-xs text-gray-400">{item.projectType}</div>
+                      <div className="text-xs text-gray-400">{getProjectTypeLabel(item.projectType)}</div>
                     </td>
                     <td className="px-4 py-3 text-sm text-right text-gray-500">{item.sampleCount}</td>
                     <td className="px-4 py-3 text-sm text-right text-gray-500">{formatCurrency(item.materialCost)}</td>

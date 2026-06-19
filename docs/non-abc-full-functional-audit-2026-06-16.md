@@ -16695,9 +16695,64 @@ git diff --check
 
 **后续风险**
 
-- 成本趋势月度/季度导出口径已阶段性保护；下一批可继续复核收费对照的筛选、项目类型显示和导出归档是否与页面读面一致。
+- 成本趋势月度/季度导出口径已阶段性保护；下一批转入收费对照，确认筛选、项目类型显示和导出归档与页面读面一致。
 
-## 三百四十一、结论
+## 三百四十一、批次 386: 收费对照显示与导出必须使用页面业务口径
+
+**发现的问题**
+
+- 本轮继续复核非废弃成本读面，聚焦“收费对照页面筛选后的读面与导出归档必须同口径”不变量。
+- `FeeComparison` 的项目类型筛选器显示 `HE染色 / 免疫组化 / 特殊染色` 等业务标签，但旧表格项目副标题直接渲染 `item.projectType`，导致行内泄露 `he` 等内部枚举。
+- 旧导出逻辑调用后端通用 `abcApi.exportData`，只传开始/结束月份和项目类型，不携带收费对照页面特有的 `profitFilter` 与 `mappingFilter`。
+- 旧导出下载的是通用 ABC 成本明细 CSV，可能包含 `project_type\nhe` 这类 raw 枚举，不是收费对照页面的业务列，也不能保证导出当前筛选后的全量结果。
+- 页面级红灯测试还暴露 `FeeComparison.tsx` 在当前 Vitest/JSX 配置下缺少 React 导入，导致收费对照页无法稳定进行页面级验证。
+
+**已完成修复**
+
+- `前端代码/src/pages/cost/FeeComparison.tsx`
+  - 补充 React 导入，让页面在当前测试配置下可被页面级测试渲染。
+  - 新增 `getProjectTypeLabel`，把收费对照行中的项目类型枚举转换成 `HE染色` 等业务标签。
+  - 新增 `escapeCsvValue`，对导出 CSV 的逗号、换行和引号做转义。
+  - 新增 `normalizeFeeComparisonResponse`，兼容列表响应与 `{ list, summary, pagination }` 响应，避免页面因响应形态差异直接落空。
+  - 新增 `buildFeeComparisonExportCsv`，按收费对照业务列导出：`出库单号、日期、项目、项目类型、样本数、物料成本、作业成本、总成本、收费、利润、利润率、收费标准`。
+  - 表格项目类型副标题改为显示业务标签，未知类型保留原值回退。
+  - `handleExport` 改为按当前页面筛选重新调用 `abcApi.getFeeComparison` 获取全量导出行；导出请求携带 `startDate/endDate/projectType/profitFilter/mappingFilter`，并用 `pageSize = max(total, 当前页大小)` 覆盖当前筛选结果。
+  - 导出不再调用通用 `abcApi.exportData`；本地导出失败时提示 `导出收费对照数据失败`。
+- `前端代码/src/pages/cost/FeeComparison.test.tsx`
+  - 新增页面级红绿测试：接口返回 `projectType: 'he'` 时，`OUT-HE-001` 所在行必须显示 `HE染色`，且不能显示内部枚举 `he`。
+  - 新增页面级导出测试：切换盈亏筛选为 `亏损`、映射状态为 `未映射` 后，点击导出必须用收费对照接口携带对应筛选重新取数，不得调用通用 `abcApi.exportData`；CSV 必须包含 `HE染色`、分页外导出行 `OUT-HE-002` 和 `未映射`，且不能下载 `project_type\nhe`。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 收费对照页面的前端显示口径、导出内容和页面级测试，不修改 ABC 本体、ABC API 后端、成本算法、库存、出库或废弃 `/cost-analysis`。
+- 导出内容来自收费对照页面同一数据源 `abcApi.getFeeComparison`，按当前筛选重新获取结果，不改变出库 ABC 明细、收费映射、成本异常、重算、费用归集或关账事实。
+- 已补跑全成本和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/cost/FeeComparison.test.tsx` 首次暴露测试文件缺少 React 导入；补充后再次暴露 `FeeComparison.tsx` 缺少 React 导入。
+  - 清掉渲染前置问题后，同一命令按预期失败：`OUT-HE-001` 所在行显示内部枚举 `he`，找不到 `HE染色`；导出仍调用通用 `abcApi.exportData({ startMonth, endMonth, projectType })`。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/cost/FeeComparison.test.tsx` 通过，2 tests passed。
+  - `前端代码 npm test -- --run src/pages/cost/FeeComparison.test.tsx src/pages/cost/CostTrend.test.ts src/pages/cost/SlideCostAnalysis.test.ts src/pages/cost/ProfitabilityAnalysis.test.ts src/pages/cost/PersonnelEfficiency.render.test.tsx` 通过，5 files / 14 tests passed。
+  - `后端代码/server npm test -- --run tests/integration/full-cost.test.ts tests/integration/cost-exceptions.test.ts` 通过，2 files / 14 tests passed；命令退出码为 0，保留既有 Vite close timeout 提示和 `cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis` 无输出，确认未改废弃范围。
+- 浏览器复核:
+  - 本批为收费对照表格显示和本地 CSV 导出内容修复，不新增路由、表单、弹窗或接口；核心风险是导出按钮真实副作用是否写出当前筛选同口径文件，已用页面级红绿测试覆盖筛选操作、按钮点击、下载函数参数、业务标签、未映射状态和不调用通用导出接口，不新增截图证据。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 收费对照项目类型显示、盈亏/映射筛选和导出归档口径已阶段性保护；下一批可继续复核非废弃成本读面中预算、质量成本、差异分析等页面的筛选、导入导出和异常态。
+
+## 三百四十二、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 
