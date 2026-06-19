@@ -11408,7 +11408,47 @@ git diff --check
 
 - 对账 summary 仍是顶部聚合指标，不证明各 Tab 页面交互、导出文件下载动作和筛选 UI 已完成浏览器级验收；后续页面批次仍需用 Chrome for Testing 检查真实点击、筛选和下载副作用。
 
-## 二百三十二、结论
+## 二百三十二、批次 277: 对账导出文件名必须包含筛选日期范围
+
+**发现的问题**
+
+- REC-11 要求对账导出文件名包含日期和内容类型，便于离线归档和复核。
+- `/api/v1/reconciliation/export` 当前文件名使用 `Date.now()`，例如 `reconciliation-project-1781827313569.csv`，无法从文件名判断导出筛选范围。
+- 前端虽然会用 `downloadTextFile` 触发真实下载，但后端返回的文件名缺少筛选日期，用户下载多个对账文件后容易混淆归档范围。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/reconciliation-v1.1.ts`
+  - 导出文件名改为 `reconciliation-${type}-${startDate}_${endDate}.csv`。
+  - 无日期筛选时使用当天日期作为文件名日期段，保留原有 `reconciliation-project/material/case/log` 内容类型前缀。
+  - 项目导出分支不再覆盖回时间戳文件名，避免不同 Tab 命名规则不一致。
+- `后端代码/server/tests/integration/reconciliation.test.ts`
+  - 在项目对账导出闭环测试中新增文件名断言，要求包含 `reconciliation-project` 和 `2026-06-01_2026-06-30`。
+
+**ABC 影响评估**
+
+- 本批不修改 ABC 本体、成本公式、成本池、收费映射、成本异常判定或废弃 `/cost-analysis` 代码。
+- 变更只影响非 ABC 对账导出的文件名，不改变 CSV 内容、筛选条件、库存、BOM、项目、出库、成本异常或 ABC 明细。
+- 对账完整集成测试、前端导出参数单测和精确 ABC 输入回归通过，说明文件名修复没有影响对账内容或 ABC 病例收费重排。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/reconciliation.test.ts -t "项目物料对账差异审计写入成本异常"` 修复前失败：文件名 `reconciliation-project-1781827313569.csv` 不包含 `2026-06-01_2026-06-30`。
+- 修复后验证:
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/reconciliation.test.ts -t "项目物料对账差异审计写入成本异常"` 通过，1 file / 1 test passed / 10 skipped。
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/reconciliation.test.ts` 通过，1 file / 11 tests passed。
+  - `前端代码 npm test -- --run src/pages/reconciliation/hooks/useReconciliationPage.test.ts` 通过，1 file / 8 tests passed。
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/cost-exceptions.test.ts -t "同一病例多个BOM|取消非最新病例"` 通过，2 tests passed / 9 skipped。
+  - `后端代码/server npm run build` 通过。
+- 浏览器复核:
+  - 本批为后端导出文件名修复，已用接口和前端参数单测覆盖文件名与筛选参数；真实浏览器下载动作仍留到对账页面 REC-11 页面批次统一验证。
+
+**后续风险**
+
+- REC-11 的 Excel/CSV 格式选择、导出弹窗、当前 Tab 全部数据 vs 当前筛选结果、浏览器真实下载事件仍未完成页面级验收；本批只收口已存在 CSV 导出链路的文件名可归档性。
+
+## 二百三十三、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

@@ -370,9 +370,10 @@ router.get('/export', (req, res) => {
 
     const hasDate = startDate && endDate
     const endDateTime = hasDate ? `${endDate} 23:59:59` : ''
+    const dateSegment = hasDate ? `${startDate}_${endDate}` : new Date().toISOString().slice(0, 10)
     let headers: string[] = []
     let rows: Array<Array<unknown>> = []
-    let filename = `reconciliation-${type}-${Date.now()}.csv`
+    let filename = `reconciliation-${type}-${dateSegment}.csv`
 
     if (type === 'material') {
       headers = ['物料', '规格', '单位', '关联项目数', '理论消耗', '实际出库', '差异', '差异率', '状态']
@@ -444,7 +445,7 @@ router.get('/export', (req, res) => {
           row.status,
         ])
       })
-      filename = `reconciliation-project-${Date.now()}.csv`
+      filename = `reconciliation-project-${dateSegment}.csv`
     }
 
     success(res, {

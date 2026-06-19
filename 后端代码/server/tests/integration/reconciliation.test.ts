@@ -110,6 +110,7 @@ describe('成本对账异常闭环', () => {
 
     expect(exportRes.status).toBe(200)
     expect(exportRes.body.data.filename).toContain('reconciliation-project')
+    expect(exportRes.body.data.filename).toContain('2026-06-01_2026-06-30')
     expect(exportRes.body.data.rowCount).toBeGreaterThanOrEqual(1)
     expect(exportRes.body.data.content).toContain('项目编码')
     expect(exportRes.body.data.content).toContain('对账项目')
