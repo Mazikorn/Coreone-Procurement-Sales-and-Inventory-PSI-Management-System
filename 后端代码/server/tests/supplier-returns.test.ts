@@ -79,6 +79,30 @@ describe('供应商退货', () => {
     expect(res.body.error.code).toBe('INVALID_PARAMETER')
   })
 
+  it('SR-FILTER-002: 列表拒绝非法日期范围筛选，避免返回伪空结果', async () => {
+    const invalidStartDate = await request(app)
+      .get('/api/v1/supplier-returns')
+      .query({ startDate: '2026-02-30' })
+      .set('Authorization', `Bearer ${token}`)
+
+    const invalidEndDate = await request(app)
+      .get('/api/v1/supplier-returns')
+      .query({ endDate: 'not-a-date' })
+      .set('Authorization', `Bearer ${token}`)
+
+    const reversedRange = await request(app)
+      .get('/api/v1/supplier-returns')
+      .query({ startDate: '2026-06-30', endDate: '2026-06-01' })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(invalidStartDate.status).toBe(400)
+    expect(invalidStartDate.body.error.code).toBe('INVALID_PARAMETER')
+    expect(invalidEndDate.status).toBe(400)
+    expect(invalidEndDate.body.error.code).toBe('INVALID_PARAMETER')
+    expect(reversedRange.status).toBe(400)
+    expect(reversedRange.body.error.code).toBe('INVALID_PARAMETER')
+  })
+
   it('SR-001: 创建供应商退货时忽略请求体伪造operator，使用登录用户', async () => {
     const { materialId, supplierId } = seedSupplierReturnMaterial(db, `op-${Date.now()}`)
 

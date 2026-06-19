@@ -36,6 +36,12 @@ function normalizeOptionalId(value: unknown): string | null {
   return id || null
 }
 
+function isValidDateOnly(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const date = new Date(`${value}T00:00:00.000Z`)
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value
+}
+
 function validateSupplierReturnReferences(db: any, payload: {
   materialId: string
   supplierId?: string | null
@@ -109,6 +115,22 @@ router.get('/', (req, res) => {
       return
     }
     status = normalizedStatus
+    const normalizedStartDate = String(startDate || '').trim()
+    const normalizedEndDate = String(endDate || '').trim()
+    if (normalizedStartDate && !isValidDateOnly(normalizedStartDate)) {
+      error(res, '开始日期格式必须为 YYYY-MM-DD', 'INVALID_PARAMETER', 400)
+      return
+    }
+    if (normalizedEndDate && !isValidDateOnly(normalizedEndDate)) {
+      error(res, '结束日期格式必须为 YYYY-MM-DD', 'INVALID_PARAMETER', 400)
+      return
+    }
+    if (normalizedStartDate && normalizedEndDate && normalizedStartDate > normalizedEndDate) {
+      error(res, '开始日期不能晚于结束日期', 'INVALID_PARAMETER', 400)
+      return
+    }
+    startDate = normalizedStartDate
+    endDate = normalizedEndDate
     pageSize = String(Math.min(Number(pageSize), 200))
     const db = getDatabase()
     let sql = `
