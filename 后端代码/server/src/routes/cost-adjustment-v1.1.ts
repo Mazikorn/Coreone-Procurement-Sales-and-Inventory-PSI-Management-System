@@ -6,28 +6,44 @@ import { authenticateToken, requireRole } from '../middleware/auth.js'
 
 const router = Router()
 
+function isValidYearQuarter(value: unknown) {
+  return typeof value === 'string' && /^\d{4}-Q[1-4]$/.test(value)
+}
+
+function quarterMonths(yearQuarter: string) {
+  const year = parseInt(yearQuarter.split('-')[0], 10)
+  const quarter = parseInt(yearQuarter.split('-Q')[1], 10)
+  const startMonth = (quarter - 1) * 3 + 1
+  return [
+    `${year}-${String(startMonth).padStart(2, '0')}`,
+    `${year}-${String(startMonth + 1).padStart(2, '0')}`,
+    `${year}-${String(startMonth + 2).padStart(2, '0')}`,
+  ]
+}
+
+function parseNonNegativeAmount(value: unknown) {
+  const amount = Number(value)
+  return Number.isFinite(amount) && amount >= 0 ? amount : null
+}
+
 // 获取季度调整建议（自动计算）
 router.get('/suggestions', authenticateToken, requireRole('admin', 'finance'), (req, res) => {
   try {
     const { yearQuarter } = req.query
     const db = getDatabase()
 
-    if (!yearQuarter || !/^\d{4}-Q[1-4]$/.test(yearQuarter as string)) {
+    if (!isValidYearQuarter(yearQuarter)) {
       error(res, '季度格式应为 YYYY-QN（如 2026-Q2）', 'INVALID_PARAMETER', 400); return
     }
 
-    // 解析季度对应的月份
-    const year = parseInt((yearQuarter as string).split('-')[0])
-    const quarter = parseInt((yearQuarter as string).split('-Q')[1])
-    const startMonth = (quarter - 1) * 3 + 1
-    const months = [
-      `${year}-${String(startMonth).padStart(2, '0')}`,
-      `${year}-${String(startMonth + 1).padStart(2, '0')}`,
-      `${year}-${String(startMonth + 2).padStart(2, '0')}`,
-    ]
+    const normalizedYearQuarter = String(yearQuarter)
+    const months = quarterMonths(normalizedYearQuarter)
 
     // 检查季度是否结束
     const now = new Date()
+    const year = parseInt(normalizedYearQuarter.split('-')[0], 10)
+    const quarter = parseInt(normalizedYearQuarter.split('-Q')[1], 10)
+    const startMonth = (quarter - 1) * 3 + 1
     const quarterEndDate = new Date(year, startMonth + 2, 0)
     const isQuarterEnd = now > quarterEndDate
 
@@ -60,7 +76,7 @@ router.get('/suggestions', authenticateToken, requireRole('admin', 'finance'), (
           costCenterName: center.name,
           costCenterCode: center.code,
           costType: center.cost_type,
-          yearQuarter,
+          yearQuarter: normalizedYearQuarter,
           preProvisionAmount: Math.round(preProvisionAmount * 100) / 100,
           actualAmount: 0,
           adjustmentAmount: 0,
@@ -79,21 +95,21 @@ router.post('/', authenticateToken, requireRole('admin', 'finance'), (req, res) 
     if (!costCenterId || !yearQuarter || actualAmount === undefined) {
       error(res, '缺少必填字段', 'INVALID_PARAMETER', 400); return
     }
+    if (!isValidYearQuarter(yearQuarter)) {
+      error(res, '季度格式应为 YYYY-QN（如 2026-Q2）', 'INVALID_PARAMETER', 400); return
+    }
+    const actualAmountValue = parseNonNegativeAmount(actualAmount)
+    if (actualAmountValue === null) {
+      error(res, '实际金额必须为非负数字', 'INVALID_PARAMETER', 400); return
+    }
     const db = getDatabase()
 
     // 验证成本中心存在
     const center = db.prepare('SELECT * FROM indirect_cost_centers WHERE id = ?').get(costCenterId) as any
     if (!center) { error(res, '成本中心不存在', 'NOT_FOUND', 404); return }
 
-    // 计算预提金额
-    const year = parseInt(yearQuarter.split('-')[0])
-    const quarter = parseInt(yearQuarter.split('-Q')[1])
-    const startMonth = (quarter - 1) * 3 + 1
-    const months = [
-      `${year}-${String(startMonth).padStart(2, '0')}`,
-      `${year}-${String(startMonth + 1).padStart(2, '0')}`,
-      `${year}-${String(startMonth + 2).padStart(2, '0')}`,
-    ]
+    const normalizedYearQuarter = String(yearQuarter)
+    const months = quarterMonths(normalizedYearQuarter)
 
     const monthPlaceholders = months.map(() => '?').join(',')
     const allocRows = db.prepare(`
@@ -103,14 +119,14 @@ router.post('/', authenticateToken, requireRole('admin', 'finance'), (req, res) 
     `).get(costCenterId, ...months) as any
 
     const preProvisionAmount = allocRows?.total || 0
-    const adjustmentAmount = actualAmount - preProvisionAmount
-    const userId = (req as any).user?.id
+    const adjustmentAmount = actualAmountValue - preProvisionAmount
+    const userId = (req as any).user?.userId
 
     const id = uuidv4()
     db.prepare(`
       INSERT INTO cost_adjustments (id, cost_center_id, year_quarter, pre_provision_amount, actual_amount, adjustment_amount, adjustment_reason, submitted_by, submitted_at, review_status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 'pending')
-    `).run(id, costCenterId, yearQuarter, preProvisionAmount, actualAmount, adjustmentAmount, adjustmentReason || null, userId)
+    `).run(id, costCenterId, normalizedYearQuarter, preProvisionAmount, actualAmountValue, adjustmentAmount, adjustmentReason || null, userId)
 
     success(res, { id, adjustmentAmount: Math.round(adjustmentAmount * 100) / 100 }, 'Created', 201)
   } catch (err: any) { error(res, err.message) }

@@ -15725,7 +15725,56 @@ git diff --check
 
 - LIS/对账病例列表和导出的项目来源已补齐“存在且未删除”约束；下一批应继续按计划复核其它非废弃报表、效率、LIS 或对账读取面的日期、导出格式和来源候选，不在本批继续扩展。
 
-## 三百二十一、结论
+## 三百二十一、批次 366: 季度成本调整创建参数必须可解释
+
+**发现的问题**
+
+- 本轮继续复核 ABC 之外的成本相关写入口，聚焦“调整单不是备注，季度和金额必须可解释，不能把脏参数写成财务事实”不变量。
+- `POST /api/v1/cost-adjustments` 旧实现只检查字段存在，没有校验 `yearQuarter` 是否为 `YYYY-Q1..Q4`。
+- 传入 `2026-Q5` 会进入季度月份计算并触发 500，而不是返回业务可理解的参数错误。
+- `actualAmount` 旧实现没有校验有限数和非负数，API 绕过时可能把 `abc`、负数等不可解释金额带入 `adjustment_amount` 计算和调整单落库。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/cost-adjustment-v1.1.ts`
+  - 新增季度格式校验、季度月份解析和非负金额解析 helper。
+  - `GET /cost-adjustments/suggestions` 与 `POST /cost-adjustments` 共用同一季度格式口径。
+  - 创建调整单遇到非法季度、非数字金额或负数金额时统一返回 `400 INVALID_PARAMETER`。
+  - 合法创建仍按季度分摊记录计算预提金额，并用规范化后的实际金额计算调整金额。
+  - 创建调整单改用认证 payload 中真实存在的 `userId` 写入 `submitted_by`，避免合法创建时把 `undefined` 绑定进 SQLite。
+- `后端代码/server/tests/cost-adjustments.test.ts`
+  - 新增 `COST-ADJ-001`，覆盖非法季度、非数字实际金额、负数实际金额均被拒绝，且不写入 `cost_adjustments` 脏记录。
+  - 新增合法创建回归，确认季度预提金额、调整金额、审核状态和创建人字段正确落库。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 季度成本调整 API 和后端测试，不修改 ABC 本体、ABC API、ABC 调整单、成本算法或废弃 `/cost-analysis`。
+- 季度成本调整依赖间接成本中心和分摊记录，是成本展示、财务复核与间接成本事实链附近的写入口；本批不改变合法分摊、全成本计算或 ABC 成本异常闭环，只阻断不可解释调整单落库。
+- 已补跑成本调整专项、间接成本保护、全成本和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/cost-adjustments.test.ts -t "COST-ADJ-001"` 修复前失败：非法 `2026-Q5` 返回 500，期望 400。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/cost-adjustments.test.ts` 通过，2 tests passed。
+  - `后端代码/server npm test -- --run tests/cost-adjustments.test.ts tests/indirect-cost-guard.test.ts tests/integration/full-cost.test.ts tests/integration/cost-exceptions.test.ts` 通过，4 files / 24 tests passed；`cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr 为既有异常台账测试场景，最终通过。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis` 无输出，确认未改废弃范围。
+- 浏览器复核:
+  - 本批为成本调整 API 写入口参数校验修复，不新增或改变页面组件、弹窗或可见交互；核心风险是 API 绕过时是否写入脏调整单，已用接口级红绿测试和数据库断言覆盖，不新增截图证据。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 季度成本调整创建入口的季度和金额校验已收口；列表分页、筛选来源、重复季度调整和停用成本中心是否允许创建调整单仍可作为后续独立批次评估，不在本批扩大范围。
+
+## 三百二十二、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 
