@@ -33,6 +33,14 @@ const mockCenter = {
   status: 'active',
 }
 
+const inactiveCenter = {
+  ...mockCenter,
+  id: 'cc-inactive',
+  code: 'IDC-INACTIVE',
+  name: '停用成本',
+  status: 'inactive',
+}
+
 describe('useCostCenterPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -117,6 +125,29 @@ describe('useCostCenterPage', () => {
 
     expect(indirectCostApi.recordAllocation).not.toHaveBeenCalled()
     expect(toast.error).toHaveBeenCalledWith('年月格式必须为 YYYY-MM')
+  })
+
+  it('does not submit allocation for inactive cost centers', async () => {
+    const { result } = renderHook(() => useCostCenterPage())
+    await waitFor(() => expect(indirectCostApi.getList).toHaveBeenCalled())
+
+    await act(async () => {
+      await result.current.openAllocation(inactiveCenter as any)
+    })
+    act(() => {
+      result.current.setAllocationForm({
+        yearMonth: '2026-06',
+        totalAmount: 1000,
+        allocationBaseValue: 100,
+      })
+    })
+
+    await act(async () => {
+      await result.current.handleAllocationSubmit()
+    })
+
+    expect(indirectCostApi.recordAllocation).not.toHaveBeenCalled()
+    expect(toast.error).toHaveBeenCalledWith('停用成本中心不可录入分摊')
   })
 
   it('does not send all as a real status filter', async () => {

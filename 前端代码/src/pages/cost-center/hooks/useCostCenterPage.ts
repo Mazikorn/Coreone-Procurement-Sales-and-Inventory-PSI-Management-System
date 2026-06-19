@@ -204,6 +204,10 @@ export function useCostCenterPage() {
       toast.error('请填写必填项')
       return
     }
+    if (detailRow?.status !== 'active') {
+      toast.error('停用成本中心不可录入分摊')
+      return
+    }
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(allocationForm.yearMonth)) {
       toast.error('年月格式必须为 YYYY-MM')
       return
