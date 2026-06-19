@@ -793,6 +793,7 @@ router.get('/cost-structure', (req, res) => {
         r.total_cost as material_cost,
         COALESCE(r.sample_count, 1) as sample_count,
         COALESCE(p.type, 'ihc') as project_type,
+        p.bom_id,
         COALESCE(b.standard_equipment_cost, 0) as standard_equipment_cost,
         strftime('%Y-%m', r.created_at) as cost_month
       FROM outbound_records r
@@ -847,12 +848,18 @@ router.get('/cost-structure', (req, res) => {
       sum + (Number(row.standard_equipment_cost) || 0) * (Number(row.sample_count) || 1)
     ), 0) * 100) / 100
 
-    const totalCost = materialCost + laborCost + equipmentCost + indirectCost
+    const qcCost = Math.round(costRows.reduce((sum, row) => {
+      if (!row.bom_id) return sum
+      return sum + calculateQCCost(db, row.bom_id, Number(row.sample_count) || 1)
+    }, 0) * 100) / 100
+
+    const totalCost = materialCost + laborCost + equipmentCost + qcCost + indirectCost
 
     const structure = [
       { costType: 'material', label: '直接材料', amount: Math.round(materialCost * 100) / 100, percentage: totalCost > 0 ? Math.round(materialCost / totalCost * 10000) / 100 : 0 },
       { costType: 'labor', label: '人工成本', amount: laborCost, percentage: totalCost > 0 ? Math.round(laborCost / totalCost * 10000) / 100 : 0 },
       { costType: 'equipment', label: '设备折旧', amount: equipmentCost, percentage: totalCost > 0 ? Math.round(equipmentCost / totalCost * 10000) / 100 : 0 },
+      { costType: 'qc', label: '质控成本', amount: qcCost, percentage: totalCost > 0 ? Math.round(qcCost / totalCost * 10000) / 100 : 0 },
       { costType: 'indirect', label: '间接费用', amount: indirectCost, percentage: totalCost > 0 ? Math.round(indirectCost / totalCost * 10000) / 100 : 0 },
     ]
 

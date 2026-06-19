@@ -342,9 +342,23 @@ describe('集成测试：全成本计算端到端', () => {
       .set('Authorization', `Bearer ${token}`)
     expect(structureRes.status).toBe(200)
     const structure = structureRes.body.data.structure
-    expect(structure.find((item: any) => item.costType === 'material')?.amount).toBe(materialCost)
-    expect(structure.find((item: any) => item.costType === 'labor')?.amount).toBe(565)
-    expect(structure.find((item: any) => item.costType === 'indirect')?.amount).toBe(1500)
+    const structureMaterial = structure.find((item: any) => item.costType === 'material')
+    const structureLabor = structure.find((item: any) => item.costType === 'labor')
+    const structureEquipment = structure.find((item: any) => item.costType === 'equipment')
+    const structureQc = structure.find((item: any) => item.costType === 'qc')
+    const structureIndirect = structure.find((item: any) => item.costType === 'indirect')
+    expect(structureMaterial?.amount).toBe(materialCost)
+    expect(structureLabor?.amount).toBe(565)
+    expect(structureQc?.amount).toBe(300)
+    expect(structureIndirect?.amount).toBe(1500)
+    expect(structureRes.body.data.totalCost).toBeCloseTo(
+      structureMaterial.amount +
+      structureLabor.amount +
+      structureEquipment.amount +
+      structureQc.amount +
+      structureIndirect.amount,
+      2,
+    )
 
     // 验证成本差异分析按项目维度使用完整实际成本，而不是只拿材料成本和全标准成本比较。
     const projectVarianceRes = await request(app)

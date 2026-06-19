@@ -14961,7 +14961,54 @@ git diff --check
 
 - 当前修复覆盖项目分组成本报表的 `projectId` 和物料成本报表的 `categoryId`；其它非 ABC 报表若存在主数据来源 ID 筛选但未校验存在性，应继续按同一不变量逐项处理。
 
-## 三百零五、结论
+## 三百零五、批次 350: 成本结构必须纳入质控实际成本
+
+**发现的问题**
+
+- 本轮继续复核非废弃成本展示和报表链路，聚焦“同一笔 BOM 出库在全成本、成本差异、成本结构中的实际成本口径必须一致”不变量。
+- 全成本项目报表和成本差异报表已经把 BOM 质控品按 `qcCost/qcActual` 作为独立实际成本项展示，但成本结构接口只汇总直接材料、人工、设备和间接费用。
+- 当 BOM 出库包含 `qualityControls` 时，旧 `/reports/cost-structure` 没有返回 `qc` 结构项，且 `totalCost` 少计质控实际成本，导致成本结构页低估全成本组成。
+- 这不是旧版 `/cost-analysis` 问题；它属于当前非 ABC 报表接口的成本展示一致性问题。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/reports-v1.1.ts`
+  - 成本结构查询补取每条出库记录的 `bom_id`。
+  - 按出库记录的 BOM 和样本数复用现有 `calculateQCCost` 计算质控实际成本。
+  - 将 `qcCost` 纳入 `totalCost`，并在 `structure` 中新增 `{ costType: 'qc', label: '质控成本' }`。
+- `后端代码/server/tests/integration/full-cost.test.ts`
+  - 在既有“完整流程：BOM扩展配额 → 设备/工时/间接成本 → 出库 → 全成本报表验证”中补充成本结构断言，确认结构报表包含 300 元 QC 成本，且 `totalCost` 等于所有结构项之和。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 报表接口的只读成本结构展示和集成测试，不修改 ABC 本体、ABC API、ABC 成本算法或废弃 `/cost-analysis`。
+- BOM 质控用量和出库样本数是 ABC 输入侧成本事实的上游；本批只让非 ABC 成本结构读数与既有全成本/差异报表口径一致，不改变出库、库存、BOM 或 ABC 明细写入。
+- 已补跑全成本、项目成本、项目分组成本、物料成本、日期校验、成本趋势、成本差异、出库和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+- 已确认本批 diff 不涉及 `前端代码/deprecated/legacy-cost-analysis/`、`后端代码/server/src/routes/abc-v1.1.ts`、`后端代码/server/src/utils/abc-calculator.test.ts` 或前端 ABC 本体页面。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/integration/full-cost.test.ts -t "完整流程"` 修复前失败：成本结构 `qc` 项为 `undefined`，期望 300。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/integration/full-cost.test.ts -t "完整流程"` 通过，1 test passed / 2 skipped；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `后端代码/server npm test -- --run tests/integration/full-cost.test.ts tests/integration/reports-cost-by-project.test.ts tests/integration/reports-cost-by-project-group.test.ts tests/integration/reports-cost-by-material.test.ts tests/integration/reports-date-validation.test.ts tests/integration/reports-cost-trend.test.ts tests/integration/reports-cost-variance.test.ts` 通过，7 files / 25 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `后端代码/server npm test -- --run tests/integration/outbound.test.ts tests/integration/cost-exceptions.test.ts` 通过，2 files / 40 tests passed；`cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr 为既有异常台账测试场景，最终通过。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+- 浏览器复核:
+  - 本批是非 ABC 报表 API 成本结构口径修复，不新增或改变页面组件、弹窗或可见交互；核心风险是接口是否漏计 QC 与总额是否一致，已用接口级红绿测试覆盖，不新增截图证据。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 当前修复让成本结构与既有全成本/差异报表的 QC 实际成本口径一致；若后续产品决定把标准 QC 从标准材料中拆成独立标准成本项，需要另做字段设计和历史兼容评估。
+
+## 三百零六、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 
