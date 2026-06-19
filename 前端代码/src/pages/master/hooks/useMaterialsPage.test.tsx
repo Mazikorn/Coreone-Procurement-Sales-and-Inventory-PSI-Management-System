@@ -292,4 +292,64 @@ describe('useMaterialsPage', () => {
     await waitFor(() => expect(result.current.statusTarget).toBe(null))
     expect(vi.mocked(materialApi.getList).mock.calls.length).toBeGreaterThan(listCallsBeforeSubmit)
   })
+
+  it('clears hidden row selection when a successful status change removes the material from the filtered list', async () => {
+    const material = {
+      id: 'mat-status-selected',
+      code: 'STS-SEL-001',
+      name: '选中后停用物料',
+      spec: '1ml',
+      unit: '瓶',
+      categoryId: 'cat-1',
+      supplierId: 'sup-1',
+      price: 12,
+      stock: 0,
+      minStock: 1,
+      maxStock: 20,
+      safetyStock: 1,
+      status: 'active',
+      remark: '',
+    }
+    let materialVisible = true
+    window.history.replaceState(null, '', '/materials?quick=active')
+    vi.mocked(materialApi.getList).mockImplementation(async () => ({
+      list: materialVisible ? [material] : [],
+      pagination: { total: materialVisible ? 1 : 0, page: 1, pageSize: 20 },
+    } as any))
+    vi.mocked(materialApi.checkStatus).mockResolvedValue({
+      material,
+      targetStatus: 'inactive',
+      canChange: true,
+      impacts: {
+        currentInventoryCount: 0,
+        inventoryLocationCount: 0,
+        activeBomCount: 0,
+      },
+      reasons: [],
+    } as any)
+    vi.mocked(materialApi.update).mockImplementation(async () => {
+      materialVisible = false
+      return {} as any
+    })
+
+    const { result } = renderHook(() => useMaterialsPage())
+    await waitFor(() => expect(result.current.data[0]?.id).toBe('mat-status-selected'))
+
+    act(() => {
+      result.current.toggleSelect('mat-status-selected')
+    })
+    expect(result.current.selectedIds.has('mat-status-selected')).toBe(true)
+
+    await act(async () => {
+      await result.current.handleToggleStatus(material as any)
+    })
+    await waitFor(() => expect(result.current.statusCheck?.canChange).toBe(true))
+
+    await act(async () => {
+      await result.current.confirmStatusChange()
+    })
+
+    await waitFor(() => expect(result.current.data).toHaveLength(0))
+    expect(result.current.selectedIds.size).toBe(0)
+  })
 })

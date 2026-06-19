@@ -395,6 +395,7 @@ export function useMaterialsPage() {
       toast.success(statusTargetStatus === 'active' ? '物料已启用' : '物料已停用')
       setStatusTarget(null)
       setStatusCheck(null)
+      clearSelection()
       refresh()
       fetchRefs()
       loadStats()

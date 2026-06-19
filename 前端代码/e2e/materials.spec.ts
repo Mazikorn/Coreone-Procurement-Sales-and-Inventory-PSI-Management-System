@@ -1579,6 +1579,145 @@ test.describe('耗材管理 -> 切换启用停用', () => {
     expect(updateCalled).toBe(true)
     expect(listRequests).toBeGreaterThan(1)
   })
+
+  test('MAT-STATUS-03. 正常用例：停用成功后清空已隐藏行的选择状态', async ({ page }) => {
+    await loginAs(page, 'admin')
+
+    let checkCalled = false
+    let updateCalled = false
+    let materialVisible = true
+
+    await page.route('**/api/v1/categories**', async (route) => {
+      const url = new URL(route.request().url())
+      if (url.pathname.endsWith('/categories')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              list: [{ id: 'cat-status-selected', name: '选中状态分类', status: 'active' }],
+              pagination: { total: 1, page: 1, pageSize: 999 },
+            },
+          }),
+        })
+        return
+      }
+      await route.fallback()
+    })
+    await page.route('**/api/v1/suppliers**', async (route) => {
+      const url = new URL(route.request().url())
+      if (url.pathname.endsWith('/suppliers')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              list: [],
+              pagination: { total: 0, page: 1, pageSize: 999 },
+            },
+          }),
+        })
+        return
+      }
+      await route.fallback()
+    })
+    await page.route('**/api/v1/materials**', async (route) => {
+      const request = route.request()
+      const url = new URL(request.url())
+      if (url.pathname.endsWith('/materials/stats')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              total: 1,
+              active: materialVisible ? 1 : 0,
+              inactive: materialVisible ? 0 : 1,
+              lowStock: 0,
+            },
+          }),
+        })
+        return
+      }
+      if (url.pathname.endsWith('/materials/mock-status-selected/check-status')) {
+        checkCalled = true
+        expect(url.searchParams.get('status')).toBe('inactive')
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              material: { id: 'mock-status-selected', code: 'STS-SEL-001', name: '选中停用Mock物料' },
+              targetStatus: 'inactive',
+              canChange: true,
+              impacts: {
+                currentInventoryCount: 0,
+                inventoryLocationCount: 0,
+                activeBomCount: 0,
+              },
+              reasons: [],
+            },
+          }),
+        })
+        return
+      }
+      if (url.pathname.endsWith('/materials/mock-status-selected') && request.method() === 'PUT') {
+        updateCalled = true
+        materialVisible = false
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true, data: { id: 'mock-status-selected' } }),
+        })
+        return
+      }
+      if (url.pathname.endsWith('/materials')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              list: materialVisible ? [{
+                id: 'mock-status-selected',
+                code: 'STS-SEL-001',
+                name: '选中停用Mock物料',
+                spec: '1ml',
+                unit: '瓶',
+                categoryId: 'cat-status-selected',
+                price: 5,
+                stock: 0,
+                minStock: 1,
+                status: 'active',
+              }] : [],
+              pagination: { total: materialVisible ? 1 : 0, page: Number(url.searchParams.get('page') || '1'), pageSize: Number(url.searchParams.get('pageSize') || '20') },
+            },
+          }),
+        })
+        return
+      }
+      await route.fallback()
+    })
+
+    await page.goto(`${FE_BASE}/materials?quick=active`, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByText('选中停用Mock物料')).toBeVisible({ timeout: 15000 })
+
+    const row = page.getByRole('row').filter({ hasText: '选中停用Mock物料' })
+    await row.locator('input[type="checkbox"]').check()
+    await expect(page.getByText('已选择 1 项')).toBeVisible()
+    await row.getByRole('button', { name: '停用', exact: true }).click()
+    await expect(page.getByRole('heading', { name: '确定要停用该物料吗？' })).toBeVisible()
+    await page.getByRole('button', { name: '确认停用' }).click()
+
+    await expect(page.getByText('暂无数据')).toBeVisible()
+    await expect(page.getByText('已选择 1 项')).toHaveCount(0)
+    expect(checkCalled).toBe(true)
+    expect(updateCalled).toBe(true)
+  })
 })
 
 // ────────────────────────────────────────────

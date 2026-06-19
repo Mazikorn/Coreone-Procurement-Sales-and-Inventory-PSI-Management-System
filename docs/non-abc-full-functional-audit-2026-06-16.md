@@ -12508,7 +12508,56 @@ git diff --check
 - MAT-16 的失败回滚主路径已补 hook 和页面级证据。
 - 下一步应继续 MAT-16 成功停用/启用刷新和停用后入库/出库候选过滤的页面级证据，不在本批扩展到批量状态或其它模块。
 
-## 二百五十五、结论
+## 二百五十五、批次 300: 物料停用成功后必须清空隐藏选择状态
+
+**发现的问题**
+
+- `materials.md` 的 MAT-16 要求状态切换成功后列表刷新，停用物料不应继续作为当前有效操作对象。
+- 当前物料页在 `quick=active` 已启用筛选下，如果先勾选一条物料，再执行单行停用，服务端刷新后该物料会从列表消失，但 `selectedIds` 仍保留该物料 ID。
+- 页面因此在“暂无数据”的列表上方继续显示 `已选择 1 项`，形成隐藏选择状态；用户看不到被选中的行，却仍看到批量操作工具条。
+- 这属于停用成功后的刷新状态不完整，可能让用户误判当前页面还有有效选中对象。
+
+**已完成修复**
+
+- `前端代码/src/pages/master/hooks/useMaterialsPage.tsx`
+  - 单行状态变更成功后调用 `clearSelection()`，清空已经可能因筛选刷新而隐藏的选择状态。
+  - 失败路径保持上一批策略：关闭旧弹窗并刷新服务端权威状态，但不把失败提交误当作成功停用。
+- `前端代码/src/pages/master/hooks/useMaterialsPage.test.tsx`
+  - 新增红绿测试：在 `quick=active` 下选中物料，停用成功并刷新为空列表后，`selectedIds` 必须清空。
+- `前端代码/e2e/materials.spec.ts`
+  - 新增 `MAT-STATUS-03` 页面级验收：选中 active 行，停用成功，列表变为 `暂无数据` 后，不再显示 `已选择 1 项` 工具条。
+
+**ABC 影响评估**
+
+- 物料状态是 ABC 上游主数据输入，本批只修复前端选择状态清理，不直接修改 ABC 本体、ABC API、成本计算、库存扣减或 BOM 成本算法。
+- 清空隐藏选择能避免停用后的过期物料 ID 留在当前操作上下文中，降低后续误触批量操作或候选操作的风险。
+- 已补跑物料状态保护、入库、出库和 BOM 集成回归，覆盖物料作为入库、库存、BOM 出库和成本输入的上游链路；本批不需要改 ABC 本体。
+- 未触碰废弃 `/cost-analysis` 或 `前端代码/deprecated/legacy-cost-analysis/`。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/master/hooks/useMaterialsPage.test.tsx -t "hidden row selection"` 修复前失败：停用成功并刷新为空列表后，`selectedIds.size` 仍为 1。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/materials.spec.ts -g "MAT-STATUS-03" --project=chromium` 修复前失败：列表已显示 `暂无数据`，页面仍显示 `已选择 1 项`。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/master/hooks/useMaterialsPage.test.tsx -t "hidden row selection"` 通过，1 test passed / 9 skipped。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/materials.spec.ts -g "MAT-STATUS-03" --project=chromium` 通过，1 test passed。
+  - `前端代码 npm test -- --run src/pages/master/hooks/useMaterialsPage.test.tsx src/pages/master/components/MaterialImpactModals.test.tsx src/hooks/usePagination.test.ts` 通过，3 files / 28 tests passed。
+  - `后端代码/server npm run test:node -- --run tests/materials-guard.test.ts tests/inbound-batch.test.ts tests/integration/outbound.test.ts tests/integration/bom.test.ts` 通过，4 files / 79 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/materials.spec.ts -g "MAT-STATUS-01|MAT-STATUS-02|MAT-STATUS-03|MAT-DEL-11|MAT-DEL-12|MAT-EDIT-11|MAT-DETAIL-03|MAT-PAGE-01|MAT-FILTER-01|MAT-SEARCH-03|MAT-LIST-11" --project=chromium` 通过，11 tests passed。
+  - `git diff --check` 通过。
+  - `git diff --name-only | rg "deprecated/legacy-cost-analysis|前端代码/deprecated|/cost-analysis"` 无匹配，确认未改废弃范围。
+- 浏览器复核:
+  - 使用用户已验证的 Chrome for Testing 路径完成 headless Playwright 复核；验证重点为 active 筛选下勾选物料、单行停用成功、列表刷新为空、隐藏选择工具条消失，以及状态/删除/编辑/详情/分页/筛选/搜索回归。
+
+**后续风险**
+
+- MAT-16 的单行状态成功刷新、失败回滚和启用阻断反馈已补页面级证据。
+- 下一步应继续 MAT-16 的“停用后该耗材不再出现在入库/出库选择列表中”跨页面候选过滤证据；不在本批扩展到批量状态或库存主链路修复。
+
+## 二百五十六、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 
