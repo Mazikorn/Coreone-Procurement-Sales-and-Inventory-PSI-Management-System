@@ -75,4 +75,65 @@ describe('集成测试：非ABC供应商成本报表', () => {
       orderCount: 1,
     })
   })
+
+  it('REPORT-SUPPLIER-002: 供应商成本报表扣减同期间未取消供应商退货退款金额', async () => {
+    const suffix = Date.now()
+    const categoryId = `report-supplier-net-cat-${suffix}`
+    const supplierId = `report-supplier-net-${suffix}`
+    const locationId = `report-supplier-net-loc-${suffix}`
+    const materialId = `report-supplier-net-mat-${suffix}`
+    const inboundId = `report-supplier-net-in-${suffix}`
+
+    db.prepare(`
+      INSERT INTO material_categories (id, code, name, level)
+      VALUES (?, ?, '供应商净额报表分类', 1)
+    `).run(categoryId, `REPORT-SUP-NET-CAT-${suffix}`)
+    db.prepare(`
+      INSERT INTO suppliers (id, code, name, is_deleted)
+      VALUES (?, ?, '供应商净额测试', 0)
+    `).run(supplierId, `REPORT-SUP-NET-${suffix}`)
+    db.prepare(`
+      INSERT INTO locations (id, code, name, zone)
+      VALUES (?, ?, '供应商净额报表库位', 'A区')
+    `).run(locationId, `REPORT-SUP-NET-LOC-${suffix}`)
+    db.prepare(`
+      INSERT INTO materials (id, code, name, spec, unit, category_id, supplier_id, price, location_id, status, is_deleted)
+      VALUES (?, ?, '供应商净额报表物料', '1ml', '瓶', ?, ?, 10, ?, 1, 0)
+    `).run(materialId, `REPORT-SUP-NET-MAT-${suffix}`, categoryId, supplierId, locationId)
+    db.prepare(`
+      INSERT INTO inbound_records (
+        id, inbound_no, type, material_id, quantity, unit, price, amount,
+        supplier_id, location_id, operator, status, created_at, is_deleted
+      )
+      VALUES (?, ?, 'purchase', ?, 50, '瓶', 10, 500, ?, ?, 'admin', 'completed', '2033-01-10T09:00:00', 0)
+    `).run(inboundId, `REPORT-SUP-NET-IN-${suffix}`, materialId, supplierId, locationId)
+    db.prepare(`
+      INSERT INTO supplier_returns (
+        id, return_no, material_id, quantity, supplier_id, reason, refund_amount,
+        status, operator, created_at, updated_at, is_deleted
+      )
+      VALUES
+        (?, ?, ?, 12, ?, '质量问题', 120, 'refunded', 'admin', '2033-01-12T09:00:00', '2033-01-12T09:00:00', 0),
+        (?, ?, ?, 5, ?, '取消退货', 50, 'cancelled', 'admin', '2033-01-13T09:00:00', '2033-01-13T09:00:00', 0),
+        (?, ?, ?, 3, ?, '已删除退货', 30, 'refunded', 'admin', '2033-01-14T09:00:00', '2033-01-14T09:00:00', 1)
+    `).run(
+      `report-sup-return-net-${suffix}`, `REPORT-SUP-RET-NET-${suffix}`, materialId, supplierId,
+      `report-sup-return-cancel-${suffix}`, `REPORT-SUP-RET-CANCEL-${suffix}`, materialId, supplierId,
+      `report-sup-return-deleted-${suffix}`, `REPORT-SUP-RET-DELETED-${suffix}`, materialId, supplierId,
+    )
+
+    const res = await request(app)
+      .get('/api/v1/reports/cost-by-supplier?startDate=2033-01-01&endDate=2033-01-31')
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(200)
+    expect(res.body.success).toBe(true)
+    const item = res.body.data.suppliers.find((row: any) => row.id === supplierId)
+    expect(item).toMatchObject({
+      id: supplierId,
+      name: '供应商净额测试',
+      amount: 380,
+      orderCount: 1,
+    })
+  })
 })

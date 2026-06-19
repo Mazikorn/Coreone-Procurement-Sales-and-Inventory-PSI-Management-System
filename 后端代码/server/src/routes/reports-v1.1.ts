@@ -146,10 +146,27 @@ router.get('/cost-by-supplier', (req, res) => {
       ORDER BY amount DESC
     `).all(...params) as any[]
 
-    const totalAmount = rows.reduce((sum: number, r: any) => sum + (r.amount || 0), 0)
+    let supplierReturnWhere = "is_deleted = 0 AND status != 'cancelled'"
+    const supplierReturnParams: any[] = []
+    if (startDate) { supplierReturnWhere += ' AND created_at >= ?'; supplierReturnParams.push(startDate) }
+    if (endDate) { supplierReturnWhere += ' AND created_at <= ?'; supplierReturnParams.push(`${endDate}T23:59:59`) }
+    const supplierReturnRows = db.prepare(`
+      SELECT supplier_id, SUM(refund_amount) as refund_amount
+      FROM supplier_returns
+      WHERE ${supplierReturnWhere} AND supplier_id IS NOT NULL
+      GROUP BY supplier_id
+    `).all(...supplierReturnParams) as any[]
+    const supplierReturnMap = new Map(supplierReturnRows.map((r: any) => [r.supplier_id, Number(r.refund_amount) || 0]))
+
+    const netRows = rows.map((r: any) => ({
+      ...r,
+      amount: Math.max(0, (Number(r.amount) || 0) - (supplierReturnMap.get(r.supplier_id) || 0)),
+    }))
+
+    const totalAmount = netRows.reduce((sum: number, r: any) => sum + (r.amount || 0), 0)
 
     success(res, {
-      suppliers: rows.map((r: any) => ({
+      suppliers: netRows.map((r: any) => ({
         id: r.supplier_id, name: r.name || 'Unknown',
         amount: r.amount, ratio: totalAmount > 0 ? parseFloat((r.amount / totalAmount * 100).toFixed(1)) : 0,
         orderCount: r.order_count, status: 'long-term',

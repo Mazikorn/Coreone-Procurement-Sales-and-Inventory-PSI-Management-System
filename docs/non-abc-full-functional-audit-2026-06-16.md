@@ -13708,7 +13708,55 @@ git diff --check
 - 当前数据模型没有批次到库位的精确分摊表；库位筛选金额使用该物料启用批次加权平均入库价乘以库位库存数量，是在现有 schema 下的最小可信口径。
 - 后续继续按计划复核非废弃成本相关和实验运营页面，重点检查出库、BOM、项目和库存快照是否使用历史事实而不是当前主数据。
 
-## 二百七十九、结论
+## 二百七十九、批次 324: 供应商成本报表必须扣减未取消供应商退货
+
+**发现的问题**
+
+- 本轮继续复核非废弃成本/报表页面，聚焦“报表金额必须反映采购入库后的真实净额”不变量。
+- `GET /reports/cost-by-supplier` 只汇总 `inbound_records.amount`，没有扣减同期间 `supplier_returns.refund_amount`。
+- 供应商退货会真实扣减库存并形成退款金额；若供应商成本报表继续显示毛入库金额，会高估供应商实际采购成本，影响采购分析、供应商对账和成本输入解释。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/reports-v1.1.ts`
+  - 供应商成本报表新增同日期范围的供应商退货退款汇总。
+  - 排除 `status='cancelled'` 和 `is_deleted=1` 的供应商退货记录。
+  - 报表金额改为 `入库金额 - 未取消退货退款金额`，且不低于 0；占比基于净额重新计算。
+- `后端代码/server/tests/integration/reports-cost-by-supplier.test.ts`
+  - 新增 `REPORT-SUPPLIER-002` 红绿测试：同期间入库 500、已退款供应商退货 120、取消退货 50、已删除退货 30，报表必须显示净额 380。
+
+**ABC 影响评估**
+
+- 供应商退货、入库金额和批次成本是采购上游、库存成本解释和 ABC 输入侧可信事实的一部分。
+- 本批只修改非 ABC 供应商成本报表接口和报表测试，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 已补跑供应商成本报表、入库批次、库存一致性、供应商退货专用测试和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+- 已确认本批 diff 不涉及 `前端代码/deprecated/legacy-cost-analysis/`、`后端代码/server/src/routes/abc-v1.1.ts`、`后端代码/server/src/utils/abc-calculator.test.ts` 或前端 ABC 页面。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/integration/reports-cost-by-supplier.test.ts -t "REPORT-SUPPLIER-002"` 修复前失败：实际返回 `amount=500`，期望 `380`。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/integration/reports-cost-by-supplier.test.ts -t "REPORT-SUPPLIER-002"` 通过，1 test passed / 1 skipped。
+  - `后端代码/server npm test -- --run tests/integration/reports-cost-by-supplier.test.ts tests/inbound-batch.test.ts tests/inventory-consistency.test.ts tests/integration/cost-exceptions.test.ts --config vitest.config.ts` 通过，4 files / 37 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。`cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr 为既有异常台账测试场景，最终通过。
+  - `后端代码/server npm test -- --config vitest.supplier-returns.config.ts` 通过，15 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only | rg '(^前端代码/deprecated/legacy-cost-analysis/|abc-v1.1|src/api/abc|pages/cost|cost-analysis)' || true` 无输出，确认未改废弃范围和 ABC 本体。
+- 浏览器复核:
+  - 本批是供应商成本报表 API 口径修复，不新增或改变页面交互；页面级 Playwright 不是本批必要门槛。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 当前报表只展示有入库金额的供应商；仅有退货但无同期间入库的供应商不会单独以负数展示，避免在现有报表结构中引入负采购额语义。
+- 后续继续复核 LIS、对账、异常和成本展示页面，重点检查它们是否使用已发生的出库/入库/退货历史事实，而不是后续主数据或单据状态污染后的当前值。
+
+## 二百八十、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 
