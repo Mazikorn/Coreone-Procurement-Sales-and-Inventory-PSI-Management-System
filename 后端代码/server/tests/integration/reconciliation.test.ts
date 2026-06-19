@@ -477,6 +477,24 @@ describe('成本对账异常闭环', () => {
     expect(auditRes.status).toBe(400)
   })
 
+  it('病例列表和修正日志列表必须拒绝非法分页参数', async () => {
+    const casesRes = await request(app)
+      .get('/api/v1/reconciliation/cases?page=abc&pageSize=20')
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(casesRes.status).toBe(400)
+    expect(casesRes.body.success).toBe(false)
+    expect(casesRes.body.error.code).toBe('INVALID_PARAMETER')
+
+    const logsRes = await request(app)
+      .get('/api/v1/reconciliation/logs?page=1&pageSize=0')
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(logsRes.status).toBe(400)
+    expect(logsRes.body.success).toBe(false)
+    expect(logsRes.body.error.code).toBe('INVALID_PARAMETER')
+  })
+
   it('对账汇总的关联出库数不应统计已取消出库', async () => {
     const suffix = Date.now()
     const projectId = `proj-summary-status-${suffix}`

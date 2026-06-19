@@ -31,6 +31,14 @@ function validateDateRange(startDate?: string, endDate?: string) {
   return true
 }
 
+function parsePaginationParam(value: string | undefined, fallback: number, max = 200) {
+  const raw = String(value || fallback).trim()
+  if (!/^\d+$/.test(raw)) return null
+  const parsed = Number(raw)
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > max) return null
+  return parsed
+}
+
 function validateLisOperateTime(value: string) {
   const match = value.trim().match(dateTimeRegex)
   if (!match) return false
@@ -949,8 +957,11 @@ router.get('/cases', (req, res) => {
       error(res, 'Invalid date format', 'INVALID_PARAMETER', 400); return
     }
 
-    const pageNum = Math.max(1, parseInt(page))
-    const safePageSize = Math.max(1, parseInt(pageSize))
+    const pageNum = parsePaginationParam(page, 1)
+    const safePageSize = parsePaginationParam(pageSize, 20)
+    if (!pageNum || !safePageSize) {
+      error(res, 'Invalid pagination parameter', 'INVALID_PARAMETER', 400); return
+    }
     const offset = (pageNum - 1) * safePageSize
     const filters = { search, projectId, status, startDate, endDate }
     const plainFilter = buildCaseFilterClause(filters)
@@ -1078,7 +1089,13 @@ router.get('/logs', (req, res) => {
       error(res, 'Invalid date format', 'INVALID_PARAMETER', 400); return
     }
 
-    const offset = (parseInt(page) - 1) * parseInt(pageSize)
+    const pageNum = parsePaginationParam(page, 1)
+    const safePageSize = parsePaginationParam(pageSize, 20)
+    if (!pageNum || !safePageSize) {
+      error(res, 'Invalid pagination parameter', 'INVALID_PARAMETER', 400); return
+    }
+
+    const offset = (pageNum - 1) * safePageSize
     const hasDate = startDate && endDate
     const where = hasDate ? 'WHERE created_at >= ? AND created_at <= ?' : ''
     const params = hasDate ? [startDate, `${endDate} 23:59:59`] : []
@@ -1088,11 +1105,11 @@ router.get('/logs', (req, res) => {
       ${where}
       ORDER BY created_at DESC
       LIMIT ? OFFSET ?
-    `).all(...params, parseInt(pageSize), offset) as any[]
+    `).all(...params, safePageSize, offset) as any[]
 
     const count = db.prepare(`SELECT COUNT(*) as count FROM reconciliation_logs ${where}`).get(...params) as any
 
-    successList(res, list, parseInt(page), parseInt(pageSize), count?.count || 0)
+    successList(res, list, pageNum, safePageSize, count?.count || 0)
   } catch (e: any) {
     error(res, e.message || '获取日志失败')
   }
