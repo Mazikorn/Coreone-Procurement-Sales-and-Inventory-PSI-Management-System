@@ -11789,7 +11789,54 @@ git diff --check
 
 - REC-12 的日期筛选和详情上下文已按当前接口字段收口；若未来需要展示“关联项目名称、BOM 版本、审批人”等更细上下文，需要先确认后端是否具备这些历史快照字段，不能从当前值反推历史事实。
 
-## 二百四十、结论
+## 二百四十、批次 285: 预警快速筛选必须同步规范 quick 参数
+
+**发现的问题**
+
+- `alerts.md` 的 AL-05~AL-08 要求快速筛选更新 URL：`?quick=all|pending|handled|ignored`，且筛选变化时分页重置到第 1 页。
+- 当前预警中心 Hook 读取和写入的是旧参数 `quickFilter`，例如点击“待处理”后 URL 变为 `?quickFilter=pending`。
+- 当用户按规范 URL 打开 `?quick=handled` 时，页面不会识别为“已处理”筛选，仍按全部预警加载。
+
+**已完成修复**
+
+- `前端代码/src/pages/alerts/hooks/useAlertsPage.ts`
+  - 新增快速筛选 URL 兼容映射：优先读取规范参数 `quick`，同时兼容旧 `quickFilter`。
+  - 将规范值 `quick=handled` 映射为页面内部已处理状态 `processed`，请求后端时继续使用既有 `processed,auto_resolved,handled` 状态集合。
+  - URL 同步改为写入规范 `quick` 参数，并删除旧 `quickFilter` 参数。
+  - 对外 `setQuickFilter` 包装为同时重置分页到第 1 页。
+- `前端代码/src/pages/alerts/hooks/useAlertsPage.test.ts`
+  - 新增 Hook 红灯测试，覆盖 `?quick=handled&page=3` 能识别为已处理并请求正确状态集合。
+  - 新增 Hook 红灯测试，覆盖快速筛选变更后 URL 写入 `quick=pending`、移除旧 `quickFilter`、重置分页。
+- `前端代码/e2e/alerts.spec.ts`
+  - 新增 `ALERT-STATUS-00`，真实浏览器从 `?page=3&quick=handled` 进入预警中心，点击“待处理”后确认 URL 为 `quick=pending`，且不再保留旧 `quickFilter` 或旧页码。
+
+**ABC 影响评估**
+
+- 本批只修改预警中心前端只读筛选 URL 同步和分页重置逻辑，不修改 ABC 本体、库存写入、出库、BOM、成本异常、成本公式或收费映射。
+- 预警列表仍使用既有后端状态集合查询，不改变预警处理、忽略或批量处理副作用。
+- 补跑 ABC 输入侧回归，确认病例 BOM 阶梯收费和非最新出库取消后的 ABC 明细重排仍通过。
+- 未触碰废弃 `/cost-analysis` 或 `前端代码/deprecated/legacy-cost-analysis/`。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/alerts/hooks/useAlertsPage.test.ts -t "quick"` 修复前失败：`?quick=handled` 被读成 `all`，点击后 URL 写成 `?quickFilter=pending`。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/alerts/hooks/useAlertsPage.test.ts` 通过，4 tests passed。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npm run test:e2e -- alerts.spec.ts -g "ALERT-STATUS-00"` 通过，真实浏览器确认快速筛选 URL 和分页重置。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `后端代码/server npm run build` 通过。
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/cost-exceptions.test.ts -t "同一病例多个BOM|取消非最新病例"` 通过，2 tests passed / 9 skipped。
+  - `git diff --check` 通过。
+  - `git diff --name-only | rg "deprecated/legacy-cost-analysis|前端代码/deprecated|/cost-analysis"` 无匹配，确认未改废弃范围。
+- 浏览器复核:
+  - 使用用户已验证的 Chrome for Testing 路径完成 headless Playwright 复核；验证重点为规范 URL 入参、快速筛选点击、URL 输出参数和分页重置。
+
+**后续风险**
+
+- AL-05 的“全部”显式 `quick=all`、AL-09 类型筛选、AL-10 级别筛选、AL-11 重置筛选，以及 AL-21 翻页 URL/服务端分页仍需按独立不变量继续复核；本批不扩展到这些筛选项。
+
+## 二百四十一、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

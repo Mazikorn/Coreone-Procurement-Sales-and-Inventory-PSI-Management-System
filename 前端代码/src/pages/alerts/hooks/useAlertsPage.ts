@@ -14,6 +14,7 @@ export interface AlertItem extends Alert {
 
 export type AlertTypeFilter = 'all' | 'low-stock' | 'expiry' | 'stagnant'
 export type AlertStatusFilter = 'all' | 'pending' | 'processed' | 'ignored' | 'history'
+type AlertQuickUrlValue = AlertStatusFilter | 'handled'
 
 export interface FilterState {
   keyword: string
@@ -60,6 +61,16 @@ export const STATUS_MAP: Record<string, { label: string; bg: string; text: strin
   'handled': { label: '已处理', bg: 'bg-green-50', text: 'text-green-700' },
 }
 
+function normalizeQuickFilterValue(value: string): AlertStatusFilter {
+  if (value === 'handled' || value === 'processed') return 'processed'
+  if (value === 'pending' || value === 'ignored' || value === 'history' || value === 'all') return value
+  return 'all'
+}
+
+function toQuickUrlValue(value: AlertStatusFilter): AlertQuickUrlValue {
+  return value === 'processed' ? 'handled' : value
+}
+
 export function useAlertsPage() {
   const url = useUrlParams()
 
@@ -77,8 +88,8 @@ export function useAlertsPage() {
     dateRange: [url.get('startDate', ''), url.get('endDate', '')] as [string, string],
   })
   const [debouncedKeyword, setDebouncedKeyword] = useState(filter.keyword)
-  const [quickFilter, setQuickFilter] = useState<AlertStatusFilter>(
-    (url.get('quickFilter', 'all') as AlertStatusFilter) || 'all'
+  const [quickFilter, setQuickFilterState] = useState<AlertStatusFilter>(
+    normalizeQuickFilterValue(url.get('quick', url.get('quickFilter', 'all')))
   )
   const [handleForm, setHandleForm] = useState({
     opinion: '',
@@ -160,6 +171,11 @@ export function useAlertsPage() {
     ],
   })
 
+  const setQuickFilter = useCallback((value: AlertStatusFilter) => {
+    setQuickFilterState(value)
+    setPage(1)
+  }, [setPage])
+
   // URL 同步
   useEffect(() => {
     url.setMultiple({
@@ -168,7 +184,8 @@ export function useAlertsPage() {
       keyword: filter.keyword || null,
       type: filter.type !== 'all' ? filter.type : null,
       status: filter.status !== 'all' ? filter.status : null,
-      quickFilter: quickFilter !== 'all' ? quickFilter : null,
+      quick: quickFilter !== 'all' ? toQuickUrlValue(quickFilter) : null,
+      quickFilter: null,
       startDate: filter.dateRange[0] || null,
       endDate: filter.dateRange[1] || null,
     })

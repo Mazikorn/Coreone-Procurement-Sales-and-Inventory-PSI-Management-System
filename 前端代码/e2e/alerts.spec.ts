@@ -389,6 +389,19 @@ test.describe('预警中心 -> 查看预警列表', () => {
 // 2. 按状态筛选 (8 tests)
 // ────────────────────────────────────────────
 test.describe('预警中心 -> 按状态筛选', () => {
+  test('ALERT-STATUS-00. 快速筛选同步规范quick参数并重置分页', async ({ page }) => {
+    await loginAs(page, 'admin')
+    await page.goto(`${FE_BASE}/alerts?page=3&quick=handled`, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByRole('heading', { name: '预警中心' })).toBeVisible({ timeout: 15000 })
+    await expect(page).toHaveURL(/quick=handled/)
+
+    await page.getByRole('button', { name: '待处理' }).click()
+
+    await expect(page).toHaveURL(/quick=pending/)
+    expect(new URL(page.url()).searchParams.get('quickFilter')).toBeNull()
+    expect(new URL(page.url()).searchParams.get('page')).toBeNull()
+  })
+
   test('ALERT-STATUS-01. 正常用例：pending筛选', async () => {
     const token = await apiLogin('admin')
     const res = await apiFetch(token, 'GET', '/alerts?status=pending')
