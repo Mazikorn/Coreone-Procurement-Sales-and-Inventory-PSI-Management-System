@@ -59,6 +59,7 @@ function rejectInvalidDateRange(req: any, res: any) {
 const PERSONNEL_EFFICIENCY_ROLES = new Set(['all', 'technician', 'pathologist', 'warehouse_manager'])
 const COST_TREND_DIMENSIONS = new Set(['monthly', 'quarterly'])
 const MONTHLY_COMPARISON_SOURCES = new Set(['outbound', 'abc'])
+const COST_VARIANCE_COMPARE_TYPES = new Set(['project', 'month', 'material'])
 
 function rejectInvalidPersonnelEfficiencyRole(role: string, res: any) {
   if (!PERSONNEL_EFFICIENCY_ROLES.has(role)) {
@@ -83,6 +84,14 @@ function rejectInvalidMonthlyComparisonParams(month: string, source: string, res
   }
   if (!MONTHLY_COMPARISON_SOURCES.has(source)) {
     error(res, '月度环比数据来源无效', 'INVALID_PARAMETER', 400)
+    return true
+  }
+  return false
+}
+
+function rejectInvalidCostVarianceCompareType(compareType: string, res: any) {
+  if (!COST_VARIANCE_COMPARE_TYPES.has(compareType)) {
+    error(res, '成本差异对比维度无效', 'INVALID_PARAMETER', 400)
     return true
   }
   return false
@@ -809,9 +818,8 @@ router.get('/cost-variance', (req, res) => {
   try {
     if (rejectInvalidDateRange(req, res)) return
     const { startDate, endDate } = req.query
-    const compareType = ['project', 'month', 'material'].includes(String(req.query.compareType))
-      ? String(req.query.compareType)
-      : 'project'
+    const compareType = String(req.query.compareType || 'project').trim()
+    if (rejectInvalidCostVarianceCompareType(compareType, res)) return
     const db = getDatabase()
     let where = "r.status = 'completed' AND r.is_deleted = 0"
     const params: any[] = []
