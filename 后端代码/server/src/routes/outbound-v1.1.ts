@@ -698,11 +698,19 @@ router.post('/bom', (req, res) => {
       if (lisCase?.id) {
         db.prepare(`
           UPDATE lis_cases
-          SET project_id = COALESCE(project_id, ?),
-              project_name = COALESCE(NULLIF(project_name, ''), ?),
+          SET project_id = COALESCE(NULLIF(project_id, ''), ?),
+              project_name = CASE
+                WHEN project_id IS NULL OR project_id = '' THEN ?
+                ELSE COALESCE(NULLIF(project_name, ''), ?)
+              END,
               status = CASE WHEN status = 'unmatched' THEN 'normal' ELSE status END
           WHERE id = ?
-        `).run(effectiveProjectId, project.name || lisCase.project_name || null, lisCase.id)
+        `).run(
+          effectiveProjectId,
+          project.name || lisCase.project_name || null,
+          project.name || lisCase.project_name || null,
+          lisCase.id,
+        )
       }
 
       db.exec('COMMIT')

@@ -951,6 +951,65 @@ describe('集成测试：出库管理', () => {
       expect(JSON.parse(abcDetail.source_snapshot).lisCaseId).toBe(`lis-${caseNo}`)
     })
 
+    it('BOM 出库使用显式项目时必须回填未匹配 LIS 病例项目', async () => {
+      const suffix = Date.now()
+      const materialForCase = await createMaterial(app, token, 'OB-LIS-FILL', 90)
+      await inbound(app, token, materialForCase, `B-LIS-FILL-${suffix}`, 5, 90)
+
+      const bomRes = await request(app)
+        .post('/api/v1/boms')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          code: `OB-BOM-LIS-FILL-${suffix}`,
+          name: 'LIS回填BOM',
+          type: 'ihc',
+          materials: [
+            { materialId: materialForCase, usagePerSample: 1, unit: '支', price: 90 },
+          ],
+        })
+      expect(bomRes.status).toBe(201)
+
+      const projectRes = await request(app)
+        .post('/api/v1/projects')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          code: `OB-PROJ-LIS-FILL-${suffix}`,
+          name: 'LIS回填项目',
+          type: 'ihc',
+          bomId: bomRes.body.data.id,
+          status: 'active',
+        })
+      expect(projectRes.status).toBe(201)
+
+      const caseNo = `LIS-FILL-${suffix}`
+      db.prepare(`
+        INSERT INTO lis_cases (id, case_no, project_id, project_name, operator, operate_time, status, import_batch)
+        VALUES (?, ?, '', ?, ?, ?, 'unmatched', ?)
+      `).run(`lis-fill-${suffix}`, caseNo, '未匹配项目', 'lis', '2026-06-18 09:00:00', `batch-fill-${suffix}`)
+
+      const res = await request(app)
+        .post('/api/v1/outbound/bom')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          caseNo,
+          projectId: projectRes.body.data.id,
+          sampleCount: 1,
+          remark: '未匹配LIS病例出库后回填项目',
+        })
+
+      expect(res.status).toBe(201)
+      expect(res.body.data.projectId).toBe(projectRes.body.data.id)
+      expect(res.body.data.caseNo).toBe(caseNo)
+
+      const lis = db.prepare('SELECT project_id, project_name, status FROM lis_cases WHERE case_no = ?')
+        .get(caseNo) as any
+      expect(lis).toMatchObject({
+        project_id: projectRes.body.data.id,
+        project_name: 'LIS回填项目',
+        status: 'normal',
+      })
+    })
+
     it('BOM 出库后库存正确减少', async () => {
       const inv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
       expect(inv.stock).toBe(85) // 100 - 10 - 3 - 2
