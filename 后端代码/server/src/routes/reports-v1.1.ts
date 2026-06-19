@@ -56,6 +56,26 @@ function rejectInvalidDateRange(req: any, res: any) {
   return false
 }
 
+function rejectUnknownMaterialCategory(db: any, categoryId: string, res: any) {
+  if (!categoryId) return false
+  const category = db.prepare('SELECT id FROM material_categories WHERE id = ?').get(categoryId)
+  if (!category) {
+    error(res, '物料分类筛选不存在', 'INVALID_PARAMETER', 400)
+    return true
+  }
+  return false
+}
+
+function rejectUnknownProjectFilter(db: any, projectId: string, res: any) {
+  if (!projectId) return false
+  const project = db.prepare('SELECT id FROM projects WHERE id = ?').get(projectId)
+  if (!project) {
+    error(res, '项目筛选不存在', 'INVALID_PARAMETER', 400)
+    return true
+  }
+  return false
+}
+
 const PERSONNEL_EFFICIENCY_ROLES = new Set(['all', 'technician', 'pathologist', 'warehouse_manager'])
 const COST_TREND_DIMENSIONS = new Set(['monthly', 'quarterly'])
 const MONTHLY_COMPARISON_SOURCES = new Set(['outbound', 'abc'])
@@ -174,12 +194,14 @@ router.get('/cost-by-material', (req, res) => {
   try {
     if (rejectInvalidDateRange(req, res)) return
     const { startDate, endDate, categoryId } = req.query
+    const materialCategoryId = String(categoryId || '').trim()
     const db = getDatabase()
+    if (rejectUnknownMaterialCategory(db, materialCategoryId, res)) return
     let where = "o.status = 'completed' AND o.is_deleted = 0"
     const params: any[] = []
     if (startDate) { where += ' AND o.created_at >= ?'; params.push(startDate) }
     if (endDate) { where += ' AND o.created_at <= ?'; params.push(`${endDate}T23:59:59`) }
-    if (categoryId) { where += ' AND m.category_id = ?'; params.push(categoryId) }
+    if (materialCategoryId) { where += ' AND m.category_id = ?'; params.push(materialCategoryId) }
 
     // 1. 出库成本
     const outboundRows = db.prepare(`
@@ -364,13 +386,15 @@ router.get('/cost-by-project-group', (req, res) => {
   try {
     if (rejectInvalidDateRange(req, res)) return
     const { startDate, endDate, projectId } = req.query
+    const reportProjectId = String(projectId || '').trim()
     const db = getDatabase()
+    if (rejectUnknownProjectFilter(db, reportProjectId, res)) return
 
     let where = "r.status = 'completed' AND r.is_deleted = 0"
     const params: any[] = []
     if (startDate) { where += ' AND r.created_at >= ?'; params.push(startDate) }
     if (endDate) { where += ' AND r.created_at <= ?'; params.push(`${endDate}T23:59:59`) }
-    if (projectId) { where += ' AND r.project_id = ?'; params.push(projectId) }
+    if (reportProjectId) { where += ' AND r.project_id = ?'; params.push(reportProjectId) }
 
     // 1. 按 project + group 汇总
     const groupRows = db.prepare(`

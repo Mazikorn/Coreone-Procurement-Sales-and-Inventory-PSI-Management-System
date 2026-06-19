@@ -197,4 +197,14 @@ describe('集成测试：非ABC物料成本报表', () => {
       sampleCount: 4,
     })
   })
+
+  it('REPORT-MATERIAL-005: 物料成本报表必须拒绝不存在的物料分类筛选', async () => {
+    const res = await request(app)
+      .get('/api/v1/reports/cost-by-material?categoryId=missing-report-category&startDate=2033-05-01&endDate=2033-05-31')
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(400)
+    expect(res.body.success).toBe(false)
+    expect(res.body.error.code).toBe('INVALID_PARAMETER')
+  })
 })

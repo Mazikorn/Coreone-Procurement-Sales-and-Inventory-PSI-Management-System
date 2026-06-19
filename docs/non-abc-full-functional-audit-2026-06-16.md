@@ -14909,7 +14909,59 @@ git diff --check
 
 - 当前修复覆盖对账模块内 LIS 导入、病例编辑和 BOM 修正三条候选项目写入路径；其它模块若存在“停用项目仍可作为新候选”的独立入口，应继续按同一不变量登记和处理。
 
-## 三百零四、结论
+## 三百零四、批次 349: 非 ABC 报表筛选来源必须存在
+
+**发现的问题**
+
+- 本轮继续复核非废弃报表、效率、LIS、对账、异常和成本展示链路，聚焦“报表筛选来源必须真实存在，不能把参数错误伪装成空报表”不变量。
+- 项目分组成本报表的 `projectId` 和物料成本报表的 `categoryId` 都来自页面候选来源，旧后端只把它们拼入查询条件，没有校验来源是否存在。
+- 当调用 `/reports/cost-by-project-group?projectId=missing...` 或 `/reports/cost-by-material?categoryId=missing...` 时，旧接口返回 `200` 空报表，用户可能误以为项目/分类在当前期间没有成本，而不是筛选条件错误。
+- 这类报表是出库成本、BOM 分组、物料分类和 ABC 上游成本事实的说明面；候选来源错误必须有可解释的失败响应。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/reports-v1.1.ts`
+  - 新增 `rejectUnknownProjectFilter`，显式传入不存在的 `projectId` 时返回 `400 INVALID_PARAMETER`。
+  - 新增 `rejectUnknownMaterialCategory`，显式传入不存在的 `categoryId` 时返回 `400 INVALID_PARAMETER`。
+  - 项目分组成本报表使用修剪后的 `projectId` 参与过滤；物料成本报表使用修剪后的 `categoryId` 参与过滤。
+  - 校验只要求来源记录存在，不要求启用或未删除；已软删除但有历史出库的项目/分类仍可用于历史报表解释，避免破坏历史事实。
+- `后端代码/server/tests/integration/reports-cost-by-project-group.test.ts`
+  - 新增 `REPORT-GROUP-006` 红绿测试，覆盖不存在项目筛选必须被拒绝。
+- `后端代码/server/tests/integration/reports-cost-by-material.test.ts`
+  - 新增 `REPORT-MATERIAL-005` 红绿测试，覆盖不存在物料分类筛选必须被拒绝。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 报表接口的筛选来源校验和报表测试，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 项目、物料分类、BOM 分组和出库成本是 ABC 输入侧可信成本事实的上游说明面；本批只阻断不存在来源的错误筛选，不改变合法项目、历史软删除项目、合法分类或历史物料的成本统计口径。
+- 已补跑项目分组成本、物料成本、报表日期、成本趋势、成本差异、出库和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+- 已确认本批 diff 不涉及 `前端代码/deprecated/legacy-cost-analysis/`、`后端代码/server/src/routes/abc-v1.1.ts`、`后端代码/server/src/utils/abc-calculator.test.ts` 或前端 ABC 本体页面。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/integration/reports-cost-by-project-group.test.ts -t "REPORT-GROUP-006"` 修复前失败：不存在 `projectId` 返回 200，期望 400。
+  - `后端代码/server npm test -- --run tests/integration/reports-cost-by-material.test.ts -t "REPORT-MATERIAL-005"` 修复前失败：不存在 `categoryId` 返回 200，期望 400。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/integration/reports-cost-by-project-group.test.ts -t "REPORT-GROUP-006"` 通过，1 test passed / 5 skipped；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `后端代码/server npm test -- --run tests/integration/reports-cost-by-material.test.ts -t "REPORT-MATERIAL-005"` 通过，1 test passed / 4 skipped；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - 初次并行跑上述两个目标测试时遇到测试全局端口 `3001` 的 `EADDRINUSE`，随后顺序重跑通过；该次不作为功能失败结论。
+  - `后端代码/server npm test -- --run tests/integration/reports-cost-by-project-group.test.ts tests/integration/reports-cost-by-material.test.ts tests/integration/reports-date-validation.test.ts tests/integration/reports-cost-trend.test.ts tests/integration/reports-cost-variance.test.ts` 通过，5 files / 17 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `后端代码/server npm test -- --run tests/integration/outbound.test.ts tests/integration/cost-exceptions.test.ts` 通过，2 files / 40 tests passed；`cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr 为既有异常台账测试场景，最终通过。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+- 浏览器复核:
+  - 本批是非 ABC 报表 API 筛选来源校验修复，不新增或改变页面组件、弹窗或可见交互；核心风险在接口是否拒绝不存在的项目/分类来源，已用接口级红绿测试覆盖，不新增截图证据。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 当前修复覆盖项目分组成本报表的 `projectId` 和物料成本报表的 `categoryId`；其它非 ABC 报表若存在主数据来源 ID 筛选但未校验存在性，应继续按同一不变量逐项处理。
+
+## 三百零五、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

@@ -371,4 +371,14 @@ describe('集成测试：非ABC项目分组成本报表', () => {
       expect.objectContaining({ groupName: '核心试剂', sampleCount: 5, totalCost: 50 }),
     ])
   })
+
+  it('REPORT-GROUP-006: 项目分组成本报表必须拒绝不存在的项目筛选', async () => {
+    const res = await request(app)
+      .get('/api/v1/reports/cost-by-project-group?projectId=missing-report-project&startDate=2033-04-01&endDate=2033-04-30')
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(400)
+    expect(res.body.success).toBe(false)
+    expect(res.body.error.code).toBe('INVALID_PARAMETER')
+  })
 })
