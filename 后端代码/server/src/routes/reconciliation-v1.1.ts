@@ -137,6 +137,16 @@ function validateBomFixLogPayload(payload: any) {
   return ''
 }
 
+function ensureExistingProjectFilter(db: any, projectId?: string) {
+  const id = String(projectId || '').trim()
+  if (!id) return ''
+  const project = db.prepare('SELECT id FROM projects WHERE id = ? AND is_deleted = 0').get(id)
+  if (!project) {
+    throw Object.assign(new Error('项目筛选来源不存在'), { statusCode: 400, code: 'INVALID_PARAMETER' })
+  }
+  return id
+}
+
 function buildExportPayload(params: Record<string, string>) {
   const db = getDatabase()
   const type = normalizeExportType(params.type || params.tab)
@@ -154,6 +164,7 @@ function buildExportPayload(params: Record<string, string>) {
   if (type === 'case' && !validateCaseStatus(status)) {
     throw Object.assign(new Error('Invalid case status'), { statusCode: 400, code: 'INVALID_PARAMETER' })
   }
+  const safeProjectId = type === 'case' ? ensureExistingProjectFilter(db, projectId) : ''
 
   const hasDate = startDate && endDate
   const endDateTime = hasDate ? `${endDate} 23:59:59` : ''
@@ -176,7 +187,7 @@ function buildExportPayload(params: Record<string, string>) {
       row.status,
     ])
   } else if (type === 'case') {
-    const caseFilter = buildCaseFilterClause({ search, projectId, status, startDate, endDate }, 'lc')
+    const caseFilter = buildCaseFilterClause({ search, projectId: safeProjectId, status, startDate, endDate }, 'lc')
     const caseRows = db.prepare(`
       SELECT lc.case_no, COALESCE(p.name, lc.project_name) as project_name,
              lc.operate_time, lc.operator, lc.status,
@@ -1029,7 +1040,8 @@ router.get('/cases', (req, res) => {
       error(res, 'Invalid pagination parameter', 'INVALID_PARAMETER', 400); return
     }
     const offset = (pageNum - 1) * safePageSize
-    const filters = { search, projectId, status, startDate, endDate }
+    const safeProjectId = ensureExistingProjectFilter(db, projectId)
+    const filters = { search, projectId: safeProjectId, status, startDate, endDate }
     const plainFilter = buildCaseFilterClause(filters)
     const joinFilter = buildCaseFilterClause(filters, 'lc')
 
@@ -1060,7 +1072,7 @@ router.get('/cases', (req, res) => {
 
     successList(res, result, pageNum, safePageSize, count)
   } catch (e: any) {
-    error(res, e.message || '获取病例列表失败')
+    error(res, e.message || '获取病例列表失败', e.code, e.statusCode)
   }
 })
 

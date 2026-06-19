@@ -534,6 +534,40 @@ describe('成本对账异常闭环', () => {
     expect(exportRes.body.data.content).not.toContain(otherProjectCaseNo)
   })
 
+  it('病例列表、GET 导出和 POST 导出必须拒绝不存在的项目筛选', async () => {
+    const missingProjectId = `proj-case-filter-missing-${Date.now()}`
+
+    const listRes = await request(app)
+      .get('/api/v1/reconciliation/cases')
+      .query({ projectId: missingProjectId })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(listRes.status).toBe(400)
+    expect(listRes.body.success).toBe(false)
+    expect(listRes.body.error.code).toBe('INVALID_PARAMETER')
+
+    const getExportRes = await request(app)
+      .get('/api/v1/reconciliation/export')
+      .query({ type: 'case', projectId: missingProjectId })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(getExportRes.status).toBe(400)
+    expect(getExportRes.body.success).toBe(false)
+    expect(getExportRes.body.error.code).toBe('INVALID_PARAMETER')
+
+    const postExportRes = await request(app)
+      .post('/api/v1/reconciliation/export')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        tab: 'case',
+        filters: { projectId: missingProjectId },
+      })
+
+    expect(postExportRes.status).toBe(400)
+    expect(postExportRes.body.success).toBe(false)
+    expect(postExportRes.body.error.code).toBe('INVALID_PARAMETER')
+  })
+
   it('POST 对账导出必须返回附件文件流并保留筛选内容', async () => {
     const suffix = Date.now()
     const keepProjectId = `proj-post-export-keep-${suffix}`

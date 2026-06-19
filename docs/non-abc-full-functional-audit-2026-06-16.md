@@ -15678,7 +15678,54 @@ git diff --check
 
 - 报表读取面的物料分类来源已补齐“未删除”约束；下一批应继续按计划复核其它报表来源候选、日期和导出参数，不在本批继续扩展。
 
-## 三百二十、结论
+## 三百二十、批次 365: LIS 病例项目筛选来源必须存在
+
+**发现的问题**
+
+- 本轮继续复核 ABC 之外的实验运营/LIS 对账读取面，聚焦“筛选来源必须真实存在，不能把错误来源伪装成空结果”不变量。
+- `/api/v1/reconciliation/cases?projectId=...` 旧实现会直接把任意 `projectId` 放入病例筛选条件，不存在的项目返回 200 空列表。
+- `GET /api/v1/reconciliation/export?type=case&projectId=...` 和 `POST /api/v1/reconciliation/export` 的病例导出复用同类筛选逻辑，也会把不存在的项目筛选伪装为正常空导出。
+- 这会让用户误判为“该检测项目没有病例/没有对账数据”，而不是项目来源错误；病例列表和导出又会影响 BOM 出库归属、对账异常解释和成本异常输入侧判断。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/reconciliation-v1.1.ts`
+  - 新增病例项目筛选来源校验，先规范化 `projectId`，再确认项目存在且未软删除。
+  - 病例列表、GET 病例导出和 POST 病例导出遇到不存在或已软删除项目筛选时，统一返回 `400 INVALID_PARAMETER`。
+  - 停用但未删除的历史项目不作为本批拦截条件，避免破坏历史病例筛选和导出；新增候选绑定、编辑和 BOM 修正仍沿用既有启用项目校验。
+- `后端代码/server/tests/integration/reconciliation.test.ts`
+  - 新增病例列表、GET 导出和 POST 导出拒绝不存在项目筛选的红绿测试，确保三个入口共享同一来源语义。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC LIS/对账读取面来源校验和后端测试，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- LIS 病例项目归属会进入 BOM 出库、对账差异和成本异常解释链；本批不改变病例导入、病例编辑、BOM 修正、出库或异常写入副作用，只阻断错误项目筛选污染查询和导出语义。
+- 已补跑完整对账专项、出库和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/integration/reconciliation.test.ts -t "病例列表、GET 导出和 POST 导出必须拒绝不存在的项目筛选"` 修复前失败：病例列表返回 200，期望 400。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/integration/reconciliation.test.ts -t "病例列表、GET 导出和 POST 导出必须拒绝不存在的项目筛选"` 通过，1 test passed / 21 skipped。
+  - `后端代码/server npm test -- --run tests/integration/reconciliation.test.ts` 通过，22 tests passed。
+  - `后端代码/server npm test -- --run tests/integration/outbound.test.ts tests/integration/cost-exceptions.test.ts` 通过，2 files / 40 tests passed；`cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr 为既有异常台账测试场景，最终通过。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis` 无输出，确认未改废弃范围。
+- 浏览器复核:
+  - 本批为 LIS/对账 API 来源参数校验修复，不新增或改变页面组件、弹窗或可见交互；核心风险是 API 是否拒绝错误项目来源，已用接口级红绿测试覆盖，不新增截图证据。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- LIS/对账病例列表和导出的项目来源已补齐“存在且未删除”约束；下一批应继续按计划复核其它非废弃报表、效率、LIS 或对账读取面的日期、导出格式和来源候选，不在本批继续扩展。
+
+## 三百二十一、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 
