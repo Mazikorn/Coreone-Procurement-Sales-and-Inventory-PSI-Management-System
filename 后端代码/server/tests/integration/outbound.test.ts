@@ -270,6 +270,57 @@ describe('集成测试：出库管理', () => {
       }
     })
 
+    it('OUT-TYPE-001: 普通出库创建和编辑必须拒绝未知出库类型', async () => {
+      const beforeStock = (db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any).stock
+      const beforeCount = (db.prepare('SELECT COUNT(*) as count FROM outbound_records').get() as any).count
+
+      const invalidCreate = await request(app)
+        .post('/api/v1/outbound')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          type: 'mystery',
+          items: [{ materialId, quantity: 1 }],
+          remark: '非法类型创建',
+        })
+
+      expect(invalidCreate.status).toBe(400)
+      expect(invalidCreate.body.error.code).toBe('INVALID_PARAMETER')
+      expect(invalidCreate.body.error.message).toContain('出库类型')
+      expect((db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any).stock).toBe(beforeStock)
+      expect((db.prepare('SELECT COUNT(*) as count FROM outbound_records').get() as any).count).toBe(beforeCount)
+
+      const createRes = await request(app)
+        .post('/api/v1/outbound')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          type: 'project',
+          items: [{ materialId, quantity: 1 }],
+          remark: '合法类型编辑前',
+        })
+      expect(createRes.status).toBe(201)
+
+      const stockAfterValidCreate = (db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any).stock
+      const invalidUpdate = await request(app)
+        .put(`/api/v1/outbound/${createRes.body.data.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          type: 'mystery',
+          items: [{ materialId, quantity: 2 }],
+          remark: '非法类型编辑',
+        })
+
+      expect(invalidUpdate.status).toBe(400)
+      expect(invalidUpdate.body.error.code).toBe('INVALID_PARAMETER')
+      expect(invalidUpdate.body.error.message).toContain('出库类型')
+      expect((db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any).stock).toBe(stockAfterValidCreate)
+
+      const savedRecord = db.prepare('SELECT type, remark FROM outbound_records WHERE id = ?').get(createRes.body.data.id) as any
+      const savedItems = db.prepare('SELECT material_id, quantity FROM outbound_items WHERE outbound_id = ?').all(createRes.body.data.id) as any[]
+      expect(savedRecord).toMatchObject({ type: 'project', remark: '合法类型编辑前' })
+      expect(savedItems).toHaveLength(1)
+      expect(savedItems[0]).toMatchObject({ material_id: materialId, quantity: 1 })
+    })
+
     it('OUT-REF-001: 普通出库拒绝停用物料和停用检测项目', async () => {
       const suffix = `guard-${Date.now()}`
       const inactiveMaterialId = await createMaterial(app, token, `OB-INACTIVE-MAT-${suffix}`, 30)

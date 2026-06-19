@@ -7,6 +7,7 @@ import { consumeInventoryLocationStock, restoreInventoryLocationStock } from '..
 
 const router = Router()
 const BATCH_RESTORE_EPSILON = 0.000001
+const DIRECT_OUTBOUND_TYPES = new Set(['project', 'transfer', 'scrap'])
 
 import { checkStockAlerts } from '../utils/alertChecker.js'
 import { generateNo } from '../utils/generateNo.js'
@@ -86,6 +87,14 @@ function validateOutboundItems(items: any) {
     }
   }
   return { ok: true }
+}
+
+function validateDirectOutboundType(type: unknown) {
+  const normalizedType = String(type || '').trim()
+  if (!DIRECT_OUTBOUND_TYPES.has(normalizedType)) {
+    return { ok: false, message: '出库类型无效' }
+  }
+  return { ok: true, type: normalizedType }
 }
 
 function normalizeOptionalSampleCount(value: unknown) {
@@ -233,6 +242,10 @@ router.post('/', requireWriteAccess, (req, res) => {
     if (!type) {
       error(res, '缺少必填字段', 'INVALID_PARAMETER', 400); return
     }
+    const typeValidation = validateDirectOutboundType(type)
+    if (!typeValidation.ok) {
+      error(res, typeValidation.message, 'INVALID_PARAMETER', 400); return
+    }
     const itemValidation = validateOutboundItems(items)
     if (!itemValidation.ok) {
       error(res, itemValidation.message, 'INVALID_PARAMETER', 400); return
@@ -290,7 +303,7 @@ router.post('/', requireWriteAccess, (req, res) => {
       db.prepare(`
         INSERT INTO outbound_records (id, outbound_no, type, project_id, total_cost, sample_count, operator, status, remark)
         VALUES (?, ?, ?, ?, ?, ?, ?, 'completed', ?)
-      `).run(id, outboundNo, type, projectId || null, totalCost, sc, operator, remark || null)
+      `).run(id, outboundNo, typeValidation.type, projectId || null, totalCost, sc, operator, remark || null)
 
       for (const ia of itemAllocations) {
         for (const alloc of ia.allocations) {
@@ -958,7 +971,13 @@ router.put('/:id', requireWriteAccess, (req, res) => {
       return
     }
 
-    const nextType = type !== undefined ? type : record.type
+    if (type !== undefined) {
+      const typeValidation = validateDirectOutboundType(type)
+      if (!typeValidation.ok) {
+        error(res, typeValidation.message, 'INVALID_PARAMETER', 400); return
+      }
+    }
+    const nextType = type !== undefined ? String(type || '').trim() : record.type
     const nextProjectId = projectId !== undefined ? (projectId || null) : (record.project_id || null)
     const oldItems = db.prepare('SELECT * FROM outbound_items WHERE outbound_id = ?').all(id) as any[]
     const materialUnits = db.prepare('SELECT id, unit FROM materials WHERE id IN (' + newItems.map(() => '?').join(',') + ')').all(...newItems.map((i: any) => i.materialId)) as any[]

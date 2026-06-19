@@ -13375,7 +13375,58 @@ git diff --check
 - 当前数据模型没有批次-库位分摊表；当同一物料库存已经跨库位拆分时，列表只能准确展示库位总量，不能声明某个批次在该库位的精确剩余。
 - 后续如果业务要求跨库位下也支持“按库位选择具体批次”，需要单独设计批次-库位分摊结构和迁移，本批不扩大范围。
 
-## 二百七十二、结论
+## 二百七十二、批次 317: 普通出库必须拒绝未知业务类型
+
+**发现的问题**
+
+- 本轮继续复核库存主链路中的出库候选来源有效性和业务身份保护。
+- `POST /outbound` 只检查 `type` 是否存在，不校验是否为系统支持的普通出库类型。
+- API 绕过可创建 `type='mystery'` 一类未知出库单，并真实扣减库存、写入出库明细和库存日志。
+- `PUT /outbound/:id` 也可把已有合法出库单改成未知类型，污染出库业务身份、报表类型筛选、库存日志解释和后续成本归集语义。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/outbound-v1.1.ts`
+  - 为普通出库接口增加类型白名单：`project / transfer / scrap`。
+  - 创建普通出库时，未知 `type` 返回 `400 INVALID_PARAMETER`，不写出库单、不扣库存。
+  - 编辑普通出库时，仅当请求显式提交 `type` 时校验；未知类型返回 `400 INVALID_PARAMETER`，保留原出库单和库存事实不变。
+  - 不修改 `/outbound/bom`，不改变 BOM 出库的 `type='bom'` 写入路径。
+- `后端代码/server/tests/integration/outbound.test.ts`
+  - 新增红绿测试 `OUT-TYPE-001`：未知类型创建必须失败且库存/记录数不变；未知类型编辑必须失败且原出库单类型、备注、明细和库存不变。
+
+**ABC 影响评估**
+
+- 出库类型是库存流水、报表筛选、BOM/项目出库语义和 ABC 输入侧成本事实解释的重要业务身份字段。
+- 本批阻断未知出库类型写入，避免非标准业务身份进入出库、库存日志和后续成本解释链路。
+- 本批只修改非 ABC 的普通出库接口和出库集成测试；不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 已补跑出库完整集成测试、库存一致性、入库批次、库存列表/批次、调拨和成本异常输入侧回归。
+- 未触碰 `前端代码/deprecated/legacy-cost-analysis/`。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/integration/outbound.test.ts -t "OUT-TYPE-001"` 修复前失败：未知 `type='mystery'` 创建实际返回 201，期望 400。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/integration/outbound.test.ts -t "OUT-TYPE-001"` 通过，1 test passed / 27 skipped。
+  - `后端代码/server npm test -- --run tests/integration/outbound.test.ts` 通过，28 tests passed。
+  - `后端代码/server npm test -- --run tests/inventory-consistency.test.ts tests/inbound-batch.test.ts tests/integration/inventory.test.ts tests/inventory-batches.test.ts tests/transfers.test.ts tests/integration/cost-exceptions.test.ts` 通过，6 files / 63 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff -- 前端代码/deprecated/legacy-cost-analysis 后端代码/server/src/routes/abc-v1.1.ts 后端代码/server/src/utils/abc-calculator.test.ts` 无输出，确认未改废弃范围和 ABC 本体。
+- 浏览器复核:
+  - 本批是普通出库 API 绕过防护，不新增或改变页面交互；页面/弹窗级 Playwright 不是本批必要门槛。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 本批只处理普通出库接口的未知 `type`，不扩展到旧 E2E 中把 `transfer/scrap` 作为普通出库类型使用的历史设计。
+- 后续继续按库存主链路检查退货、报废、调拨、供应商退货、盘点等模块的候选来源和历史回滚边界；发现计划外问题先登记到待评估清单。
+
+## 二百七十三、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 
