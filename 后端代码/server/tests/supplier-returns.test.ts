@@ -103,6 +103,16 @@ describe('供应商退货', () => {
     expect(reversedRange.body.error.code).toBe('INVALID_PARAMETER')
   })
 
+  it('SR-FILTER-003: 列表拒绝不存在的供应商来源筛选', async () => {
+    const res = await request(app)
+      .get('/api/v1/supplier-returns')
+      .query({ supplierId: 'missing-supplier-source' })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(400)
+    expect(res.body.error.code).toBe('INVALID_PARAMETER')
+  })
+
   it('SR-001: 创建供应商退货时忽略请求体伪造operator，使用登录用户', async () => {
     const { materialId, supplierId } = seedSupplierReturnMaterial(db, `op-${Date.now()}`)
 

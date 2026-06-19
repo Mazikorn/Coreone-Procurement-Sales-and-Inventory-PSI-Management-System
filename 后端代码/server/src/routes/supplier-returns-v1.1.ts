@@ -133,6 +133,14 @@ router.get('/', (req, res) => {
     endDate = normalizedEndDate
     pageSize = String(Math.min(Number(pageSize), 200))
     const db = getDatabase()
+    supplierId = String(supplierId || '').trim()
+    if (supplierId) {
+      const supplier = db.prepare('SELECT id FROM suppliers WHERE id = ? AND is_deleted = 0').get(supplierId) as any
+      if (!supplier) {
+        error(res, '供应商筛选来源不存在', 'INVALID_PARAMETER', 400)
+        return
+      }
+    }
     let sql = `
       SELECT sr.*, m.name as material_name, s.name as supplier_name, po.order_no as purchase_order_no, ir.inbound_no
       FROM supplier_returns sr
