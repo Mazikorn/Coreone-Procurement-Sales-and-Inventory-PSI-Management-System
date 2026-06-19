@@ -259,6 +259,25 @@ describe('间接成本中心删除保护', () => {
     expect(stats.body.data.active).toBe(1)
   })
 
+  it('IDC-FILTER-002: 列表和统计必须拒绝非法状态筛选', async () => {
+    const cases = [
+      { path: '/api/v1/indirect-costs', query: { status: 'archived' }, label: '成本中心列表非法状态' },
+      { path: '/api/v1/indirect-costs/stats', query: { status: 'archived' }, label: '成本中心统计非法状态' },
+      { path: '/api/v1/indirect-costs', query: { status: ['active', 'inactive'] }, label: '成本中心列表重复状态' },
+    ]
+
+    for (const item of cases) {
+      const res = await request(app)
+        .get(item.path)
+        .query(item.query)
+        .set('Authorization', `Bearer ${token}`)
+
+      expect(res.status, item.label).toBe(400)
+      expect(res.body.success, item.label).toBe(false)
+      expect(res.body.error.code, item.label).toBe('INVALID_PARAMETER')
+    }
+  })
+
   it('IDC-TEXT-001: 创建和更新间接成本中心时拦截危险文本并保存清理后的展示文本', async () => {
     const suffix = `text-${Date.now()}`
 

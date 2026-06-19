@@ -17,6 +17,7 @@ const COST_TYPE_LABELS: Record<string, string> = {
 
 const COST_TYPES = new Set(Object.keys(COST_TYPE_LABELS))
 const ALLOCATION_BASES = new Set(['sample_count', 'revenue', 'labor_hours', 'area'])
+const STATUS_FILTERS = new Set(['all', 'active', 'inactive'])
 
 function sendTextError(res: any, result: TextGuardResult): result is Extract<TextGuardResult, { ok: false }> {
   if ('message' in result) {
@@ -61,6 +62,12 @@ function parseStatus(status: unknown, fallback = 1) {
   return { ok: false as const, message: '状态无效' }
 }
 
+function validateStatusFilter(status: unknown) {
+  if (Array.isArray(status)) return false
+  const raw = String(status || '').trim()
+  return !raw || STATUS_FILTERS.has(raw)
+}
+
 function buildCostCenterWhere(query: any) {
   const { keyword, status } = query
   let where = '1=1'
@@ -82,6 +89,9 @@ router.get('/', (req, res) => {
   try {
     const { page = 1, pageSize = 20 } = req.query
     const db = getDatabase()
+    if (!validateStatusFilter(req.query.status)) {
+      error(res, '状态筛选无效', 'INVALID_PARAMETER', 400); return
+    }
     const { where, params } = buildCostCenterWhere(req.query)
 
     const count = (db.prepare(`SELECT COUNT(*) as total FROM indirect_cost_centers WHERE ${where}`).get(...params) as any)?.total || 0
@@ -112,6 +122,9 @@ router.get('/', (req, res) => {
 router.get('/stats', (req, res) => {
   try {
     const db = getDatabase()
+    if (!validateStatusFilter(req.query.status)) {
+      error(res, '状态筛选无效', 'INVALID_PARAMETER', 400); return
+    }
     const { where, params } = buildCostCenterWhere(req.query)
     const row = db.prepare(`
       SELECT

@@ -15963,9 +15963,59 @@ git diff --check
 
 **后续风险**
 
-- 间接成本中心列表、分摊录入和统计已有阶段性保护；后续若继续成本配置层，应按独立批次复核页面级导出、编辑刷新和更多候选来源边界。
+- 间接成本中心列表分页、分摊录入和统计已有阶段性保护；状态筛选枚举作为下一独立批次处理，避免在分页批次中扩大范围。
 
-## 三百二十六、结论
+## 三百二十六、批次 371: 间接成本状态筛选必须拒绝非法枚举
+
+**发现的问题**
+
+- 本轮继续复核非 ABC 间接成本配置读面，聚焦“状态筛选必须可解释，非法枚举不能静默当全部”不变量。
+- `GET /api/v1/indirect-costs?status=archived` 旧实现只识别 `active/inactive`，其它值被忽略，红灯返回 200，期望 400。
+- `GET /api/v1/indirect-costs/stats?status=archived` 复用同一筛选构造，也会把非法状态当作未筛选，容易让统计卡误导用户。
+- 既有 `status=all` 兼容入口必须保留，不能因为收紧非法枚举而误过滤为停用或报错。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/indirect-cost-v1.1.ts`
+  - 新增状态筛选白名单，仅允许空值、`all`、`active`、`inactive`。
+  - 重复传入 `status` 形成数组时直接按非法筛选处理，避免校验通过但实际未过滤。
+  - 成本中心列表遇到非法状态筛选返回 `400 INVALID_PARAMETER`。
+  - 成本中心统计遇到非法状态筛选返回 `400 INVALID_PARAMETER`。
+  - 保留 `status=all` 不过滤的兼容语义。
+- `后端代码/server/tests/indirect-cost-guard.test.ts`
+  - 新增 `IDC-FILTER-002` 红绿测试，覆盖列表和统计非法状态筛选，以及重复状态数组边界。
+  - 既有 `IDC-FILTER-001` 继续覆盖 `status=all` 兼容语义。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 间接成本中心列表/统计 API 和后端测试，不修改 ABC 本体、ABC API、成本算法、库存、出库或废弃 `/cost-analysis`。
+- 间接成本中心统计是全成本/成本说明配置读面；本批不改变合法状态筛选、分摊录入、全成本计算或成本异常闭环，只阻断非法枚举导致的误读。
+- 已补跑间接成本专项、全成本和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/indirect-cost-guard.test.ts -t "IDC-FILTER-002"` 修复前失败：成本中心列表非法状态返回 200，期望 400。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/indirect-cost-guard.test.ts -t "IDC-FILTER-002"` 通过，1 test passed / 9 skipped。
+  - `后端代码/server npm test -- --run tests/indirect-cost-guard.test.ts` 通过，10 tests passed。
+  - `后端代码/server npm test -- --run tests/indirect-cost-guard.test.ts tests/integration/full-cost.test.ts tests/integration/cost-exceptions.test.ts` 通过，3 files / 24 tests passed；`cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr 为既有异常台账测试场景，最终通过。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis` 无输出，确认未改废弃范围。
+- 浏览器复核:
+  - 本批为间接成本列表/统计 API 参数校验修复，不新增或改变页面组件、弹窗或可见交互；核心风险是 API 是否拒绝非法枚举并保留 `status=all` 合法语义，已用接口级红绿测试覆盖，不新增截图证据。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 间接成本中心列表分页、状态筛选、分摊录入和统计已有阶段性保护；后续若继续成本配置层，应按独立批次复核页面级导出、编辑刷新和更多候选来源边界。
+
+## 三百二十七、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 
