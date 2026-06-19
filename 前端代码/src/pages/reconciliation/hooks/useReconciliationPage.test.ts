@@ -3,6 +3,7 @@ import { reconciliationApi } from '@/api/reconciliation'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { toast } from 'sonner'
 import { buildLisImportPreview, buildLisImportTemplateCsv, buildLisImportValidation, buildReconciliationExportFilename, buildReconciliationExportParams, getLisImportRefreshTargets, parseLisImportData, useReconciliationPage, validateReconciliationDateRange } from './useReconciliationPage'
+import { downloadBlobFile } from '@/lib/utils'
 
 vi.mock('@/api/reconciliation')
 vi.mock('@/lib/utils', () => ({
@@ -119,6 +120,30 @@ describe('parseLisImportData', () => {
     }, 'csv')).toBe('reconciliation-project-2026-06-01_2026-06-30.csv')
 
     expect(buildReconciliationExportFilename({ type: 'case' }, 'xlsx')).toMatch(/^reconciliation-case-\d{4}-\d{2}-\d{2}\.xlsx$/)
+  })
+
+  it('downloads the backend Excel export blob directly', async () => {
+    const xlsxBlob = new Blob(['xlsx-binary'], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+    vi.mocked(reconciliationApi.exportData).mockResolvedValue(xlsxBlob as any)
+
+    const { result } = renderHook(() => useReconciliationPage())
+    await waitFor(() => expect(reconciliationApi.getProjects).toHaveBeenCalled())
+
+    await act(async () => {
+      await result.current.handleExport({ format: 'xlsx', scope: 'all' })
+    })
+
+    expect(reconciliationApi.exportData).toHaveBeenCalledWith({
+      type: 'project',
+      format: 'xlsx',
+      scope: 'all',
+    })
+    expect(downloadBlobFile).toHaveBeenCalledWith(
+      xlsxBlob,
+      expect.stringMatching(/^reconciliation-project-\d{4}-\d{2}-\d{2}\.xlsx$/)
+    )
   })
 
   it('rejects impossible and reversed reconciliation date ranges before requests', () => {

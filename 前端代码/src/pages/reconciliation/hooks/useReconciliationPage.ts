@@ -563,14 +563,7 @@ export function useReconciliationPage() {
       })
       const blob = await reconciliationApi.exportData(params)
       const filename = buildReconciliationExportFilename(params, options.format)
-      if (options.format === 'xlsx') {
-        const XLSX = await import('xlsx')
-        const content = await blob.text()
-        const workbook = XLSX.read(content, { type: 'string' })
-        XLSX.writeFile(workbook, filename)
-      } else {
-        downloadBlobFile(blob, filename)
-      }
+      downloadBlobFile(blob, filename)
       toast.success('已导出对账数据')
     } catch (e: any) {
       toast.error(e?.message || '导出失败')

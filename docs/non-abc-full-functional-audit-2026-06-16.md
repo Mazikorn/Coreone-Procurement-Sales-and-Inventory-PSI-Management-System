@@ -14705,7 +14705,61 @@ git diff --check
 
 - 当前修复覆盖对账导出的 `type/tab` 归一后类型；其它非 ABC 导出入口若存在非法枚举值静默落入默认分支，应继续按同一不变量逐项处理。
 
-## 三百、结论
+## 三百、批次 345: 对账导出格式必须真实生效
+
+**发现的问题**
+
+- 本轮继续复核非 ABC 对账导出，聚焦“导出格式选择必须产生对应真实文件，不能把 CSV 伪装成 Excel”不变量。
+- 设计稿 `REC-11` 明确要求导出弹窗选择 `Excel / CSV`，点击确认后调用 `POST /reconciliation/export`，参数包含 `format: xlsx|csv`，后端返回文件流。
+- 旧后端 POST 导出没有读取或校验 `format`，用户选择 `xlsx` 时仍返回 `text/csv` 和 `.csv` 文件。
+- 旧前端在选择 Excel 时把后端 CSV blob 读成文本，再用 `xlsx` 库二次转换；这会让 API 直接调用、文件 MIME、文件名和前端下载语义不一致，也无法拒绝非法 `format=pdf`。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/reconciliation-v1.1.ts`
+  - 新增 `normalizeExportFormat` 和 `validateExportFormat`，只允许 `csv / xlsx`。
+  - `buildExportPayload` 读取导出格式；非法格式统一返回 `400 INVALID_PARAMETER`。
+  - CSV 继续返回 UTF-8 CSV；XLSX 使用 `XLSX.utils.aoa_to_sheet` 生成真实工作簿 buffer，返回 `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` 和 `.xlsx` 文件名。
+  - POST 文件流发送时区分 string CSV 和 Buffer XLSX，避免给二进制文件加 BOM。
+- `前端代码/src/pages/reconciliation/hooks/useReconciliationPage.ts`
+  - 选择 Excel 时不再把 CSV 文本二次转换为 xlsx，而是直接下载后端返回的 Blob。
+- `后端代码/server/tests/integration/reconciliation.test.ts`
+  - 新增“POST 对账导出必须按格式返回真实文件并拒绝非法格式”红绿测试，覆盖 xlsx MIME、`.xlsx` 文件名、ZIP/PK 文件头和非法 `format=pdf`。
+- `前端代码/src/pages/reconciliation/hooks/useReconciliationPage.test.ts`
+  - 新增前端红绿测试，确认选择 Excel 时向后端提交 `format: 'xlsx'`，并直接调用 `downloadBlobFile` 下载后端 Blob。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 对账模块的导出格式处理、前端下载方式和相关测试，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 对账模块会把项目物料差异写入成本异常台账，是 ABC 输入侧可信成本事实的上游说明面；本批只改变导出文件交付格式和非法格式拦截，不改变合法对账统计、病例筛选、异常写入或成本异常口径。
+- 已补跑对账集成、成本异常、出库主链、前端对账页面/Hook 测试和前后端构建，确认不会破坏已完成的 ABC 成本透明化闭环。
+- 已确认本批 diff 不涉及 `前端代码/deprecated/legacy-cost-analysis/`、`后端代码/server/src/routes/abc-v1.1.ts`、`后端代码/server/src/utils/abc-calculator.test.ts` 或前端 ABC 本体页面。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/integration/reconciliation.test.ts -t "非法格式"` 修复前失败：`format=xlsx` 返回 `text/csv; charset=utf-8`，期望 xlsx MIME。
+  - `前端代码 npm test -- --run src/pages/reconciliation/hooks/useReconciliationPage.test.ts -t "backend Excel export"` 修复前失败：选择 Excel 时未调用 `downloadBlobFile` 下载后端 Blob。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/integration/reconciliation.test.ts -t "非法格式"` 通过，1 test passed / 17 skipped；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `前端代码 npm test -- --run src/pages/reconciliation/hooks/useReconciliationPage.test.ts -t "backend Excel export"` 通过，1 test passed / 14 skipped。
+  - `后端代码/server npm test -- --run tests/integration/reconciliation.test.ts tests/integration/cost-exceptions.test.ts` 通过，2 files / 29 tests passed；`cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr 为既有异常台账测试场景，最终通过。
+  - `后端代码/server npm test -- --run tests/integration/outbound.test.ts` 通过，1 file / 29 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `前端代码 npm test -- --run src/pages/reconciliation/Reconciliation.test.tsx src/pages/reconciliation/hooks/useReconciliationPage.test.ts` 通过，2 files / 18 tests passed。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `后端代码/server npm run build` 通过。
+- 浏览器复核:
+  - 本批不新增或改变导出弹窗的可见组件、布局或交互入口；核心风险是选择格式后的真实文件副作用。后端文件流已校验 xlsx MIME、文件名和二进制文件头，前端已校验直接下载后端 Blob，因此本批不新增截图证据。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 当前修复覆盖对账导出的 `format` 参数和 xlsx/csv 文件流；其它非 ABC 导出入口若存在“格式选项不生效”或“后端忽略非法格式”，应继续按同一不变量逐项处理。
+
+## 三百零一、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

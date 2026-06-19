@@ -102,12 +102,24 @@ function validateExportType(type: string) {
   return ['project', 'material', 'case', 'log'].includes(type)
 }
 
+function normalizeExportFormat(value?: string) {
+  return String(value || 'csv').trim().toLowerCase()
+}
+
+function validateExportFormat(format: string) {
+  return ['csv', 'xlsx'].includes(format)
+}
+
 function buildExportPayload(params: Record<string, string>) {
   const db = getDatabase()
   const type = normalizeExportType(params.type || params.tab)
+  const format = normalizeExportFormat(params.format)
   const { startDate, endDate, search, projectId, status } = params
   if (!validateExportType(type)) {
     throw Object.assign(new Error('Invalid export type'), { statusCode: 400, code: 'INVALID_PARAMETER' })
+  }
+  if (!validateExportFormat(format)) {
+    throw Object.assign(new Error('Invalid export format'), { statusCode: 400, code: 'INVALID_PARAMETER' })
   }
   if (!validateDateRange(startDate, endDate)) {
     throw Object.assign(new Error('Invalid date format'), { statusCode: 400, code: 'INVALID_PARAMETER' })
@@ -118,7 +130,7 @@ function buildExportPayload(params: Record<string, string>) {
   const dateSegment = hasDate ? `${startDate}_${endDate}` : new Date().toISOString().slice(0, 10)
   let headers: string[] = []
   let rows: Array<Array<unknown>> = []
-  let filename = `reconciliation-${type}-${dateSegment}.csv`
+  let filenameBase = `reconciliation-${type}-${dateSegment}`
 
   if (type === 'material') {
     headers = ['物料', '规格', '单位', '关联项目数', '理论消耗', '实际出库', '差异', '差异率', '状态']
@@ -190,11 +202,23 @@ function buildExportPayload(params: Record<string, string>) {
         row.status,
       ])
     })
-    filename = `reconciliation-project-${dateSegment}.csv`
+    filenameBase = `reconciliation-project-${dateSegment}`
+  }
+
+  if (format === 'xlsx') {
+    const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows])
+    const workbook = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(workbook, worksheet, '对账数据')
+    return {
+      filename: `${filenameBase}.xlsx`,
+      contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      content: XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer,
+      rowCount: rows.length,
+    }
   }
 
   return {
-    filename,
+    filename: `${filenameBase}.csv`,
     contentType: 'text/csv;charset=utf-8',
     content: toCsv(headers, rows),
     rowCount: rows.length,
@@ -210,6 +234,7 @@ function normalizePostExportParams(body: any): Record<string, string> {
     search: String(filters.search || body?.search || ''),
     projectId: String(filters.projectId || body?.projectId || ''),
     status: String(filters.status || body?.status || ''),
+    format: String(body?.format || ''),
   }
 }
 
@@ -707,7 +732,7 @@ router.post('/export', (req, res) => {
     const payload = buildExportPayload(normalizePostExportParams(req.body || {}))
     res.setHeader('Content-Type', payload.contentType)
     res.setHeader('Content-Disposition', `attachment; filename="${payload.filename}"`)
-    res.send(`\ufeff${payload.content}`)
+    res.send(Buffer.isBuffer(payload.content) ? payload.content : `\ufeff${payload.content}`)
   } catch (e: any) {
     error(res, e.message || '导出对账报表失败', e.code, e.statusCode)
   }

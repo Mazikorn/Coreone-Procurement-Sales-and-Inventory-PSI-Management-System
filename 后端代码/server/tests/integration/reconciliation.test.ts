@@ -466,6 +466,59 @@ describe('成本对账异常闭环', () => {
     expect(postRes.body.error.code).toBe('INVALID_PARAMETER')
   })
 
+  it('POST 对账导出必须按格式返回真实文件并拒绝非法格式', async () => {
+    const suffix = Date.now()
+    const projectId = `proj-export-format-${suffix}`
+    const caseNo = `CASE-EXPORT-FORMAT-${suffix}`
+
+    db.prepare(`
+      INSERT INTO projects (id, code, name, type, status)
+      VALUES (?, ?, ?, 'ihc', 1)
+    `).run(projectId, `P-EXPORT-FORMAT-${suffix}`, '导出格式项目')
+    db.prepare(`
+      INSERT INTO lis_cases (id, case_no, project_id, project_name, operator, operate_time, status, import_batch)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      `case-export-format-${suffix}`, caseNo, projectId, '导出格式项目', 'lis', '2026-06-20 09:00:00', 'modified', `batch-format-${suffix}`,
+    )
+
+    const xlsxRes = await request(app)
+      .post('/api/v1/reconciliation/export')
+      .set('Authorization', `Bearer ${token}`)
+      .buffer(true)
+      .parse((res, callback) => {
+        const chunks: Buffer[] = []
+        res.on('data', chunk => chunks.push(Buffer.from(chunk)))
+        res.on('end', () => callback(null, Buffer.concat(chunks)))
+      })
+      .send({
+        tab: 'case',
+        format: 'xlsx',
+        filters: {
+          startDate: '2026-06-01',
+          endDate: '2026-06-30',
+          search: 'CASE-EXPORT-FORMAT',
+          projectId,
+          status: 'modified',
+        },
+      })
+
+    expect(xlsxRes.status).toBe(200)
+    expect(xlsxRes.headers['content-type']).toContain('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    expect(xlsxRes.headers['content-disposition']).toContain('reconciliation-case-2026-06-01_2026-06-30.xlsx')
+    const body = Buffer.isBuffer(xlsxRes.body) ? xlsxRes.body : Buffer.from(xlsxRes.text || '')
+    expect(body.subarray(0, 2).toString('utf8')).toBe('PK')
+
+    const invalidFormatRes = await request(app)
+      .post('/api/v1/reconciliation/export')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ tab: 'case', format: 'pdf' })
+
+    expect(invalidFormatRes.status).toBe(400)
+    expect(invalidFormatRes.body.success).toBe(false)
+    expect(invalidFormatRes.body.error.code).toBe('INVALID_PARAMETER')
+  })
+
   it('对账汇总、物料汇总、导出和审计必须拒绝非法日期范围', async () => {
     const summaryRes = await request(app)
       .get('/api/v1/reconciliation/summary')
