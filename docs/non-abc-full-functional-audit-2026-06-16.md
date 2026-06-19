@@ -13851,7 +13851,51 @@ git diff --check
 - 本批只修复出库成功后的病例项目回填，不扩展 LIS 导入的人工确认工作流。
 - 后续继续复核非废弃成本相关和实验运营页面，重点检查病例、项目、BOM、出库和库存快照是否使用历史事实，而不是后续编辑污染后的当前值。
 
-## 二百八十二、结论
+## 二百八十二、批次 327: 物料成本报表不得扣减取消退库
+
+**发现的问题**
+
+- 本轮继续复核非废弃成本展示页面，聚焦“报表净额只反映真实生效库存写操作”不变量。
+- `GET /reports/cost-by-material` 会用相同时间范围内的退库成本冲减出库成本，但退库汇总只排除 `is_deleted=1`，没有排除 `status='cancelled'`。
+- 取消退库不应再代表真实扣减；若继续冲减物料成本报表，会低估物料实际出库成本，影响物料成本分析、库存成本解释和 ABC 输入侧异常判断。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/reports-v1.1.ts`
+  - 物料成本报表的退库汇总条件改为 `is_deleted = 0 AND status != 'cancelled'`。
+  - 保持现有净成本口径：`出库成本 - 未取消且未删除退库成本`，且不低于 0。
+- `后端代码/server/tests/integration/reports-cost-by-material.test.ts`
+  - 新增 `REPORT-MATERIAL-003` 红绿测试：同期间出库 300，有效退库 80、取消退库 50、已删除退库 30，物料成本报表必须显示净额 220。
+
+**ABC 影响评估**
+
+- 退库、出库和物料成本报表是库存成本解释和 ABC 输入侧异常判断的上游数据。
+- 本批只修改非 ABC 物料成本报表接口和报表测试，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 已补跑物料成本报表、退库、库存一致性和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+- 已确认本批 diff 不涉及 `前端代码/deprecated/legacy-cost-analysis/`、`后端代码/server/src/routes/abc-v1.1.ts`、`后端代码/server/src/utils/abc-calculator.test.ts` 或前端 ABC 页面。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/integration/reports-cost-by-material.test.ts -t "REPORT-MATERIAL-003"` 修复前失败：实际 `totalCost=170`，期望 `220`。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/integration/reports-cost-by-material.test.ts -t "REPORT-MATERIAL-003"` 通过，1 test passed / 2 skipped。
+  - `后端代码/server npm test -- --run tests/integration/reports-cost-by-material.test.ts tests/returns.test.ts tests/inventory-consistency.test.ts tests/integration/cost-exceptions.test.ts` 通过，4 files / 29 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。`cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr 为既有异常台账测试场景，最终通过。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+- 浏览器复核:
+  - 本批是物料成本报表 API 口径修复，不新增或改变页面组件和弹窗交互；页面级 Playwright 不是本批必要门槛。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 当前物料成本报表仍只展示有出库成本的物料；仅有退库但无同期间出库的物料不会单独以负数展示，避免在现有报表结构中引入负成本语义。
+- 后续继续复核非废弃成本相关和实验运营页面，重点检查取消、删除、恢复等业务状态是否被报表误计入真实成本。
+
+## 二百八十三、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

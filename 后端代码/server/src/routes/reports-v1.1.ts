@@ -93,7 +93,7 @@ router.get('/cost-by-material', (req, res) => {
     `).all(...params) as any[]
 
     // 2. 退库成本（相同时间范围）
-    let returnWhere = 'is_deleted = 0'
+    let returnWhere = "is_deleted = 0 AND status != 'cancelled'"
     const returnParams: any[] = []
     if (startDate) { returnWhere += ' AND created_at >= ?'; returnParams.push(startDate) }
     if (endDate) { returnWhere += ' AND created_at <= ?'; returnParams.push(`${endDate}T23:59:59`) }

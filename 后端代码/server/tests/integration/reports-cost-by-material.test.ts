@@ -106,4 +106,53 @@ describe('集成测试：非ABC物料成本报表', () => {
       sampleCount: 4,
     })
   })
+
+  it('REPORT-MATERIAL-003: 物料成本报表只扣减未取消且未删除退库成本', async () => {
+    const suffix = Date.now()
+    const categoryId = `report-material-return-category-${suffix}`
+    const materialId = `report-material-return-${suffix}`
+    const outboundId = `report-material-return-outbound-${suffix}`
+    const outboundItemId = `report-material-return-item-${suffix}`
+
+    db.prepare('INSERT INTO material_categories (id, code, name, level) VALUES (?, ?, ?, 1)')
+      .run(categoryId, `REPORT-MAT-RET-CAT-${suffix}`, '报表退库物料分类')
+    db.prepare(`
+      INSERT INTO materials (id, code, name, spec, unit, category_id, price, status, is_deleted)
+      VALUES (?, ?, '扣减退库物料', '5ml', '瓶', ?, 50, 1, 0)
+    `).run(materialId, `REPORT-MAT-RET-${suffix}`, categoryId)
+    db.prepare(`
+      INSERT INTO outbound_records (id, outbound_no, type, total_cost, sample_count, operator, status, created_at, is_deleted)
+      VALUES (?, ?, 'normal', 300, 1, 'admin', 'completed', '2033-02-10T09:00:00', 0)
+    `).run(outboundId, `REPORT-MAT-RET-OUT-${suffix}`)
+    db.prepare(`
+      INSERT INTO outbound_items (id, outbound_id, material_id, quantity, unit, unit_cost, total_cost)
+      VALUES (?, ?, ?, 6, '瓶', 50, 300)
+    `).run(outboundItemId, outboundId, materialId)
+    db.prepare(`
+      INSERT INTO return_records (
+        id, return_no, material_id, quantity, unit_cost, total_cost,
+        reason, operator, status, created_at, is_deleted
+      )
+      VALUES
+        (?, ?, ?, 1.6, 50, 80, '有效退库', 'admin', 'completed', '2033-02-11T09:00:00', 0),
+        (?, ?, ?, 1, 50, 50, '取消退库', 'admin', 'cancelled', '2033-02-12T09:00:00', 0),
+        (?, ?, ?, 0.6, 50, 30, '已删除退库', 'admin', 'completed', '2033-02-13T09:00:00', 1)
+    `).run(
+      `report-mat-return-ok-${suffix}`, `REPORT-MAT-RET-OK-${suffix}`, materialId,
+      `report-mat-return-cancel-${suffix}`, `REPORT-MAT-RET-CANCEL-${suffix}`, materialId,
+      `report-mat-return-deleted-${suffix}`, `REPORT-MAT-RET-DELETED-${suffix}`, materialId,
+    )
+
+    const res = await request(app)
+      .get('/api/v1/reports/cost-by-material?startDate=2033-02-01&endDate=2033-02-28')
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(200)
+    const materialCost = res.body.data.materials.find((row: any) => row.id === materialId)
+    expect(materialCost).toMatchObject({
+      id: materialId,
+      consumption: 6,
+      totalCost: 220,
+    })
+  })
 })
