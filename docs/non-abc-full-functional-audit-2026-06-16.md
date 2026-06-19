@@ -16871,7 +16871,63 @@ git diff --check
 
 - 预算管理编辑、月份筛选和执行率口径已阶段性保护；下一批可继续转入成本差异分析的筛选、导出和异常态，或复核质量成本录入字段与后端 category/subType 契约是否一致，不在本批继续扩展。
 
-## 三百四十四、结论
+## 三百四十四、批次 389: 质量成本录入必须保留成本类型和子类型契约
+
+**发现的问题**
+
+- 本轮继续复核非废弃成本读写面中的质量成本，聚焦“录入字段必须真实落库并能被列表/汇总按同一业务口径读回”不变量。
+- 前端质量成本录入提交 `costType` 和 `subType`，列表也依赖 `costType/subType` 显示 `预防成本 / 培训费用` 等业务标签。
+- 后端旧 `POST /api/v1/abc/quality-costs` 只读取 `category/amount/description`，会丢弃前端提交的 `costType/subType`。
+- 后端旧 `GET /api/v1/abc/quality-costs` 只返回 `category`，导致真实接口数据无法满足前端列表和搜索所需字段。
+- 后端旧 `GET /api/v1/abc/quality-costs/summary` 只返回 `totalAmount`，而前端汇总卡片需要 `totalQualityCost/preventionCost/appraisalCost/internalFailureCost/externalFailureCost`。
+- 后端旧创建接口没有拦截负数金额，API 绕过前端后可创建负数质量成本。
+
+**已完成修复**
+
+- `后端代码/server/src/database/DatabaseManager.ts`
+  - `quality_costs` 基础表新增 `cost_type` 和 `sub_type` 字段。
+  - 使用现有 `ensureColumn` 为旧库兼容补列，避免破坏性迁移。
+- `后端代码/server/src/routes/abc-v1.1.ts`
+  - 新增 `qualityCostPayload`，统一返回 `yearMonth/costType/subType/amount/description/createdAt`。
+  - `GET /abc/quality-costs` 改为质量成本专用查询，支持 `yearMonth` 精确筛选，并返回前端需要的 `costType/subType`。
+  - `POST /abc/quality-costs` 接收并保存 `costType/subType`；兼容旧 `category` 入参，同时把 `category` 保留为 `costType` 以照顾历史数据。
+  - `POST /abc/quality-costs` 增加金额非负校验，负数返回 `422 VALIDATION_ERROR`。
+  - `GET /abc/quality-costs/summary` 改为按 `cost_type/category` 汇总四类质量成本，返回前端卡片需要的完整字段。
+- `后端代码/server/tests/integration/abc-quality-costs.test.ts`
+  - 新增后端集成红绿测试：创建 `prevention/training` 质量成本后，列表必须保留成本类型和子类型，汇总必须返回四类成本字段。
+  - 新增负数金额测试，锁定 API 绕过前端时也必须拒绝。
+
+**ABC 影响评估**
+
+- 本批修改的是质量成本台账接口和兼容 schema，属于非废弃成本运营读写面；不改 ABC 成本算法、成本池重算、出库 ABC 明细、成本异常、收费映射、关账或废弃 `/cost-analysis`。
+- 质量成本目前作为独立运营台账展示，不参与库存/BOM/出库成本输入写入；本批主要修复质量成本自身的字段可追溯性和汇总读面。
+- 已补跑全成本和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/integration/abc-quality-costs.test.ts` 按预期失败：列表记录没有 `costType/subType`；负数金额创建返回 201 而不是 422。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/integration/abc-quality-costs.test.ts` 通过，2 tests passed；命令退出码为 0，保留既有 Vite close timeout 提示。
+  - `前端代码 npm test -- --run src/pages/cost/QualityCostAnalysis.test.tsx src/pages/cost/BudgetManagement.test.tsx src/pages/cost/FeeComparison.test.tsx src/pages/cost/CostTrend.test.ts src/pages/cost/SlideCostAnalysis.test.ts src/pages/cost/ProfitabilityAnalysis.test.ts src/pages/cost/PersonnelEfficiency.render.test.tsx src/pages/cost/CostVarianceAnalysis.render.test.tsx` 通过，8 files / 17 tests passed。
+  - `后端代码/server npm test -- --run tests/integration/abc-quality-costs.test.ts tests/integration/abc-budgets.test.ts tests/integration/full-cost.test.ts tests/integration/cost-exceptions.test.ts` 通过，4 files / 18 tests passed；命令退出码为 0，保留既有 Vite close timeout 提示和 `cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis` 无输出，确认未改废弃范围。
+- 浏览器复核:
+  - 使用用户指定 Chrome for Testing 路径启动 headless Playwright，前端 Vite 在 `127.0.0.1:8080`，拦截 `/api/v1/abc/quality-costs`、`/api/v1/abc/quality-costs/summary` 和顶栏 `/api/v1/alerts` 返回 `{ success: true, data }` 形状。
+  - 页面 `/abc/quality-costs` 复核结果：`hasPage=true`、`sentContractPayload=true`、`showsCreatedSubtype=true`、`showsSummary=true`、`consoleErrors=[]`、`badResponses=[]`。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 质量成本录入、列表、汇总字段契约已阶段性保护；下一批可继续复核成本差异分析的筛选/空态/异常态，或进入非废弃告警、审计追踪、季度调整等剩余成本运营页面，不在本批继续扩展。
+
+## 三百四十五、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

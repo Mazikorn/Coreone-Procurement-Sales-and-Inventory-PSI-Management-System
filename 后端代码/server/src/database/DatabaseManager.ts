@@ -808,11 +808,15 @@ export function initializeDatabase(): void {
       id TEXT PRIMARY KEY,
       year_month TEXT NOT NULL,
       category TEXT,
+      cost_type TEXT,
+      sub_type TEXT,
       amount DECIMAL(18, 4) DEFAULT 0,
       description TEXT,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `)
+  ensureColumn('quality_costs', 'cost_type', 'TEXT')
+  ensureColumn('quality_costs', 'sub_type', 'TEXT')
   database.exec(`
     CREATE TABLE IF NOT EXISTS abc_audit_logs (
       id TEXT PRIMARY KEY,

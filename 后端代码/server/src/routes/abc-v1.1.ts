@@ -336,6 +336,16 @@ const budgetPayload = (row: any) => {
   }
 }
 
+const qualityCostPayload = (row: any) => ({
+  id: row.id,
+  yearMonth: row.year_month,
+  costType: row.cost_type || row.category || '',
+  subType: row.sub_type || '',
+  amount: Number(row.amount) || 0,
+  description: row.description,
+  createdAt: row.created_at,
+})
+
 const activityCenterPayload = (row: any) => ({
   id: row.id,
   code: row.code,
@@ -2060,32 +2070,74 @@ router.put('/budgets/:id', requireCostWrite, (req, res) => {
 router.get('/quality-costs/summary', (req, res) => {
   try {
     const yearMonth = req.query.yearMonth || new Date().toISOString().slice(0, 7)
-    const row = getDatabase().prepare('SELECT COALESCE(SUM(amount), 0) as total FROM quality_costs WHERE year_month = ?').get(yearMonth) as any
-    success(res, { yearMonth, totalAmount: row?.total || 0 })
+    const rows = getDatabase().prepare(`
+      SELECT COALESCE(cost_type, category, '') as cost_type, COALESCE(SUM(amount), 0) as total
+      FROM quality_costs
+      WHERE year_month = ?
+      GROUP BY COALESCE(cost_type, category, '')
+    `).all(yearMonth) as any[]
+    const byType = new Map(rows.map(row => [row.cost_type, Number(row.total) || 0]))
+    const preventionCost = byType.get('prevention') || 0
+    const appraisalCost = byType.get('appraisal') || 0
+    const internalFailureCost = byType.get('internal_failure') || 0
+    const externalFailureCost = byType.get('external_failure') || 0
+    success(res, {
+      yearMonth,
+      totalQualityCost: preventionCost + appraisalCost + internalFailureCost + externalFailureCost,
+      preventionCost,
+      appraisalCost,
+      internalFailureCost,
+      externalFailureCost,
+    })
   } catch (err: any) { error(res, err.message) }
 })
 
 router.get('/quality-costs', (req, res) => {
   try {
-    listTable(res, 'quality_costs', row => ({
-      id: row.id,
-      yearMonth: row.year_month,
-      category: row.category,
-      amount: row.amount || 0,
-      description: row.description,
-      createdAt: row.created_at,
-    }), req.query)
+    const { page, pageSize, offset } = pageParams(req.query)
+    const db = getDatabase()
+    const filters: string[] = []
+    const params: any[] = []
+    const yearMonth = String(req.query.yearMonth || '').trim()
+    if (yearMonth) {
+      filters.push('year_month = ?')
+      params.push(yearMonth)
+    }
+    const whereClause = filters.length ? `WHERE ${filters.join(' AND ')}` : ''
+    const total = (db.prepare(`SELECT COUNT(*) as total FROM quality_costs ${whereClause}`).get(...params) as any)?.total || 0
+    const rows = db.prepare(`
+      SELECT *
+      FROM quality_costs
+      ${whereClause}
+      ORDER BY created_at DESC
+      LIMIT ? OFFSET ?
+    `).all(...params, pageSize, offset) as any[]
+    successList(res, rows.map(qualityCostPayload), page, pageSize, total)
   } catch (err: any) { error(res, err.message) }
 })
 
 router.post('/quality-costs', requireCostWrite, (req, res) => {
   try {
     const id = uuidv4()
-    const { yearMonth, category, amount, description } = req.body
+    const { yearMonth, category, costType, subType, amount, description } = req.body
+    const amountValue = Number(amount) || 0
+    if (amountValue < 0) {
+      error(res, '质量成本金额必须为非负数', 'VALIDATION_ERROR', 422)
+      return
+    }
+    const finalCostType = costType || category || null
     getDatabase().prepare(`
-      INSERT INTO quality_costs (id, year_month, category, amount, description)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(id, yearMonth || new Date().toISOString().slice(0, 7), category || null, Number(amount) || 0, description || null)
+      INSERT INTO quality_costs (id, year_month, category, cost_type, sub_type, amount, description)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      yearMonth || new Date().toISOString().slice(0, 7),
+      finalCostType,
+      finalCostType,
+      subType || null,
+      amountValue,
+      description || null,
+    )
     success(res, { id }, 'Created', 201)
   } catch (err: any) { error(res, err.message) }
 })
