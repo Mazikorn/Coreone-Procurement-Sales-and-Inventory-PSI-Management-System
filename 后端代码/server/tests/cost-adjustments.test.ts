@@ -172,4 +172,84 @@ describe('季度成本调整', () => {
       review_reason: '财务复核通过',
     })
   })
+
+  it('调整单列表必须拒绝非法分页、季度、审核状态和不存在成本中心筛选', async () => {
+    const cases = [
+      { query: { page: 'abc', pageSize: '20' }, label: '非法页码' },
+      { query: { page: '1', pageSize: '0' }, label: '非法每页数量' },
+      { query: { yearQuarter: '2026-Q5' }, label: '非法季度' },
+      { query: { reviewStatus: 'done' }, label: '非法审核状态' },
+      { query: { costCenterId: `missing-cost-center-${Date.now()}` }, label: '不存在成本中心' },
+    ]
+
+    for (const item of cases) {
+      const res = await request(app)
+        .get('/api/v1/cost-adjustments')
+        .query(item.query)
+        .set('Authorization', `Bearer ${token}`)
+
+      expect(res.status, item.label).toBe(400)
+      expect(res.body.success, item.label).toBe(false)
+      expect(res.body.error.code, item.label).toBe('INVALID_PARAMETER')
+    }
+  })
+
+  it('调整单列表按季度、成本中心和审核状态筛选时保留正确分页结果', async () => {
+    const suffix = Date.now()
+    const keepCenterId = `cost-adj-list-keep-center-${suffix}`
+    const otherCenterId = `cost-adj-list-other-center-${suffix}`
+    const keepId = `cost-adj-list-keep-${suffix}`
+    const otherQuarterId = `cost-adj-list-other-quarter-${suffix}`
+    const otherStatusId = `cost-adj-list-other-status-${suffix}`
+
+    db.prepare(`
+      INSERT INTO indirect_cost_centers (id, code, name, cost_type, monthly_amount, allocation_base, status)
+      VALUES
+        (?, ?, '列表筛选保留成本中心', 'rent', 1000, 'sample_count', 1),
+        (?, ?, '列表筛选其他成本中心', 'rent', 1000, 'sample_count', 1)
+    `).run(
+      keepCenterId, `COST-ADJ-LIST-KEEP-${suffix}`,
+      otherCenterId, `COST-ADJ-LIST-OTHER-${suffix}`,
+    )
+    db.prepare(`
+      INSERT INTO cost_adjustments (
+        id, cost_center_id, year_quarter, pre_provision_amount, actual_amount,
+        adjustment_amount, adjustment_reason, submitted_by, review_status, created_at
+      )
+      VALUES
+        (?, ?, '2026-Q2', 100, 150, 50, '保留记录', ?, 'pending', '2026-07-01T09:00:00'),
+        (?, ?, '2026-Q1', 100, 150, 50, '季度不同', ?, 'pending', '2026-07-01T10:00:00'),
+        (?, ?, '2026-Q2', 100, 150, 50, '状态不同', ?, 'approved', '2026-07-01T11:00:00')
+    `).run(
+      keepId, keepCenterId, adminUserId,
+      otherQuarterId, keepCenterId, adminUserId,
+      otherStatusId, otherCenterId, adminUserId,
+    )
+
+    const res = await request(app)
+      .get('/api/v1/cost-adjustments')
+      .query({
+        page: 1,
+        pageSize: 10,
+        yearQuarter: '2026-Q2',
+        costCenterId: keepCenterId,
+        reviewStatus: 'pending',
+      })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(200)
+    expect(res.body.success).toBe(true)
+    expect(res.body.data.total).toBe(1)
+    expect(res.body.data.list).toHaveLength(1)
+    expect(res.body.data.list[0]).toMatchObject({
+      id: keepId,
+      costCenterId: keepCenterId,
+      costCenterName: '列表筛选保留成本中心',
+      yearQuarter: '2026-Q2',
+      reviewStatus: 'pending',
+      adjustmentReason: '保留记录',
+    })
+    expect(res.body.data.list.map((item: any) => item.id)).not.toContain(otherQuarterId)
+    expect(res.body.data.list.map((item: any) => item.id)).not.toContain(otherStatusId)
+  })
 })

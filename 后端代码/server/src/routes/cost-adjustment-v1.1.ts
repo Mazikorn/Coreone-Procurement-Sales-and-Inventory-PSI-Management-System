@@ -26,6 +26,15 @@ function parseNonNegativeAmount(value: unknown) {
   return Number.isFinite(amount) && amount >= 0 ? amount : null
 }
 
+function parsePaginationParam(value: unknown, fallback: number, max = 200) {
+  const raw = String(value ?? fallback).trim()
+  if (!/^\d+$/.test(raw)) return null
+  const parsed = Number(raw)
+  return Number.isInteger(parsed) && parsed >= 1 && parsed <= max ? parsed : null
+}
+
+const REVIEW_STATUSES = new Set(['pending', 'approved', 'rejected'])
+
 // 获取季度调整建议（自动计算）
 router.get('/suggestions', authenticateToken, requireRole('admin', 'finance'), (req, res) => {
   try {
@@ -172,15 +181,33 @@ router.get('/', authenticateToken, requireRole('admin', 'finance'), (req, res) =
   try {
     const { page = 1, pageSize = 20, yearQuarter, costCenterId, reviewStatus } = req.query
     const db = getDatabase()
+    const pageNum = parsePaginationParam(page, 1)
+    const safePageSize = parsePaginationParam(pageSize, 20)
+    if (!pageNum || !safePageSize) {
+      error(res, '分页参数无效', 'INVALID_PARAMETER', 400); return
+    }
+    const normalizedYearQuarter = String(yearQuarter || '').trim()
+    const normalizedCostCenterId = String(costCenterId || '').trim()
+    const normalizedReviewStatus = String(reviewStatus || '').trim()
+    if (normalizedYearQuarter && !isValidYearQuarter(normalizedYearQuarter)) {
+      error(res, '季度格式应为 YYYY-QN（如 2026-Q2）', 'INVALID_PARAMETER', 400); return
+    }
+    if (normalizedReviewStatus && !REVIEW_STATUSES.has(normalizedReviewStatus)) {
+      error(res, '审核状态无效', 'INVALID_PARAMETER', 400); return
+    }
+    if (normalizedCostCenterId) {
+      const center = db.prepare('SELECT id FROM indirect_cost_centers WHERE id = ?').get(normalizedCostCenterId)
+      if (!center) { error(res, '成本中心筛选不存在', 'INVALID_PARAMETER', 400); return }
+    }
     let where = '1=1'
     const params: any[] = []
 
-    if (yearQuarter) { where += ' AND ca.year_quarter = ?'; params.push(yearQuarter) }
-    if (costCenterId) { where += ' AND ca.cost_center_id = ?'; params.push(costCenterId) }
-    if (reviewStatus) { where += ' AND ca.review_status = ?'; params.push(reviewStatus) }
+    if (normalizedYearQuarter) { where += ' AND ca.year_quarter = ?'; params.push(normalizedYearQuarter) }
+    if (normalizedCostCenterId) { where += ' AND ca.cost_center_id = ?'; params.push(normalizedCostCenterId) }
+    if (normalizedReviewStatus) { where += ' AND ca.review_status = ?'; params.push(normalizedReviewStatus) }
 
     const count = (db.prepare(`SELECT COUNT(*) as total FROM cost_adjustments ca WHERE ${where}`).get(...params) as any)?.total || 0
-    const offset = (Number(page) - 1) * Number(pageSize)
+    const offset = (pageNum - 1) * safePageSize
     const list = db.prepare(`
       SELECT ca.*, icc.name as cost_center_name, icc.code as cost_center_code,
         u1.real_name as submitted_by_name, u2.real_name as reviewed_by_name
@@ -191,7 +218,7 @@ router.get('/', authenticateToken, requireRole('admin', 'finance'), (req, res) =
       WHERE ${where}
       ORDER BY ca.created_at DESC
       LIMIT ? OFFSET ?
-    `).all(...params, Number(pageSize), offset) as any[]
+    `).all(...params, safePageSize, offset) as any[]
 
     successList(res, list.map((r: any) => ({
       id: r.id,
@@ -212,7 +239,7 @@ router.get('/', authenticateToken, requireRole('admin', 'finance'), (req, res) =
       reviewedAt: r.reviewed_at,
       reviewReason: r.review_reason,
       createdAt: r.created_at,
-    })), Number(page), Number(pageSize), count)
+    })), pageNum, safePageSize, count)
   } catch (err: any) { error(res, err.message) }
 })
 
