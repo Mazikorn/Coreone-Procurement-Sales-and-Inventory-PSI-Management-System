@@ -2,6 +2,7 @@ import { CheckCircle2, Eye, Search, Trash2 } from 'lucide-react'
 import { Pagination } from '@/components/ui/Pagination'
 import type {
   AlertItem,
+  AlertLevelFilter,
   AlertStatusFilter,
   AlertTypeFilter,
   FilterState,
@@ -40,6 +41,13 @@ const typeOptions: Array<{ value: AlertTypeFilter; label: string }> = [
   { value: 'low-stock', label: '库存不足' },
   { value: 'expiry', label: '即将过期' },
   { value: 'stagnant', label: '消耗异常' },
+]
+
+const levelOptions: Array<{ value: AlertLevelFilter; label: string }> = [
+  { value: 'all', label: '全部级别' },
+  { value: 'urgent', label: '紧急' },
+  { value: 'important', label: '重要' },
+  { value: 'normal', label: '一般' },
 ]
 
 const quickFilters: Array<{ value: AlertStatusFilter; label: string }> = [
@@ -98,6 +106,15 @@ export function AlertTable({
               className="h-10 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10"
             >
               {typeOptions.map(option => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+            <select
+              value={filter.level}
+              onChange={(e) => onFilterChange({ ...filter, level: e.target.value as AlertLevelFilter })}
+              className="h-10 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10"
+            >
+              {levelOptions.map(option => (
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </select>

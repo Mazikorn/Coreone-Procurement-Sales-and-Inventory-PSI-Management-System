@@ -11836,7 +11836,64 @@ git diff --check
 
 - AL-05 的“全部”显式 `quick=all`、AL-09 类型筛选、AL-10 级别筛选、AL-11 重置筛选，以及 AL-21 翻页 URL/服务端分页仍需按独立不变量继续复核；本批不扩展到这些筛选项。
 
-## 二百四十一、结论
+## 二百四十一、批次 286: 预警类型和级别筛选必须同步规范 URL
+
+**发现的问题**
+
+- `alerts.md` 的 AL-09 要求类型筛选更新 URL：`?type=stock_low|expiring|consumption_anomaly`，并在筛选后重置分页。
+- `alerts.md` 的 AL-10 要求级别筛选更新 URL：`?level=urgent|important|normal`，并在筛选后重置分页。
+- 当前预警中心前端只支持内部类型值 `low-stock/expiry/stagnant`，URL 也直接写内部值；当用户按规范 URL 打开 `?type=stock_low` 时，会把规范值直接传给后端，导致筛选口径错误。
+- 页面没有级别筛选下拉，后端 `GET /alerts` 也没有处理 `level` 参数，无法完成“紧急/重要/一般”筛选。
+
+**已完成修复**
+
+- `前端代码/src/pages/alerts/hooks/useAlertsPage.ts`
+  - 新增类型 URL 映射：`stock_low -> low-stock`、`expiring -> expiry`、`consumption_anomaly -> stagnant`，URL 写回时使用规范值。
+  - 新增级别筛选状态：`urgent/important/normal`，请求后端时映射为现有 `danger/warning/info`。
+  - 类型/级别筛选都参与列表请求、统计请求、URL 同步和选择清空。
+- `前端代码/src/pages/alerts/components/AlertTable.tsx`
+  - 新增“全部级别/紧急/重要/一般”下拉，沿用现有筛选变更后重置分页路径。
+- `后端代码/server/src/routes/alerts-v1.1.ts`
+  - `GET /alerts` 和 `/alerts/stats` 共用的 where 构造增加类型规范值兼容。
+  - 增加 `level` 过滤，并兼容规范值 `urgent/important/normal` 到现有数据值 `danger/warning/info`。
+- `后端代码/server/tests/alerts.test.ts`
+  - 新增 `ALERT-013`，插入 `danger` 和 `warning` 两条预警，验证 `level=urgent` 只返回 `danger` 记录。
+- `前端代码/src/pages/alerts/hooks/useAlertsPage.test.ts`
+  - 新增 Hook 测试，覆盖规范 URL `type=stock_low&level=urgent` 映射到 API 参数 `type=low-stock&level=danger`。
+  - 新增 Hook 测试，覆盖筛选变更后 URL 写入 `type=expiring&level=important` 并重置旧页码。
+- `前端代码/e2e/alerts.spec.ts`
+  - 新增 `ALERT-FILTER-09`，真实浏览器选择类型和级别后确认 URL 使用规范值，实际 API 请求使用现有后端值。
+
+**ABC 影响评估**
+
+- 本批只修改预警列表的只读筛选和后端查询条件，不修改 ABC 本体、库存写入、出库、BOM、成本异常、成本公式或收费映射。
+- 预警处理、忽略、批量处理、扫描生成等写操作未改变。
+- 补跑 ABC 输入侧回归，确认病例 BOM 阶梯收费和非最新出库取消后的 ABC 明细重排仍通过。
+- 未触碰废弃 `/cost-analysis` 或 `前端代码/deprecated/legacy-cost-analysis/`。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/alerts/hooks/useAlertsPage.test.ts -t "type and level"` 修复前失败：`type=stock_low` 被直接传给 API，缺少 `level` 参数，URL 写回为内部值 `type=expiry`。
+  - `后端代码/server npm test -- --run tests/alerts.test.ts -t "规范级别筛选"` 修复前失败：`level=urgent` 没有过滤，warning 记录也被返回。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npm run test:e2e -- alerts.spec.ts -g "ALERT-FILTER-09"` 修复前页面没有级别下拉，且请求/URL 无法满足规范映射。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/alerts/hooks/useAlertsPage.test.ts` 通过，6 tests passed。
+  - `后端代码/server npm test -- --run tests/alerts.test.ts` 通过，14 tests passed；Vitest 结束阶段仍输出既有 close timeout 提示，但测试断言全部通过且未残留 3001 监听。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npm run test:e2e -- alerts.spec.ts -g "ALERT-FILTER-09"` 通过，真实浏览器确认下拉、URL 和 API 参数。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `后端代码/server npm run build` 通过。
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/cost-exceptions.test.ts -t "同一病例多个BOM|取消非最新病例"` 通过，2 tests passed / 9 skipped。
+  - `git diff --check` 通过。
+  - `git diff --name-only | rg "deprecated/legacy-cost-analysis|前端代码/deprecated|/cost-analysis"` 无匹配，确认未改废弃范围。
+- 浏览器复核:
+  - 使用用户已验证的 Chrome for Testing 路径完成 headless Playwright 复核；验证重点为类型/级别下拉真实交互、规范 URL 输出、映射后的 API 请求参数和分页重置。
+
+**后续风险**
+
+- AL-11 重置筛选和 AL-21 翻页 URL/服务端分页仍需独立批次复核；本批不扩大到重置按钮和翻页行为。
+
+## 二百四十二、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

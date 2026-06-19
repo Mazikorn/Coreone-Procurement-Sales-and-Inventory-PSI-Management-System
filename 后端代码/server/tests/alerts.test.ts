@@ -349,6 +349,32 @@ describe('预警处理', () => {
     expect(afterExpiry).toMatchObject(beforeExpiry)
   })
 
+  it('ALERT-013: 列表支持按规范级别筛选 urgent 预警', async () => {
+    const stamp = Date.now()
+    const dangerId = `alert-level-danger-${stamp}`
+    const warningId = `alert-level-warning-${stamp}`
+
+    db.prepare(`
+      INSERT INTO alerts (id, type, level, material_id, material_name, current_stock, threshold, message, status)
+      VALUES
+        (?, 'expiry', 'danger', ?, ?, 1, 5, ?, 'pending'),
+        (?, 'low-stock', 'warning', ?, ?, 1, 5, ?, 'pending')
+    `).run(
+      dangerId, `mat-alert-danger-${stamp}`, `级别筛选紧急-${stamp}`, `紧急预警-${stamp}`,
+      warningId, `mat-alert-warning-${stamp}`, `级别筛选重要-${stamp}`, `重要预警-${stamp}`,
+    )
+
+    const res = await request(app)
+      .get('/api/v1/alerts')
+      .query({ level: 'urgent', keyword: `级别筛选` })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(200)
+    const ids = res.body.data.list.map((alert: any) => alert.id)
+    expect(ids).toContain(dangerId)
+    expect(ids).not.toContain(warningId)
+  })
+
   it('ALERT-009: 非处理角色不能处理、忽略、批量处理或手动扫描预警', async () => {
     const techToken = await loginRole(app, 'zhangwei')
     const firstId = seedAlert(db, `forbidden-a-${Date.now()}`)

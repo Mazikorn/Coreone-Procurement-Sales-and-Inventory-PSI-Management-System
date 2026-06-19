@@ -42,12 +42,29 @@ function appendStatusFilter(where: string, params: any[], status: unknown) {
   return `${where} AND status IN (${placeholders})`
 }
 
+function normalizeAlertTypeFilter(value: unknown) {
+  const raw = String(value || '').trim()
+  if (raw === 'stock_low') return 'low-stock'
+  if (raw === 'expiring') return 'expiry'
+  if (raw === 'consumption_anomaly') return 'stagnant'
+  return raw
+}
+
+function normalizeAlertLevelFilter(value: unknown) {
+  const raw = String(value || '').trim()
+  if (raw === 'urgent') return 'danger'
+  if (raw === 'important') return 'warning'
+  if (raw === 'normal') return 'info'
+  return raw
+}
+
 function buildAlertWhere(query: any) {
-  const { status, type, keyword, startDate, endDate } = query
+  const { status, type, level, keyword, startDate, endDate } = query
   let where = '1=1'
   const params: any[] = []
   where = appendStatusFilter(where, params, status)
-  if (type) { where += ' AND type = ?'; params.push(type) }
+  if (type) { where += ' AND type = ?'; params.push(normalizeAlertTypeFilter(type)) }
+  if (level) { where += ' AND level = ?'; params.push(normalizeAlertLevelFilter(level)) }
   if (keyword) {
     where += ' AND (material_name LIKE ? OR message LIKE ? OR id LIKE ?)'
     const like = `%${keyword}%`

@@ -72,4 +72,37 @@ describe('buildAlertHandleRemark', () => {
     expect(window.location.search).not.toContain('quickFilter=')
     expect(window.location.search).not.toContain('page=4')
   })
+
+  it('reads spec type and level URL parameters and maps them to existing API values', async () => {
+    window.history.replaceState(null, '', '/alerts?type=stock_low&level=urgent&page=5')
+
+    renderHook(() => useAlertsPage())
+
+    await waitFor(() => expect(alertsApi.getList).toHaveBeenCalledWith(expect.objectContaining({
+      page: 5,
+      pageSize: 10,
+      type: 'low-stock',
+      level: 'danger',
+    })))
+  })
+
+  it('writes type and level filter changes to spec URL parameters and resets pagination', async () => {
+    window.history.replaceState(null, '', '/alerts?page=4')
+
+    const { result } = renderHook(() => useAlertsPage())
+    await waitFor(() => expect(alertsApi.getList).toHaveBeenCalled())
+
+    act(() => {
+      result.current.setFilter({
+        ...result.current.filter,
+        type: 'expiry',
+        level: 'important',
+      } as any)
+      result.current.setPage(1)
+    })
+
+    await waitFor(() => expect(window.location.search).toContain('type=expiring'))
+    expect(window.location.search).toContain('level=important')
+    expect(window.location.search).not.toContain('page=4')
+  })
 })

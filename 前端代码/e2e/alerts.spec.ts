@@ -402,6 +402,27 @@ test.describe('预警中心 -> 按状态筛选', () => {
     expect(new URL(page.url()).searchParams.get('page')).toBeNull()
   })
 
+  test('ALERT-FILTER-09. 类型和级别筛选同步规范URL并映射到API参数', async ({ page }) => {
+    await loginAs(page, 'admin')
+    await page.goto(`${FE_BASE}/alerts?page=4&type=stock_low&level=urgent`, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByRole('heading', { name: '预警中心' })).toBeVisible({ timeout: 15000 })
+
+    const apiRequest = page.waitForRequest(request => {
+      const url = new URL(request.url())
+      return url.pathname.endsWith('/api/v1/alerts')
+        && url.searchParams.get('type') === 'expiry'
+        && url.searchParams.get('level') === 'warning'
+    })
+    await page.locator('select').nth(0).selectOption('expiry')
+    await page.locator('select').nth(1).selectOption('important')
+    await apiRequest
+
+    const url = new URL(page.url())
+    expect(url.searchParams.get('type')).toBe('expiring')
+    expect(url.searchParams.get('level')).toBe('important')
+    expect(url.searchParams.get('page')).toBeNull()
+  })
+
   test('ALERT-STATUS-01. 正常用例：pending筛选', async () => {
     const token = await apiLogin('admin')
     const res = await apiFetch(token, 'GET', '/alerts?status=pending')

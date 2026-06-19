@@ -14,11 +14,15 @@ export interface AlertItem extends Alert {
 
 export type AlertTypeFilter = 'all' | 'low-stock' | 'expiry' | 'stagnant'
 export type AlertStatusFilter = 'all' | 'pending' | 'processed' | 'ignored' | 'history'
+export type AlertLevelFilter = 'all' | 'urgent' | 'important' | 'normal'
 type AlertQuickUrlValue = AlertStatusFilter | 'handled'
+type AlertTypeUrlValue = AlertTypeFilter | 'stock_low' | 'expiring' | 'consumption_anomaly'
+type AlertApiLevelValue = 'danger' | 'warning' | 'info'
 
 export interface FilterState {
   keyword: string
   type: AlertTypeFilter
+  level: AlertLevelFilter
   status: AlertStatusFilter
   dateRange: [string, string]
 }
@@ -71,6 +75,36 @@ function toQuickUrlValue(value: AlertStatusFilter): AlertQuickUrlValue {
   return value === 'processed' ? 'handled' : value
 }
 
+function normalizeTypeFilterValue(value: string): AlertTypeFilter {
+  if (value === 'stock_low') return 'low-stock'
+  if (value === 'expiring') return 'expiry'
+  if (value === 'consumption_anomaly') return 'stagnant'
+  if (value === 'low-stock' || value === 'expiry' || value === 'stagnant' || value === 'all') return value
+  return 'all'
+}
+
+function toTypeUrlValue(value: AlertTypeFilter): AlertTypeUrlValue {
+  if (value === 'low-stock') return 'stock_low'
+  if (value === 'expiry') return 'expiring'
+  if (value === 'stagnant') return 'consumption_anomaly'
+  return value
+}
+
+function normalizeLevelFilterValue(value: string): AlertLevelFilter {
+  if (value === 'danger') return 'urgent'
+  if (value === 'warning') return 'important'
+  if (value === 'info') return 'normal'
+  if (value === 'urgent' || value === 'important' || value === 'normal' || value === 'all') return value
+  return 'all'
+}
+
+function toApiLevelValue(value: AlertLevelFilter): AlertApiLevelValue | undefined {
+  if (value === 'urgent') return 'danger'
+  if (value === 'important') return 'warning'
+  if (value === 'normal') return 'info'
+  return undefined
+}
+
 export function useAlertsPage() {
   const url = useUrlParams()
 
@@ -83,7 +117,8 @@ export function useAlertsPage() {
   const [modal, setModal] = useState<ModalState>({ type: null, alert: null })
   const [filter, setFilter] = useState<FilterState>({
     keyword: url.get('keyword', ''),
-    type: (url.get('type', 'all') as AlertTypeFilter) || 'all',
+    type: normalizeTypeFilterValue(url.get('type', 'all')),
+    level: normalizeLevelFilterValue(url.get('level', 'all')),
     status: (url.get('status', 'all') as AlertStatusFilter) || 'all',
     dateRange: [url.get('startDate', ''), url.get('endDate', '')] as [string, string],
   })
@@ -116,6 +151,7 @@ export function useAlertsPage() {
     ? normalizeStatus(quickFilter)
     : normalizeStatus(filter.status)
   const effectiveType = filter.type !== 'all' ? filter.type : undefined
+  const effectiveLevel = toApiLevelValue(filter.level)
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedKeyword(filter.keyword), 300)
@@ -128,6 +164,7 @@ export function useAlertsPage() {
         ...params,
         keyword: debouncedKeyword || undefined,
         type: effectiveType,
+        level: effectiveLevel,
         status: effectiveStatus,
         startDate: filter.dateRange[0] || undefined,
         endDate: filter.dateRange[1] || undefined,
@@ -140,6 +177,7 @@ export function useAlertsPage() {
     [
       debouncedKeyword,
       filter.type,
+      filter.level,
       filter.status,
       filter.dateRange[0],
       filter.dateRange[1],
@@ -164,6 +202,7 @@ export function useAlertsPage() {
     deps: [
       debouncedKeyword,
       filter.type,
+      filter.level,
       filter.status,
       filter.dateRange[0],
       filter.dateRange[1],
@@ -182,20 +221,22 @@ export function useAlertsPage() {
       page: page > 1 ? page : null,
       pageSize: pageSize !== 10 ? pageSize : null,
       keyword: filter.keyword || null,
-      type: filter.type !== 'all' ? filter.type : null,
+      type: filter.type !== 'all' ? toTypeUrlValue(filter.type) : null,
+      level: filter.level !== 'all' ? filter.level : null,
       status: filter.status !== 'all' ? filter.status : null,
       quick: quickFilter !== 'all' ? toQuickUrlValue(quickFilter) : null,
       quickFilter: null,
       startDate: filter.dateRange[0] || null,
       endDate: filter.dateRange[1] || null,
     })
-  }, [page, pageSize, filter.keyword, filter.type, filter.status, filter.dateRange, quickFilter])
+  }, [page, pageSize, filter.keyword, filter.type, filter.level, filter.status, filter.dateRange, quickFilter])
 
   const loadStats = useCallback(async () => {
     try {
       const res: any = await alertsApi.getStats({
         keyword: debouncedKeyword || undefined,
         type: effectiveType,
+        level: effectiveLevel,
         status: effectiveStatus,
         startDate: filter.dateRange[0] || undefined,
         endDate: filter.dateRange[1] || undefined,
@@ -215,6 +256,7 @@ export function useAlertsPage() {
   }, [
     debouncedKeyword,
     filter.type,
+    filter.level,
     filter.status,
     filter.dateRange[0],
     filter.dateRange[1],
@@ -228,7 +270,7 @@ export function useAlertsPage() {
   // 清空选择当筛选/分页变化时
   useEffect(() => {
     setSelectedIds(new Set())
-  }, [page, pageSize, filter.keyword, filter.type, filter.status, filter.dateRange, quickFilter])
+  }, [page, pageSize, filter.keyword, filter.type, filter.level, filter.status, filter.dateRange, quickFilter])
 
   const handleSelect = (id: string) => {
     const next = new Set(selectedIds)
