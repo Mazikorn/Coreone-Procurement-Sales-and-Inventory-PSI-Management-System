@@ -12039,10 +12039,56 @@ git diff --check
 
 **后续风险**
 
-- MAT-09~12 的关键词、分类、供应商筛选 URL 与重置行为仍可继续按独立批次复核；本批只处理快速筛选 `quick` 不变量。
+- MAT-09~12 的关键词搜索 300ms 防抖已在批次 290 承接；分类、供应商筛选 URL 与重置行为仍可继续按独立批次复核。
 - MAT-31 物料分页 URL/服务端分页仍需结合本轮共享 `usePagination` 修复继续做页面级证据；本批不扩大到物料分页控件。
 
-## 二百四十五、结论
+## 二百四十五、批次 290: 物料搜索必须 300ms 防抖并同步 URL
+
+**发现的问题**
+
+- `materials.md` 的 MAT-09~12 要求关键词筛选输入支持 300ms 防抖，并与 URL 参数同步。
+- 当前物料页已能把搜索框输入写入 `keyword` URL，但 `useMaterialsPage` 直接把原始 `keyword` 作为列表和统计查询依赖。
+- 用户快速连续输入时，列表 API 会在每次输入后立即触发，无法满足 300ms 防抖要求；旧 `MAT-SEARCH-03` 只输入不校验请求和页面结果，不能证明真实副作用正确。
+
+**已完成修复**
+
+- `前端代码/src/pages/master/hooks/useMaterialsPage.tsx`
+  - 新增 `debouncedKeyword` 状态，列表查询、统计查询和分页依赖统一使用防抖后的关键词。
+  - 搜索框输入仍即时同步规范 URL `keyword`，保证可分享地址和刷新恢复不滞后。
+  - 点击“查询”会立即刷新防抖关键词并回到第 1 页；点击“重置”会同时清空即时关键词和防抖关键词。
+- `前端代码/src/pages/master/hooks/useMaterialsPage.test.tsx`
+  - 新增 Hook 红绿测试，覆盖输入 `Ki-67` 后 URL 立即同步，但 300ms 内不调用列表 API，满 300ms 后只以最终关键词查询。
+- `前端代码/e2e/materials.spec.ts`
+  - 将 `MAT-SEARCH-03` 从浅层等待升级为真实浏览器验收：快速连续输入 `a/ab/abc`，确认 URL 为 `keyword=abc`，页面渲染最终搜索结果，列表接口只收到最终关键词 `abc`。
+
+**ABC 影响评估**
+
+- 本批只修改物料页只读搜索节流和 URL 同步，不修改物料事实字段、库存、入库、出库、BOM、成本异常、ABC API 或 ABC 本体。
+- 物料是 ABC 上游主数据，但本批不改变任何写入副作用，也不改变库存数量、批次成本或出库扣减。
+- 因不触碰 ABC 上游写入链，本批不补跑 ABC 输入侧成本回归；通过物料 hook、共享分页 hook、材料页 E2E 和前端构建验证读路径。
+- 未触碰废弃 `/cost-analysis` 或 `前端代码/deprecated/legacy-cost-analysis/`。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/master/hooks/useMaterialsPage.test.tsx -t "debounces keyword"` 修复前失败：输入 `Ki-67` 后 `materialApi.getList` 立即被调用，未等待 300ms。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/master/hooks/useMaterialsPage.test.tsx -t "debounces keyword"` 通过，1 test passed / 2 skipped。
+  - `前端代码 npm test -- --run src/pages/master/hooks/useMaterialsPage.test.tsx src/hooks/usePagination.test.ts` 通过，2 files / 16 tests passed。
+  - 首次未设置 `PLAYWRIGHT_CHROMIUM_PATH` 的 Playwright 命令失败于本机缺失默认 `chromium_headless_shell`，不作为功能失败结论。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/materials.spec.ts -g "MAT-SEARCH-03|MAT-LIST-11|MAT-PAGE-01" --project=chromium` 通过，3 tests passed。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only | rg "deprecated/legacy-cost-analysis|前端代码/deprecated|/cost-analysis"` 无匹配，确认未改废弃范围。
+- 浏览器复核:
+  - 使用用户已验证的 Chrome for Testing 路径完成 headless Playwright 复核；验证重点为快速连续输入后的最终 URL、最终列表渲染、列表接口关键词唯一性，以及快速筛选/分页回归。
+
+**后续风险**
+
+- MAT-09~12 的关键词搜索防抖已收口；分类、供应商筛选 URL 与重置行为仍可继续按独立批次复核。
+- MAT-31 物料分页 URL/服务端分页仍需结合本轮共享 `usePagination` 修复继续做页面级证据；本批不扩大到物料分页控件。
+
+## 二百四十六、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

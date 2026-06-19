@@ -68,6 +68,7 @@ export function useMaterialsPage() {
   const initialQuickFilter = normalizeQuickFilter(get('quick', get('status', 'all')))
 
   const [keyword, setKeyword] = useState(get('keyword') || '')
+  const [debouncedKeyword, setDebouncedKeyword] = useState(get('keyword') || '')
   const [categoryId, setCategoryId] = useState(get('categoryId') || '')
   const [supplierId, setSupplierId] = useState(get('supplierId') || '')
   const [quickFilter, setQuickFilter] = useState<QuickFilter>(initialQuickFilter)
@@ -83,10 +84,15 @@ export function useMaterialsPage() {
     ? getNumber('pageSize', 20)
     : 20
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedKeyword(keyword), 300)
+    return () => window.clearTimeout(timer)
+  }, [keyword])
+
   const fetchFn = useCallback(
     async ({ page, pageSize }: { page: number; pageSize: number }) => {
       const params: any = { page, pageSize }
-      if (keyword) params.keyword = keyword
+      if (debouncedKeyword) params.keyword = debouncedKeyword
       if (categoryId) params.categoryId = categoryId
       if (supplierId) params.supplierId = supplierId
       if (quickFilter === 'active' || quickFilter === 'inactive') {
@@ -98,7 +104,7 @@ export function useMaterialsPage() {
       const res: any = await materialApi.getList(params)
       return { list: res.list || [], pagination: res.pagination }
     },
-    [keyword, categoryId, supplierId, quickFilter]
+    [debouncedKeyword, categoryId, supplierId, quickFilter]
   )
 
   const {
@@ -108,7 +114,7 @@ export function useMaterialsPage() {
     fetchFn,
     initialPage: urlPage,
     initialPageSize: urlPageSize,
-    deps: [keyword, categoryId, supplierId, quickFilter],
+    deps: [debouncedKeyword, categoryId, supplierId, quickFilter],
   })
 
   useEffect(() => {
@@ -200,7 +206,7 @@ export function useMaterialsPage() {
   const loadStats = useCallback(async () => {
     try {
       const params: { keyword?: string; categoryId?: string; supplierId?: string } = {}
-      if (keyword) params.keyword = keyword
+      if (debouncedKeyword) params.keyword = debouncedKeyword
       if (categoryId) params.categoryId = categoryId
       if (supplierId) params.supplierId = supplierId
       const res: any = await materialApi.getStats(params)
@@ -211,7 +217,7 @@ export function useMaterialsPage() {
         lowStock: Number(res?.lowStock || 0),
       })
     } catch (e) { console.error(e) }
-  }, [keyword, categoryId, supplierId])
+  }, [debouncedKeyword, categoryId, supplierId])
 
   useEffect(() => { loadStats() }, [loadStats])
 
@@ -522,10 +528,14 @@ export function useMaterialsPage() {
     </span>
   )
 
-  const handleSearch = () => { setPage(1) }
+  const handleSearch = () => {
+    setDebouncedKeyword(keyword)
+    setPage(1)
+  }
 
   const handleReset = () => {
     setKeyword('')
+    setDebouncedKeyword('')
     setCategoryId('')
     setSupplierId('')
     setQuickFilter('all')

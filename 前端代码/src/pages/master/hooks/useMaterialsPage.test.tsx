@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { categoryApi, materialApi, supplierApi } from '@/api/master'
 import { useMaterialsPage } from './useMaterialsPage'
 
@@ -37,6 +37,10 @@ describe('useMaterialsPage', () => {
     } as any)
   })
 
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   it('reads the spec quick URL parameter and maps low to low stock API params', async () => {
     window.history.replaceState(null, '', '/materials?quick=low&page=4')
 
@@ -65,5 +69,32 @@ describe('useMaterialsPage', () => {
     await waitFor(() => expect(window.location.search).toContain('quick=inactive'))
     expect(window.location.search).not.toContain('status=')
     expect(window.location.search).not.toContain('page=5')
+  })
+
+  it('debounces keyword API requests for 300ms while keeping the URL in sync', async () => {
+    const { result } = renderHook(() => useMaterialsPage())
+    await waitFor(() => expect(materialApi.getList).toHaveBeenCalled())
+    vi.mocked(materialApi.getList).mockClear()
+    vi.useFakeTimers()
+
+    act(() => {
+      result.current.setKeyword('Ki-67')
+    })
+
+    expect(window.location.search).toContain('keyword=Ki-67')
+    expect(materialApi.getList).not.toHaveBeenCalled()
+
+    act(() => {
+      vi.advanceTimersByTime(299)
+    })
+    expect(materialApi.getList).not.toHaveBeenCalled()
+
+    act(() => {
+      vi.advanceTimersByTime(1)
+    })
+    await Promise.resolve()
+    expect(materialApi.getList).toHaveBeenCalledWith(expect.objectContaining({
+      keyword: 'Ki-67',
+    }))
   })
 })

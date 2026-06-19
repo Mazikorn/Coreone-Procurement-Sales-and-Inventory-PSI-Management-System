@@ -332,17 +332,69 @@ test.describe('耗材管理 -> 搜索物料', () => {
     expect(res.status).toBe(200)
     expect(res.data?.data?.list?.length || 0).toBe(0)
   })
-  test('MAT-SEARCH-03. 并发：快速连续输入', async ({ page }) => {
+  test('MAT-SEARCH-03. 并发：快速连续输入只用最终关键词刷新列表', async ({ page }) => {
     await loginAs(page, 'admin')
-    await page.goto(`${FE_BASE}/materials`)
-    await page.waitForTimeout(500)
-    const search = page.locator('input[placeholder*="搜索"], input[type="search"]').first()
-    if (await search.isVisible().catch(() => false)) {
-      await search.fill('a')
-      await search.fill('ab')
-      await search.fill('abc')
-      await page.waitForTimeout(600)
-    }
+    const listRequests: URL[] = []
+
+    await page.route('**/api/v1/materials**', async (route) => {
+      const url = new URL(route.request().url())
+
+      if (url.pathname.endsWith('/materials/stats')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: { total: 1, active: 1, inactive: 0, lowStock: 0 },
+          }),
+        })
+        return
+      }
+
+      if (url.pathname.endsWith('/materials')) {
+        listRequests.push(url)
+        const keyword = url.searchParams.get('keyword') || 'initial'
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              list: [{
+                id: `mock-search-${keyword}`,
+                code: `SEARCH-${keyword}`,
+                name: `搜索Mock物料-${keyword}`,
+                spec: '1ml',
+                unit: '瓶',
+                categoryId: 'cat-mock',
+                supplierId: 'sup-mock',
+                price: 1,
+                stock: 20,
+                minStock: 5,
+                status: 'active',
+              }],
+              pagination: { total: 1, page: Number(url.searchParams.get('page') || '1'), pageSize: Number(url.searchParams.get('pageSize') || '20') },
+            },
+          }),
+        })
+        return
+      }
+
+      await route.fallback()
+    })
+
+    await page.goto(`${FE_BASE}/materials`, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByText('搜索Mock物料-initial')).toBeVisible({ timeout: 15000 })
+
+    listRequests.length = 0
+    const search = page.getByPlaceholder('搜索物料名称、编码')
+    await search.fill('a')
+    await search.fill('ab')
+    await search.fill('abc')
+
+    await expect.poll(() => new URL(page.url()).searchParams.get('keyword')).toBe('abc')
+    await expect(page.getByText('搜索Mock物料-abc')).toBeVisible({ timeout: 3000 })
+    expect(listRequests.map(url => url.searchParams.get('keyword')).filter(Boolean)).toEqual(['abc'])
   })
   test('MAT-SEARCH-04. 异常恢复：搜索时网络断', async ({ page }) => {
     await loginAs(page, 'admin')
