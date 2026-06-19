@@ -685,6 +685,24 @@ test.describe('消耗对账 -> 修正日志', () => {
     const count = await reason.count()
     expect(count).toBeGreaterThanOrEqual(0)
   })
+
+  test('RECON-LOG-07. 正常用例：修正日志按顶部日期范围请求数据', async ({ page }) => {
+    await loginAs(page, 'admin')
+    await page.goto(`${FE_BASE}/reconciliation`)
+    const dateInputs = page.locator('input[type="date"]')
+    await dateInputs.nth(0).fill('2026-06-01')
+    await dateInputs.nth(1).fill('2026-06-30')
+
+    const logsRequest = page.waitForRequest(request => {
+      const url = request.url()
+      return url.includes('/api/v1/reconciliation/logs')
+        && url.includes('startDate=2026-06-01')
+        && url.includes('endDate=2026-06-30')
+    })
+    await page.click('text=修正日志')
+    await logsRequest
+    await expect(page.locator('text=BOM修正记录')).toBeVisible()
+  })
 })
 
 // ── 8. 导入LIS数据 ──

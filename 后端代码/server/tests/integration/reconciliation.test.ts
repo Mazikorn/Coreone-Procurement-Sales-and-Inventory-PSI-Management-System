@@ -525,6 +525,29 @@ describe('成本对账异常闭环', () => {
     expect(afterLogCount).toBe(beforeLogCount)
   })
 
+  it('修正日志列表必须按创建时间范围过滤', async () => {
+    const suffix = Date.now()
+    const insideLogId = `log-range-inside-${suffix}`
+    const outsideLogId = `log-range-outside-${suffix}`
+
+    db.prepare(`
+      INSERT INTO reconciliation_logs (id, type, target_id, target_name, field, old_value, new_value, reason, operator, created_at)
+      VALUES
+        (?, 'bom_fix', ?, '六月修正物料', 'usage_per_sample', '1', '2', '范围内原因', 'admin', '2042-06-15 10:00:00'),
+        (?, 'bom_fix', ?, '五月修正物料', 'usage_per_sample', '1', '3', '范围外原因', 'admin', '2042-05-15 10:00:00')
+    `).run(insideLogId, `target-inside-${suffix}`, outsideLogId, `target-outside-${suffix}`)
+
+    const res = await request(app)
+      .get('/api/v1/reconciliation/logs?startDate=2042-06-01&endDate=2042-06-30&pageSize=50')
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(200)
+    expect(res.body.data.pagination.total).toBe(1)
+    const ids = res.body.data.list.map((log: any) => log.id)
+    expect(ids).toContain(insideLogId)
+    expect(ids).not.toContain(outsideLogId)
+  })
+
   it('物料汇总对账必须把实际少于理论的短缺差异标记为异常', async () => {
     const suffix = Date.now()
     const materialId = `mat-recon-short-${suffix}`

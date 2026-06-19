@@ -11691,7 +11691,59 @@ git diff --check
 
 - `npm install multer xlsx @types/multer` 后 npm audit 报告 11 个依赖漏洞提示（7 moderate / 3 high / 1 critical）。本批未运行 `npm audit fix`，避免无关依赖升级漂移；需要后续作为依赖安全治理项单独评估。
 
-## 二百三十八、结论
+## 二百三十八、批次 283: 修正日志必须按日期范围筛选
+
+**发现的问题**
+
+- REC-12 要求修正日志可按时间范围筛选修正记录。
+- 后端 `GET /api/v1/reconciliation/logs` 只处理分页，忽略 `startDate/endDate`，导致区间外修正记录也进入列表和 total。
+- 前端修正日志 Tab 只调用 `getLogs({ page, pageSize })`，没有把页面顶部日期范围传给日志请求，因此即使用户选择日期，日志也不会按同一范围刷新。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/reconciliation-v1.1.ts`
+  - `GET /reconciliation/logs` 增加与对账其他接口一致的日期范围校验。
+  - 列表查询和 total 查询共用 `created_at >= startDate AND created_at <= endDate 23:59:59` 过滤条件。
+  - 非法日期范围返回 `INVALID_PARAMETER`，保持既有错误风格。
+- `前端代码/src/pages/reconciliation/hooks/useReconciliationPage.ts`
+  - 修正日志分页请求带上 `dateParams`。
+  - 日期不合法时不发日志请求，并返回空分页，避免错误范围下展示旧数据。
+  - 日志分页依赖加入日期范围，用户修改顶部日期后会触发日志刷新。
+- `后端代码/server/tests/integration/reconciliation.test.ts`
+  - 新增后端红灯测试：插入 2042-06 和 2042-05 两条修正日志，请求 2042-06 范围时只能返回六月记录。
+- `前端代码/src/pages/reconciliation/hooks/useReconciliationPage.test.ts`
+  - 新增 Hook 测试，验证切到修正日志 Tab 时 `getLogs` 请求携带 `startDate/endDate`。
+- `前端代码/e2e/reconciliation.spec.ts`
+  - 新增 `RECON-LOG-07`，真实浏览器填日期后切换修正日志 Tab，断言实际 `/reconciliation/logs` 请求包含日期范围。
+
+**ABC 影响评估**
+
+- 本批只修改对账修正日志的只读列表筛选，不修改 ABC 本体、成本公式、成本池、收费映射、BOM 修正写入、库存、出库或成本异常判定。
+- 由于修正日志属于 BOM/对账解释证据，补跑 ABC 输入侧回归，确认病例 BOM 阶梯收费和非最新出库取消后的 ABC 明细重排仍通过。
+- 未触碰废弃 `/cost-analysis` 或 `前端代码/deprecated/legacy-cost-analysis/`。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/reconciliation.test.ts -t "修正日志列表必须按创建时间范围过滤"` 修复前失败：六月范围请求返回 total=2，包含五月记录。
+  - `前端代码 npm test -- --run src/pages/reconciliation/hooks/useReconciliationPage.test.ts -t "passes the selected date range when loading correction logs"` 修复前失败：`getLogs` 只收到 `{ page, pageSize }`，没有 `startDate/endDate`。
+- 修复后验证:
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/reconciliation.test.ts` 通过，14 tests passed。
+  - `前端代码 npm test -- --run src/pages/reconciliation/hooks/useReconciliationPage.test.ts` 通过，14 tests passed。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npm run test:e2e -- reconciliation.spec.ts -g "RECON-LOG-07"` 通过，真实浏览器确认日志请求包含日期范围。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/cost-exceptions.test.ts -t "同一病例多个BOM|取消非最新病例"` 通过，2 tests passed / 9 skipped。
+  - `git diff --check` 通过。
+  - `git diff --name-only | rg "deprecated/legacy-cost-analysis|前端代码/deprecated|/cost-analysis"` 无匹配，确认未改废弃范围。
+- 浏览器复核:
+  - 使用用户已验证的 Chrome for Testing 路径完成 headless Playwright 复核；验证重点为真实日期输入、Tab 切换后的日志接口请求参数和页面稳定显示。
+
+**后续风险**
+
+- REC-12 的“查看详情可见完整修正上下文”仍需单独批次复核；本批只处理同一验收项下的日期范围筛选不变量，避免扩展到详情弹窗。
+
+## 二百三十九、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

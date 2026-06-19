@@ -1062,16 +1062,24 @@ router.put('/cases/:id', (req, res) => {
 router.get('/logs', (req, res) => {
   try {
     const db = getDatabase()
-    const { page = '1', pageSize = '20' } = req.query as Record<string, string>
+    const { page = '1', pageSize = '20', startDate, endDate } = req.query as Record<string, string>
+    if (!validateDateRange(startDate, endDate)) {
+      error(res, 'Invalid date format', 'INVALID_PARAMETER', 400); return
+    }
+
     const offset = (parseInt(page) - 1) * parseInt(pageSize)
+    const hasDate = startDate && endDate
+    const where = hasDate ? 'WHERE created_at >= ? AND created_at <= ?' : ''
+    const params = hasDate ? [startDate, `${endDate} 23:59:59`] : []
 
     const list = db.prepare(`
       SELECT * FROM reconciliation_logs
+      ${where}
       ORDER BY created_at DESC
       LIMIT ? OFFSET ?
-    `).all(parseInt(pageSize), offset) as any[]
+    `).all(...params, parseInt(pageSize), offset) as any[]
 
-    const count = db.prepare('SELECT COUNT(*) as count FROM reconciliation_logs').get() as any
+    const count = db.prepare(`SELECT COUNT(*) as count FROM reconciliation_logs ${where}`).get(...params) as any
 
     successList(res, list, parseInt(page), parseInt(pageSize), count?.count || 0)
   } catch (e: any) {

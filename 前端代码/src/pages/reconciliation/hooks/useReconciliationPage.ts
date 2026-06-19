@@ -478,17 +478,18 @@ export function useReconciliationPage() {
   const logFetchFn = useCallback(
     async ({ page, pageSize }: { page: number; pageSize: number }) => {
       if (activeTab !== 'log') return { list: [], pagination: { total: 0, page, pageSize } }
-      const res = await reconciliationApi.getLogs({ page, pageSize })
+      if (!dateValidation.valid) return { list: [], pagination: { total: 0, page, pageSize } }
+      const res = await reconciliationApi.getLogs({ page, pageSize, ...dateParams })
       return { list: res?.list || [], pagination: res?.pagination }
     },
-    [activeTab]
+    [activeTab, dateParams, dateValidation.valid]
   )
 
   const logPagination = usePagination<ReconcileLog>({
     fetchFn: logFetchFn,
     initialPage: Math.max(1, getNumber('lpage', 1)),
     initialPageSize: Math.max(1, Math.min(100, getNumber('lpageSize', 20))),
-    deps: [activeTab],
+    deps: [activeTab, dateParams, dateValidation.valid],
   })
 
   useEffect(() => {

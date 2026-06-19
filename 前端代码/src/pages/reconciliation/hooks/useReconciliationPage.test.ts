@@ -252,4 +252,23 @@ describe('parseLisImportData', () => {
     expect(reconciliationApi.importLisFile).toHaveBeenCalledWith(file)
     expect(reconciliationApi.importCases).not.toHaveBeenCalled()
   })
+
+  it('passes the selected date range when loading correction logs', async () => {
+    const { result } = renderHook(() => useReconciliationPage())
+    await waitFor(() => expect(reconciliationApi.getProjects).toHaveBeenCalled())
+    vi.mocked(reconciliationApi.getLogs).mockClear()
+
+    act(() => {
+      result.current.setStartDate('2026-06-01')
+      result.current.setEndDate('2026-06-30')
+      result.current.setActiveTab('log')
+    })
+
+    await waitFor(() => expect(reconciliationApi.getLogs).toHaveBeenCalledWith(expect.objectContaining({
+      page: 1,
+      pageSize: 20,
+      startDate: '2026-06-01',
+      endDate: '2026-06-30',
+    })))
+  })
 })
