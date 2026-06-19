@@ -1030,10 +1030,100 @@ test.describe('耗材管理 -> 查看物料详情', () => {
   })
   test('MAT-DETAIL-03. UI差异：admin可点击行查看详情', async ({ page }) => {
     await loginAs(page, 'admin')
-    await page.goto(`${FE_BASE}/materials`)
-    await page.waitForTimeout(1000)
-    const rows = page.locator('table tbody tr')
-    if (await rows.count() > 0) await rows.first().click()
+    await page.route('**/api/v1/categories**', async (route) => {
+      const url = new URL(route.request().url())
+      if (url.pathname.endsWith('/categories')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              list: [{ id: 'cat-detail', name: '详情分类', status: 'active' }],
+              pagination: { total: 1, page: 1, pageSize: 999 },
+            },
+          }),
+        })
+        return
+      }
+      await route.fallback()
+    })
+    await page.route('**/api/v1/suppliers**', async (route) => {
+      const url = new URL(route.request().url())
+      if (url.pathname.endsWith('/suppliers')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              list: [{ id: 'sup-detail', name: '详情供应商', status: 'active' }],
+              pagination: { total: 1, page: 1, pageSize: 999 },
+            },
+          }),
+        })
+        return
+      }
+      await route.fallback()
+    })
+    await page.route('**/api/v1/materials**', async (route) => {
+      const url = new URL(route.request().url())
+      if (url.pathname.endsWith('/materials/stats')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: { total: 1, active: 1, inactive: 0, lowStock: 0 },
+          }),
+        })
+        return
+      }
+      if (url.pathname.endsWith('/materials')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              list: [{
+                id: 'mock-detail-material',
+                code: 'DETAIL-001',
+                name: '详情Mock物料',
+                spec: '',
+                unit: '瓶',
+                categoryId: 'cat-detail',
+                supplierId: 'sup-detail',
+                price: 12.5,
+                stock: 7,
+                minStock: 3,
+                maxStock: 20,
+                safetyStock: 5,
+                status: 'active',
+                remark: '',
+              }],
+              pagination: { total: 1, page: 1, pageSize: 20 },
+            },
+          }),
+        })
+        return
+      }
+      await route.fallback()
+    })
+
+    await page.goto(`${FE_BASE}/materials`, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByText('详情Mock物料')).toBeVisible({ timeout: 15000 })
+    await page.getByRole('button', { name: '详情' }).click()
+
+    const dialog = page.getByText('物料详情').locator('..').locator('..')
+    await expect(dialog.getByText('DETAIL-001')).toBeVisible()
+    await expect(dialog.getByText('详情Mock物料')).toBeVisible()
+    await expect(dialog.getByText('详情分类')).toBeVisible()
+    await expect(dialog.getByText('详情供应商')).toBeVisible()
+    await expect(dialog.getByText('¥12.50')).toBeVisible()
+    await expect(dialog.getByText('规格型号').locator('..').getByText('-')).toBeVisible()
+    await expect(dialog.getByText('备注')).toBeVisible()
+    await expect(dialog.getByText('备注').locator('..').getByText('-')).toBeVisible()
   })
 })
 

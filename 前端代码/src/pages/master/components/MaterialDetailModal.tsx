@@ -36,7 +36,7 @@ export function MaterialDetailModal({ open, row, getCategoryName, getSupplierNam
               <Info label="计量单位" value={row.unit} />
               <div>
                 <div className="text-xs text-gray-500 mb-1">参考单价</div>
-                <div className="text-sm font-medium text-blue-600">¥{row.price?.toFixed(2)}</div>
+                <div className="text-sm font-medium text-blue-600">{formatPrice(row.price)}</div>
               </div>
               <Info label="供应商" value={getSupplierName(row.supplierId)} />
               <div>
@@ -54,12 +54,10 @@ export function MaterialDetailModal({ open, row, getCategoryName, getSupplierNam
               <Info label="保险库存" value={`${row.safetyStock} ${row.unit}`} />
             </div>
           </div>
-          {row.remark && (
-            <div>
-              <h4 className="text-sm font-semibold text-gray-900 mb-3">备注</h4>
-              <div className="bg-gray-50 rounded-lg p-4 text-sm text-gray-700">{row.remark}</div>
-            </div>
-          )}
+          <div>
+            <h4 className="text-sm font-semibold text-gray-900 mb-3">备注</h4>
+            <div className="bg-gray-50 rounded-lg p-4 text-sm text-gray-700">{row.remark || '-'}</div>
+          </div>
         </div>
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 shrink-0">
           <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-md border border-gray-300 transition-colors">关闭</button>
@@ -68,6 +66,10 @@ export function MaterialDetailModal({ open, row, getCategoryName, getSupplierNam
       </div>
     </div>
   )
+}
+
+function formatPrice(value?: number | null) {
+  return typeof value === 'number' && Number.isFinite(value) ? `¥${value.toFixed(2)}` : '-'
 }
 
 function Info({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
