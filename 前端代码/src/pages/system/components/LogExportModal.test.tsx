@@ -33,4 +33,27 @@ describe('LogExportModal', () => {
     expect(dateInputs[0]).toHaveAttribute('aria-invalid', 'true')
     expect(dateInputs[1]).toHaveAttribute('aria-invalid', 'true')
   })
+
+  it('shows a visible content validation error before exporting an empty log file', () => {
+    render(
+      <LogExportModal
+        open
+        form={{
+          ...form,
+          startDate: '2026-06-01',
+          endDate: '2026-06-30',
+          includeBasic: false,
+          includeDetail: false,
+          includeIP: false,
+          includeDiff: false,
+        }}
+        contentError="请至少选择一项导出内容"
+        onClose={vi.fn()}
+        onChange={vi.fn()}
+        onExport={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByRole('alert')).toHaveTextContent('请至少选择一项导出内容')
+  })
 })

@@ -97,6 +97,7 @@ export default function Logs() {
         open={page.showExport}
         form={page.exportForm}
         dateError={page.exportDateError}
+        contentError={page.exportContentError}
         onClose={() => page.setShowExport(false)}
         onChange={page.setExportForm}
         onExport={page.handleExport}

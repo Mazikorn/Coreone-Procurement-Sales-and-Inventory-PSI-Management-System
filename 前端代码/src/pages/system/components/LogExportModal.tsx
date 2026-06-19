@@ -6,12 +6,13 @@ interface Props {
   open: boolean
   form: LogFormData
   dateError?: string
+  contentError?: string
   onClose: () => void
   onChange: (form: LogFormData) => void
   onExport: () => void
 }
 
-export function LogExportModal({ open, form, dateError = '', onClose, onChange, onExport }: Props) {
+export function LogExportModal({ open, form, dateError = '', contentError = '', onClose, onChange, onExport }: Props) {
   if (!open) return null
 
   return (
@@ -65,22 +66,27 @@ export function LogExportModal({ open, form, dateError = '', onClose, onChange, 
             <label className="block text-[13px] font-medium text-gray-700 mb-2">导出内容</label>
             <div className="flex flex-col gap-2">
               <label className="flex items-center gap-2 text-sm text-gray-900 cursor-pointer">
-                <input type="checkbox" checked={form.includeBasic} onChange={e => onChange({ ...form, includeBasic: e.target.checked })} className="rounded border-gray-300 text-blue-500 focus:ring-blue-500 w-4 h-4" />
+                <input type="checkbox" checked={form.includeBasic} onChange={e => onChange({ ...form, includeBasic: e.target.checked })} aria-describedby={contentError ? 'logs-export-content-error' : undefined} className="rounded border-gray-300 text-blue-500 focus:ring-blue-500 w-4 h-4" />
                 基本信息（时间、用户、类型、模块）
               </label>
               <label className="flex items-center gap-2 text-sm text-gray-900 cursor-pointer">
-                <input type="checkbox" checked={form.includeDetail} onChange={e => onChange({ ...form, includeDetail: e.target.checked })} className="rounded border-gray-300 text-blue-500 focus:ring-blue-500 w-4 h-4" />
+                <input type="checkbox" checked={form.includeDetail} onChange={e => onChange({ ...form, includeDetail: e.target.checked })} aria-describedby={contentError ? 'logs-export-content-error' : undefined} className="rounded border-gray-300 text-blue-500 focus:ring-blue-500 w-4 h-4" />
                 操作详情
               </label>
               <label className="flex items-center gap-2 text-sm text-gray-900 cursor-pointer">
-                <input type="checkbox" checked={form.includeIP} onChange={e => onChange({ ...form, includeIP: e.target.checked })} className="rounded border-gray-300 text-blue-500 focus:ring-blue-500 w-4 h-4" />
+                <input type="checkbox" checked={form.includeIP} onChange={e => onChange({ ...form, includeIP: e.target.checked })} aria-describedby={contentError ? 'logs-export-content-error' : undefined} className="rounded border-gray-300 text-blue-500 focus:ring-blue-500 w-4 h-4" />
                 IP地址和设备信息
               </label>
               <label className="flex items-center gap-2 text-sm text-gray-900 cursor-pointer">
-                <input type="checkbox" checked={form.includeDiff} onChange={e => onChange({ ...form, includeDiff: e.target.checked })} className="rounded border-gray-300 text-blue-500 focus:ring-blue-500 w-4 h-4" />
+                <input type="checkbox" checked={form.includeDiff} onChange={e => onChange({ ...form, includeDiff: e.target.checked })} aria-describedby={contentError ? 'logs-export-content-error' : undefined} className="rounded border-gray-300 text-blue-500 focus:ring-blue-500 w-4 h-4" />
                 变更前后数据对比
               </label>
             </div>
+            {contentError && (
+              <p id="logs-export-content-error" role="alert" className="mt-2 text-sm text-red-600">
+                {contentError}
+              </p>
+            )}
           </div>
         </div>
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50">

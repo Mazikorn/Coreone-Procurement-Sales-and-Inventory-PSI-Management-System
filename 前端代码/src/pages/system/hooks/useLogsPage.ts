@@ -183,6 +183,9 @@ export function useLogsPage() {
   })
   const dateError = getDateRangeError(startDate, endDate)
   const exportDateError = getDateRangeError(exportForm.startDate, exportForm.endDate)
+  const exportContentError = !exportForm.includeBasic && !exportForm.includeDetail && !exportForm.includeIP && !exportForm.includeDiff
+    ? '请至少选择一项导出内容'
+    : ''
 
   const handleSearch = () => {
     if (dateError) {
@@ -246,8 +249,8 @@ export function useLogsPage() {
   }
 
   const handleExport = async () => {
-    if (!exportForm.includeBasic && !exportForm.includeDetail && !exportForm.includeIP && !exportForm.includeDiff) {
-      toast.warning('请至少选择一项导出内容')
+    if (exportContentError) {
+      toast.warning(exportContentError)
       return
     }
     if (exportDateError) {
@@ -309,6 +312,7 @@ export function useLogsPage() {
     userOptions,
     dateError,
     exportDateError,
+    exportContentError,
     handleSearch, handleReset,
     openDetail, openExport,
     getLogType, getAvatarChar, getModuleLabel,
