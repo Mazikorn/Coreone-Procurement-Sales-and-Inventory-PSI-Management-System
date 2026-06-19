@@ -40,6 +40,9 @@ const MODULE_PATTERNS: Record<string, string[]> = {
   system: ['system', '系统'],
 }
 
+const LOG_TYPES = new Set(['login', 'logout', 'create', 'update', 'delete', 'export', 'import'])
+const LOG_MODULES = new Set(Object.keys(MODULE_PATTERNS))
+
 const MODULE_MATCH_ORDER = [
   'supplier_returns',
   'purchase_orders',
@@ -141,6 +144,20 @@ function validateDateRangeInput(source: any) {
   if (startDate && endDate && startDate > endDate) {
     return { valid: false, message: '开始日期不能晚于结束日期' }
   }
+  return { valid: true, message: '' }
+}
+
+function validateLogFilters(source: any) {
+  const type = String(source?.type || '').trim()
+  if (type && !LOG_TYPES.has(type)) {
+    return { valid: false, message: '操作类型筛选无效' }
+  }
+
+  const module = String(source?.module || '').trim()
+  if (module && !LOG_MODULES.has(module)) {
+    return { valid: false, message: '操作模块筛选无效' }
+  }
+
   return { valid: true, message: '' }
 }
 
@@ -265,6 +282,11 @@ function getOperationLogs(req: any, res: any) {
       error(res, dateValidation.message, 'INVALID_PARAMETER', 400)
       return
     }
+    const filterValidation = validateLogFilters(req.query)
+    if (!filterValidation.valid) {
+      error(res, filterValidation.message, 'INVALID_PARAMETER', 400)
+      return
+    }
 
     const db = getDatabase()
     const { where, params } = buildLogWhere(req.query)
@@ -312,6 +334,11 @@ function exportLogs(req: any, res: any, source: any) {
     const dateValidation = validateDateRangeInput(source)
     if (!dateValidation.valid) {
       error(res, dateValidation.message, 'INVALID_PARAMETER', 400)
+      return
+    }
+    const filterValidation = validateLogFilters(source)
+    if (!filterValidation.valid) {
+      error(res, filterValidation.message, 'INVALID_PARAMETER', 400)
       return
     }
 
