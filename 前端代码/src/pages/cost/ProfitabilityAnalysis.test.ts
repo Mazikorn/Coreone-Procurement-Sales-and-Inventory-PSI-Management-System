@@ -1,5 +1,27 @@
-import { describe, expect, it } from 'vitest'
-import { aggregateProfitabilityRows } from './ProfitabilityAnalysis'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import React from 'react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { abcApi } from '@/api/abc'
+import { downloadTextFile } from '@/lib/utils'
+import { aggregateProfitabilityRows, ProfitabilityAnalysis } from './ProfitabilityAnalysis'
+
+vi.mock('@/api/abc', () => ({
+  abcApi: {
+    getProfitability: vi.fn(),
+    exportData: vi.fn(),
+  },
+}))
+
+vi.mock('@/lib/utils', () => ({
+  downloadTextFile: vi.fn(),
+  formatCurrency: (num: number | undefined) => {
+    if (num === undefined || num === null) return '-'
+    return '¥' + num.toLocaleString('zh-CN', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })
+  },
+}))
 
 describe('aggregateProfitabilityRows', () => {
   it('按项目汇总同月同类型盈利数据', () => {
@@ -58,5 +80,49 @@ describe('aggregateProfitabilityRows', () => {
         profitRate: 0.4,
       },
     ])
+  })
+})
+
+describe('ProfitabilityAnalysis', () => {
+  beforeEach(() => {
+    vi.mocked(abcApi.getProfitability).mockReset()
+    vi.mocked(abcApi.exportData).mockReset()
+    vi.mocked(downloadTextFile).mockReset()
+  })
+
+  it('exports with the month currently selected on the page', async () => {
+    vi.mocked(abcApi.getProfitability).mockResolvedValue({ list: [] } as any)
+    vi.mocked(abcApi.exportData).mockResolvedValue({
+      filename: 'abc-profitability.csv',
+      content: 'ok',
+      mimeType: 'text/csv;charset=utf-8',
+    } as any)
+
+    render(React.createElement(ProfitabilityAnalysis))
+
+    await waitFor(() => expect(abcApi.getProfitability).toHaveBeenCalled())
+
+    fireEvent.change(screen.getByDisplayValue(new Date().toISOString().slice(0, 7)), {
+      target: { value: '2026-05' },
+    })
+
+    await waitFor(() => expect(abcApi.getProfitability).toHaveBeenLastCalledWith({
+      startDate: '2026-05',
+      endDate: '2026-05',
+      projectType: undefined,
+    }))
+
+    fireEvent.click(screen.getByRole('button', { name: /导出报表/ }))
+
+    await waitFor(() => expect(abcApi.exportData).toHaveBeenCalled())
+    expect(abcApi.exportData).toHaveBeenCalledWith({
+      month: '2026-05',
+      projectType: undefined,
+    })
+    expect(downloadTextFile).toHaveBeenCalledWith(
+      'abc-profitability.csv',
+      'ok',
+      'text/csv;charset=utf-8',
+    )
   })
 })

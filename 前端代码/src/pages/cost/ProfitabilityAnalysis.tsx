@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Download, TrendingUp, TrendingDown, Minus } from 'lucide-react'
 import { toast } from 'sonner'
 import { abcApi } from '@/api/abc'
@@ -109,6 +109,7 @@ export function ProfitabilityAnalysis() {
     try {
       setExporting(true)
       const exported = await abcApi.exportData({
+        month,
         projectType: projectType !== 'all' ? projectType : undefined,
       })
       downloadTextFile(exported.filename || 'abc-profitability.csv', exported.content || '', exported.mimeType)

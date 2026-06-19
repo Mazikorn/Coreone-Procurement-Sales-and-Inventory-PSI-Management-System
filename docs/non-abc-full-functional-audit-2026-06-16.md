@@ -16441,9 +16441,58 @@ git diff --check
 
 **后续风险**
 
-- 人员效率统计卡片、跨筛选刷新和导出角色口径已阶段性保护；后续可继续复核人员效率趋势图口径，或转入其它依赖历史事实的非 ABC 成本读面。
+- 人员效率统计卡片、跨筛选刷新和导出角色口径已阶段性保护；人员效率趋势图当前直接消费后端 `trend`，本轮未找到足以 red-green 修复的明确口径缺陷。下一批转入相邻盈利性分析导出月份口径，继续按“页面读面与导出归档一致”不变量推进。
 
-## 三百三十六、结论
+## 三百三十六、批次 381: 盈利性分析导出必须携带页面月份筛选
+
+**发现的问题**
+
+- 本轮继续复核效率/报表展示页，聚焦“页面读面与导出归档必须使用同一筛选口径”不变量。
+- `ProfitabilityAnalysis` 页面加载列表时会按当前 `month` 调用 `abcApi.getProfitability({ startDate: month, endDate: month, ... })`。
+- 旧导出逻辑调用 `abcApi.exportData` 时只传 `projectType`，没有传当前页面月份；用户切换到某个月后导出，文件可能回到后端默认月份或其它月份口径，和页面当前读面不一致。
+- 盈利性分析导出是成本经营归档材料，月份错位会让离线文件与页面指标对不上，削弱后续成本解释、复核和结账留痕可信度。
+- 当前 Vitest 页面渲染配置还暴露出 `ProfitabilityAnalysis.tsx` 缺少 React 导入的问题，导致页面级导出测试无法稳定执行。
+
+**已完成修复**
+
+- `前端代码/src/pages/cost/ProfitabilityAnalysis.tsx`
+  - 补充 React 导入，让页面在当前 JSX/Vitest 配置下可被页面级测试渲染。
+  - `handleExport` 调用 `abcApi.exportData` 时新增当前 `month` 参数。
+  - 保留现有 `projectType` 参数逻辑，不改变页面筛选、列表聚合或后端接口。
+- `前端代码/src/pages/cost/ProfitabilityAnalysis.test.ts`
+  - 新增页面级红绿测试：切换月份到 `2026-05` 后点击 `导出报表`，断言 `abcApi.exportData` 必须收到 `{ month: '2026-05', projectType: undefined }`。
+  - Mock `downloadTextFile`，避免测试触发真实下载副作用，同时确认导出成功后仍使用后端返回的文件名、内容和 MIME。
+
+**ABC 影响评估**
+
+- 本批只修改成本读面页面的前端导出参数和前端测试，不修改 ABC 本体、ABC API 后端、成本算法、库存、出库或废弃 `/cost-analysis`。
+- 盈利性分析导出调用既有 `/abc/export?month=...` 能力；本批不改变导出文件生成规则，只把页面当前月份传给既有接口，避免读面和导出归档错月。
+- 已补跑全成本和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/cost/ProfitabilityAnalysis.test.ts -t "exports with the month"` 首次暴露 React 渲染前置问题；补充 React 导入后再次运行，修复前失败：`abcApi.exportData` 只收到 `{ projectType: undefined }`，没有 `month: '2026-05'`。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/cost/ProfitabilityAnalysis.test.ts` 通过，2 tests passed。
+  - `前端代码 npm test -- --run src/pages/cost/ProfitabilityAnalysis.test.ts src/pages/cost/PersonnelEfficiency.render.test.tsx` 通过，2 files / 5 tests passed。
+  - `后端代码/server npm test -- --run tests/integration/full-cost.test.ts tests/integration/cost-exceptions.test.ts` 通过，2 files / 14 tests passed；命令退出码为 0，保留既有 Vite close timeout 提示和 `cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis` 无输出，确认未改废弃范围。
+- 浏览器复核:
+  - 本批为盈利性分析页面导出参数口径修复，不新增路由、弹窗或接口；核心风险是导出请求是否携带页面当前月份，已用页面级红绿测试覆盖月份切换、按钮点击和导出 API 参数，不新增截图证据。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 盈利性分析导出月份口径已阶段性保护；后续可继续复核盈利性分析项目类型显示/导出口径、切片成本明细导出月份与分页口径，或其它依赖历史事实的非废弃成本读面。
+
+## 三百三十七、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 
