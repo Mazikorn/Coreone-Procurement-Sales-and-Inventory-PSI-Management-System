@@ -1,3 +1,4 @@
+import React from 'react'
 import { X } from 'lucide-react'
 import type { Project } from '@/types'
 import type { FormData } from '../hooks/useProjectsPage'
@@ -19,7 +20,7 @@ export function ProjectCopyModal({ open, editingRow, form, isSubmitting, onClose
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
       onClick={e => { if (e.target === e.currentTarget) onClose() }}
     >
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-lg mx-4">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
           <h3 className="text-lg font-semibold text-gray-900">复制检测服务</h3>
           <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-lg transition-colors">
@@ -35,12 +36,36 @@ export function ProjectCopyModal({ open, editingRow, form, isSubmitting, onClose
             </div>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label htmlFor="copy-project-code" className="block text-sm font-medium text-gray-700 mb-1">
+              新服务编号 <span className="text-red-500">*</span>
+            </label>
+            <input
+              id="copy-project-code"
+              value={form.code}
+              onChange={e => onChange({ ...form, code: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div>
+            <label htmlFor="copy-project-name" className="block text-sm font-medium text-gray-700 mb-1">
               新服务名称 <span className="text-red-500">*</span>
             </label>
             <input
+              id="copy-project-name"
               value={form.name}
               onChange={e => onChange({ ...form, name: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div>
+            <label htmlFor="copy-project-description" className="block text-sm font-medium text-gray-700 mb-1">
+              新服务描述
+            </label>
+            <textarea
+              id="copy-project-description"
+              value={form.description}
+              onChange={e => onChange({ ...form, description: e.target.value })}
+              rows={3}
               className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>

@@ -13021,7 +13021,60 @@ git diff --check
 - 本批只处理编辑弹窗内的状态变更绕过影响检查，不扩展到项目导入、复制或 BOM 绑定历史提示。
 - 后续可继续按基础资料阶段检查项目复制、导入、删除和历史出库/LIS 引用保护；发现计划外问题先登记到待评估清单。
 
-## 二百六十五、结论
+## 二百六十五、批次 310: 检测服务复制必须可修改新编号和描述且保留 BOM 绑定
+
+**发现的问题**
+
+- 设计稿 `PRO-14` 要求复制检测服务时，弹窗预填原项目数据，项目编号自动生成新编号，并允许修改编号、名称、描述，BOM 配置默认复制。
+- 当前复制弹窗只显示“新服务名称”，不能修改自动生成的新编号，也不能调整复制后的描述。
+- 自动编号使用时间后缀生成，若出现冲突或用户需要按业务编码规则修正，只能提交失败后退出流程；描述也无法在复制时完成真实副作用调整。
+- 这属于复制入口的可见功能不完整，且会影响后续 BOM 出库和成本上游对检测服务身份/BOM 绑定的追溯。
+
+**已完成修复**
+
+- `前端代码/src/pages/master/components/ProjectCopyModal.tsx`
+  - 补充 `React` 默认导入，保证组件在 Vitest JSX 环境下可直接渲染测试。
+  - 复制弹窗新增“新服务编号”输入框，默认使用自动生成编号，允许提交前修改。
+  - 复制弹窗新增“新服务描述”文本域，默认继承原服务描述，允许提交前调整。
+  - 保持已有复制内容提示和 BOM 配置默认复制，提交仍复用 `useProjectsPage` 中的完整 `form` payload。
+- `前端代码/src/pages/master/components/ProjectCopyModal.test.tsx`
+  - 新增红绿测试：复制弹窗必须允许编辑新编号和新描述，且 `onChange` 后仍保留 `bomId`。
+- `前端代码/e2e/projects.spec.ts`
+  - 新增 `PROJECT-COPY-01` 页面级验收：创建带 BOM 的源检测服务，从页面复制时修改编号和描述，断言 `POST /projects` 带自定义编号、描述和原 BOM 绑定，并从接口读回新项目验证真实保存。
+
+**ABC 影响评估**
+
+- 检测服务编号、描述和 BOM 绑定会进入出库候选、BOM 出库标准配置、LIS/出库历史解释和后续成本输入链。
+- 本批让复制入口在提交前可修正新服务身份，并验证 BOM 绑定被默认复制，避免用户为了修正编号或描述绕路创建导致 BOM 绑定遗漏。
+- 本批只修改非 ABC 的项目/检测服务复制弹窗和测试，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 已补跑项目、BOM 和出库后端回归，覆盖检测服务复制/BOM 绑定对相邻库存/成本输入链的影响。
+- 未触碰 `前端代码/deprecated/legacy-cost-analysis/`。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/master/components/ProjectCopyModal.test.tsx -t "generated code and description"` 在解除组件 JSX 环境导入问题后失败：找不到“新服务编号”字段。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/master/components/ProjectCopyModal.test.tsx -t "generated code and description"` 通过，1 test passed。
+  - `前端代码 npm test -- --run src/pages/master/components/ProjectCopyModal.test.tsx` 通过，1 test passed。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/projects.spec.ts --project=chromium --grep "PROJECT-COPY-01"` 通过，1 test passed。
+  - `前端代码 npm test -- --run src/pages/master/components/ProjectCopyModal.test.tsx src/pages/master/hooks/useProjectsPage.test.tsx src/pages/master/components/ProjectStatusModal.test.tsx src/pages/master/components/ProjectImportModal.test.ts` 通过，4 files / 9 tests passed。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/projects.spec.ts --project=chromium` 通过，2 tests passed；启动阶段打印 3001 已占用，但测试复用既有服务完成，收尾端口检查无监听残留。
+  - `后端代码/server npm test -- --run tests/projects-batch.test.ts tests/integration/outbound.test.ts tests/integration/bom.test.ts` 通过，3 files / 61 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `后端代码/server npm run build` 通过。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis ':(glob)**/*cost-analysis*'` 无输出，确认未改废弃范围。
+  - `lsof -nP -iTCP:3001 -sTCP:LISTEN` 和 `lsof -nP -iTCP:8080 -sTCP:LISTEN` 均无监听残留。
+- 浏览器复核:
+  - 使用用户已验证的 Chrome for Testing 路径完成 headless Playwright 复核；验证重点为复制弹窗可修改新编号和描述、提交前保留原 BOM 绑定、确认后接口真实创建并可读回。
+
+**后续风险**
+
+- 本批只处理项目复制弹窗的编号/描述编辑与 BOM 绑定默认复制，不扩展到复制后列表定位或 technician 角色权限差异。
+- 后续可继续按基础资料阶段检查项目导入、删除和历史出库/LIS 引用保护；发现计划外问题先登记到待评估清单。
+
+## 二百六十六、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 
