@@ -407,7 +407,7 @@ function importLisItems(items: any[]) {
 
   db.exec('BEGIN IMMEDIATE')
   try {
-    const projects = db.prepare("SELECT id, code, name FROM projects WHERE is_deleted = 0").all() as any[]
+    const projects = db.prepare("SELECT id, code, name FROM projects WHERE is_deleted = 0 AND status = 1").all() as any[]
     const projectsById = new Map(projects.map(p => [p.id, p]))
     const projectsByNameOrCode = new Map<string, any>()
     for (const project of projects) {
@@ -1128,8 +1128,8 @@ router.put('/cases/:id', (req, res) => {
     if (!existing) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
     let nextProjectName = projectName
     if (projectId) {
-      const project = db.prepare('SELECT id, name FROM projects WHERE id = ? AND is_deleted = 0').get(projectId) as any
-      if (!project) { error(res, '项目不存在', 'NOT_FOUND', 404); return }
+      const project = db.prepare('SELECT id, name FROM projects WHERE id = ? AND is_deleted = 0 AND status = 1').get(projectId) as any
+      if (!project) { error(res, '项目不存在或已停用', 'INVALID_PARAMETER', 400); return }
       nextProjectName = projectName || project.name
     }
 
@@ -1204,8 +1204,12 @@ router.post('/logs', (req, res) => {
       // 如果提供了projectId、materialId和newUsage，先更新bom_items
       {
         const usage = Number(newUsage)
-        const project = db.prepare('SELECT bom_id FROM projects WHERE id = ? AND is_deleted = 0').get(projectId) as any
-        if (!project?.bom_id) {
+        const project = db.prepare('SELECT bom_id FROM projects WHERE id = ? AND is_deleted = 0 AND status = 1').get(projectId) as any
+        if (!project) {
+          db.exec('ROLLBACK')
+          error(res, '项目不存在或已停用', 'INVALID_PARAMETER', 400); return
+        }
+        if (!project.bom_id) {
           db.exec('ROLLBACK')
           error(res, '项目未关联BOM', 'INVALID_PARAMETER', 400); return
         }

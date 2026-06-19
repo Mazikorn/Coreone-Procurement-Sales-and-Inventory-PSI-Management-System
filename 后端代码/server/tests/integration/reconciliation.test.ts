@@ -252,6 +252,105 @@ describe('成本对账异常闭环', () => {
     expect(imported.operate_time).toBe('2026-06-14 10:30:00')
   })
 
+  it('LIS 导入、病例编辑和 BOM 修正必须拒绝停用检测项目作为新候选', async () => {
+    const suffix = Date.now()
+    const inactiveProjectId = `proj-inactive-candidate-${suffix}`
+    const activeProjectId = `proj-active-candidate-${suffix}`
+    const bomId = `bom-inactive-candidate-${suffix}`
+    const materialId = `mat-inactive-candidate-${suffix}`
+    const explicitCaseNo = `CASE-INACTIVE-EXPLICIT-${suffix}`
+    const nameOnlyCaseNo = `CASE-INACTIVE-NAME-${suffix}`
+    const editableCaseId = `case-inactive-edit-${suffix}`
+
+    db.prepare('INSERT INTO material_categories (id, code, name, level) VALUES (?, ?, ?, ?)')
+      .run(`cat-inactive-candidate-${suffix}`, `IC${suffix}`, '停用项目校验试剂', 1)
+    db.prepare(`
+      INSERT INTO materials (id, code, name, spec, unit, category_id, price, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+    `).run(materialId, `M-INACTIVE-CAND-${suffix}`, '停用项目校验物料', '1ml', '支', `cat-inactive-candidate-${suffix}`, 10)
+    db.prepare(`
+      INSERT INTO boms (id, code, name, version, type, status)
+      VALUES (?, ?, ?, 'v1.0', 'ihc', 1)
+    `).run(bomId, `BOM-INACTIVE-CAND-${suffix}`, '停用项目校验BOM')
+    db.prepare(`
+      INSERT INTO bom_items (id, bom_id, material_id, usage_per_sample, unit)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(`bi-inactive-candidate-${suffix}`, bomId, materialId, 1, '支')
+    db.prepare(`
+      INSERT INTO projects (id, code, name, type, bom_id, status)
+      VALUES (?, ?, ?, 'ihc', ?, 0), (?, ?, ?, 'ihc', '', 1)
+    `).run(
+      inactiveProjectId, `P-INACTIVE-CAND-${suffix}`, '停用候选项目', bomId,
+      activeProjectId, `P-ACTIVE-CAND-${suffix}`, '启用候选项目',
+    )
+    db.prepare(`
+      INSERT INTO lis_cases (id, case_no, project_id, project_name, operator, operate_time, status, import_batch)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(editableCaseId, `CASE-INACTIVE-EDIT-${suffix}`, activeProjectId, '启用候选项目', 'lis', '2026-06-22 09:00:00', 'normal', `batch-inactive-${suffix}`)
+
+    const importRes = await request(app)
+      .post('/api/v1/reconciliation/cases/import')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        items: [
+          { caseNo: explicitCaseNo, projectId: inactiveProjectId, projectName: '停用候选项目', operateTime: '2026-06-22 10:00:00', operator: 'lis' },
+          { caseNo: nameOnlyCaseNo, projectName: '停用候选项目', operateTime: '2026-06-22 11:00:00', operator: 'lis' },
+        ],
+      })
+
+    expect(importRes.status).toBe(200)
+    expect(importRes.body.data.count).toBe(1)
+    expect(importRes.body.data.skipped).toBe(1)
+    expect(importRes.body.data.unmatched).toBe(1)
+    expect(importRes.body.data.errors).toEqual([
+      expect.objectContaining({ row: 1, caseNo: explicitCaseNo, message: expect.stringContaining('指定检测项目不存在') }),
+    ])
+    expect(db.prepare('SELECT COUNT(*) as count FROM lis_cases WHERE case_no = ?').get(explicitCaseNo).count).toBe(0)
+    const unmatched = db.prepare('SELECT project_id, project_name FROM lis_cases WHERE case_no = ?').get(nameOnlyCaseNo) as any
+    expect(unmatched.project_id).toBe('')
+    expect(unmatched.project_name).toBe('停用候选项目')
+
+    const editRes = await request(app)
+      .put(`/api/v1/reconciliation/cases/${editableCaseId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ projectId: inactiveProjectId })
+
+    expect(editRes.status).toBe(400)
+    expect(editRes.body.success).toBe(false)
+    expect(editRes.body.error.code).toBe('INVALID_PARAMETER')
+    const unchangedCase = db.prepare('SELECT project_id, project_name FROM lis_cases WHERE id = ?').get(editableCaseId) as any
+    expect(unchangedCase.project_id).toBe(activeProjectId)
+    expect(unchangedCase.project_name).toBe('启用候选项目')
+
+    const beforeLogCount = (db.prepare('SELECT COUNT(*) as count FROM reconciliation_logs').get() as any).count
+    const fixRes = await request(app)
+      .post('/api/v1/reconciliation/logs')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        type: 'bom_fix',
+        targetId: materialId,
+        targetName: '停用项目校验物料',
+        field: 'usage_per_sample,unit',
+        oldValue: '1 支',
+        newValue: '2 ml',
+        reason: '停用项目不能修正',
+        projectId: inactiveProjectId,
+        materialId,
+        newUsage: 2,
+        newUnit: 'ml',
+      })
+
+    expect(fixRes.status).toBe(400)
+    expect(fixRes.body.success).toBe(false)
+    expect(fixRes.body.error.code).toBe('INVALID_PARAMETER')
+    const item = db.prepare('SELECT usage_per_sample, unit FROM bom_items WHERE bom_id = ? AND material_id = ?')
+      .get(bomId, materialId) as any
+    expect(item.usage_per_sample).toBe(1)
+    expect(item.unit).toBe('支')
+    const afterLogCount = (db.prepare('SELECT COUNT(*) as count FROM reconciliation_logs').get() as any).count
+    expect(afterLogCount).toBe(beforeLogCount)
+  })
+
   it('LIS 导入跳过缺少关键字段的病例，整批无效时拒绝写入', async () => {
     const suffix = Date.now()
     const projectId = `proj-import-required-${suffix}`

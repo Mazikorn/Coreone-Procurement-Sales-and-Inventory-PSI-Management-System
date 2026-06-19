@@ -14857,7 +14857,59 @@ git diff --check
 
 - 当前修复覆盖 BOM 修正日志写入口；修正日志列表的展示字段、导出字段和其它历史日志类型如果后续恢复写入口，应重新定义可写类型并补同等级校验。
 
-## 三百零三、结论
+## 三百零三、批次 348: LIS 对账候选项目必须启用有效
+
+**发现的问题**
+
+- 本轮继续复核非 ABC 对账/LIS 与 BOM 修正链路，聚焦“写入候选项目必须存在、未删除且启用；停用项目只能作为历史事实保留，不能作为新候选继续污染后续链路”不变量。
+- 对账项目列表和前端候选项只展示启用项目，但旧后端导入、病例编辑和 BOM 修正写入口只校验 `projects.is_deleted = 0`，没有校验 `status = 1`。
+- 当 API 绕过提交停用项目时：
+  - LIS 显式 `projectId` 导入会把停用项目当成有效项目并写入病例。
+  - 病例编辑会把既有关联项目改成停用项目。
+  - BOM 修正日志会通过停用项目找到 BOM 并修改用量，影响后续 BOM 出库理论用量和成本异常解释。
+- 这会让“停用后不影响历史记录”的项目规则变成“停用后仍可作为新写入候选”，与项目规格和对账候选来源不一致。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/reconciliation-v1.1.ts`
+  - `importLisItems` 的项目候选 Map 改为只读取 `is_deleted = 0 AND status = 1` 的启用项目。
+  - LIS 显式传入停用 `projectId` 时按无效候选跳过该行并返回可解释错误；仅按项目名称导入停用项目时保留原始项目名，但作为未匹配病例写入，不建立错误关联。
+  - 病例编辑关联项目时只允许启用项目；无效或停用项目返回 `400 INVALID_PARAMETER`，不修改原病例项目。
+  - BOM 修正日志按启用项目查找 BOM；项目不存在或已停用时在事务内回滚，不改 BOM、不写日志。
+- `后端代码/server/tests/integration/reconciliation.test.ts`
+  - 新增“LIS 导入、病例编辑和 BOM 修正必须拒绝停用检测项目作为新候选”红绿测试，覆盖显式项目导入、名称导入、病例编辑和 BOM 修正事务回滚。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 对账/LIS 写入口和集成测试，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- LIS 病例、项目和 BOM 用量是 BOM 出库、成本异常与 ABC 输入侧成本事实的上游；本批阻断停用项目继续成为新写入候选，减少后续出库、异常和成本解释被错误项目/BOM 污染。
+- 合法历史病例不被重写：既有关联停用项目的历史记录仍可作为历史事实存在；本批只限制新增导入、编辑和 BOM 修正候选。
+- 已补跑对账集成、成本异常、出库主链、前端对账页面/Hook/日志组件测试和前后端构建，确认不会破坏已完成的 ABC 成本透明化闭环。
+- 已确认本批 diff 不涉及 `前端代码/deprecated/legacy-cost-analysis/`、`后端代码/server/src/routes/abc-v1.1.ts`、`后端代码/server/src/utils/abc-calculator.test.ts` 或前端 ABC 本体页面。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/integration/reconciliation.test.ts -t "停用检测项目"` 修复前失败：旧导入路径把停用项目当成有效项目，`count` 返回 2，期望 1。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/integration/reconciliation.test.ts -t "停用检测项目"` 通过，1 test passed / 20 skipped；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `后端代码/server npm test -- --run tests/integration/reconciliation.test.ts tests/integration/cost-exceptions.test.ts` 通过，2 files / 32 tests passed；`cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr 为既有异常台账测试场景，最终通过。
+  - `前端代码 npm test -- --run src/pages/reconciliation/Reconciliation.test.tsx src/pages/reconciliation/hooks/useReconciliationPage.test.ts src/pages/reconciliation/components/LogListTab.test.tsx` 通过，3 files / 19 tests passed。
+  - `后端代码/server npm test -- --run tests/integration/outbound.test.ts` 通过，1 file / 29 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+- 浏览器复核:
+  - 本批不新增或改变 LIS 导入、病例编辑、BOM 修正弹窗或日志列表的可见组件；核心风险是 API 绕过停用项目候选时是否产生错误副作用，已用接口级红绿测试覆盖，不新增截图证据。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 当前修复覆盖对账模块内 LIS 导入、病例编辑和 BOM 修正三条候选项目写入路径；其它模块若存在“停用项目仍可作为新候选”的独立入口，应继续按同一不变量登记和处理。
+
+## 三百零四、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 
