@@ -383,7 +383,7 @@ test.describe('耗材管理 -> 搜索物料', () => {
       await route.fallback()
     })
 
-    await page.goto(`${FE_BASE}/materials`, { waitUntil: 'domcontentloaded' })
+    await page.goto(`${FE_BASE}/materials?page=5`, { waitUntil: 'domcontentloaded' })
     await expect(page.getByText('搜索Mock物料-initial')).toBeVisible({ timeout: 15000 })
 
     listRequests.length = 0
@@ -393,8 +393,13 @@ test.describe('耗材管理 -> 搜索物料', () => {
     await search.fill('abc')
 
     await expect.poll(() => new URL(page.url()).searchParams.get('keyword')).toBe('abc')
+    expect(new URL(page.url()).searchParams.get('page')).toBeNull()
     await expect(page.getByText('搜索Mock物料-abc')).toBeVisible({ timeout: 3000 })
     expect(listRequests.map(url => url.searchParams.get('keyword')).filter(Boolean)).toEqual(['abc'])
+    expect(listRequests.some(url =>
+      url.searchParams.get('keyword') === 'abc' &&
+      url.searchParams.get('page') === '1'
+    )).toBe(true)
   })
   test('MAT-SEARCH-04. 异常恢复：搜索时网络断', async ({ page }) => {
     await loginAs(page, 'admin')

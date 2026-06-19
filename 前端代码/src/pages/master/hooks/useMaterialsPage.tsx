@@ -67,7 +67,7 @@ export function useMaterialsPage() {
 
   const initialQuickFilter = normalizeQuickFilter(get('quick', get('status', 'all')))
 
-  const [keyword, setKeyword] = useState(get('keyword') || '')
+  const [keyword, setKeywordState] = useState(get('keyword') || '')
   const [debouncedKeyword, setDebouncedKeyword] = useState(get('keyword') || '')
   const [categoryId, setCategoryId] = useState(get('categoryId') || '')
   const [supplierId, setSupplierId] = useState(get('supplierId') || '')
@@ -534,13 +534,18 @@ export function useMaterialsPage() {
   }
 
   const handleReset = () => {
-    setKeyword('')
+    setKeywordState('')
     setDebouncedKeyword('')
     setCategoryId('')
     setSupplierId('')
     setQuickFilter('all')
     setPage(1)
   }
+
+  const setKeyword = useCallback((value: string) => {
+    setKeywordState(value)
+    setPage(1)
+  }, [setPage])
 
   return {
     data, loading, page, pageSize, total, setPage, setPageSize, refresh,

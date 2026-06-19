@@ -97,4 +97,23 @@ describe('useMaterialsPage', () => {
       keyword: 'Ki-67',
     }))
   })
+
+  it('resets pagination when the keyword filter changes', async () => {
+    window.history.replaceState(null, '', '/materials?page=5')
+    vi.mocked(materialApi.getList).mockImplementation(async (params: any) => ({
+      list: [],
+      pagination: { total: 100, page: params.page, pageSize: params.pageSize },
+    } as any))
+
+    const { result } = renderHook(() => useMaterialsPage())
+    await waitFor(() => expect(result.current.page).toBe(5))
+
+    act(() => {
+      result.current.setKeyword('HER2')
+    })
+
+    await waitFor(() => expect(result.current.page).toBe(1))
+    expect(window.location.search).toContain('keyword=HER2')
+    expect(window.location.search).not.toContain('page=5')
+  })
 })
