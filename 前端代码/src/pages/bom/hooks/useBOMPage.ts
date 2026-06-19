@@ -163,6 +163,10 @@ function validateBomForm(form: BOMForm) {
   )
 }
 
+function statusBlockedMessage(status: 'active' | 'inactive', reasons?: string[]) {
+  return reasons?.join('；') || (status === 'active' ? 'BOM存在不可用依赖，不可启用' : 'BOM已被启用检测项目引用，不可停用')
+}
+
 function toForm(bom: BOM): BOMForm {
   return {
     code: bom.code,
@@ -439,6 +443,13 @@ export function useBOMPage() {
         const contentChanged = JSON.stringify(payload) !== JSON.stringify(previousPayload)
         const statusChanged = form.status !== selectedBom?.status
 
+        if (statusChanged) {
+          const check = await bomApi.checkStatus(editingId, form.status)
+          if (!check.canChange) {
+            toast.error(statusBlockedMessage(form.status, check.reasons))
+            return
+          }
+        }
         if (statusChanged && form.status === 'inactive') {
           await bomApi.updateStatus(editingId, form.status)
         }
@@ -616,7 +627,7 @@ export function useBOMPage() {
     try {
       const check = await bomApi.checkStatus(targetId, status)
       if (!check.canChange) {
-        toast.error(check.reasons?.join('；') || (status === 'active' ? 'BOM存在不可用依赖，不可启用' : 'BOM已被启用检测项目引用，不可停用'))
+        toast.error(statusBlockedMessage(status, check.reasons))
         return
       }
       await bomApi.batchStatus(ids, status)

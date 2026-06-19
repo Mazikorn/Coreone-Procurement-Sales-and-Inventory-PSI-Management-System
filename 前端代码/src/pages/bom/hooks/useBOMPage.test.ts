@@ -98,8 +98,19 @@ describe('useBOMPage', () => {
     vi.mocked(projectApi.getList).mockResolvedValue({ list: [], pagination: { total: 0 } } as any)
   })
 
-  it('does not update BOM content when deactivation is rejected first', async () => {
-    vi.mocked(bomApi.updateStatus).mockRejectedValue(new Error('BOM已被启用检测项目引用'))
+  it('checks edit status impacts before saving content changes', async () => {
+    vi.mocked(bomApi.checkStatus).mockResolvedValue({
+      bom: { id: 'bom-1', code: 'BOM-001', name: '原BOM' },
+      targetStatus: 'inactive',
+      canChange: false,
+      impacts: {
+        activeProjectCount: 1,
+        inactiveMaterialCount: 0,
+        inactiveEquipmentCount: 0,
+        inactiveEquipmentTypeCount: 0,
+      },
+      reasons: ['存在 1 个启用检测项目引用'],
+    } as any)
 
     const { result } = renderHook(() => useBOMPage())
 
@@ -120,8 +131,10 @@ describe('useBOMPage', () => {
       await result.current.handleSubmit()
     })
 
-    expect(bomApi.updateStatus).toHaveBeenCalledWith('bom-1', 'inactive')
+    expect(bomApi.checkStatus).toHaveBeenCalledWith('bom-1', 'inactive')
+    expect(bomApi.updateStatus).not.toHaveBeenCalled()
     expect(bomApi.update).not.toHaveBeenCalled()
+    expect(toast.error).toHaveBeenCalledWith('存在 1 个启用检测项目引用')
   })
 
   it('checks delete impacts before opening BOM batch delete confirmation', async () => {

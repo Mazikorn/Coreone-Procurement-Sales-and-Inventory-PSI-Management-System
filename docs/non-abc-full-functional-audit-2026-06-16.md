@@ -12814,7 +12814,59 @@ git diff --check
 - 本批只处理 BOM 新建/编辑表单的检测服务候选过滤；后端服务绑定保护仍是最终防线。
 - 如果后续继续服务绑定专题，可检查检测服务页面反向绑定 BOM 的候选是否也排除了不可用或已冲突 BOM；不在本批扩展。
 
-## 二百六十一、结论
+## 二百六十一、批次 306: BOM 编辑保存状态变更必须先做影响检查
+
+**发现的问题**
+
+- 本轮计划要求 BOM 覆盖启停用依赖，任何会改变 BOM 可用性的入口都必须在真实副作用前检查引用和依赖影响。
+- 批量启停用和表格单行启停用已经补了 `check-status` 预检查，但编辑弹窗内直接修改状态后保存仍没有先检查影响。
+- 旧编辑保存路径在状态改为停用时会先调用状态更新再保存内容，依赖后端 409 和通用失败提示兜底；状态改为启用时还可能先保存内容，再执行状态变更。
+- 这会导致“名称/物料用量修改”和“状态变更”混在一次保存里时，页面缺少真实副作用前的阻断证据，可能在状态变更被拒绝时仍产生部分内容更新风险。
+
+**已完成修复**
+
+- `前端代码/src/pages/bom/hooks/useBOMPage.ts`
+  - 新增 `statusBlockedMessage`，统一把后端 `reasons` 转成可解释提示，并保留启用/停用默认兜底文案。
+  - 编辑保存时只要检测到状态变更，就先调用 `bomApi.checkStatus(editingId, form.status)`。
+  - 当 `canChange=false` 时，立即展示阻断原因并停止保存，不再发送内容更新或状态更新请求。
+  - 单行启停用路径复用同一提示函数，保持文案口径一致。
+- `前端代码/src/pages/bom/hooks/useBOMPage.test.ts`
+  - 新增红绿测试：编辑弹窗把被引用 BOM 改为停用时，必须先调用 `checkStatus`，且不得调用 `updateStatus` 或 `update`。
+- `前端代码/e2e/bom.spec.ts`
+  - 新增 `BOM-STATUS-EDIT-01` 页面级验收：在编辑弹窗修改名称并尝试停用被引用 BOM，页面显示后端阻断原因，且未发送内容更新和状态更新请求。
+
+**ABC 影响评估**
+
+- BOM 状态和内容是项目绑定、BOM 出库标准用量、库存扣减、成本异常和 ABC 上游成本事实的关键输入。
+- 本批阻止“状态变更被拒绝但内容已经保存”的部分副作用风险，保护历史 BOM 事实不被一次失败操作静默污染。
+- 本批只修改 BOM 页面保存前检查，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 已补跑 BOM、出库、入库和物料保护输入链回归，覆盖 BOM 状态对相邻库存/成本输入链的影响。
+- 未触碰 `前端代码/deprecated/legacy-cost-analysis/`。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/bom/hooks/useBOMPage.test.ts -t "edit status impacts"` 修复前失败：旧实现没有调用 `bomApi.checkStatus`。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/bom/hooks/useBOMPage.test.ts -t "edit status impacts"` 通过，1 test passed / 10 skipped。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/bom.spec.ts -g "BOM-STATUS-EDIT-01" --project=chromium` 通过，1 test passed。
+  - `前端代码 npm test -- --run src/pages/bom/hooks/useBOMPage.test.ts src/pages/bom/components/BOMFormModal.test.tsx src/pages/bom/components/BOMCopyModal.test.tsx src/pages/bom/components/BOMBatchImpactModal.test.tsx src/hooks/usePagination.test.ts` 通过，5 files / 32 tests passed。
+  - `后端代码/server npm run test:node -- --run tests/bom-batch.test.ts tests/integration/bom.test.ts tests/integration/outbound.test.ts tests/materials-guard.test.ts tests/inbound-batch.test.ts` 通过，5 files / 101 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/bom.spec.ts -g "BOM-STATUS-EDIT-01|BOM-SERVICE-CAND-01|BOM-STATUS-SINGLE-01|BOM-MAT-GROUP-01|BOM-CREATE-01|BOM-CREATE-02|BOM-CREATE-15|BOM-EDIT-01|BOM-EDIT-09|BOM-DETAIL-03" --project=chromium` 通过，10 tests passed。
+  - `git diff --check` 通过。
+  - `git diff --name-only | rg "deprecated/legacy-cost-analysis|前端代码/deprecated|/cost-analysis"` 无匹配，确认未改废弃范围。
+  - `lsof -nP -iTCP:3001 -sTCP:LISTEN` 和 `lsof -nP -iTCP:8080 -sTCP:LISTEN` 均无监听残留。
+- 浏览器复核:
+  - 使用用户已验证的 Chrome for Testing 路径完成 headless Playwright 复核；验证重点为编辑弹窗停用被引用 BOM 时先查影响、显示阻断原因、未发送内容更新和状态更新请求，以及 BOM 服务候选、单行状态检查、跨分组重复、创建、编辑和详情回归。
+
+**后续风险**
+
+- 本批只处理编辑保存时的状态影响预检查，不扩展到 BOM 历史使用后的内容字段保护。
+- 后续可继续按基础资料阶段检查 BOM 复制版本、历史使用后保护，或转入项目/检测服务绑定边界；发现计划外问题先登记到待评估清单。
+
+## 二百六十二、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 
