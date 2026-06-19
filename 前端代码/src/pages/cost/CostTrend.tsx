@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { Download } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -45,6 +45,45 @@ const MONTHS_OPTIONS = [
 ]
 
 const LINE_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444', '#06b6d4']
+
+function getProjectTypeLabel(projectTypeValue: string) {
+  return PROJECT_TYPE_OPTIONS.find(option => option.value === projectTypeValue)?.label || projectTypeValue
+}
+
+function escapeCsvValue(value: string | number | boolean | undefined) {
+  const text = String(value ?? '')
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
+}
+
+export function buildMonthlyTrendExportCsv(rows: TrendItem[]) {
+  const headers = ['月份', 'BOM/项目名称', '项目类型', '切片均成本', '物料成本', '作业成本', '收费', '利润率']
+  const body = rows.map(item => [
+    item.month,
+    item.bomName,
+    getProjectTypeLabel(item.projectType),
+    item.costPerSlide,
+    item.materialCost,
+    item.activityCost,
+    item.feeAmount,
+    `${(item.marginRate * 100).toFixed(1)}%`,
+  ])
+  return [headers, ...body]
+    .map(row => row.map(escapeCsvValue).join(','))
+    .join('\n')
+}
+
+export function buildQuarterlyTrendExportCsv(rows: ReportsTrendItem[]) {
+  const headers = ['季度', '总成本', '出库记录数', '数据状态']
+  const body = rows.map(item => [
+    item.period,
+    item.cost,
+    item.recordCount,
+    item.isComplete === false ? '进行中' : '完整',
+  ])
+  return [headers, ...body]
+    .map(row => row.map(escapeCsvValue).join(','))
+    .join('\n')
+}
 
 export function normalizeSlideCostTrendRows(rows: any[]): TrendItem[] {
   return rows
@@ -187,18 +226,14 @@ export default function CostTrend() {
   const handleExport = async () => {
     try {
       setExporting(true)
-      const end = new Date()
-      const start = new Date()
-      start.setMonth(start.getMonth() - months + 1)
-      const data = await abcApi.exportData({
-        startMonth: start.toISOString().slice(0, 7),
-        endMonth: end.toISOString().slice(0, 7),
-        projectType: projectType !== 'all' ? projectType : undefined,
-      })
-      downloadTextFile(data.filename || 'abc-cost-trend.csv', data.content || '', data.mimeType)
+      const content = dimension === 'quarterly'
+        ? buildQuarterlyTrendExportCsv(quarterlyChartData)
+        : buildMonthlyTrendExportCsv(trend)
+      const suffix = dimension === 'quarterly' ? 'quarterly' : `${months}months`
+      downloadTextFile(`abc-cost-trend-${suffix}.csv`, content, 'text/csv;charset=utf-8')
       toast.success('导出完成')
     } catch {
-      // 统一错误提示已在请求拦截器处理
+      toast.error('导出成本趋势数据失败')
     } finally {
       setExporting(false)
     }

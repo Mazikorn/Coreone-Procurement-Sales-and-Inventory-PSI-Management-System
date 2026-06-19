@@ -16642,9 +16642,62 @@ git diff --check
 
 **后续风险**
 
-- 切片成本明细显示和导出业务口径已阶段性保护；下一批可继续复核成本趋势、收费对照或其它非废弃成本读面的导出筛选范围与页面读面一致性。
+- 切片成本明细显示和导出业务口径已阶段性保护；下一批转入成本趋势导出，确认趋势图页面不会导出通用成本明细 raw 口径。
 
-## 三百四十、结论
+## 三百四十、批次 385: 成本趋势导出必须使用趋势页业务口径
+
+**发现的问题**
+
+- 本轮继续复核非废弃成本读面，聚焦“导出归档必须与页面读面同口径”不变量。
+- `CostTrend` 页面月度视图展示的是趋势行：月份、BOM/项目名称、项目类型、切片均成本、物料成本、作业成本、收费和利润率。
+- 旧导出逻辑调用后端通用 `abcApi.exportData`，下载的是通用 ABC 成本明细 CSV，可能包含 `project_type` 和 `he` 等内部枚举，且不是趋势图的月度/季度读面。
+- 季度视图也共用同一个导出按钮，旧逻辑同样会退回通用明细，而不是导出页面上的季度成本趋势和记录数。
+- 页面级红灯测试还暴露 `CostTrend.tsx` 在当前 Vitest/JSX 配置下缺少 React 导入，导致成本趋势页无法稳定进行页面级导出验证。
+
+**已完成修复**
+
+- `前端代码/src/pages/cost/CostTrend.tsx`
+  - 补充 React 导入，让页面在当前测试配置下可被页面级测试渲染。
+  - 新增 `getProjectTypeLabel`，把趋势行中的项目类型枚举转换成 `HE染色` 等业务标签。
+  - 新增 `escapeCsvValue`，对导出 CSV 的逗号、换行和引号做转义。
+  - 新增 `buildMonthlyTrendExportCsv`，按月度趋势页当前 `trend` 数据导出业务列：`月份、BOM/项目名称、项目类型、切片均成本、物料成本、作业成本、收费、利润率`。
+  - 新增 `buildQuarterlyTrendExportCsv`，按季度视图当前 `quarterlyChartData` 导出 `季度、总成本、出库记录数、数据状态`。
+  - `handleExport` 改为根据当前视图本地生成趋势 CSV，不再调用通用 `abcApi.exportData`；本地导出失败时提示 `导出成本趋势数据失败`。
+- `前端代码/src/pages/cost/CostTrend.test.ts`
+  - 新增页面级红绿测试：接口返回 `HE标准BOM / projectType: he` 的月度趋势行时，点击导出必须下载包含 `HE标准BOM`、`HE染色`、`2026-06` 的趋势 CSV，且不得调用通用 `abcApi.exportData` 或下载 `project_type\nhe`。
+  - 为 `.ts` 测试文件补充 `React.createElement` 形式的 Recharts mock，避免 JSX 语法被当成正则解析。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 成本趋势页面的前端导出内容、页面级测试和渲染前置导入，不修改 ABC 本体、ABC API 后端、成本算法、库存、出库或废弃 `/cost-analysis`。
+- 导出内容来自页面已经加载并归一化后的趋势事实，不改变出库 ABC 明细、成本异常、重算、费用归集或关账事实。
+- 已补跑全成本和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/cost/CostTrend.test.ts -t "exports monthly trend data"` 首次暴露 `.ts` 测试文件不能使用 JSX mock；改为 `React.createElement` 后再次暴露 `CostTrend.tsx` 缺少 React 导入。
+  - 清掉渲染前置问题后，同一命令按预期失败：下载内容为 `project_type\nhe`，不包含 `HE标准BOM`。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/cost/CostTrend.test.ts` 通过，3 tests passed。
+  - `前端代码 npm test -- --run src/pages/cost/CostTrend.test.ts src/pages/cost/SlideCostAnalysis.test.ts src/pages/cost/ProfitabilityAnalysis.test.ts src/pages/cost/PersonnelEfficiency.render.test.tsx` 通过，4 files / 12 tests passed。
+  - `后端代码/server npm test -- --run tests/integration/full-cost.test.ts tests/integration/cost-exceptions.test.ts` 通过，2 files / 14 tests passed；命令退出码为 0，保留既有 Vite close timeout 提示和 `cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis` 无输出，确认未改废弃范围。
+- 浏览器复核:
+  - 本批为成本趋势本地 CSV 导出内容修复，不新增路由、表单、弹窗或接口；核心风险是导出按钮真实副作用是否写出当前页面同口径文件，已用页面级红绿测试覆盖按钮点击、下载函数参数、业务标签和不调用通用导出接口，不新增截图证据。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 成本趋势月度/季度导出口径已阶段性保护；下一批可继续复核收费对照的筛选、项目类型显示和导出归档是否与页面读面一致。
+
+## 三百四十一、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 
