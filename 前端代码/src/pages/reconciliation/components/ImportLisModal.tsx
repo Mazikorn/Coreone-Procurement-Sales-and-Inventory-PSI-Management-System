@@ -8,12 +8,13 @@ interface Props {
   open: boolean
   importData: string
   setImportData: (v: string) => void
+  setImportFile: (file: File | null) => void
   importErrors: LisImportError[]
   onClose: () => void
   onConfirm: () => void
 }
 
-export function ImportLisModal({ open, importData, setImportData, importErrors, onClose, onConfirm }: Props) {
+export function ImportLisModal({ open, importData, setImportData, setImportFile, importErrors, onClose, onConfirm }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null)
   const [fileName, setFileName] = useState('')
   const preview = useMemo(() => importData.trim() ? buildLisImportPreview(importData) : null, [importData])
@@ -53,8 +54,9 @@ export function ImportLisModal({ open, importData, setImportData, importErrors, 
         return
       }
 
-      setFileName(file.name)
       setImportData(content)
+      setImportFile(file)
+      setFileName(file.name)
       toast.success('文件已读取，请确认后导入')
     } catch {
       toast.error('文件读取失败，请检查格式')
@@ -118,7 +120,11 @@ export function ImportLisModal({ open, importData, setImportData, importErrors, 
           </div>
           <textarea
             value={importData}
-            onChange={e => setImportData(e.target.value)}
+            onChange={e => {
+              setImportFile(null)
+              setFileName('')
+              setImportData(e.target.value)
+            }}
             placeholder={`P24050187,HE制片,2026-04-15 14:30,张三\nP24050188,免疫组化-IHC,2026-04-15 15:00,李四`}
             rows={6}
             className="w-full mt-4 px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:border-blue-500 font-mono"

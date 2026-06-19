@@ -409,6 +409,7 @@ export function useReconciliationPage() {
   const [fixBomModalOpen, setFixBomModalOpen] = useState(false)
   const [editCaseModalOpen, setEditCaseModalOpen] = useState(false)
   const [importData, setImportData] = useState('')
+  const [importFile, setImportFile] = useState<File | null>(null)
   const [importErrors, setImportErrors] = useState<LisImportError[]>([])
   const [fixTarget, setFixTarget] = useState<MaterialDiff | null>(null)
   const [fixTargetProjectId, setFixTargetProjectId] = useState<string | null>(null)
@@ -600,11 +601,15 @@ export function useReconciliationPage() {
         return
       }
 
-      const res = await reconciliationApi.importCases({ items: validation.validItems })
+      const res = importFile
+        ? await reconciliationApi.importLisFile(importFile)
+        : await reconciliationApi.importCases({ items: validation.validItems })
       const unmatched = Number(res?.unmatched || 0)
-      toast.success(`成功导入 ${res?.count || items.length} 条病例数据${unmatched > 0 ? `，${unmatched} 条未匹配项目` : ''}`)
+      const importedCount = res?.count || res?.imported || items.length
+      toast.success(`成功导入 ${importedCount} 条病例数据${unmatched > 0 ? `，${unmatched} 条未匹配项目` : ''}`)
       setImportModalOpen(false)
       setImportData('')
+      setImportFile(null)
       setImportErrors([])
       const refreshTargets = getLisImportRefreshTargets(activeTab)
       if (refreshTargets.clearProjectMaterials) {
@@ -624,6 +629,7 @@ export function useReconciliationPage() {
 
   const updateImportData = (value: string) => {
     setImportData(value)
+    setImportFile(null)
     if (importErrors.length > 0) setImportErrors([])
   }
 
@@ -761,6 +767,8 @@ export function useReconciliationPage() {
     logPagination,
     importModalOpen,
     setImportModalOpen,
+    importFile,
+    setImportFile,
     fixBomModalOpen,
     setFixBomModalOpen,
     editCaseModalOpen,

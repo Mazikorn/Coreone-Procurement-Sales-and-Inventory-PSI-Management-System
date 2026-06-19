@@ -32,6 +32,8 @@ vi.mock('./hooks/useReconciliationPage', () => ({
     setCaseFilterStatus: vi.fn(),
     importModalOpen: false,
     setImportModalOpen: vi.fn(),
+    importFile: null,
+    setImportFile: vi.fn(),
     fixBomModalOpen: false,
     editCaseModalOpen: false,
     importData: '',

@@ -1,10 +1,16 @@
 import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
+import multer from 'multer'
+import * as XLSX from 'xlsx'
 import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
 import { recordCostException } from '../utils/cost-exceptions.js'
 
 const router = Router()
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+})
 
 const dateRegex = /^\d{4}-\d{2}-\d{2}$/
 const dateTimeRegex = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/
@@ -232,6 +238,193 @@ function findProjectForImportedCase(projectsById: Map<string, any>, projectsByNa
   const projectName = String(item.projectName || item.project_name || '').trim()
   if (!projectName) return null
   return projectsByNameOrCode.get(projectName.toLowerCase()) || null
+}
+
+const lisHeaderAliases: Record<string, string[]> = {
+  caseNo: ['病理号', '病例号', 'case_no', 'caseno', 'case no'],
+  projectName: ['检测项目', '项目名称', 'project_name', 'projectname', 'project name'],
+  operateTime: ['操作时间', '检测时间', 'operate_time', 'operatetime', 'operate time'],
+  operator: ['操作人', 'operator'],
+}
+
+function parseDelimitedLine(line: string, delimiter: string) {
+  const cells: string[] = []
+  let current = ''
+  let quoted = false
+
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i]
+    const next = line[i + 1]
+    if (char === '"') {
+      if (quoted && next === '"') {
+        current += '"'
+        i += 1
+      } else {
+        quoted = !quoted
+      }
+      continue
+    }
+    if (char === delimiter && !quoted) {
+      cells.push(current.trim())
+      current = ''
+      continue
+    }
+    current += char
+  }
+  cells.push(current.trim())
+  return cells
+}
+
+function parseLisLine(line: string) {
+  return parseDelimitedLine(line, line.includes('\t') ? '\t' : ',')
+}
+
+function normalizeHeader(value: string) {
+  return value.trim().replace(/^\ufeff/, '').toLowerCase()
+}
+
+function findLisHeaderIndex(headers: string[], key: keyof typeof lisHeaderAliases) {
+  const aliases = lisHeaderAliases[key].map(normalizeHeader)
+  return headers.findIndex(header => aliases.includes(normalizeHeader(header)))
+}
+
+function parseLisImportText(raw: string) {
+  const lines = raw.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+  if (lines.length === 0) return []
+
+  const firstCells = parseLisLine(lines[0])
+  const hasHeader = findLisHeaderIndex(firstCells, 'caseNo') >= 0 && findLisHeaderIndex(firstCells, 'projectName') >= 0
+  const indexes = hasHeader
+    ? {
+        caseNo: findLisHeaderIndex(firstCells, 'caseNo'),
+        projectName: findLisHeaderIndex(firstCells, 'projectName'),
+        operateTime: findLisHeaderIndex(firstCells, 'operateTime'),
+        operator: findLisHeaderIndex(firstCells, 'operator'),
+      }
+    : { caseNo: 0, projectName: 1, operateTime: 2, operator: 3 }
+
+  return lines.slice(hasHeader ? 1 : 0)
+    .map(line => parseLisLine(line))
+    .map(cells => ({
+      caseNo: indexes.caseNo >= 0 ? String(cells[indexes.caseNo] || '').trim() : '',
+      projectName: indexes.projectName >= 0 ? String(cells[indexes.projectName] || '').trim() : '',
+      operateTime: indexes.operateTime >= 0 ? String(cells[indexes.operateTime] || '').trim() : '',
+      operator: indexes.operator >= 0 ? String(cells[indexes.operator] || '').trim() : '',
+    }))
+}
+
+function parseLisImportFile(file: Express.Multer.File) {
+  const ext = file.originalname.split('.').pop()?.toLowerCase()
+  if (ext === 'xlsx' || ext === 'xls') {
+    const workbook = XLSX.read(file.buffer, { type: 'buffer' })
+    const firstSheet = workbook.SheetNames[0]
+    if (!firstSheet) return []
+    const rows = XLSX.utils.sheet_to_json<Array<string | number | null>>(workbook.Sheets[firstSheet], { header: 1, blankrows: false })
+    const text = rows
+      .map(row => row.map(cell => String(cell ?? '').trim()).join('\t').trim())
+      .filter(Boolean)
+      .join('\n')
+    return parseLisImportText(text)
+  }
+
+  return parseLisImportText(file.buffer.toString('utf8'))
+}
+
+function importLisItems(items: any[]) {
+  const db = getDatabase()
+  const importBatch = `IMPORT-${Date.now()}`
+
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    const projects = db.prepare("SELECT id, code, name FROM projects WHERE is_deleted = 0").all() as any[]
+    const projectsById = new Map(projects.map(p => [p.id, p]))
+    const projectsByNameOrCode = new Map<string, any>()
+    for (const project of projects) {
+      if (project.name) projectsByNameOrCode.set(String(project.name).toLowerCase(), project)
+      if (project.code) projectsByNameOrCode.set(String(project.code).toLowerCase(), project)
+    }
+
+    const stmt = db.prepare(`
+      INSERT INTO lis_cases (id, case_no, project_id, project_name, operator, operate_time, import_batch)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(case_no) DO UPDATE SET
+        project_id = excluded.project_id,
+        project_name = excluded.project_name,
+        operator = excluded.operator,
+        operate_time = excluded.operate_time
+    `)
+
+    let successCount = 0
+    let skippedCount = 0
+    let unmatchedCount = 0
+    const errors: Array<{ row: number; caseNo?: string; message: string }> = []
+    for (const [index, item] of items.entries()) {
+      const row = index + 1
+      const caseNo = String(item.caseNo || item.case_no || '').trim()
+      const projectName = String(item.projectName || item.project_name || '').trim()
+      const operateTime = String(item.operateTime || item.operate_time || '').trim()
+      const operator = String(item.operator || '').trim()
+      if (!caseNo || !projectName || !operateTime) {
+        errors.push({
+          row,
+          caseNo,
+          message: !caseNo ? '病理号不能为空' : !projectName ? '检测项目不能为空' : '检测时间不能为空',
+        })
+        skippedCount++
+        continue
+      }
+      if (!validateLisOperateTime(operateTime)) {
+        errors.push({ row, caseNo, message: '检测时间格式错误，应为 YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss' })
+        skippedCount++
+        continue
+      }
+
+      const explicitProjectId = String(item.projectId || item.project_id || '').trim()
+      const project = findProjectForImportedCase(projectsById, projectsByNameOrCode, { ...item, projectName })
+      if (explicitProjectId && !project) {
+        errors.push({ row, caseNo, message: '指定检测项目不存在' })
+        skippedCount++
+        continue
+      }
+      if (!project) unmatchedCount++
+      stmt.run(
+        uuidv4(),
+        caseNo,
+        project?.id || '',
+        project?.name || projectName,
+        operator,
+        operateTime,
+        importBatch
+      )
+      successCount++
+    }
+
+    if (successCount === 0) {
+      db.exec('ROLLBACK')
+      return { ok: false as const, message: '未找到有效病例数据', errors }
+    }
+
+    db.exec('COMMIT')
+    const message = skippedCount > 0
+      ? `成功导入 ${successCount} 条病例数据，跳过 ${skippedCount} 条无效项目`
+      : `成功导入 ${successCount} 条病例数据`
+    return {
+      ok: true as const,
+      message,
+      data: {
+        importBatch,
+        count: successCount,
+        skipped: skippedCount,
+        unmatched: unmatchedCount,
+        imported: successCount,
+        failed: skippedCount,
+        errors,
+      },
+    }
+  } catch (e) {
+    db.exec('ROLLBACK')
+    throw e
+  }
 }
 
 function getProjectMaterialReconciliation(db: any, projectId: string, startDate?: string, endDate?: string) {
@@ -789,95 +982,40 @@ router.get('/cases', (req, res) => {
  */
 router.post('/cases/import', (req, res) => {
   try {
-    const db = getDatabase()
     const { items } = req.body as { items: any[] }
 
     if (!Array.isArray(items) || items.length === 0) {
       return error(res, '导入数据为空', 'BAD_REQUEST', 400)
     }
 
-    const importBatch = `IMPORT-${Date.now()}`
-
-    db.exec('BEGIN IMMEDIATE')
-    try {
-      // 预加载项目，支持按 ID、编码或名称匹配。LIS 导入文件通常只有项目名称。
-      const projects = db.prepare("SELECT id, code, name FROM projects WHERE is_deleted = 0").all() as any[]
-      const projectsById = new Map(projects.map(p => [p.id, p]))
-      const projectsByNameOrCode = new Map<string, any>()
-      for (const project of projects) {
-        if (project.name) projectsByNameOrCode.set(String(project.name).toLowerCase(), project)
-        if (project.code) projectsByNameOrCode.set(String(project.code).toLowerCase(), project)
-      }
-
-      const stmt = db.prepare(`
-        INSERT INTO lis_cases (id, case_no, project_id, project_name, operator, operate_time, import_batch)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(case_no) DO UPDATE SET
-          project_id = excluded.project_id,
-          project_name = excluded.project_name,
-          operator = excluded.operator,
-          operate_time = excluded.operate_time
-      `)
-
-      let successCount = 0
-      let skippedCount = 0
-      let unmatchedCount = 0
-      const errors: Array<{ row: number; caseNo?: string; message: string }> = []
-      for (const [index, item] of items.entries()) {
-        const row = index + 1
-        const caseNo = String(item.caseNo || item.case_no || '').trim()
-        const projectName = String(item.projectName || item.project_name || '').trim()
-        const operateTime = String(item.operateTime || item.operate_time || '').trim()
-        const operator = String(item.operator || '').trim()
-        if (!caseNo || !projectName || !operateTime) {
-          errors.push({
-            row,
-            caseNo,
-            message: !caseNo ? '病理号不能为空' : !projectName ? '检测项目不能为空' : '检测时间不能为空',
-          })
-          skippedCount++
-          continue
-        }
-        if (!validateLisOperateTime(operateTime)) {
-          errors.push({ row, caseNo, message: '检测时间格式错误，应为 YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss' })
-          skippedCount++
-          continue
-        }
-
-        const explicitProjectId = String(item.projectId || item.project_id || '').trim()
-        const project = findProjectForImportedCase(projectsById, projectsByNameOrCode, { ...item, projectName })
-        if (explicitProjectId && !project) {
-          errors.push({ row, caseNo, message: '指定检测项目不存在' })
-          skippedCount++
-          continue
-        }
-        if (!project) unmatchedCount++
-        stmt.run(
-          uuidv4(),
-          caseNo,
-          project?.id || '',
-          project?.name || projectName,
-          operator,
-          operateTime,
-          importBatch
-        )
-        successCount++
-      }
-
-      if (successCount === 0) {
-        db.exec('ROLLBACK')
-        return badImportResponse(res, '未找到有效病例数据', errors)
-      }
-
-      db.exec('COMMIT')
-      const msg = skippedCount > 0
-        ? `成功导入 ${successCount} 条病例数据，跳过 ${skippedCount} 条无效项目`
-        : `成功导入 ${successCount} 条病例数据`
-      success(res, { importBatch, count: successCount, skipped: skippedCount, unmatched: unmatchedCount, errors }, msg)
-    } catch (e: any) {
-      db.exec('ROLLBACK')
-      throw e
+    const result = importLisItems(items)
+    if (!result.ok) {
+      return badImportResponse(res, result.message, result.errors)
     }
+    success(res, result.data, result.message)
+  } catch (e: any) {
+    error(res, e.message || '导入失败')
+  }
+})
+
+/**
+ * POST /api/v1/reconciliation/import-lis
+ * 上传 LIS 文件并导入病例数据
+ */
+router.post('/import-lis', upload.single('file'), (req, res) => {
+  try {
+    if (!req.file) {
+      return error(res, '请上传LIS数据文件', 'BAD_REQUEST', 400)
+    }
+    const items = parseLisImportFile(req.file)
+    if (items.length === 0) {
+      return badImportResponse(res, '未找到有效病例数据', [])
+    }
+    const result = importLisItems(items)
+    if (!result.ok) {
+      return badImportResponse(res, result.message, result.errors)
+    }
+    success(res, result.data, result.message)
   } catch (e: any) {
     error(res, e.message || '导入失败')
   }

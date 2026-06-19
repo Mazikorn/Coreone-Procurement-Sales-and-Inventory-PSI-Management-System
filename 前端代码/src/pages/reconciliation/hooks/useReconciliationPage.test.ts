@@ -30,6 +30,7 @@ describe('parseLisImportData', () => {
     vi.mocked(reconciliationApi.getCases).mockResolvedValue({ list: [], pagination: { page: 1, pageSize: 20, total: 0 } } as any)
     vi.mocked(reconciliationApi.getLogs).mockResolvedValue({ list: [], pagination: { page: 1, pageSize: 20, total: 0 } } as any)
     vi.mocked(reconciliationApi.importCases).mockResolvedValue({ count: 1, unmatched: 0 } as any)
+    vi.mocked(reconciliationApi.importLisFile).mockResolvedValue({ imported: 1, failed: 0, unmatched: 0 } as any)
   })
 
   it('parses quoted CSV fields without shifting LIS columns', () => {
@@ -233,5 +234,22 @@ describe('parseLisImportData', () => {
     })
     expect(reconciliationApi.getProjects).toHaveBeenCalledTimes(callsBeforeImport + 1)
     expect(toast.success).toHaveBeenCalledWith(expect.stringContaining('成功导入 1 条病例数据'))
+  })
+
+  it('uploads the original LIS file through FormData import when a file was selected', async () => {
+    const { result } = renderHook(() => useReconciliationPage())
+    await waitFor(() => expect(reconciliationApi.getProjects).toHaveBeenCalled())
+    const file = new File(['病理号,检测项目,操作时间,操作人\nCASE-FILE,HE制片,2026-06-16 09:00,张三'], 'lis.csv', { type: 'text/csv' })
+
+    act(() => {
+      result.current.setImportData('CASE-FILE,HE制片,2026-06-16 09:00,张三')
+      result.current.setImportFile(file)
+    })
+    await act(async () => {
+      await result.current.handleImport()
+    })
+
+    expect(reconciliationApi.importLisFile).toHaveBeenCalledWith(file)
+    expect(reconciliationApi.importCases).not.toHaveBeenCalled()
   })
 })

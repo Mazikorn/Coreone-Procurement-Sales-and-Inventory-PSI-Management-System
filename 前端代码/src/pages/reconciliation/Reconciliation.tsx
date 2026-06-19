@@ -212,6 +212,7 @@ export default function Reconciliation() {
         open={page.importModalOpen}
         importData={page.importData}
         setImportData={page.setImportData}
+        setImportFile={page.setImportFile}
         importErrors={page.importErrors}
         onClose={() => page.setImportModalOpen(false)}
         onConfirm={page.handleImport}

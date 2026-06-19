@@ -25,6 +25,14 @@ export const reconciliationApi = {
   importCases: (data: any) =>
     request.post('/reconciliation/cases/import', data),
 
+  importLisFile: (file: File) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    return request.post('/reconciliation/import-lis', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+  },
+
   updateCase: (id: string, data: any) =>
     request.put(`/reconciliation/cases/${id}`, data),
 

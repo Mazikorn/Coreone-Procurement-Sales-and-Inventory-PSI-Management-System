@@ -765,6 +765,28 @@ test.describe('消耗对账 -> 导入LIS数据', () => {
     await expect(page.locator('text=导入LIS病例数据')).not.toBeVisible()
   })
 
+  test('RECON-IMPORT-10. 上传真实CSV文件走FormData导入接口', async ({ page }) => {
+    await loginAs(page, 'admin')
+    await page.goto(`${FE_BASE}/reconciliation`)
+    await page.click('text=导入LIS数据')
+    const caseNo = `E2E-LIS-FILE-${Date.now()}`
+    await page.locator('input[type="file"]').setInputFiles({
+      name: 'lis-import.csv',
+      mimeType: 'text/csv',
+      buffer: Buffer.from(`病理号,检测项目,操作时间,操作人\n${caseNo},HE制片,2026-06-19 10:00,自动化`, 'utf8'),
+    })
+    await expect(page.locator('text=lis-import.csv')).toBeVisible()
+
+    const [importResponse, projectsResponse] = await Promise.all([
+      page.waitForResponse(res => res.url().includes('/api/v1/reconciliation/import-lis') && res.request().method() === 'POST'),
+      page.waitForResponse(res => res.url().includes('/api/v1/reconciliation/projects') && res.request().method() === 'GET'),
+      page.click('button:has-text("确认导入")'),
+    ])
+    expect(importResponse.status()).toBe(200)
+    expect(projectsResponse.status()).toBe(200)
+    await expect(page.locator('text=导入LIS病例数据')).not.toBeVisible()
+  })
+
   test('RECON-IMPORT-07. 权限：非admin导入返回403', async () => {
     const token = await apiLogin('technician')
     const res = await apiFetch(token, 'POST', '/reconciliation/cases/import', {

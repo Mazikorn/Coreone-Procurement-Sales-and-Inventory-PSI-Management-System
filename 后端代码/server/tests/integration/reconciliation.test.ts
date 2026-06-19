@@ -247,6 +247,40 @@ describe('成本对账异常闭环', () => {
     expect(invalidOnly.body.error.details.errors[0].message).toContain('检测时间格式错误')
   })
 
+  it('FormData LIS 文件导入必须解析真实文件并返回失败行', async () => {
+    const suffix = Date.now()
+    const projectId = `proj-import-file-${suffix}`
+    const validCaseNo = `CASE-IMPORT-FILE-VALID-${suffix}`
+    const invalidCaseNo = `CASE-IMPORT-FILE-BAD-${suffix}`
+
+    db.prepare(`
+      INSERT INTO projects (id, code, name, type, status)
+      VALUES (?, ?, ?, 'ihc', 1)
+    `).run(projectId, `P-IMPORT-FILE-${suffix}`, '文件导入项目')
+
+    const csv = [
+      '病理号,检测项目,操作时间,操作人',
+      `${validCaseNo},文件导入项目,2026-06-20 09:00:00,lis`,
+      `${invalidCaseNo},文件导入项目,not-a-date,lis`,
+    ].join('\n')
+
+    const importRes = await request(app)
+      .post('/api/v1/reconciliation/import-lis')
+      .set('Authorization', `Bearer ${token}`)
+      .attach('file', Buffer.from(csv, 'utf8'), { filename: 'lis-import.csv', contentType: 'text/csv' })
+
+    expect(importRes.status).toBe(200)
+    expect(importRes.body.data.imported).toBe(1)
+    expect(importRes.body.data.failed).toBe(1)
+    expect(importRes.body.data.errors).toEqual([
+      expect.objectContaining({ row: 2, caseNo: invalidCaseNo, message: expect.stringContaining('检测时间格式错误') }),
+    ])
+    const imported = db.prepare('SELECT project_id, project_name FROM lis_cases WHERE case_no = ?').get(validCaseNo) as any
+    expect(imported.project_id).toBe(projectId)
+    expect(imported.project_name).toBe('文件导入项目')
+    expect(db.prepare('SELECT COUNT(*) as count FROM lis_cases WHERE case_no = ?').get(invalidCaseNo).count).toBe(0)
+  })
+
   it('病例列表和病例导出必须使用同一套日期、项目、状态和搜索筛选', async () => {
     const suffix = Date.now()
     const keepProjectId = `proj-case-filter-keep-${suffix}`
