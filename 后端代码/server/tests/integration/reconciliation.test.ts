@@ -160,6 +160,53 @@ describe('成本对账异常闭环', () => {
     expect(updated.status).toBe('modified')
   })
 
+  it('LIS 重新导入未匹配项目时不得清空既有关联项目', async () => {
+    const suffix = Date.now()
+    const projectId = `proj-import-preserve-${suffix}`
+    const caseNo = `CASE-IMPORT-PRESERVE-${suffix}`
+
+    db.prepare(`
+      INSERT INTO projects (id, code, name, type, status)
+      VALUES (?, ?, ?, 'ihc', 1)
+    `).run(projectId, `P-IMPORT-PRESERVE-${suffix}`, '已匹配项目')
+
+    const firstImport = await request(app)
+      .post('/api/v1/reconciliation/cases/import')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        items: [
+          { caseNo, projectName: '已匹配项目', operateTime: '2026-06-13 09:00:00', operator: 'lis-a' },
+        ],
+      })
+
+    expect(firstImport.status).toBe(200)
+    expect(firstImport.body.data.count).toBe(1)
+
+    const secondImport = await request(app)
+      .post('/api/v1/reconciliation/cases/import')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        items: [
+          { caseNo, projectName: '不存在项目', operateTime: '2026-06-14 10:30:00', operator: 'lis-b' },
+        ],
+      })
+
+    expect(secondImport.status).toBe(200)
+    expect(secondImport.body.data.count).toBe(1)
+    expect(secondImport.body.data.unmatched).toBe(1)
+
+    const imported = db.prepare(`
+      SELECT project_id, project_name, operator, operate_time
+      FROM lis_cases
+      WHERE case_no = ?
+    `).get(caseNo) as any
+
+    expect(imported.project_id).toBe(projectId)
+    expect(imported.project_name).toBe('已匹配项目')
+    expect(imported.operator).toBe('lis-b')
+    expect(imported.operate_time).toBe('2026-06-14 10:30:00')
+  })
+
   it('LIS 导入跳过缺少关键字段的病例，整批无效时拒绝写入', async () => {
     const suffix = Date.now()
     const projectId = `proj-import-required-${suffix}`

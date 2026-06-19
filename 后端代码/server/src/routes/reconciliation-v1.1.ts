@@ -348,10 +348,18 @@ function importLisItems(items: any[]) {
       INSERT INTO lis_cases (id, case_no, project_id, project_name, operator, operate_time, import_batch)
       VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(case_no) DO UPDATE SET
-        project_id = excluded.project_id,
-        project_name = excluded.project_name,
+        project_id = CASE
+          WHEN excluded.project_id IS NOT NULL AND excluded.project_id != '' THEN excluded.project_id
+          ELSE lis_cases.project_id
+        END,
+        project_name = CASE
+          WHEN excluded.project_id IS NOT NULL AND excluded.project_id != '' THEN excluded.project_name
+          WHEN lis_cases.project_id IS NOT NULL AND lis_cases.project_id != '' THEN lis_cases.project_name
+          ELSE excluded.project_name
+        END,
         operator = excluded.operator,
-        operate_time = excluded.operate_time
+        operate_time = excluded.operate_time,
+        updated_at = CURRENT_TIMESTAMP
     `)
 
     let successCount = 0

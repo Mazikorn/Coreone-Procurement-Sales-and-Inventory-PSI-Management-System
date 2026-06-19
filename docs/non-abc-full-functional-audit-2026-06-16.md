@@ -13756,7 +13756,55 @@ git diff --check
 - 当前报表只展示有入库金额的供应商；仅有退货但无同期间入库的供应商不会单独以负数展示，避免在现有报表结构中引入负采购额语义。
 - 后续继续复核 LIS、对账、异常和成本展示页面，重点检查它们是否使用已发生的出库/入库/退货历史事实，而不是后续主数据或单据状态污染后的当前值。
 
-## 二百八十、结论
+## 二百八十、批次 325: LIS 未匹配重导入不得清空既有关联项目
+
+**发现的问题**
+
+- 本轮继续复核 LIS、对账、异常和成本展示链路，聚焦“业务身份和项目绑定不能被后续导入静默清空”不变量。
+- `POST /reconciliation/cases/import` 在 `case_no` 冲突时直接使用导入行覆盖 `project_id` 和 `project_name`。
+- 当一个病例已通过项目名称匹配到有效项目后，后续同病例号导入若项目名称无法匹配，会把 `project_id` 覆盖为空字符串，并把项目名改成未匹配文本，污染 LIS 病例到项目、BOM 出库和成本异常解释的事实链。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/reconciliation-v1.1.ts`
+  - LIS 导入 upsert 改为仅在新导入行匹配到有效项目时覆盖项目绑定。
+  - 新导入行未匹配项目时，保留既有 `project_id` 和已确认 `project_name`。
+  - 未匹配行仍会更新 LIS 操作人、检测时间和 `updated_at`，并继续通过 `unmatched` 计数暴露导入风险。
+- `后端代码/server/tests/integration/reconciliation.test.ts`
+  - 新增红绿测试：同一病例首次导入匹配“已匹配项目”，二次导入项目名为“不存在项目”时，必须保留原项目绑定，但更新 LIS 操作人和检测时间。
+
+**ABC 影响评估**
+
+- LIS 病例项目绑定会影响项目追踪、标准 BOM 出库、成本异常解释和 ABC 输入侧病例/项目事实链。
+- 本批只修改非 ABC 对账/LIS 导入接口和对账集成测试，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 已补跑项目、BOM、出库和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+- 已确认本批 diff 不涉及 `前端代码/deprecated/legacy-cost-analysis/`、`后端代码/server/src/routes/abc-v1.1.ts`、`后端代码/server/src/utils/abc-calculator.test.ts` 或前端 ABC 页面。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/integration/reconciliation.test.ts -t "LIS 重新导入未匹配项目"` 修复前失败：实际 `project_id=''`，期望保留原项目 ID。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/integration/reconciliation.test.ts -t "LIS 重新导入未匹配项目"` 通过，1 test passed / 14 skipped。
+  - `后端代码/server npm test -- --run tests/integration/reconciliation.test.ts` 通过，15 tests passed。
+  - `后端代码/server npm test -- --run tests/integration/projects.test.ts tests/integration/bom.test.ts tests/integration/outbound.test.ts tests/integration/cost-exceptions.test.ts` 通过，4 files / 55 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。`cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr 为既有异常台账测试场景，最终通过。
+  - `前端代码 npm test -- --run src/pages/reconciliation/hooks/useReconciliationPage.test.ts src/pages/reconciliation/Reconciliation.test.tsx src/pages/reconciliation/components/LogListTab.test.tsx` 通过，3 files / 17 tests passed。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --name-only | rg '(^前端代码/deprecated/legacy-cost-analysis/|abc-v1.1|src/api/abc|pages/cost|cost-analysis)'` 无输出，确认未改废弃范围和 ABC 本体。
+- 浏览器复核:
+  - 本批是 LIS 导入 API 的历史绑定保护修复，不新增或改变页面组件和弹窗交互；对账页 hook/组件测试已覆盖导入、刷新、导出和日志筛选，页面级 Playwright 不是本批必要门槛。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 未匹配 LIS 行仍允许进入系统并通过 `unmatched` 暴露，后续可继续复核导入预览、批量确认和异常提示是否足够阻断人工误用。
+- 后续继续复核非废弃成本相关和实验运营页面，重点检查它们是否使用历史出库、BOM、项目和库存快照，而不是后续编辑污染后的当前值。
+
+## 二百八十一、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 
