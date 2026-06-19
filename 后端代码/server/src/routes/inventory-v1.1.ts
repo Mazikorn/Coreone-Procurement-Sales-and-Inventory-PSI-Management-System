@@ -4,6 +4,7 @@ import { success, successList, error } from '../utils/response.js'
 import { requireRole } from '../middleware/auth.js'
 
 const router = Router()
+const INVENTORY_STATUSES = new Set(['low-stock', 'out-of-stock', 'expired', 'expiring-soon', 'expiring-month'])
 
 function buildInventoryWhere(query: any) {
   const { categoryId, locationId, keyword, materialId } = query
@@ -58,6 +59,15 @@ function buildInventoryStatusWhere(status: unknown) {
   if (status === 'expiring-soon') return " AND b.expiry_date IS NOT NULL AND b.expiry_date != '' AND b.expiry_date > date('now') AND b.expiry_date <= date('now', '+7 days')"
   if (status === 'expiring-month') return " AND b.expiry_date IS NOT NULL AND b.expiry_date != '' AND b.expiry_date > date('now') AND b.expiry_date <= date('now', '+30 days')"
   return ''
+}
+
+function rejectInvalidInventoryStatus(res: any, status: unknown) {
+  const value = String(status || '').trim()
+  if (value && !INVENTORY_STATUSES.has(value)) {
+    error(res, '库存状态筛选无效', 'INVALID_PARAMETER', 400)
+    return true
+  }
+  return false
 }
 
 function getBatchSubQuery(field: string): string {
@@ -390,6 +400,7 @@ router.get('/consistency-check', requireRole('admin', 'warehouse_manager'), (req
 router.get('/', (req, res) => {
   try {
     let { page = 1, pageSize = 20, status } = req.query
+    if (rejectInvalidInventoryStatus(res, status)) return
     page = Math.max(1, Number(page) || 1)
     pageSize = Math.max(1, Math.min(200, Number(pageSize) || 20))
     const db = getDatabase()

@@ -275,6 +275,16 @@ describe('集成测试：库存管理', () => {
       expect(supplierRes.status).toBe(200)
       expect(supplierRes.body.data.list.some((i: any) => i.supplierName === 'Dako')).toBe(true)
     })
+
+    it('INV-FILTER-001: 库存列表必须拒绝非法状态筛选，避免返回全量库存', async () => {
+      const res = await request(app)
+        .get('/api/v1/inventory')
+        .query({ status: 'archived' })
+        .set('Authorization', `Bearer ${token}`)
+
+      expect(res.status).toBe(400)
+      expect(res.body.error.code).toBe('INVALID_PARAMETER')
+    })
   })
 
   describe('库存统计', () => {
