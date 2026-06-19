@@ -447,13 +447,20 @@ describe('成本对账异常闭环', () => {
     expect(csv).not.toContain(otherProjectCaseNo)
   })
 
-  it('对账汇总、导出和审计必须拒绝非法日期范围', async () => {
+  it('对账汇总、物料汇总、导出和审计必须拒绝非法日期范围', async () => {
     const summaryRes = await request(app)
       .get('/api/v1/reconciliation/summary')
       .query({ startDate: '2026-06-30', endDate: '2026-06-01' })
       .set('Authorization', `Bearer ${token}`)
 
     expect(summaryRes.status).toBe(400)
+
+    const materialRes = await request(app)
+      .get('/api/v1/reconciliation/materials')
+      .query({ startDate: '2026-06-30', endDate: '2026-06-01' })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(materialRes.status).toBe(400)
 
     const exportRes = await request(app)
       .get('/api/v1/reconciliation/export')

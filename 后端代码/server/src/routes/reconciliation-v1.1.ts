@@ -926,6 +926,9 @@ router.get('/materials', (req, res) => {
   try {
     const db = getDatabase()
     const { startDate, endDate } = req.query as Record<string, string>
+    if (!validateDateRange(startDate, endDate)) {
+      error(res, 'Invalid date format', 'INVALID_PARAMETER', 400); return
+    }
     const result = getMaterialReconciliationRows(db, startDate, endDate)
 
     successList(res, result, 1, result.length, result.length)
