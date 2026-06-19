@@ -12609,7 +12609,60 @@ git diff --check
 - 入库新增入口的 MAT-16 候选过滤已补 hook 和页面级证据。
 - 出库新增入口存在相似的“先用旧 `materials[0]` 初始化、再异步刷新引用数据”的可疑模式；下一批应继续检查并修复出库候选刷新，不在本批扩展到其它库存写入链路。
 
-## 二百五十七、结论
+## 二百五十七、批次 302: 出库新增必须刷新启用物料候选
+
+**发现的问题**
+
+- `materials.md` 的 MAT-16 要求停用后的耗材不再出现在入库/出库选择列表中。
+- 出库页面初始加载引用数据时已经请求 `status: 'active'` 的物料候选，但 `openCreate` 会先用当前 `materials[0]` 初始化第一条出库明细，再异步刷新引用数据。
+- 如果页面挂载时某物料仍为启用，随后该物料在其他入口被停用，用户再打开“出库登记”时，即使刷新后的候选列表已经不再展示旧物料，`form.items[0].materialId` 仍可能保留旧 ID。
+- 这会让隐藏的过期物料 ID 进入普通出库创建路径；后端虽已有停用物料拒绝保护，但前端候选过滤和提交前阻断证据不完整。
+
+**已完成修复**
+
+- `前端代码/src/pages/outbound/Outbound.tsx`
+  - `fetchRefs` 改为返回本次刷新得到的 `materials/projects`，并在异常时同步清空引用数据，避免失败后继续使用旧候选。
+  - `openCreate` 改为等待 `fetchRefs` 完成后，再用刷新后的启用物料初始化第一条出库明细。
+  - 当刷新后没有启用物料候选时，第一条明细的 `materialId` 明确为空，普通出库提交会停留在前端校验，不会把旧物料 ID 发给创建接口。
+- `前端代码/src/pages/outbound/Outbound.test.ts`
+  - 新增红绿测试：先加载一个旧启用物料，再模拟打开出库登记前刷新候选为空，断言点击确认后不会调用 `outboundApi.create`。
+- `前端代码/e2e/outbound.spec.ts`
+  - 新增 `OUTBOUND-MAT-CAND-01` 页面级验收：`/materials` 首次返回旧候选、打开出库登记时返回空候选，确认旧候选不显示，点击确认不会发送 `POST /outbound` 创建请求。
+
+**ABC 影响评估**
+
+- 出库记录是库存扣减、BOM 出库、项目成本归集和 ABC 上游成本事实的关键输入，本批修复能防止停用物料从过期前端状态进入普通出库提交链路。
+- 本批不直接修改 ABC 本体、ABC API、成本计算、BOM 出库算法或成本展示逻辑。
+- 后端普通出库已有停用物料拒绝保护；本批补的是前端候选刷新与提交前阻断证据。
+- 已补跑物料保护、入库、出库和 BOM 输入链回归，覆盖物料作为入库、库存、普通出库、BOM 出库和成本输入的上游链路。
+- 未触碰废弃 `/cost-analysis` 或 `前端代码/deprecated/legacy-cost-analysis/`。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/outbound/Outbound.test.ts -t "refreshes active material candidates"` 修复前失败：点击确认出库后 `outboundApi.create` 收到 `mat-stale-outbound`。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/outbound/Outbound.test.ts -t "refreshes active material candidates"` 通过，1 test passed / 1 skipped。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/outbound.spec.ts -g "OUTBOUND-MAT-CAND-01" --project=chromium` 通过，1 test passed。
+  - `前端代码 npm test -- --run src/pages/outbound/Outbound.test.ts src/pages/inbound/hooks/useInboundPage.test.ts src/pages/master/hooks/useMaterialsPage.test.tsx src/pages/master/components/MaterialImpactModals.test.tsx src/hooks/usePagination.test.ts` 通过，5 files / 45 tests passed。
+  - `后端代码/server npm run test:node -- --run tests/materials-guard.test.ts tests/inbound-batch.test.ts tests/integration/outbound.test.ts tests/integration/bom.test.ts` 通过，4 files / 79 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/outbound.spec.ts -g "OUTBOUND-MAT-CAND-01|OUT-CREATE-PROJ-01|OUT-CREATE-PROJ-15|OUT-BOM-01|OUT-BOM-03" --project=chromium` 通过，5 tests passed。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/materials.spec.ts -g "MAT-STATUS-01|MAT-STATUS-02|MAT-STATUS-03|MAT-DEL-11|MAT-DEL-12|MAT-EDIT-11|MAT-DETAIL-03|MAT-PAGE-01|MAT-FILTER-01|MAT-SEARCH-03|MAT-LIST-11" --project=chromium` 通过，11 tests passed。
+  - `git diff --check` 通过。
+  - `git diff --name-only | rg "deprecated/legacy-cost-analysis|前端代码/deprecated|/cost-analysis"` 无匹配，确认未改废弃范围。
+  - `lsof -nP -iTCP:3001 -sTCP:LISTEN` 和 `lsof -nP -iTCP:8080 -sTCP:LISTEN` 均无监听残留。
+- 浏览器复核:
+  - 使用用户已验证的 Chrome for Testing 路径完成 headless Playwright 复核；验证重点为出库登记前刷新启用物料候选、旧候选不显示、无启用候选时前端拦截提交、未发送创建请求，以及普通出库、库存扣减、BOM 出库和物料状态/删除/编辑/详情/分页/筛选/搜索回归。
+
+**后续风险**
+
+- 入库和出库新增入口的 MAT-16 候选过滤均已补页面级证据。
+- 本批未处理出库编辑入口中 `openEdit` 对无明细记录使用 `materials[0]` 作为 fallback 的边界；如后续计划继续 MAT-16 编辑态候选保护，应单独开批验证，不在本批扩展。
+- 下一步可继续按计划进入基础资料剩余验收项或库存主链路下一项，发现计划外问题先登记到待评估。
+
+## 二百五十八、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

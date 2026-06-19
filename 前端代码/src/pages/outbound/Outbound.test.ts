@@ -1,6 +1,90 @@
-import { describe, expect, it } from 'vitest'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import * as React from 'react'
+import { MemoryRouter } from 'react-router-dom'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { outboundApi } from '@/api/inventory'
+import { bomApi, materialApi, projectApi } from '@/api/master'
+import { reconciliationApi } from '@/api/reconciliation'
 import { mapOutboundRecordToForm } from './Outbound'
+import Outbound from './Outbound'
+import type { Material } from '@/types'
 import type { OutboundRecord } from '@/types'
+
+vi.mock('@/api/inventory')
+vi.mock('@/api/master')
+vi.mock('@/api/reconciliation')
+vi.mock('sonner')
+
+const mockMaterial: Material = {
+  id: 'material-1',
+  code: 'M001',
+  name: '苏木素',
+  spec: '10ml',
+  unit: '瓶',
+  price: 10,
+  stock: 10,
+  minStock: 1,
+  maxStock: 100,
+  safetyStock: 5,
+  categoryId: 'cat-1',
+  status: 'active',
+  createdAt: '',
+  updatedAt: '',
+}
+
+describe('Outbound page material candidates', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.stubGlobal('React', React)
+    window.history.replaceState(null, '', '/')
+
+    vi.mocked(outboundApi.getList).mockResolvedValue({
+      list: [],
+      pagination: { total: 0, page: 1, pageSize: 10 },
+    } as any)
+    vi.mocked(outboundApi.getStats).mockResolvedValue({
+      monthTotal: 0,
+      completed: 0,
+      pending: 0,
+      cancelled: 0,
+      quickCounts: { all: 0, today: 0, week: 0, month: 0 },
+    } as any)
+    vi.mocked(outboundApi.create).mockResolvedValue({} as any)
+    vi.mocked(materialApi.getList).mockResolvedValue({
+      list: [mockMaterial],
+      pagination: { total: 1 },
+    } as any)
+    vi.mocked(projectApi.getList).mockResolvedValue({ list: [], pagination: { total: 0 } } as any)
+    vi.mocked(bomApi.getList).mockResolvedValue({ list: [], pagination: { total: 0 } } as any)
+    vi.mocked(reconciliationApi.getCases).mockResolvedValue({ list: [], pagination: { total: 0 } } as any)
+  })
+
+  it('refreshes active material candidates before opening create modal and blocks stale material submission', async () => {
+    const staleMaterial = {
+      ...mockMaterial,
+      id: 'mat-stale-outbound',
+      code: 'STALE-OUT',
+      name: '已停用旧出库候选',
+    } as Material
+    vi.mocked(materialApi.getList)
+      .mockResolvedValueOnce({ list: [staleMaterial], pagination: { total: 1 } } as any)
+      .mockResolvedValueOnce({ list: [], pagination: { total: 0 } } as any)
+
+    render(React.createElement(MemoryRouter, null, React.createElement(Outbound)))
+
+    await waitFor(() => expect(materialApi.getList).toHaveBeenCalledTimes(1))
+
+    fireEvent.click(screen.getByRole('button', { name: '出库登记' }))
+
+    await waitFor(() => expect(materialApi.getList).toHaveBeenCalledTimes(2))
+    expect(materialApi.getList).toHaveBeenLastCalledWith({ page: 1, pageSize: 999, status: 'active' })
+    await waitFor(() => expect(screen.queryByText('已停用旧出库候选')).not.toBeInTheDocument())
+
+    fireEvent.click(screen.getByTestId('submit-btn'))
+
+    await waitFor(() => expect(outboundApi.create).not.toHaveBeenCalled())
+  })
+})
 
 describe('mapOutboundRecordToForm', () => {
   it('preserves selected batch when editing an outbound record', () => {

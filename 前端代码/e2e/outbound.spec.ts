@@ -100,6 +100,101 @@ test.beforeEach(async () => {
   if (mid) await ensureStock(token, mid, 20)
 })
 
+test.describe('出库管理 -> 物料候选过滤', () => {
+  test('OUTBOUND-MAT-CAND-01. 新增出库前刷新启用物料候选并阻断旧物料提交', async ({ page }) => {
+    const staleMaterial = {
+      id: 'mat-stale-outbound',
+      code: 'STALE-OUT',
+      name: '已停用旧出库候选',
+      spec: '10ml',
+      unit: '瓶',
+      price: 12,
+      status: 'active',
+    }
+    let materialListCalls = 0
+    const createBodies: any[] = []
+
+    await loginAs(page, 'admin')
+    await page.route('**/api/v1/materials**', async route => {
+      const url = new URL(route.request().url())
+      if (route.request().method() !== 'GET') return route.fallback()
+      expect(url.searchParams.get('status')).toBe('active')
+      materialListCalls += 1
+      const list = materialListCalls === 1 ? [staleMaterial] : []
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: { list, pagination: { total: list.length, page: 1, pageSize: 999 } } }),
+      })
+    })
+    await page.route('**/api/v1/projects**', async route => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: { list: [], pagination: { total: 0, page: 1, pageSize: 999 } } }),
+      })
+    })
+    await page.route('**/api/v1/boms**', async route => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: { list: [], pagination: { total: 0, page: 1, pageSize: 999 } } }),
+      })
+    })
+    await page.route('**/api/v1/reconciliation/cases**', async route => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: { list: [], pagination: { total: 0, page: 1, pageSize: 100 } } }),
+      })
+    })
+    await page.route('**/api/v1/alerts**', async route => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: { list: [], items: [], pagination: { total: 0, page: 1, pageSize: 5 } } }),
+      })
+    })
+    await page.route('**/api/v1/outbound**', async route => {
+      const url = new URL(route.request().url())
+      if (route.request().method() === 'GET' && url.pathname.endsWith('/outbound/stats')) {
+        await route.fulfill({
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: { monthTotal: 0, completed: 0, pending: 0, cancelled: 0, quickCounts: { all: 0, today: 0, week: 0, month: 0 } },
+          }),
+        })
+        return
+      }
+      if (route.request().method() === 'GET' && url.pathname.endsWith('/outbound')) {
+        await route.fulfill({
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true, data: { list: [], pagination: { total: 0, page: 1, pageSize: 10 } } }),
+        })
+        return
+      }
+      if (route.request().method() === 'POST' && url.pathname.endsWith('/outbound')) {
+        createBodies.push(await route.request().postDataJSON())
+        await route.fulfill({
+          status: 400,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: false, error: { message: '旧物料不应被提交' } }),
+        })
+        return
+      }
+      await route.fallback()
+    })
+
+    await page.goto(`${FE_BASE}/outbound`, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByRole('heading', { name: '出库记录' })).toBeVisible({ timeout: 15000 })
+    await page.getByRole('button', { name: '出库登记' }).click()
+    await expect(page.getByText('出库登记').last()).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText('已停用旧出库候选')).toHaveCount(0)
+    await page.getByTestId('submit-btn').click()
+
+    await expect(page.getByText('请添加至少一个有效物料')).toBeVisible({ timeout: 10000 })
+    await page.waitForTimeout(300)
+    expect(materialListCalls).toBeGreaterThanOrEqual(2)
+    expect(createBodies).toEqual([])
+  })
+})
+
 // ────────────────────────────────────────────
 // 1. 查看出库列表 (10 tests)
 // ────────────────────────────────────────────

@@ -19,6 +19,11 @@ import OutboundTable from './components/OutboundTable'
 type QuickFilter = 'all' | 'today' | 'week' | 'month'
 type StatusFilter = '' | 'completed' | 'pending' | 'cancelled'
 
+interface OutboundRefs {
+  materials: Material[]
+  projects: Project[]
+}
+
 export function mapOutboundRecordToForm(record: OutboundRecord, fallbackMaterialId = ''): FormData {
   return {
     type: record.type as FormData['type'],
@@ -148,10 +153,19 @@ export default function Outbound() {
         materialApi.getList({ page: 1, pageSize: 999, status: 'active' }),
         projectApi.getList({ page: 1, pageSize: 999, status: 'active' }),
       ])
-      setMaterials(mRes?.list || [])
-      setProjects(pRes?.list || [])
+      const refs: OutboundRefs = {
+        materials: mRes?.list || [],
+        projects: pRes?.list || [],
+      }
+      setMaterials(refs.materials)
+      setProjects(refs.projects)
+      return refs
     } catch (e) {
       console.error(e)
+      const refs: OutboundRefs = { materials: [], projects: [] }
+      setMaterials(refs.materials)
+      setProjects(refs.projects)
+      return refs
     }
   }
 
@@ -198,18 +212,18 @@ export default function Outbound() {
 
   const quickFilterCounts = stats.quickCounts
 
-  const openCreate = () => {
+  const openCreate = async () => {
+    const refs = await fetchRefs()
     setEditRecordId(null)
     setForm({
       type: 'project',
       projectId: '',
-      items: [{ materialId: materials[0]?.id || '', quantity: 1 }],
+      items: [{ materialId: refs.materials[0]?.id || '', quantity: 1 }],
       remark: '',
       bomId: undefined,
       sampleCount: undefined,
       caseNo: '',
     })
-    fetchRefs()
     setCreateModalOpen(true)
   }
 
