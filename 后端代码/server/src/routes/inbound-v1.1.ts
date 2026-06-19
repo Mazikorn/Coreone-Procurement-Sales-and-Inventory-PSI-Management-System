@@ -461,7 +461,8 @@ router.post('/', requireWriteAccess, (req, res) => {
     const id = uuidv4()
     const operator = (req as any).user?.username || 'system'
     const inboundQuantity = Number(quantity)
-    const inboundPrice = price === undefined || price === null || price === '' ? 0 : Number(price)
+    const hasExplicitPrice = price !== undefined && price !== null && price !== ''
+    let inboundPrice = hasExplicitPrice ? Number(price) : 0
     let effectiveSupplierId = supplierId || null
 
     if (!Number.isFinite(inboundQuantity) || inboundQuantity <= 0) {
@@ -484,7 +485,6 @@ router.post('/', requireWriteAccess, (req, res) => {
     if (!material) { error(res, '物料不存在或已停用', 'NOT_FOUND', 404); return }
 
     const unit = material.unit
-    const amount = inboundPrice * inboundQuantity
 
     // 查询采购订单信息
     let purchaseOrderNo: string | null = null
@@ -531,8 +531,17 @@ router.post('/', requireWriteAccess, (req, res) => {
         error(res, '入库数量超过订单剩余数量', 'INVALID_PARAMETER', 400)
         return
       }
+      if (!hasExplicitPrice) {
+        inboundPrice = Number(po.unit_price)
+        if (!Number.isFinite(inboundPrice) || inboundPrice < 0) {
+          error(res, '采购订单单价无效，不能入库', 'INVALID_PARAMETER', 400)
+          return
+        }
+      }
       purchaseOrderNo = po.order_no
     }
+
+    const amount = inboundPrice * inboundQuantity
 
     // 事务保护：入库涉及 records + batches + inventory + stock_logs 多表操作
     db.exec('BEGIN IMMEDIATE')

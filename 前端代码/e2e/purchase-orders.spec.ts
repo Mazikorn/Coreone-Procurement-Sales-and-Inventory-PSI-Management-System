@@ -280,13 +280,22 @@ test.describe('采购订单 -> 收货与取消', () => {
       materialId: material.id,
       batchNo: firstBatchNo,
       quantity: 4,
-      price: 5,
       supplierId: supplier?.id || material.supplierId,
       locationId: location.id,
       expiryDate: '2027-12-31',
       purchaseOrderId: id,
     })
     expect(firstInbound.status).toBe(201)
+
+    const inheritedPriceRecord = await apiFetch(token, 'GET', `/inbound?keyword=${encodeURIComponent(firstBatchNo)}&page=1&pageSize=10`)
+    expect(inheritedPriceRecord.status).toBe(200)
+    const firstInboundRow = (inheritedPriceRecord.data?.data?.list || []).find((row: any) => row.batchNo === firstBatchNo)
+    expect(firstInboundRow).toMatchObject({
+      quantity: 4,
+      price: 5,
+      amount: 20,
+      purchaseOrderId: id,
+    })
 
     const partial = await apiFetch(token, 'GET', `/purchase-orders/${id}`)
     expect(partial.status).toBe(200)

@@ -239,6 +239,52 @@ describe('采购订单入库联动', () => {
     expect(batch.inbound_price).toBe(12)
   })
 
+  it('PO-IN-011: 采购订单入库未传单价时继承订单单价，避免批次成本被清零', async () => {
+    const suffix = `inherit-price-${Date.now()}`
+    const fixture = seedPurchaseFixture(db, suffix)
+
+    const poRes = await request(app)
+      .post('/api/v1/purchase-orders')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId: fixture.materialId,
+        supplierId: fixture.supplierId,
+        orderedQty: 10,
+        unitPrice: 15,
+      })
+
+    expect(poRes.status).toBe(200)
+    const purchaseOrderId = poRes.body.data.id
+
+    const inboundRes = await request(app)
+      .post('/api/v1/inbound')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        type: 'purchase',
+        materialId: fixture.materialId,
+        batchNo: `B-POIN-${suffix}`,
+        quantity: 4,
+        supplierId: fixture.supplierId,
+        locationId: fixture.locationId,
+        expiryDate: '2027-12-31',
+        purchaseOrderId,
+      })
+
+    expect(inboundRes.status).toBe(201)
+
+    const order = db.prepare('SELECT received_qty, status FROM purchase_orders WHERE id = ?').get(purchaseOrderId) as any
+    const record = db.prepare('SELECT quantity, price, amount FROM inbound_records WHERE id = ?')
+      .get(inboundRes.body.data.id) as any
+    const batch = db.prepare('SELECT remaining, inbound_price FROM batches WHERE material_id = ? AND batch_no = ?')
+      .get(fixture.materialId, `B-POIN-${suffix}`) as any
+
+    expect(order.received_qty).toBe(4)
+    expect(order.status).toBe('partial')
+    expect(record).toMatchObject({ quantity: 4, price: 15, amount: 60 })
+    expect(batch.remaining).toBe(4)
+    expect(batch.inbound_price).toBe(15)
+  })
+
   it('PO-IN-003: 直接收货接口被拒绝，避免订单与库存脱节', async () => {
     const suffix = `direct-receive-${Date.now()}`
     const fixture = seedPurchaseFixture(db, suffix)

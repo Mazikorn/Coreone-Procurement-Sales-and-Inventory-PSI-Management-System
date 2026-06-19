@@ -13230,7 +13230,53 @@ git diff --check
 - 本批只处理已有历史出库/LIS 后的服务编号变更，不扩展到服务名称展示快照或历史报表是否需要冗余保存当时名称。
 - 后续可继续按基础资料阶段检查项目删除弹窗文案、批量状态可见影响和其他项目历史字段边界；发现计划外问题先登记到待评估清单。
 
-## 二百六十九、结论
+## 二百六十九、批次 314: 采购订单入库缺省单价必须继承订单单价
+
+**发现的问题**
+
+- 本轮进入库存主链路复核，采购订单到入库必须保证来源单据事实不会在服务端被静默清空。
+- `POST /inbound` 在收到 `purchaseOrderId` 但请求未传 `price` 时，会先把入库单价置为 `0`，随后写入 `inbound_records.price/amount` 和 `batches.inbound_price`。
+- 这会让采购订单本身已有 `unit_price` 的入库记录变成零金额批次，污染库存批次成本、退库/出库成本输入和后续 ABC 上游成本解释。
+- 现有前端表单通常会带入采购订单单价，但 API 绕过、兼容调用或导入式调用仍可触发该问题；服务端不能依赖前端传价来保护成本事实。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/inbound-v1.1.ts`
+  - 区分“显式传入单价”和“未传单价”。
+  - 关联采购订单且未显式传价时，服务端使用采购订单 `unit_price` 作为入库单价。
+  - 金额 `amount` 延后到采购订单校验和单价继承之后计算，确保 `inbound_records.amount` 与最终单价一致。
+  - 显式传入单价的既有行为不变；普通非采购订单入库未传价仍保持原有 0 单价行为。
+- `后端代码/server/tests/purchase-order-inbound.test.ts`
+  - 新增红绿测试 `PO-IN-011`：采购订单入库未传单价时，入库记录 `price=15`、`amount=60`，批次 `inbound_price=15`，采购订单收货数量和状态同步更新。
+- `前端代码/e2e/purchase-orders.spec.ts`
+  - 调整 `PO-RECEIVE-02` 采购入库闭环：第一笔采购入库不再传 `price`，然后按批号回查入库列表，确认真实服务返回 `price=5`、`amount=20`、`purchaseOrderId` 保持关联。
+
+**ABC 影响评估**
+
+- 批次 `inbound_price` 是出库、退库、报废、供应商退货和后续成本解释的重要上游事实。
+- 本批阻止采购订单来源单价在入库创建时被服务端静默清零，保护库存批次成本和 ABC 输入侧成本事实。
+- 本批只修改非 ABC 的入库创建接口和采购订单 E2E，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 已补跑采购订单入库、批量入库、出库、BOM 后端回归，并用 Playwright 验证采购订单入库闭环。
+- 未触碰 `前端代码/deprecated/legacy-cost-analysis/`。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/purchase-order-inbound.test.ts -t "PO-IN-011"` 修复前失败：期望入库记录 `price=15, amount=60`，实际写入 `price=0, amount=0`。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/purchase-order-inbound.test.ts -t "PO-IN-011"` 通过，1 test passed / 17 skipped。
+  - `后端代码/server npm test -- --run tests/purchase-order-inbound.test.ts` 通过，18 tests passed。
+  - `后端代码/server npm test -- --run tests/purchase-order-inbound.test.ts tests/inbound-batch.test.ts tests/integration/outbound.test.ts tests/integration/bom.test.ts` 通过，4 files / 77 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npm run test:e2e:ci -- e2e/purchase-orders.spec.ts -g "PO-RECEIVE-02"` 通过，1 chromium test passed。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+
+**后续风险**
+
+- 本批只处理采购订单入库缺省单价继承，不扩展到采购订单编辑后是否需要保留历史价格快照。
+- 后续继续按库存主链路检查采购订单取消/删除、入库恢复、库存批次/库位一致性和来源候选有效性；发现计划外问题先登记到待评估清单。
+
+## 二百七十、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 
