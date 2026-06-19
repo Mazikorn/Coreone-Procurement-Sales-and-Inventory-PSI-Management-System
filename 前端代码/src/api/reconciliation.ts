@@ -14,7 +14,7 @@ export const reconciliationApi = {
     request.post(`/reconciliation/projects/${projectId}/materials/audit`, data || {}),
 
   exportData: (params?: any) =>
-    request.get('/reconciliation/export', { params }),
+    request.post('/reconciliation/export', params || {}, { responseType: 'blob' }),
 
   getMaterials: (params?: any) =>
     request.get('/reconciliation/materials', { params }),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildLisImportPreview, buildLisImportTemplateCsv, buildLisImportValidation, buildReconciliationExportParams, parseLisImportData, validateReconciliationDateRange } from './useReconciliationPage'
+import { buildLisImportPreview, buildLisImportTemplateCsv, buildLisImportValidation, buildReconciliationExportFilename, buildReconciliationExportParams, parseLisImportData, validateReconciliationDateRange } from './useReconciliationPage'
 
 describe('parseLisImportData', () => {
   it('parses quoted CSV fields without shifting LIS columns', () => {
@@ -78,6 +78,16 @@ describe('parseLisImportData', () => {
       format: 'xlsx',
       scope: 'all',
     })
+  })
+
+  it('builds traceable reconciliation export filenames for blob downloads', () => {
+    expect(buildReconciliationExportFilename({
+      type: 'project',
+      startDate: '2026-06-01',
+      endDate: '2026-06-30',
+    }, 'csv')).toBe('reconciliation-project-2026-06-01_2026-06-30.csv')
+
+    expect(buildReconciliationExportFilename({ type: 'case' }, 'xlsx')).toMatch(/^reconciliation-case-\d{4}-\d{2}-\d{2}\.xlsx$/)
   })
 
   it('rejects impossible and reversed reconciliation date ranges before requests', () => {

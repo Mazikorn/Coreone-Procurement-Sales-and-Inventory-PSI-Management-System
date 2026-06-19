@@ -78,6 +78,120 @@ function toCsv(headers: string[], rows: Array<Array<unknown>>) {
   ].join('\n')
 }
 
+function normalizeExportType(value?: string) {
+  const raw = String(value || 'project')
+  if (raw === 'reconcile') return 'project'
+  return raw
+}
+
+function buildExportPayload(params: Record<string, string>) {
+  const db = getDatabase()
+  const type = normalizeExportType(params.type || params.tab)
+  const { startDate, endDate, search, projectId, status } = params
+  if (!validateDateRange(startDate, endDate)) {
+    throw Object.assign(new Error('Invalid date format'), { statusCode: 400, code: 'INVALID_PARAMETER' })
+  }
+
+  const hasDate = startDate && endDate
+  const endDateTime = hasDate ? `${endDate} 23:59:59` : ''
+  const dateSegment = hasDate ? `${startDate}_${endDate}` : new Date().toISOString().slice(0, 10)
+  let headers: string[] = []
+  let rows: Array<Array<unknown>> = []
+  let filename = `reconciliation-${type}-${dateSegment}.csv`
+
+  if (type === 'material') {
+    headers = ['物料', '规格', '单位', '关联项目数', '理论消耗', '实际出库', '差异', '差异率', '状态']
+    rows = getMaterialReconciliationRows(db, startDate, endDate).map((row: any) => [
+      row.materialName,
+      row.spec,
+      row.unit,
+      row.projectCount,
+      row.theoryTotal,
+      row.actualTotal,
+      row.diff,
+      `${row.diffRate}%`,
+      row.status,
+    ])
+  } else if (type === 'case') {
+    const caseFilter = buildCaseFilterClause({ search, projectId, status, startDate, endDate }, 'lc')
+    const caseRows = db.prepare(`
+      SELECT lc.case_no, COALESCE(p.name, lc.project_name) as project_name,
+             lc.operate_time, lc.operator, lc.status,
+             CASE WHEN p.bom_id IS NULL OR p.bom_id = '' THEN '否' ELSE '是' END as has_bom
+      FROM lis_cases lc
+      LEFT JOIN projects p ON lc.project_id = p.id AND p.is_deleted = 0
+      ${caseFilter.where}
+      ORDER BY lc.operate_time DESC
+    `).all(...caseFilter.params) as any[]
+    headers = ['病理号', '检测项目', '操作时间', '操作人', '状态', '是否关联BOM']
+    rows = caseRows.map(row => [row.case_no, row.project_name, row.operate_time, row.operator, row.status, row.has_bom])
+  } else if (type === 'log') {
+    const logRows = db.prepare(`
+      SELECT type, target_name, field, old_value, new_value, reason, operator, created_at
+      FROM reconciliation_logs
+      ${hasDate ? 'WHERE created_at >= ? AND created_at <= ?' : ''}
+      ORDER BY created_at DESC
+    `).all(...(hasDate ? [startDate, endDateTime] : [])) as any[]
+    headers = ['类型', '对象', '字段', '旧值', '新值', '原因', '操作人', '时间']
+    rows = logRows.map(row => [row.type, row.target_name, row.field, row.old_value, row.new_value, row.reason, row.operator, row.created_at])
+  } else {
+    const projects = db.prepare(`
+      SELECT p.id, p.code, p.name, p.bom_id, p.type,
+        (SELECT COUNT(*) FROM lis_cases WHERE project_id = p.id
+          ${hasDate ? 'AND operate_time >= ? AND operate_time <= ?' : ''}
+        ) as case_count,
+        (SELECT COUNT(DISTINCT o.id) FROM outbound_records o
+          WHERE o.project_id = p.id AND o.status = 'completed' AND o.is_deleted = 0
+          ${hasDate ? 'AND o.created_at >= ? AND o.created_at <= ?' : ''}
+        ) as outbound_count
+      FROM projects p
+      WHERE p.is_deleted = 0 AND p.status = 1
+      ORDER BY case_count DESC
+    `).all(...(hasDate ? [startDate, endDateTime, startDate, endDateTime] : [])) as any[]
+    headers = ['项目编码', '项目名称', '项目类型', 'LIS病例数', '关联出库数', '是否配置BOM', '物料', '理论消耗', '实际出库', '差异', '差异率', '状态']
+    rows = projects.flatMap((project: any) => {
+      const { rows: materialRows } = getProjectMaterialReconciliation(db, project.id, startDate, endDate)
+      if (materialRows.length === 0) {
+        return [[project.code, project.name, project.type, project.case_count, project.outbound_count, project.bom_id ? '是' : '否', '', '', '', '', '', '']]
+      }
+      return materialRows.map(row => [
+        project.code,
+        project.name,
+        project.type,
+        project.case_count,
+        project.outbound_count,
+        project.bom_id ? '是' : '否',
+        row.materialName,
+        row.theoryQty,
+        row.actualQty,
+        row.diff,
+        `${row.diffRate}%`,
+        row.status,
+      ])
+    })
+    filename = `reconciliation-project-${dateSegment}.csv`
+  }
+
+  return {
+    filename,
+    contentType: 'text/csv;charset=utf-8',
+    content: toCsv(headers, rows),
+    rowCount: rows.length,
+  }
+}
+
+function normalizePostExportParams(body: any): Record<string, string> {
+  const filters = body?.filters || {}
+  return {
+    type: normalizeExportType(body?.type || body?.tab),
+    startDate: String(filters.startDate || body?.startDate || ''),
+    endDate: String(filters.endDate || body?.endDate || ''),
+    search: String(filters.search || body?.search || ''),
+    projectId: String(filters.projectId || body?.projectId || ''),
+    status: String(filters.status || body?.status || ''),
+  }
+}
+
 function buildCaseFilterClause(filters: {
   search?: string
   projectId?: string
@@ -362,100 +476,24 @@ router.get('/summary', (req, res) => {
  */
 router.get('/export', (req, res) => {
   try {
-    const db = getDatabase()
-    const { type = 'project', startDate, endDate, search, projectId, status } = req.query as Record<string, string>
-    if (!validateDateRange(startDate, endDate)) {
-      error(res, 'Invalid date format', 'INVALID_PARAMETER', 400); return
-    }
-
-    const hasDate = startDate && endDate
-    const endDateTime = hasDate ? `${endDate} 23:59:59` : ''
-    const dateSegment = hasDate ? `${startDate}_${endDate}` : new Date().toISOString().slice(0, 10)
-    let headers: string[] = []
-    let rows: Array<Array<unknown>> = []
-    let filename = `reconciliation-${type}-${dateSegment}.csv`
-
-    if (type === 'material') {
-      headers = ['物料', '规格', '单位', '关联项目数', '理论消耗', '实际出库', '差异', '差异率', '状态']
-      rows = getMaterialReconciliationRows(db, startDate, endDate).map((row: any) => [
-        row.materialName,
-        row.spec,
-        row.unit,
-        row.projectCount,
-        row.theoryTotal,
-        row.actualTotal,
-        row.diff,
-        `${row.diffRate}%`,
-        row.status,
-      ])
-    } else if (type === 'case') {
-      const caseFilter = buildCaseFilterClause({ search, projectId, status, startDate, endDate }, 'lc')
-      const caseRows = db.prepare(`
-        SELECT lc.case_no, COALESCE(p.name, lc.project_name) as project_name,
-               lc.operate_time, lc.operator, lc.status,
-               CASE WHEN p.bom_id IS NULL OR p.bom_id = '' THEN '否' ELSE '是' END as has_bom
-        FROM lis_cases lc
-        LEFT JOIN projects p ON lc.project_id = p.id AND p.is_deleted = 0
-        ${caseFilter.where}
-        ORDER BY lc.operate_time DESC
-      `).all(...caseFilter.params) as any[]
-      headers = ['病理号', '检测项目', '操作时间', '操作人', '状态', '是否关联BOM']
-      rows = caseRows.map(row => [row.case_no, row.project_name, row.operate_time, row.operator, row.status, row.has_bom])
-    } else if (type === 'log') {
-      const logRows = db.prepare(`
-        SELECT type, target_name, field, old_value, new_value, reason, operator, created_at
-        FROM reconciliation_logs
-        ${hasDate ? 'WHERE created_at >= ? AND created_at <= ?' : ''}
-        ORDER BY created_at DESC
-      `).all(...(hasDate ? [startDate, endDateTime] : [])) as any[]
-      headers = ['类型', '对象', '字段', '旧值', '新值', '原因', '操作人', '时间']
-      rows = logRows.map(row => [row.type, row.target_name, row.field, row.old_value, row.new_value, row.reason, row.operator, row.created_at])
-    } else {
-      const projects = db.prepare(`
-        SELECT p.id, p.code, p.name, p.bom_id, p.type,
-          (SELECT COUNT(*) FROM lis_cases WHERE project_id = p.id
-            ${hasDate ? 'AND operate_time >= ? AND operate_time <= ?' : ''}
-          ) as case_count,
-          (SELECT COUNT(DISTINCT o.id) FROM outbound_records o
-            WHERE o.project_id = p.id AND o.status = 'completed' AND o.is_deleted = 0
-            ${hasDate ? 'AND o.created_at >= ? AND o.created_at <= ?' : ''}
-          ) as outbound_count
-        FROM projects p
-        WHERE p.is_deleted = 0 AND p.status = 1
-        ORDER BY case_count DESC
-      `).all(...(hasDate ? [startDate, endDateTime, startDate, endDateTime] : [])) as any[]
-      headers = ['项目编码', '项目名称', '项目类型', 'LIS病例数', '关联出库数', '是否配置BOM', '物料', '理论消耗', '实际出库', '差异', '差异率', '状态']
-      rows = projects.flatMap((project: any) => {
-        const { rows: materialRows } = getProjectMaterialReconciliation(db, project.id, startDate, endDate)
-        if (materialRows.length === 0) {
-          return [[project.code, project.name, project.type, project.case_count, project.outbound_count, project.bom_id ? '是' : '否', '', '', '', '', '', '']]
-        }
-        return materialRows.map(row => [
-          project.code,
-          project.name,
-          project.type,
-          project.case_count,
-          project.outbound_count,
-          project.bom_id ? '是' : '否',
-          row.materialName,
-          row.theoryQty,
-          row.actualQty,
-          row.diff,
-          `${row.diffRate}%`,
-          row.status,
-        ])
-      })
-      filename = `reconciliation-project-${dateSegment}.csv`
-    }
-
-    success(res, {
-      filename,
-      contentType: 'text/csv;charset=utf-8',
-      content: toCsv(headers, rows),
-      rowCount: rows.length,
-    })
+    success(res, buildExportPayload(req.query as Record<string, string>))
   } catch (e: any) {
-    error(res, e.message || '导出对账报表失败')
+    error(res, e.message || '导出对账报表失败', e.code, e.statusCode)
+  }
+})
+
+/**
+ * POST /api/v1/reconciliation/export
+ * 导出对账报表文件流
+ */
+router.post('/export', (req, res) => {
+  try {
+    const payload = buildExportPayload(normalizePostExportParams(req.body || {}))
+    res.setHeader('Content-Type', payload.contentType)
+    res.setHeader('Content-Disposition', `attachment; filename="${payload.filename}"`)
+    res.send(`\ufeff${payload.content}`)
+  } catch (e: any) {
+    error(res, e.message || '导出对账报表失败', e.code, e.statusCode)
   }
 })
 

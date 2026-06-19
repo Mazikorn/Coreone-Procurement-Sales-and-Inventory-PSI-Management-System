@@ -3,7 +3,7 @@ import { toast } from 'sonner'
 import { reconciliationApi } from '@/api/reconciliation'
 import { usePagination } from '@/hooks/usePagination'
 import { useUrlParams } from '@/hooks/useUrlParams'
-import { downloadTextFile } from '@/lib/utils'
+import { downloadBlobFile } from '@/lib/utils'
 
 export interface SummaryData {
   totalCases: number
@@ -300,6 +300,13 @@ export function buildReconciliationExportParams({
   }
 }
 
+export function buildReconciliationExportFilename(params: { type: string; startDate?: string; endDate?: string }, format: ReconciliationExportFormat) {
+  const dateSegment = params.startDate && params.endDate
+    ? `${params.startDate}_${params.endDate}`
+    : new Date().toISOString().slice(0, 10)
+  return `reconciliation-${params.type}-${dateSegment}.${format === 'xlsx' ? 'xlsx' : 'csv'}`
+}
+
 const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/
 
 function isValidDateOnly(value: string) {
@@ -533,7 +540,7 @@ export function useReconciliationPage() {
     }
     setExporting(true)
     try {
-      const res = await reconciliationApi.exportData(buildReconciliationExportParams({
+      const params = buildReconciliationExportParams({
         activeTab,
         dateParams,
         caseSearch,
@@ -541,16 +548,18 @@ export function useReconciliationPage() {
         caseFilterStatus,
         format: options.format,
         scope: options.scope,
-      }))
+      })
+      const blob = await reconciliationApi.exportData(params)
+      const filename = buildReconciliationExportFilename(params, options.format)
       if (options.format === 'xlsx') {
         const XLSX = await import('xlsx')
-        const workbook = XLSX.read(res?.content || '', { type: 'string' })
-        const filename = (res?.filename || `reconciliation-${activeTab}.csv`).replace(/\.csv$/i, '.xlsx')
+        const content = await blob.text()
+        const workbook = XLSX.read(content, { type: 'string' })
         XLSX.writeFile(workbook, filename)
       } else {
-        downloadTextFile(res?.filename || `reconciliation-${activeTab}.csv`, res?.content || '', res?.contentType || 'text/csv;charset=utf-8')
+        downloadBlobFile(blob, filename)
       }
-      toast.success(`已导出 ${res?.rowCount || 0} 行对账数据`)
+      toast.success('已导出对账数据')
     } catch (e: any) {
       toast.error(e?.message || '导出失败')
     } finally {

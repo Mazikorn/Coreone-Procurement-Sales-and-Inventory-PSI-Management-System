@@ -309,6 +309,63 @@ describe('成本对账异常闭环', () => {
     expect(exportRes.body.data.content).not.toContain(otherProjectCaseNo)
   })
 
+  it('POST 对账导出必须返回附件文件流并保留筛选内容', async () => {
+    const suffix = Date.now()
+    const keepProjectId = `proj-post-export-keep-${suffix}`
+    const dropProjectId = `proj-post-export-drop-${suffix}`
+    const keepCaseNo = `CASE-POST-EXPORT-KEEP-${suffix}`
+    const oldCaseNo = `CASE-POST-EXPORT-OLD-${suffix}`
+    const otherProjectCaseNo = `CASE-POST-EXPORT-OTHER-${suffix}`
+
+    db.prepare(`
+      INSERT INTO projects (id, code, name, type, status)
+      VALUES (?, ?, ?, 'ihc', 1), (?, ?, ?, 'he', 1)
+    `).run(
+      keepProjectId, `P-POST-KEEP-${suffix}`, 'POST导出项目',
+      dropProjectId, `P-POST-DROP-${suffix}`, 'POST导出其他项目',
+    )
+
+    db.prepare(`
+      INSERT INTO lis_cases (id, case_no, project_id, project_name, operator, operate_time, status, import_batch)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      `case-post-export-keep-${suffix}`, keepCaseNo, keepProjectId, 'POST导出项目', 'lis', '2026-06-19 09:00:00', 'modified', `batch-post-${suffix}`,
+      `case-post-export-old-${suffix}`, oldCaseNo, keepProjectId, 'POST导出项目', 'lis', '2026-05-19 09:00:00', 'modified', `batch-post-${suffix}`,
+      `case-post-export-other-${suffix}`, otherProjectCaseNo, dropProjectId, 'POST导出其他项目', 'lis', '2026-06-19 10:00:00', 'modified', `batch-post-${suffix}`,
+    )
+
+    const exportRes = await request(app)
+      .post('/api/v1/reconciliation/export')
+      .set('Authorization', `Bearer ${token}`)
+      .buffer(true)
+      .parse((res, callback) => {
+        const chunks: Buffer[] = []
+        res.on('data', chunk => chunks.push(Buffer.from(chunk)))
+        res.on('end', () => callback(null, Buffer.concat(chunks)))
+      })
+      .send({
+        tab: 'case',
+        format: 'csv',
+        filters: {
+          startDate: '2026-06-01',
+          endDate: '2026-06-30',
+          search: 'CASE-POST-EXPORT',
+          projectId: keepProjectId,
+          status: 'modified',
+        },
+      })
+
+    expect(exportRes.status).toBe(200)
+    expect(exportRes.headers['content-type']).toContain('text/csv')
+    expect(exportRes.headers['content-disposition']).toContain('attachment')
+    expect(exportRes.headers['content-disposition']).toContain('reconciliation-case-2026-06-01_2026-06-30.csv')
+    const csv = Buffer.isBuffer(exportRes.body) ? exportRes.body.toString('utf8') : String(exportRes.text || '')
+    expect(csv).toContain('病理号')
+    expect(csv).toContain(keepCaseNo)
+    expect(csv).not.toContain(oldCaseNo)
+    expect(csv).not.toContain(otherProjectCaseNo)
+  })
+
   it('对账汇总、导出和审计必须拒绝非法日期范围', async () => {
     const summaryRes = await request(app)
       .get('/api/v1/reconciliation/summary')

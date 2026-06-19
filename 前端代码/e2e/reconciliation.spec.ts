@@ -291,15 +291,15 @@ test.describe('消耗对账 -> 时间段筛选', () => {
     await expect(dialog.getByText('当前 Tab 全部数据').first()).toBeVisible()
 
     const [request, download] = await Promise.all([
-      page.waitForRequest(req => req.url().includes('/api/v1/reconciliation/export') && req.url().includes('format=xlsx')),
+      page.waitForRequest(req => req.url().includes('/api/v1/reconciliation/export') && req.method() === 'POST'),
       page.waitForEvent('download'),
       dialog.getByRole('button', { name: '确认导出' }).click(),
     ])
-    const url = new URL(request.url())
-    expect(url.searchParams.get('format')).toBe('xlsx')
-    expect(url.searchParams.get('scope')).toBe('all')
-    expect(url.searchParams.has('startDate')).toBe(false)
-    expect(url.searchParams.has('endDate')).toBe(false)
+    const body = request.postDataJSON()
+    expect(body.format).toBe('xlsx')
+    expect(body.scope).toBe('all')
+    expect(body.startDate).toBeUndefined()
+    expect(body.endDate).toBeUndefined()
     expect(download.suggestedFilename()).toMatch(/^reconciliation-project-.*\.xlsx$/)
     await expect(dialog).toBeHidden()
   })
