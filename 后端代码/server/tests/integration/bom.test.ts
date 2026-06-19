@@ -29,6 +29,19 @@ function seedBasicData(db: any) {
   )
 }
 
+function seedFeeMapping(db: any, bomId: string, suffix: string, feePerSlide = 80) {
+  const feeStandardId = `fee-${suffix}`
+  db.prepare(`
+    INSERT INTO fee_standards (id, code, name, category, project_type, fee_per_slide, status)
+    VALUES (?, ?, ?, 'test', 'ihc', ?, 'active')
+  `).run(feeStandardId, `FEE-${suffix}`, `BOM追溯测试收费${suffix}`, feePerSlide)
+  db.prepare(`
+    INSERT INTO bom_fee_mappings (id, bom_id, fee_standard_id, quantity_multiplier, aggregation_scope, sort_order, status)
+    VALUES (?, ?, ?, 1, 'outbound', 0, 'active')
+  `).run(`bfm-${suffix}`, bomId, feeStandardId)
+  return feeStandardId
+}
+
 /** 创建测试物料并入库 */
 async function createMaterialWithStock(app: any, token: string, db: any, code: string, price: number, stock: number) {
   const matRes = await request(app)
@@ -214,6 +227,8 @@ describe('集成测试：BOM 管理', () => {
     })
 
     it('追溯更新 BOM 时返回历史出库影响范围并写入版本历史', async () => {
+      seedFeeMapping(db, bomId, `retro-${Date.now()}`)
+
       const projectRes = await request(app)
         .post('/api/v1/projects')
         .set('Authorization', `Bearer ${token}`)

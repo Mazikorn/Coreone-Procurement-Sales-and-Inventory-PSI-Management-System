@@ -319,7 +319,7 @@ describe('成本异常台账', () => {
         id, exception_no, source_module, source_type, year_month,
         exception_type, severity, status, message
       )
-      VALUES (?, ?, 'abc', 'period_close_test', ?, 'missing_fee_mapping', 'warning', 'open', '测试可忽略异常')
+      VALUES (?, ?, 'abc', 'period_close_test', ?, 'manual_review', 'warning', 'open', '测试可忽略异常')
     `).run(warningExceptionId, `CE-WARN-${Date.now()}`, yearMonth)
 
     const listRes = await request(app)
@@ -761,7 +761,7 @@ describe('成本异常台账', () => {
 
   it('成本池重算会生成成本任务并更新成本快照', async () => {
     const suffix = unique('run')
-    const yearMonth = new Date().toISOString().slice(0, 7)
+    const yearMonth = '2099-07'
     const base = seedBase(db, suffix)
     const materialId = seedMaterialWithStock(db, `${suffix}-core`, base, 20, 25)
     const { bomId, projectId } = seedBomProject(db, suffix, materialId)
@@ -773,6 +773,10 @@ describe('成本异常台账', () => {
       .send({ projectId, bomId, sampleCount: 2 })
 
     expect(outbound.status).toBe(201)
+    db.prepare('UPDATE outbound_records SET created_at = ?, updated_at = ? WHERE id = ?')
+      .run(`${yearMonth}-08T09:00:00`, `${yearMonth}-08T09:00:00`, outbound.body.data.id)
+    db.prepare('UPDATE outbound_abc_details SET cost_month = ? WHERE outbound_id = ?')
+      .run(yearMonth, outbound.body.data.id)
 
     db.prepare('UPDATE abc_activity_centers SET status = 1').run()
 

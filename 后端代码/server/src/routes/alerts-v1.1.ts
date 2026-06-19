@@ -138,8 +138,8 @@ router.get('/stats', (req, res) => {
         COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0) as pending,
         COALESCE(SUM(CASE WHEN status IN ('processed', 'auto_resolved', 'handled') THEN 1 ELSE 0 END), 0) as processed,
         COALESCE(SUM(CASE WHEN status IN ('ignored', 'dismissed') THEN 1 ELSE 0 END), 0) as ignored,
-        COALESCE(SUM(CASE WHEN date(created_at) = date('now', 'localtime') THEN 1 ELSE 0 END), 0) as today,
-        COALESCE(SUM(CASE WHEN strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now', 'localtime') THEN 1 ELSE 0 END), 0) as month
+        COALESCE(SUM(CASE WHEN date(created_at, 'localtime') = date('now', 'localtime') THEN 1 ELSE 0 END), 0) as today,
+        COALESCE(SUM(CASE WHEN strftime('%Y-%m', created_at, 'localtime') = strftime('%Y-%m', 'now', 'localtime') THEN 1 ELSE 0 END), 0) as month
       FROM alerts
       WHERE ${where}
     `).get(...params) as any

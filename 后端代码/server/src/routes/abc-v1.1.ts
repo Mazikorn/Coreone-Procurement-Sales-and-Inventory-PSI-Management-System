@@ -5,10 +5,10 @@ import { success, successList, error } from '../utils/response.js'
 import { calculateSlideCostWithFee } from '../utils/cost-calculator.js'
 import { recordCostException } from '../utils/cost-exceptions.js'
 import { ensurePeriodOpen, getOrCreatePeriod, normalizeMonth, runCostRecalculation, writeAuditLog } from '../utils/cost-runs.js'
-import { requireRole } from '../middleware/auth.js'
+import { requireRole, requireStrictRole } from '../middleware/auth.js'
 
 const router = Router()
-const requireCostWrite = requireRole('admin', 'finance')
+const requireCostWrite = requireStrictRole('admin', 'finance')
 
 const pageParams = (query: any) => {
   const page = Math.max(1, Number(query.page) || 1)
@@ -447,15 +447,6 @@ router.post('/periods/:id/close', requireCostWrite, (req, res) => {
     if (!period) { error(res, '成本期间不存在', 'NOT_FOUND', 404); return }
     if (period.status === 'closed') { success(res, periodPayload(period)); return }
 
-    const blocking = (db.prepare(`
-      SELECT COUNT(*) as total
-      FROM cost_exceptions
-      WHERE (year_month = ? OR year_month IS NULL) AND status = 'open' AND severity = 'error'
-    `).get(period.year_month) as any)?.total || 0
-    if (blocking > 0) {
-      error(res, '存在未处理的错误级成本异常，不能关账', 'OPEN_COST_EXCEPTIONS', 422, { blocking })
-      return
-    }
     const openFeeMapping = (db.prepare(`
       SELECT COUNT(*) as total
       FROM cost_exceptions
@@ -465,6 +456,15 @@ router.post('/periods/:id/close', requireCostWrite, (req, res) => {
     `).get(period.year_month) as any)?.total || 0
     if (openFeeMapping > 0) {
       error(res, '存在未处理的收费映射异常，不能关账', 'OPEN_FEE_MAPPING_EXCEPTIONS', 422, { blocking: openFeeMapping })
+      return
+    }
+    const blocking = (db.prepare(`
+      SELECT COUNT(*) as total
+      FROM cost_exceptions
+      WHERE (year_month = ? OR year_month IS NULL) AND status = 'open' AND severity = 'error'
+    `).get(period.year_month) as any)?.total || 0
+    if (blocking > 0) {
+      error(res, '存在未处理的错误级成本异常，不能关账', 'OPEN_COST_EXCEPTIONS', 422, { blocking })
       return
     }
     const pendingCost = (db.prepare(`

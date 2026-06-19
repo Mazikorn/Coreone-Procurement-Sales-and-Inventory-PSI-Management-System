@@ -81,6 +81,16 @@ async function seedAbcExceptionFlow(): Promise<SeededAbcFlow> {
     productionDate: new Date().toISOString().slice(0, 10),
     remark: 'E2E ABC 产品化造数',
   })
+  await api(token, 'POST', '/inbound', {
+    type: 'purchase',
+    materialId: skippedMaterial.id,
+    batchNo: `E2E-S-${suffix}`,
+    quantity: 20,
+    price: 8,
+    locationId: location.id,
+    productionDate: new Date().toISOString().slice(0, 10),
+    remark: 'E2E ABC 产品化扩展试剂造数',
+  })
 
   const bomName = `E2E ABC核算BOM ${suffix}`
   const bom = await api(token, 'POST', '/boms', {

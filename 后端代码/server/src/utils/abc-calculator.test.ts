@@ -282,7 +282,8 @@ function createSlideCostMockDb(options: {
           }
           // boms 查询（收费标准关联）
           if (sql.includes('FROM boms WHERE id = ? AND is_deleted')) {
-            return bom || null
+            const [bomId] = params
+            return bom ? { id: bomId, ...bom } : null
           }
           // fee_standards 查询
           if (sql.includes('FROM fee_standards WHERE id = ?')) {
