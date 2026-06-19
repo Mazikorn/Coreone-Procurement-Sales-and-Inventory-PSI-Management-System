@@ -97,6 +97,18 @@ function rejectInvalidCostVarianceCompareType(compareType: string, res: any) {
   return false
 }
 
+function rejectInvalidTimeRange(query: any, res: any) {
+  if (query.timeRange === undefined || query.timeRange === null || query.timeRange === '') return false
+  const timeRange = String(query.timeRange).trim()
+  const match = timeRange.match(/^(\d+)m$/)
+  const months = match ? Number(match[1]) : 0
+  if (!match || !Number.isInteger(months) || months < 1 || months > 36) {
+    error(res, '时间范围必须为 1m 至 36m', 'INVALID_PARAMETER', 400)
+    return true
+  }
+  return false
+}
+
 function getDateRange(query: any) {
   const timeRange = String(query.timeRange || '').trim()
   const monthMatch = timeRange.match(/^(\d+)m$/)
@@ -1078,6 +1090,7 @@ router.get('/cost-monthly-comparison', (req, res) => {
 router.get('/personnel-efficiency', (req, res) => {
   try {
     if (rejectInvalidDateRange(req, res)) return
+    if (rejectInvalidTimeRange(req.query, res)) return
     const db = getDatabase()
     const { startDate, endDate } = getDateRange(req.query)
     const role = String(req.query.role || 'all').trim()

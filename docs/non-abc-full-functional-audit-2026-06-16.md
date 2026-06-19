@@ -14519,7 +14519,53 @@ git diff --check
 
 - 当前修复只覆盖成本差异报表的 `compareType` 参数；其它非 ABC 报表若存在固定筛选项但后端未校验的入口，应继续按同一不变量逐项处理。
 
-## 二百九十六、结论
+## 二百九十六、批次 341: 人员效率报表必须拒绝非法时间范围
+
+**发现的问题**
+
+- 本轮继续复核非 ABC 报表参数有效性，聚焦“时间窗口参数必须拒绝非法值，不能退化成更宽统计范围”不变量。
+- `/api/v1/reports/personnel-efficiency` 的 `timeRange` 只在 `getDateRange` 中识别 `Nm` 形态；非法值不会报错，而是变成只有 `endDate` 的宽范围查询。
+- 当调用 `timeRange=forever` 时，旧接口返回 200，用户可能误以为这是合法时间窗口下的人员效率、人工成本和趋势结果。
+- 人员效率报表解释出库人员产出、标准工时和人工成本，是出库成本事实和 ABC 上游成本输入的说明面，非法时间范围必须显式拒绝。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/reports-v1.1.ts`
+  - 新增 `rejectInvalidTimeRange`，只在请求显式携带 `timeRange` 时校验。
+  - 保留后端原有灵活 `Nm` 语义，但要求月份数必须为 `1m` 至 `36m`，避免非法值或超大窗口被静默回落/截断。
+  - `/reports/personnel-efficiency` 在日期范围和角色校验前后增加时间范围校验，非法时间范围统一返回 `400 INVALID_PARAMETER`。
+- `后端代码/server/tests/integration/personnel-efficiency.test.ts`
+  - 新增 `REPORT-EFFICIENCY-004` 红绿测试，覆盖非法 `timeRange=forever` 必须返回 `400 INVALID_PARAMETER`。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 人员效率报表的 API 参数校验和集成测试，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 人员效率报表依赖出库记录、项目类型、操作人角色和标准工时，是 ABC 输入侧可信成本事实的上游说明面；本批只阻断非法时间范围，不改变合法 `1m` 至 `36m` 统计口径。
+- 已补跑人员效率、非 ABC 报表日期、成本趋势、成本月度环比、成本差异、出库和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+- 已确认本批 diff 不涉及 `前端代码/deprecated/legacy-cost-analysis/`、`后端代码/server/src/routes/abc-v1.1.ts`、`后端代码/server/src/utils/abc-calculator.test.ts` 或前端 ABC 本体页面。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/integration/personnel-efficiency.test.ts -t "REPORT-EFFICIENCY-004"` 修复前失败：非法 `timeRange=forever` 返回 200，期望 400。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/integration/personnel-efficiency.test.ts -t "REPORT-EFFICIENCY-004"` 通过，1 test passed / 5 skipped。
+  - `后端代码/server npm test -- --run tests/integration/personnel-efficiency.test.ts tests/integration/reports-date-validation.test.ts tests/integration/reports-cost-trend.test.ts tests/integration/reports-monthly-comparison.test.ts tests/integration/reports-cost-variance.test.ts` 通过，5 files / 15 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `后端代码/server npm test -- --run tests/integration/outbound.test.ts tests/integration/cost-exceptions.test.ts` 通过，2 files / 40 tests passed；`cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr 为既有异常台账测试场景，最终通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `后端代码/server npm run build` 通过。
+- 浏览器复核:
+  - 本批是非 ABC 报表 API 参数校验修复，不新增或改变页面组件、弹窗或可见交互；核心风险是接口是否拒绝非法时间范围，已用接口级红绿测试覆盖，不新增截图证据。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 当前修复只覆盖人员效率报表的 `timeRange` 参数；其它使用时间窗口但后端未校验的非 ABC 页面，应继续按同一不变量逐项处理。
+
+## 二百九十七、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

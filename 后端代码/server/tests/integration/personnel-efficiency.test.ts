@@ -149,6 +149,16 @@ describe('集成测试：人员效率报表', () => {
     expect(res.body.error.code).toBe('INVALID_PARAMETER')
   })
 
+  it('REPORT-EFFICIENCY-004: 拒绝非法时间范围，避免退化成宽范围效率报表', async () => {
+    const res = await request(app)
+      .get('/api/v1/reports/personnel-efficiency?timeRange=forever')
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(400)
+    expect(res.body.success).toBe(false)
+    expect(res.body.error.code).toBe('INVALID_PARAMETER')
+  })
+
   it('REPORT-EFFICIENCY-001: 人员效率不因项目后续软删除而丢失历史项目类型工时', async () => {
     const suffix = Date.now()
     const operator = `pe-deleted-project-tech-${suffix}`
