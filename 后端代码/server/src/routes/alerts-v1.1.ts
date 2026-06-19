@@ -68,6 +68,12 @@ function normalizeAlertLevelFilter(value: unknown) {
   return raw
 }
 
+function isValidDateOnly(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const date = new Date(`${value}T00:00:00.000Z`)
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value
+}
+
 function validateAlertFilters(query: any) {
   const status = String(query.status || '').trim()
   if (status) {
@@ -85,6 +91,18 @@ function validateAlertFilters(query: any) {
   const level = normalizeAlertLevelFilter(query.level)
   if (level && !ALERT_LEVELS.has(level)) {
     return { ok: false, message: '预警级别筛选无效' }
+  }
+
+  const startDate = String(query.startDate || '').trim()
+  const endDate = String(query.endDate || '').trim()
+  if (startDate && !isValidDateOnly(startDate)) {
+    return { ok: false, message: '开始日期格式必须为 YYYY-MM-DD' }
+  }
+  if (endDate && !isValidDateOnly(endDate)) {
+    return { ok: false, message: '结束日期格式必须为 YYYY-MM-DD' }
+  }
+  if (startDate && endDate && startDate > endDate) {
+    return { ok: false, message: '开始日期不能晚于结束日期' }
   }
 
   return { ok: true }

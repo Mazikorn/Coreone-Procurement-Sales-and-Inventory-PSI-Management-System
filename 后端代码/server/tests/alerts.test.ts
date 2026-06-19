@@ -399,6 +399,30 @@ describe('预警处理', () => {
     expect(invalidStatsLevel.body.error.code).toBe('INVALID_PARAMETER')
   })
 
+  it('ALERT-015: 列表和统计拒绝非法日期范围筛选', async () => {
+    const invalidStartDate = await request(app)
+      .get('/api/v1/alerts')
+      .query({ startDate: '2026-02-30' })
+      .set('Authorization', `Bearer ${token}`)
+
+    const invalidEndDate = await request(app)
+      .get('/api/v1/alerts/stats')
+      .query({ endDate: 'not-a-date' })
+      .set('Authorization', `Bearer ${token}`)
+
+    const reversedRange = await request(app)
+      .get('/api/v1/alerts')
+      .query({ startDate: '2026-06-30', endDate: '2026-06-01' })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(invalidStartDate.status).toBe(400)
+    expect(invalidStartDate.body.error.code).toBe('INVALID_PARAMETER')
+    expect(invalidEndDate.status).toBe(400)
+    expect(invalidEndDate.body.error.code).toBe('INVALID_PARAMETER')
+    expect(reversedRange.status).toBe(400)
+    expect(reversedRange.body.error.code).toBe('INVALID_PARAMETER')
+  })
+
   it('ALERT-009: 非处理角色不能处理、忽略、批量处理或手动扫描预警', async () => {
     const techToken = await loginRole(app, 'zhangwei')
     const firstId = seedAlert(db, `forbidden-a-${Date.now()}`)

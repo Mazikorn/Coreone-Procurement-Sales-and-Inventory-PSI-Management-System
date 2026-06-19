@@ -15341,7 +15341,54 @@ git diff --check
 
 - 预警筛选非法枚举已收口；若未来需要让 API 接受更多历史状态或第三方状态别名，应先定义状态来源和展示语义，再扩展白名单，避免继续把错误输入伪装成空结果。
 
-## 三百一十三、结论
+## 三百一十三、批次 358: 预警日期筛选必须拒绝非法范围
+
+**发现的问题**
+
+- 本轮继续复核预警中心列表/统计 API，聚焦“日期筛选必须是真实日期范围，不能把错误输入伪装成空结果”不变量。
+- `/api/v1/alerts` 和 `/api/v1/alerts/stats` 会把 `startDate/endDate` 原样加入 SQL 查询。
+- `startDate=2026-02-30`、`endDate=not-a-date` 或 `startDate > endDate` 这类输入会返回 200 空结果或不可解释结果，用户可能误判为当前没有预警。
+- 前端日期输入是正常入口，但 URL、集成调用和手工请求仍可能绕过页面控件，后端必须兜底。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/alerts-v1.1.ts`
+  - 新增严格 `YYYY-MM-DD` 日期校验，并确认日期是真实日历日期，避免 `2026-02-30` 被自动滚动。
+  - `validateAlertFilters` 增加 `startDate/endDate` 校验。
+  - 列表和统计接口对非法开始日期、非法结束日期和反向日期范围统一返回 `400 INVALID_PARAMETER`。
+- `后端代码/server/tests/alerts.test.ts`
+  - 新增 `ALERT-015`，覆盖列表拒绝非法开始日期、统计拒绝非法结束日期、列表拒绝开始晚于结束。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 预警中心只读日期筛选校验和后端测试，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 预警日期筛选只影响风险提示列表/统计的查询解释性，不改变预警生成、处理、忽略、批量处理、库存写入、出库、BOM 或成本异常写入。
+- 已补跑预警、库存一致性、库存集成、出库和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/alerts.test.ts -t "ALERT-015"` 修复前失败：`startDate=2026-02-30` 返回 200，期望 400。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/alerts.test.ts -t "ALERT-015"` 通过，1 test passed / 15 skipped。
+  - `后端代码/server npm test -- --run tests/alerts.test.ts` 通过，16 tests passed。
+  - `后端代码/server npm test -- --run tests/alerts.test.ts tests/integration/inventory.test.ts tests/inventory-consistency.test.ts` 通过，3 files / 40 tests passed。
+  - `后端代码/server npm test -- --run tests/integration/outbound.test.ts tests/integration/cost-exceptions.test.ts` 通过，2 files / 40 tests passed；`cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr 为既有异常台账测试场景，最终通过。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+- 浏览器复核:
+  - 本批为预警列表/统计 API 参数校验修复，不新增或改变页面组件、弹窗或可见交互；核心风险是 API 是否拒绝非法日期范围，已用接口级红绿测试覆盖，不新增截图证据。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 预警列表/统计的枚举和日期筛选已收口；如果后续要支持更复杂的相对日期或自然语言日期，应先在前端和后端共同定义规范参数，不应让后端静默接受。
+
+## 三百一十四、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 
