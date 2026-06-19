@@ -116,4 +116,45 @@ describe('useMaterialsPage', () => {
     expect(window.location.search).toContain('keyword=HER2')
     expect(window.location.search).not.toContain('page=5')
   })
+
+  it('resets pagination when category or supplier filters change', async () => {
+    window.history.replaceState(null, '', '/materials?page=5')
+    vi.mocked(materialApi.getList).mockImplementation(async (params: any) => ({
+      list: [],
+      pagination: { total: 100, page: params.page, pageSize: params.pageSize },
+    } as any))
+
+    const { result } = renderHook(() => useMaterialsPage())
+    await waitFor(() => expect(result.current.page).toBe(5))
+
+    act(() => {
+      result.current.setCategoryId('cat-1')
+    })
+
+    await waitFor(() => expect(result.current.page).toBe(1))
+    expect(window.location.search).toContain('categoryId=cat-1')
+    expect(window.location.search).not.toContain('page=5')
+    expect(materialApi.getList).toHaveBeenCalledWith(expect.objectContaining({
+      page: 1,
+      categoryId: 'cat-1',
+    }))
+
+    act(() => {
+      result.current.setPage(5)
+    })
+    await waitFor(() => expect(result.current.page).toBe(5))
+
+    act(() => {
+      result.current.setSupplierId('sup-1')
+    })
+
+    await waitFor(() => expect(result.current.page).toBe(1))
+    expect(window.location.search).toContain('supplierId=sup-1')
+    expect(window.location.search).not.toContain('page=5')
+    expect(materialApi.getList).toHaveBeenCalledWith(expect.objectContaining({
+      page: 1,
+      categoryId: 'cat-1',
+      supplierId: 'sup-1',
+    }))
+  })
 })

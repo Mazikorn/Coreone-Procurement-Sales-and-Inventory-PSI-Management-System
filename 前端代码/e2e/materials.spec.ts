@@ -317,6 +317,131 @@ test.describe('耗材管理 -> 按供应商筛选', () => {
   })
 })
 
+test.describe('耗材管理 -> 筛选栏联动', () => {
+  test('MAT-FILTER-01. 分类和供应商筛选同步URL并重置分页', async ({ page }) => {
+    await loginAs(page, 'admin')
+
+    const materialRequests: URL[] = []
+    await page.route('**/api/v1/categories**', async (route) => {
+      const url = new URL(route.request().url())
+      if (url.pathname.endsWith('/categories')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              list: [{ id: 'cat-filter', name: '筛选分类A', status: 'active' }],
+              pagination: { total: 1, page: 1, pageSize: 999 },
+            },
+          }),
+        })
+        return
+      }
+      await route.fallback()
+    })
+    await page.route('**/api/v1/suppliers**', async (route) => {
+      const url = new URL(route.request().url())
+      if (url.pathname.endsWith('/suppliers')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              list: [{ id: 'sup-filter', name: '筛选供应商A', status: 'active' }],
+              pagination: { total: 1, page: 1, pageSize: 999 },
+            },
+          }),
+        })
+        return
+      }
+      await route.fallback()
+    })
+    await page.route('**/api/v1/materials**', async (route) => {
+      const url = new URL(route.request().url())
+      if (url.pathname.endsWith('/materials/stats')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: { total: 1, active: 1, inactive: 0, lowStock: 0 },
+          }),
+        })
+        return
+      }
+      if (url.pathname.endsWith('/materials')) {
+        materialRequests.push(url)
+        const categoryId = url.searchParams.get('categoryId')
+        const supplierId = url.searchParams.get('supplierId')
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              list: [{
+                id: 'mock-filtered-material',
+                code: 'FILTER-001',
+                name: supplierId ? '分类供应商Mock物料' : categoryId ? '分类Mock物料' : '全部Mock物料',
+                spec: '1ml',
+                unit: '瓶',
+                categoryId: categoryId || 'cat-filter',
+                supplierId: supplierId || 'sup-filter',
+                price: 1,
+                stock: 20,
+                minStock: 5,
+                status: 'active',
+              }],
+              pagination: { total: 1, page: Number(url.searchParams.get('page') || '1'), pageSize: Number(url.searchParams.get('pageSize') || '20') },
+            },
+          }),
+        })
+        return
+      }
+      await route.fallback()
+    })
+
+    await page.goto(`${FE_BASE}/materials?page=5`, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByText('全部Mock物料')).toBeVisible({ timeout: 15000 })
+    materialRequests.length = 0
+
+    await page.getByText('全部分类').click()
+    await page.getByTestId('option-cat-filter').click()
+    await expect(page.getByText('分类Mock物料')).toBeVisible()
+    await expect.poll(() => {
+      const url = new URL(page.url())
+      return {
+        categoryId: url.searchParams.get('categoryId'),
+        page: url.searchParams.get('page'),
+      }
+    }).toEqual({ categoryId: 'cat-filter', page: null })
+    expect(materialRequests.some(url =>
+      url.searchParams.get('categoryId') === 'cat-filter' &&
+      url.searchParams.get('page') === '1'
+    )).toBe(true)
+
+    materialRequests.length = 0
+    await page.getByText('全部供应商').click()
+    await page.getByTestId('option-sup-filter').click()
+    await expect(page.getByText('分类供应商Mock物料')).toBeVisible()
+    await expect.poll(() => {
+      const url = new URL(page.url())
+      return {
+        categoryId: url.searchParams.get('categoryId'),
+        supplierId: url.searchParams.get('supplierId'),
+        page: url.searchParams.get('page'),
+      }
+    }).toEqual({ categoryId: 'cat-filter', supplierId: 'sup-filter', page: null })
+    expect(materialRequests.some(url =>
+      url.searchParams.get('categoryId') === 'cat-filter' &&
+      url.searchParams.get('supplierId') === 'sup-filter' &&
+      url.searchParams.get('page') === '1'
+    )).toBe(true)
+  })
+})
+
 // ────────────────────────────────────────────
 // 4. 搜索物料 (6 tests)
 // ────────────────────────────────────────────

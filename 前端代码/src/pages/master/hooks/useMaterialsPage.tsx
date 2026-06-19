@@ -69,8 +69,8 @@ export function useMaterialsPage() {
 
   const [keyword, setKeywordState] = useState(get('keyword') || '')
   const [debouncedKeyword, setDebouncedKeyword] = useState(get('keyword') || '')
-  const [categoryId, setCategoryId] = useState(get('categoryId') || '')
-  const [supplierId, setSupplierId] = useState(get('supplierId') || '')
+  const [categoryId, setCategoryIdState] = useState(get('categoryId') || '')
+  const [supplierId, setSupplierIdState] = useState(get('supplierId') || '')
   const [quickFilter, setQuickFilter] = useState<QuickFilter>(initialQuickFilter)
   const [stats, setStats] = useState<MaterialStats>({
     total: 0,
@@ -536,14 +536,24 @@ export function useMaterialsPage() {
   const handleReset = () => {
     setKeywordState('')
     setDebouncedKeyword('')
-    setCategoryId('')
-    setSupplierId('')
+    setCategoryIdState('')
+    setSupplierIdState('')
     setQuickFilter('all')
     setPage(1)
   }
 
   const setKeyword = useCallback((value: string) => {
     setKeywordState(value)
+    setPage(1)
+  }, [setPage])
+
+  const setCategoryId = useCallback((value: string) => {
+    setCategoryIdState(value)
+    setPage(1)
+  }, [setPage])
+
+  const setSupplierId = useCallback((value: string) => {
+    setSupplierIdState(value)
     setPage(1)
   }, [setPage])
 

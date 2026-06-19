@@ -12129,10 +12129,57 @@ git diff --check
 
 **后续风险**
 
-- MAT-09~12 的关键词搜索 URL、防抖和分页重置已收口；分类、供应商筛选 URL 与重置行为仍可继续按独立批次复核。
+- MAT-09~12 的关键词搜索 URL、防抖和分页重置已收口；分类、供应商筛选分页重置已在批次 292 承接。
 - MAT-31 物料分页 URL/服务端分页仍需结合本轮共享 `usePagination` 修复继续做页面级证据；本批不扩大到物料分页控件。
 
-## 二百四十七、结论
+## 二百四十七、批次 292: 物料分类和供应商筛选必须统一重置分页
+
+**发现的问题**
+
+- `materials.md` 的 MAT-09~12 要求下拉筛选 onChange 实时生效，筛选条件同步 URL，刷新保留；`交互规范总纲.md` 2.3 还要求任何筛选变化时重置到第 1 页。
+- 页面组件虽然在分类/供应商下拉 `onChange` 外层调用了 `setPage(1)`，但 `useMaterialsPage` 对外暴露的 `setCategoryId` 和 `setSupplierId` 仍是原始 React setter。
+- 如果后续组件、测试或复用方直接调用 hook 返回的 setter，从 `/materials?page=5` 切分类或供应商时会继续停留在第 5 页，和批次 291 已收口的关键词筛选规则不一致。
+
+**已完成修复**
+
+- `前端代码/src/pages/master/hooks/useMaterialsPage.tsx`
+  - 将 `categoryId/supplierId` 的内部 state setter 与对外业务 setter 分离。
+  - 对外 `setCategoryId`、`setSupplierId` 统一写入筛选条件并调用 `setPage(1)`。
+  - `handleReset` 改用内部 setter 清空分类/供应商，保留一次性重置页码。
+- `前端代码/src/pages/master/Materials.tsx`
+  - 页面层分类/供应商下拉不再重复调用 `setPage(1)`，只负责清空选中项；分页重置规则回归 hook。
+- `前端代码/src/pages/master/hooks/useMaterialsPage.test.tsx`
+  - 新增红绿测试，覆盖从 `?page=5` 进入后直接调用 `setCategoryId('cat-1')` 或 `setSupplierId('sup-1')`，状态和 URL 都回到第 1 页，列表请求带最终筛选参数。
+- `前端代码/e2e/materials.spec.ts`
+  - 新增 `MAT-FILTER-01`，真实浏览器 mock 分类、供应商和物料接口，从 `?page=5` 进入后点击分类/供应商下拉，确认 URL 写入 `categoryId/supplierId`、清掉页码，并且列表接口以 `page=1` 和最终筛选参数请求。
+
+**ABC 影响评估**
+
+- 本批只修改物料页只读分类/供应商筛选的分页状态，不修改物料事实字段、供应商事实、库存、入库、出库、BOM、成本异常、ABC API 或 ABC 本体。
+- 物料、分类和供应商是 ABC 上游主数据维度，但本批不改变任何写入副作用，也不改变库存数量、批次成本或出库扣减。
+- 因不触碰 ABC 上游写入链，本批不补跑 ABC 输入侧成本回归；通过物料 hook、共享分页 hook、材料页 E2E 和前端构建验证读路径。
+- 未触碰废弃 `/cost-analysis` 或 `前端代码/deprecated/legacy-cost-analysis/`。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/master/hooks/useMaterialsPage.test.tsx -t "category or supplier"` 修复前失败：从 `page=5` 调用 `setCategoryId('cat-1')` 后 `result.current.page` 仍为 `5`。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/master/hooks/useMaterialsPage.test.tsx -t "category or supplier"` 通过，1 test passed / 4 skipped。
+  - `前端代码 npm test -- --run src/pages/master/hooks/useMaterialsPage.test.tsx src/hooks/usePagination.test.ts` 通过，2 files / 18 tests passed。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/materials.spec.ts -g "MAT-FILTER-01|MAT-SEARCH-03|MAT-LIST-11|MAT-PAGE-01" --project=chromium` 通过，4 tests passed。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only | rg "deprecated/legacy-cost-analysis|前端代码/deprecated|/cost-analysis"` 无匹配，确认未改废弃范围。
+- 浏览器复核:
+  - 使用用户已验证的 Chrome for Testing 路径完成 headless Playwright 复核；验证重点为真实分类/供应商下拉点击、URL 写回、页码清理、最终接口 `page=1&categoryId=...&supplierId=...`，以及快速筛选/搜索/分页回归。
+
+**后续风险**
+
+- MAT-09~12 的关键词、分类、供应商筛选 URL 与分页重置主路径已收口；筛选“重置清空所有条件 + URL query”仍可继续按独立批次做更强页面级复核。
+- MAT-31 物料分页 URL/服务端分页仍需结合本轮共享 `usePagination` 修复继续做页面级证据；本批不扩大到物料分页控件。
+
+## 二百四十八、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

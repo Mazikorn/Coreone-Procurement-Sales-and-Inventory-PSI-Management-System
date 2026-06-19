@@ -66,8 +66,8 @@ export default function Materials() {
         getSupplierName={page.getSupplierName}
         statusBadge={page.statusBadge}
         onKeywordChange={page.setKeyword}
-        onCategoryIdChange={(v) => { page.setCategoryId(v); page.setPage(1); page.setSelectedIds(new Set()) }}
-        onSupplierIdChange={(v) => { page.setSupplierId(v); page.setPage(1); page.setSelectedIds(new Set()) }}
+        onCategoryIdChange={(v) => { page.setCategoryId(v); page.setSelectedIds(new Set()) }}
+        onSupplierIdChange={(v) => { page.setSupplierId(v); page.setSelectedIds(new Set()) }}
         onQuickFilterChange={(v) => { page.setQuickFilter(v); page.setPage(1); page.setSelectedIds(new Set()) }}
         onSearch={page.handleSearch}
         onReset={page.handleReset}
