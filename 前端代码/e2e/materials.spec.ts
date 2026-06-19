@@ -1043,8 +1043,64 @@ test.describe('耗材管理 -> 查看物料详情', () => {
 test.describe('耗材管理 -> 分页切换', () => {
   test('MAT-PAGE-01. 正常用例：切换到第2页', async ({ page }) => {
     await loginAs(page, 'admin')
-    await page.goto(`${FE_BASE}/materials?page=2`)
-    await page.waitForTimeout(800)
+    const materialRequests: URL[] = []
+
+    await page.route('**/api/v1/materials**', async (route) => {
+      const url = new URL(route.request().url())
+      if (url.pathname.endsWith('/materials/stats')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: { total: 45, active: 45, inactive: 0, lowStock: 0 },
+          }),
+        })
+        return
+      }
+      if (url.pathname.endsWith('/materials')) {
+        materialRequests.push(url)
+        const currentPage = Number(url.searchParams.get('page') || '1')
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              list: [{
+                id: `mock-page-${currentPage}`,
+                code: `PAGE-${currentPage}`,
+                name: `第${currentPage}页Mock物料`,
+                spec: '1ml',
+                unit: '瓶',
+                categoryId: 'cat-mock',
+                supplierId: 'sup-mock',
+                price: 1,
+                stock: 20,
+                minStock: 5,
+                status: 'active',
+              }],
+              pagination: { total: 45, page: currentPage, pageSize: Number(url.searchParams.get('pageSize') || '20') },
+            },
+          }),
+        })
+        return
+      }
+      await route.fallback()
+    })
+
+    await page.goto(`${FE_BASE}/materials`, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByText('第1页Mock物料')).toBeVisible({ timeout: 15000 })
+
+    await page.getByRole('button', { name: '2' }).click()
+
+    await expect(page.getByText('第2页Mock物料')).toBeVisible()
+    await expect(page.getByText('共 45 条，第 2/3 页')).toBeVisible()
+    await expect.poll(() => new URL(page.url()).searchParams.get('page')).toBe('2')
+    expect(materialRequests.some(url =>
+      url.searchParams.get('page') === '2' &&
+      url.searchParams.get('pageSize') === '20'
+    )).toBe(true)
   })
   test('MAT-PAGE-02. 边界：仅1页分页器隐藏', async ({ page }) => {
     await loginAs(page, 'admin')

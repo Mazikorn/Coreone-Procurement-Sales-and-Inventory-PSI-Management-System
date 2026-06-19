@@ -50,6 +50,8 @@ export function MaterialTable({
   onOpenDetail, onOpenEdit, onToggleStatus, onDelete,
   onBatchToggleStatus, onBatchDelete,
 }: Props) {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const currentPage = Math.min(Math.max(page, 1), totalPages)
   const quickFilterTabs = [
     { key: 'all' as const, label: '全部' },
     { key: 'active' as const, label: '已启用' },
@@ -229,7 +231,7 @@ export function MaterialTable({
 
       {/* Pagination */}
       <div className="flex items-center justify-between bg-white p-3 rounded-lg border border-gray-200">
-        <span className="text-sm text-gray-500">共 {total} 条记录</span>
+        <span className="text-sm text-gray-500">共 {total} 条，第 {currentPage}/{totalPages} 页</span>
         <Pagination
           page={page}
           pageSize={pageSize}
