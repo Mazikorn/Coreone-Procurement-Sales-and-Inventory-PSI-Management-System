@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react'
+import React, { useState, useMemo, useEffect, useRef } from 'react'
 import { Download, Users } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -62,22 +62,29 @@ export default function PersonnelEfficiency() {
   const [ranking, setRanking] = useState<PersonnelRankItem[]>([])
   const [trend, setTrend] = useState<PersonnelTrendPoint[]>([])
   const [backendSummary, setBackendSummary] = useState<PersonnelSummary | null>(null)
+  const latestRequestId = useRef(0)
 
   useEffect(() => {
     loadData()
   }, [timeRange, role])
 
   const loadData = async () => {
+    const requestId = latestRequestId.current + 1
+    latestRequestId.current = requestId
     try {
       setLoading(true)
       const res = await reportsApi.getPersonnelEfficiency({ timeRange, role })
+      if (requestId !== latestRequestId.current) return
       setRanking(res?.ranking || [])
       setTrend(res?.trend || [])
       setBackendSummary(res?.summary || null)
     } catch {
+      if (requestId !== latestRequestId.current) return
       toast.error('加载人员效率数据失败')
     } finally {
-      setLoading(false)
+      if (requestId === latestRequestId.current) {
+        setLoading(false)
+      }
     }
   }
 
