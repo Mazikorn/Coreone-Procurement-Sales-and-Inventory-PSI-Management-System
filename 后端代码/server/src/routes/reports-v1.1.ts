@@ -60,6 +60,7 @@ const PERSONNEL_EFFICIENCY_ROLES = new Set(['all', 'technician', 'pathologist', 
 const COST_TREND_DIMENSIONS = new Set(['monthly', 'quarterly'])
 const MONTHLY_COMPARISON_SOURCES = new Set(['outbound', 'abc'])
 const COST_VARIANCE_COMPARE_TYPES = new Set(['project', 'month', 'material'])
+const REPORT_PROJECT_TYPES = new Set(['all', 'ihc', 'he', 'ss', 'mp', 'cyto'])
 
 function rejectInvalidPersonnelEfficiencyRole(role: string, res: any) {
   if (!PERSONNEL_EFFICIENCY_ROLES.has(role)) {
@@ -72,6 +73,14 @@ function rejectInvalidPersonnelEfficiencyRole(role: string, res: any) {
 function rejectInvalidCostTrendDimension(dimension: string, res: any) {
   if (!COST_TREND_DIMENSIONS.has(dimension)) {
     error(res, '成本趋势聚合维度无效', 'INVALID_PARAMETER', 400)
+    return true
+  }
+  return false
+}
+
+function rejectInvalidReportProjectType(projectType: string, res: any) {
+  if (projectType && !REPORT_PROJECT_TYPES.has(projectType)) {
+    error(res, '项目类型筛选无效', 'INVALID_PARAMETER', 400)
     return true
   }
   return false
@@ -272,15 +281,17 @@ router.get('/cost-trend', (req, res) => {
     if (rejectInvalidDateRange(req, res)) return
     const { startDate, endDate, dimension = 'monthly', projectType } = req.query
     const trendDimension = String(dimension || 'monthly').trim()
+    const trendProjectType = String(projectType || '').trim()
     if (rejectInvalidCostTrendDimension(trendDimension, res)) return
+    if (rejectInvalidReportProjectType(trendProjectType, res)) return
     const db = getDatabase()
     let where = "r.status = 'completed' AND r.is_deleted = 0"
     const params: any[] = []
     if (startDate) { where += ' AND r.created_at >= ?'; params.push(startDate) }
     if (endDate) { where += ' AND r.created_at <= ?'; params.push(`${endDate}T23:59:59`) }
-    if (projectType && projectType !== 'all') {
+    if (trendProjectType && trendProjectType !== 'all') {
       where += ' AND p.type = ?'
-      params.push(projectType)
+      params.push(trendProjectType)
     }
 
     if (trendDimension === 'quarterly') {

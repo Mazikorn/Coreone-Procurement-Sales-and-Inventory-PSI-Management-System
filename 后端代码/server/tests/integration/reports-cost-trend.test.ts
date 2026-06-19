@@ -138,4 +138,14 @@ describe('集成测试：非ABC成本趋势报表', () => {
     expect(res.body.success).toBe(false)
     expect(res.body.error.code).toBe('INVALID_PARAMETER')
   })
+
+  it('REPORT-TREND-003: 拒绝非法项目类型，避免伪装成空趋势', async () => {
+    const res = await request(app)
+      .get('/api/v1/reports/cost-trend?dimension=quarterly&projectType=unknown')
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(400)
+    expect(res.body.success).toBe(false)
+    expect(res.body.error.code).toBe('INVALID_PARAMETER')
+  })
 })
