@@ -438,6 +438,16 @@ router.put('/:id', requireProjectWrite, (req, res) => {
         }
       }
     }
+    if (data.type !== undefined && normalizedType !== (existing as any).type) {
+      const history = getProjectHistoryCounts(db, id)
+      if (history.outboundCount > 0 || history.lisCaseCount > 0) {
+        const reasons: string[] = []
+        if (history.outboundCount > 0) reasons.push(`已有出库记录 ${history.outboundCount} 条`)
+        if (history.lisCaseCount > 0) reasons.push(`已有LIS检测记录 ${history.lisCaseCount} 条`)
+        error(res, `检测项目已有历史业务，不可直接更换服务类型：${reasons.join('；')}`, 'PROJECT_TYPE_CHANGE_BLOCKED', 409)
+        return
+      }
+    }
     const fields: string[] = []; const params: any[] = []
     if (normalizedCode !== null) { fields.push('code = ?'); params.push(normalizedCode) }
     if (normalizedName !== null) { fields.push('name = ?'); params.push(normalizedName) }

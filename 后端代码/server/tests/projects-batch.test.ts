@@ -506,6 +506,32 @@ describe('检测项目批量操作', () => {
     expect(row.bom_id).toBe(firstBomId)
   })
 
+  it('PRJ-TYPE-002: 检测项目已有出库或LIS记录后禁止直接更换服务类型', async () => {
+    const suffix = `type-change-history-${Date.now()}`
+    const outboundId = `out-prj-type-history-${suffix}`
+    const caseId = `case-prj-type-history-${suffix}`
+    const projectId = await createProject(app, token, `${suffix}-project`, { type: 'he' })
+
+    db.prepare("INSERT INTO outbound_records (id, outbound_no, type, project_id, total_cost, sample_count, operator, status) VALUES (?, ?, 'project', ?, 30, 3, 'admin', 'completed')")
+      .run(outboundId, `OUT-PRJ-TYPE-HIS-${suffix}`, projectId)
+    db.prepare('INSERT INTO lis_cases (id, case_no, project_id, project_name, operator, operate_time, status) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(caseId, `CASE-PRJ-TYPE-HIS-${suffix}`, projectId, `历史类型项目-${suffix}`, 'admin', '2026-06-18 12:00:00', 'normal')
+
+    const res = await request(app)
+      .put(`/api/v1/projects/${projectId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        code: `PRJ-BATCH-${suffix}-project`,
+        name: `历史禁止换类型项目-${suffix}`,
+        type: 'ihc',
+      })
+
+    expect(res.status).toBe(409)
+    expect(res.body.error?.code || res.body.code).toBe('PROJECT_TYPE_CHANGE_BLOCKED')
+    const row = db.prepare('SELECT type FROM projects WHERE id = ?').get(projectId) as any
+    expect(row.type).toBe('he')
+  })
+
   it('PRJ-STATUS-001: 更新检测项目状态必须拒绝页面选项以外的状态', async () => {
     const suffix = `status-update-${Date.now()}`
     const projectId = await createProject(app, token, `${suffix}-project`, { status: 'active' })

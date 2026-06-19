@@ -7,12 +7,18 @@ test.describe('检测服务状态影响检查', () => {
   let copiedProjectId = ''
   let bomId = ''
   let materialId = ''
+  let inboundId = ''
+  let outboundId = ''
 
   test.beforeEach(async () => {
     token = await apiLogin('admin')
   })
 
   test.afterEach(async () => {
+    if (outboundId) {
+      await apiFetch(token, 'DELETE', `/outbound/${outboundId}`)
+      outboundId = ''
+    }
     if (copiedProjectId) {
       await apiFetch(token, 'DELETE', `/projects/${copiedProjectId}`)
       copiedProjectId = ''
@@ -24,6 +30,10 @@ test.describe('检测服务状态影响检查', () => {
     if (bomId) {
       await apiFetch(token, 'DELETE', `/boms/${bomId}`)
       bomId = ''
+    }
+    if (inboundId) {
+      await apiFetch(token, 'DELETE', `/inbound/${inboundId}`)
+      inboundId = ''
     }
     if (materialId) {
       await apiFetch(token, 'DELETE', `/materials/${materialId}`)
@@ -55,6 +65,51 @@ test.describe('检测服务状态影响检查', () => {
     expect(bom.status, `创建项目复制BOM失败: ${JSON.stringify(bom.data)}`).toBe(201)
     bomId = bom.data?.data?.id
     expect(bomId).toBeTruthy()
+  }
+
+  async function createProjectOutboundHistory(suffix: string) {
+    const categories = await apiFetch(token, 'GET', '/categories?page=1&pageSize=1')
+    const categoryId = categories.data?.data?.list?.[0]?.id
+    expect(categoryId, '历史项目测试需要至少一个物料分类').toBeTruthy()
+    const locations = await apiFetch(token, 'GET', '/locations?page=1&pageSize=1')
+    const locationId = locations.data?.data?.list?.[0]?.id
+    expect(locationId, '历史项目测试需要至少一个库位').toBeTruthy()
+
+    const material = await apiFetch(token, 'POST', '/materials', {
+      code: `E2E-PRJ-HIS-MAT-${suffix}`,
+      name: `E2E项目历史物料-${suffix}`,
+      unit: '瓶',
+      categoryId,
+      price: 8,
+    })
+    expect(material.status, `创建项目历史物料失败: ${JSON.stringify(material.data)}`).toBe(201)
+    materialId = material.data?.data?.id
+    expect(materialId).toBeTruthy()
+
+    const inbound = await apiFetch(token, 'POST', '/inbound', {
+      type: 'purchase',
+      materialId,
+      batchNo: `E2E-PRJ-HIS-BATCH-${suffix}`,
+      quantity: 5,
+      locationId,
+      remark: `E2E项目历史入库-${suffix}`,
+    })
+    expect(inbound.status, `创建项目历史入库失败: ${JSON.stringify(inbound.data)}`).toBe(201)
+    inboundId = inbound.data?.data?.id
+    expect(inboundId).toBeTruthy()
+    const batches = await apiFetch(token, 'GET', `/depletion/batches/${materialId}`)
+    const batchId = batches.data?.data?.list?.find((batch: any) => batch.batch_no === `E2E-PRJ-HIS-BATCH-${suffix}`)?.id
+    expect(batchId, `未找到项目历史测试批次: ${JSON.stringify(batches.data)}`).toBeTruthy()
+
+    const outbound = await apiFetch(token, 'POST', '/outbound', {
+      type: 'project',
+      projectId,
+      items: [{ materialId, batchId, quantity: 1 }],
+      remark: `E2E项目历史出库-${suffix}`,
+    })
+    expect(outbound.status, `创建项目历史出库失败: ${JSON.stringify(outbound.data)}`).toBe(201)
+    outboundId = outbound.data?.data?.id
+    expect(outboundId).toBeTruthy()
   }
 
   test('PROJECT-EDIT-STATUS-01. 编辑弹窗变更状态必须先展示影响检查并确认后更新', async ({ page }) => {
@@ -202,5 +257,44 @@ test.describe('检测服务状态影响检查', () => {
     await expect(page.getByText(`第 2 行BOM ID不存在或未启用：${bomId}`)).toBeVisible({ timeout: 10000 })
     await expect(page.getByRole('button', { name: /^开始导入/ })).toBeDisabled()
     expect(postBodies).toHaveLength(0)
+  })
+
+  test('PROJECT-EDIT-TYPE-01. 已有出库历史的检测服务编辑时不得更换服务类型', async ({ page }) => {
+    const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+    const code = `E2E-PRJ-TYPE-HIS-${suffix}`
+    const created = await apiFetch(token, 'POST', '/projects', {
+      code,
+      name: `E2E历史类型项目-${suffix}`,
+      type: 'he',
+      cycle: '1天',
+      manager: 'E2E',
+      status: 'active',
+    })
+    expect(created.status, `创建历史类型检测服务失败: ${JSON.stringify(created.data)}`).toBe(201)
+    projectId = created.data?.data?.id
+    expect(projectId).toBeTruthy()
+    await createProjectOutboundHistory(suffix)
+
+    await loginAs(page, 'admin')
+    await page.goto(`${FE_BASE}/projects?keyword=${encodeURIComponent(code)}`, { waitUntil: 'domcontentloaded' })
+    const row = page.locator('tbody tr').filter({ hasText: code }).first()
+    await expect(row).toBeVisible({ timeout: 15000 })
+
+    await row.getByRole('button', { name: '编辑' }).click()
+    await expect(page.getByText('编辑检测服务')).toBeVisible({ timeout: 10000 })
+    const editDialog = page.locator('.fixed').filter({ hasText: '编辑检测服务' }).first()
+    await editDialog.getByText('病理技术-HE制片').click()
+    await editDialog.getByTestId('option-ihc').click()
+
+    const updateResponse = page.waitForResponse(res =>
+      res.url().endsWith(`/api/v1/projects/${projectId}`) &&
+      res.request().method() === 'PUT'
+    )
+    await page.getByRole('button', { name: '保存' }).click()
+    await expect((await updateResponse).status()).toBe(409)
+
+    const detail = await apiFetch(token, 'GET', `/projects/${projectId}`)
+    expect(detail.status).toBe(200)
+    expect(detail.data?.data?.type).toBe('he')
   })
 })
