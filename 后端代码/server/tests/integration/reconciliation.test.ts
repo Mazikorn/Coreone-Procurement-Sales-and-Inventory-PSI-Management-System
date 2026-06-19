@@ -447,6 +447,25 @@ describe('成本对账异常闭环', () => {
     expect(csv).not.toContain(otherProjectCaseNo)
   })
 
+  it('GET 和 POST 对账导出必须拒绝非法导出类型', async () => {
+    const getRes = await request(app)
+      .get('/api/v1/reconciliation/export?type=unknown')
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(getRes.status).toBe(400)
+    expect(getRes.body.success).toBe(false)
+    expect(getRes.body.error.code).toBe('INVALID_PARAMETER')
+
+    const postRes = await request(app)
+      .post('/api/v1/reconciliation/export')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ type: 'unknown' })
+
+    expect(postRes.status).toBe(400)
+    expect(postRes.body.success).toBe(false)
+    expect(postRes.body.error.code).toBe('INVALID_PARAMETER')
+  })
+
   it('对账汇总、物料汇总、导出和审计必须拒绝非法日期范围', async () => {
     const summaryRes = await request(app)
       .get('/api/v1/reconciliation/summary')

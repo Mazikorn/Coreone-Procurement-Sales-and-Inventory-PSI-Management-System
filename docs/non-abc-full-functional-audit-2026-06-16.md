@@ -14658,7 +14658,54 @@ git diff --check
 
 - 当前修复覆盖对账病例列表和修正日志列表的 `page/pageSize`；其它非 ABC 列表若存在非法分页导致 500 或静默空页，应继续按同一不变量逐项处理。
 
-## 二百九十九、结论
+## 二百九十九、批次 344: 对账导出必须拒绝非法导出类型
+
+**发现的问题**
+
+- 本轮继续复核非 ABC 对账/运营页面，聚焦“导出是真实文件交付副作用，导出类型必须可解释，不能把非法输入静默转换成另一个报表”不变量。
+- `/api/v1/reconciliation/export` 的 GET 和 POST 入口会调用同一个导出构造逻辑，但旧实现只把历史别名 `reconcile` 归一为 `project`，没有校验导出类型白名单。
+- 当调用 `type=unknown` 时，旧接口会落入默认项目导出分支并返回 200，用户可能拿到错误报表而不知参数无效。
+- 对账导出承载项目对账、物料汇总、病例和审计日志等事实留痕，非法导出类型必须返回稳定的 `400 INVALID_PARAMETER`。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/reconciliation-v1.1.ts`
+  - 新增 `validateExportType`，只允许 `project / material / case / log` 四类当前有效导出。
+  - 保留 `reconcile -> project` 的历史别名归一逻辑，避免破坏已有合法调用。
+  - `buildExportPayload` 在日期、筛选和 SQL 构造前先校验导出类型；GET 和 POST 导出入口因此统一返回 `400 INVALID_PARAMETER`。
+- `后端代码/server/tests/integration/reconciliation.test.ts`
+  - 新增“GET 和 POST 对账导出必须拒绝非法导出类型”红绿测试，覆盖 `type=unknown` 的 GET 查询参数和 POST body 两个入口。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 对账模块的导出类型参数校验和集成测试，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 对账模块会把项目物料差异写入成本异常台账，是 ABC 输入侧可信成本事实的上游说明面；本批只阻断非法导出类型，不改变合法项目、物料、病例、日志导出的统计口径和文件内容。
+- 已补跑对账集成、成本异常、出库主链、前端对账页面/Hook 测试和前后端构建，确认不会破坏已完成的 ABC 成本透明化闭环。
+- 已确认本批 diff 不涉及 `前端代码/deprecated/legacy-cost-analysis/`、`后端代码/server/src/routes/abc-v1.1.ts`、`后端代码/server/src/utils/abc-calculator.test.ts` 或前端 ABC 本体页面。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/integration/reconciliation.test.ts -t "非法导出类型"` 修复前失败：`/reconciliation/export?type=unknown` 返回 200，期望 400。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/integration/reconciliation.test.ts -t "非法导出类型"` 通过，1 test passed / 16 skipped。
+  - `后端代码/server npm test -- --run tests/integration/reconciliation.test.ts tests/integration/cost-exceptions.test.ts` 通过，2 files / 28 tests passed；`cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr 为既有异常台账测试场景，最终通过。
+  - `后端代码/server npm test -- --run tests/integration/outbound.test.ts` 通过，1 file / 29 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `前端代码 npm test -- --run src/pages/reconciliation/Reconciliation.test.tsx src/pages/reconciliation/hooks/useReconciliationPage.test.ts` 通过，2 files / 17 tests passed。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `后端代码/server npm run build` 通过。
+- 浏览器复核:
+  - 本批是对账导出 API 参数校验修复，不新增或改变页面组件、弹窗或可见交互；核心风险是接口是否拒绝非法导出类型，已用接口级红绿测试覆盖，不新增截图证据。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 当前修复覆盖对账导出的 `type/tab` 归一后类型；其它非 ABC 导出入口若存在非法枚举值静默落入默认分支，应继续按同一不变量逐项处理。
+
+## 三百、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

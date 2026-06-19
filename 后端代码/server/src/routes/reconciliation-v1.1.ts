@@ -98,10 +98,17 @@ function normalizeExportType(value?: string) {
   return raw
 }
 
+function validateExportType(type: string) {
+  return ['project', 'material', 'case', 'log'].includes(type)
+}
+
 function buildExportPayload(params: Record<string, string>) {
   const db = getDatabase()
   const type = normalizeExportType(params.type || params.tab)
   const { startDate, endDate, search, projectId, status } = params
+  if (!validateExportType(type)) {
+    throw Object.assign(new Error('Invalid export type'), { statusCode: 400, code: 'INVALID_PARAMETER' })
+  }
   if (!validateDateRange(startDate, endDate)) {
     throw Object.assign(new Error('Invalid date format'), { statusCode: 400, code: 'INVALID_PARAMETER' })
   }
