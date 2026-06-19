@@ -155,4 +155,46 @@ describe('集成测试：非ABC物料成本报表', () => {
       totalCost: 220,
     })
   })
+
+  it('REPORT-MATERIAL-004: 成本差异物料维度标准成本不得被物料后续改价污染', async () => {
+    const suffix = Date.now()
+    const categoryId = `report-variance-price-category-${suffix}`
+    const materialId = `report-variance-price-material-${suffix}`
+    const outboundId = `report-variance-price-outbound-${suffix}`
+    const outboundItemId = `report-variance-price-item-${suffix}`
+
+    db.prepare('INSERT INTO material_categories (id, code, name, level) VALUES (?, ?, ?, 1)')
+      .run(categoryId, `REPORT-VAR-PRICE-CAT-${suffix}`, '差异改价物料分类')
+    db.prepare(`
+      INSERT INTO materials (id, code, name, spec, unit, category_id, price, status, is_deleted)
+      VALUES (?, ?, '历史出库后改价物料', '10ml', '瓶', ?, 50, 1, 0)
+    `).run(materialId, `REPORT-VAR-PRICE-MAT-${suffix}`, categoryId)
+    db.prepare(`
+      INSERT INTO outbound_records (id, outbound_no, type, total_cost, sample_count, operator, status, created_at, is_deleted)
+      VALUES (?, ?, 'normal', 220, 1, 'admin', 'completed', '2033-04-10T09:00:00', 0)
+    `).run(outboundId, `REPORT-VAR-PRICE-OUT-${suffix}`)
+    db.prepare(`
+      INSERT INTO outbound_items (id, outbound_id, material_id, quantity, unit, unit_cost, total_cost)
+      VALUES (?, ?, ?, 4, '瓶', 50, 220)
+    `).run(outboundItemId, outboundId, materialId)
+    db.prepare('UPDATE materials SET price = 999 WHERE id = ?').run(materialId)
+
+    const res = await request(app)
+      .get('/api/v1/reports/cost-variance?compareType=material&startDate=2033-04-01&endDate=2033-04-30')
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(200)
+    expect(res.body.success).toBe(true)
+    const item = res.body.data.items.find((row: any) => row.projectId === materialId)
+    expect(item).toMatchObject({
+      projectId: materialId,
+      projectName: '历史出库后改价物料',
+      groupType: 'material',
+      materialActual: 220,
+      materialStandard: 200,
+      totalVariance: 20,
+      varianceRate: 10,
+      sampleCount: 4,
+    })
+  })
 })

@@ -13939,7 +13939,51 @@ git diff --check
 
 - 当前项目分组成本报表仍依赖当前项目、BOM、BOM 分组和物料名称解释历史出库；如果后续 BOM 分组定义被改名或重写，彻底历史快照化需要单独设计出库项目/BOM/分组/物料快照字段和兼容迁移，已列入后续待评估，不在本批扩展。
 
-## 二百八十四、结论
+## 二百八十四、批次 329: 成本差异物料维度标准成本不得被物料后续改价污染
+
+**发现的问题**
+
+- 本轮继续复核非废弃成本展示页面，聚焦“历史成本差异报表必须基于出库当时的成本事实，不能被后续主数据改价污染”不变量。
+- `GET /reports/cost-variance?compareType=material` 使用 `SUM(oi.quantity * COALESCE(m.price, oi.unit_cost, 0))` 计算物料维度标准成本。
+- 如果物料已经出库，后续修改 `materials.price`，历史月份的物料标准成本、差异额和差异率会被新的参考价重写；例如历史出库 4 瓶、出库单价 50，后续参考价改为 999 后，标准成本会从 200 漂移为 3996。
+- 这会让成本差异分析解释的是“当前物料参考价”，而不是“当时出库事实”，影响历史成本复盘、物料异常解释和 ABC 输入侧成本可信度。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/reports-v1.1.ts`
+  - 物料维度成本差异标准成本改为优先使用 `outbound_items.unit_cost`。
+  - 保留 `materials.price` 作为极端历史数据缺少出库单价时的兼容兜底，不引入 schema 迁移。
+- `后端代码/server/tests/integration/reports-cost-by-material.test.ts`
+  - 新增 `REPORT-MATERIAL-004` 红绿测试：历史出库单价 50、数量 4、实际成本 220，出库后物料参考价改成 999，成本差异报表仍必须返回 `materialStandard=200`、`totalVariance=20`、`varianceRate=10`。
+
+**ABC 影响评估**
+
+- 物料单价、出库明细、成本差异和成本异常解释是 ABC 输入侧可信成本事实的上游说明面。
+- 本批只修改非 ABC 成本差异报表的物料维度读取口径和报表测试，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 已补跑物料成本/成本差异、项目成本、全成本、出库和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+- 已确认本批 diff 不涉及 `前端代码/deprecated/legacy-cost-analysis/`、`后端代码/server/src/routes/abc-v1.1.ts`、`后端代码/server/src/utils/abc-calculator.test.ts` 或前端 ABC 页面。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/integration/reports-cost-by-material.test.ts -t "REPORT-MATERIAL-004"` 修复前失败：实际 `materialStandard=3996`、`totalVariance=-3776`、`varianceRate=-94.49`，期望使用历史出库单价得到 `materialStandard=200`。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/integration/reports-cost-by-material.test.ts -t "REPORT-MATERIAL-004"` 通过，1 test passed / 3 skipped。
+  - `后端代码/server npm test -- --run tests/integration/reports-cost-by-material.test.ts tests/integration/reports-cost-by-project.test.ts tests/integration/full-cost.test.ts tests/integration/outbound.test.ts tests/integration/cost-exceptions.test.ts` 通过，5 files / 52 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。`cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr 为既有异常台账测试场景，最终通过。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+- 浏览器复核:
+  - 本批是成本差异报表 API 口径修复，不新增或改变页面组件和弹窗交互；核心风险在接口返回的物料维度标准成本是否使用历史出库单价，已用接口级红绿测试覆盖，不新增截图证据。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 当前修复使用出库明细已有 `unit_cost` 保护历史单价；如果未来需要区分“标准价快照”和“实际出库成本价”，需要单独设计标准价快照字段和兼容迁移，已列入后续待评估，不在本批扩展。
+
+## 二百八十五、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

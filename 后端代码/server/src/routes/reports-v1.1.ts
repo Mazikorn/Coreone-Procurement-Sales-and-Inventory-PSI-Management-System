@@ -748,7 +748,7 @@ router.get('/cost-variance', (req, res) => {
           m.unit,
           SUM(oi.quantity) as quantity,
           SUM(oi.total_cost) as actual_cost,
-          SUM(oi.quantity * COALESCE(m.price, oi.unit_cost, 0)) as standard_cost
+          SUM(oi.quantity * COALESCE(oi.unit_cost, m.price, 0)) as standard_cost
         FROM outbound_items oi
         JOIN outbound_records r ON oi.outbound_id = r.id
         LEFT JOIN projects p ON r.project_id = p.id
