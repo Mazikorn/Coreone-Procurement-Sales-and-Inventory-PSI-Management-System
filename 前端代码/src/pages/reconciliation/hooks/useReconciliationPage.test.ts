@@ -1,7 +1,37 @@
-import { describe, expect, it } from 'vitest'
-import { buildLisImportPreview, buildLisImportTemplateCsv, buildLisImportValidation, buildReconciliationExportFilename, buildReconciliationExportParams, parseLisImportData, validateReconciliationDateRange } from './useReconciliationPage'
+import { act, renderHook, waitFor } from '@testing-library/react'
+import { reconciliationApi } from '@/api/reconciliation'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { toast } from 'sonner'
+import { buildLisImportPreview, buildLisImportTemplateCsv, buildLisImportValidation, buildReconciliationExportFilename, buildReconciliationExportParams, getLisImportRefreshTargets, parseLisImportData, useReconciliationPage, validateReconciliationDateRange } from './useReconciliationPage'
+
+vi.mock('@/api/reconciliation')
+vi.mock('@/lib/utils', () => ({
+  downloadBlobFile: vi.fn(),
+}))
+vi.mock('sonner', () => ({
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+  },
+}))
 
 describe('parseLisImportData', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    window.history.replaceState(null, '', '/reconciliation')
+    vi.mocked(reconciliationApi.getSummary).mockResolvedValue({
+      totalCases: 0,
+      linkedOutbounds: 0,
+      unlinkedOutbounds: 0,
+      projectsWithoutBom: 0,
+    } as any)
+    vi.mocked(reconciliationApi.getProjects).mockResolvedValue({ list: [] } as any)
+    vi.mocked(reconciliationApi.getMaterials).mockResolvedValue({ list: [] } as any)
+    vi.mocked(reconciliationApi.getCases).mockResolvedValue({ list: [], pagination: { page: 1, pageSize: 20, total: 0 } } as any)
+    vi.mocked(reconciliationApi.getLogs).mockResolvedValue({ list: [], pagination: { page: 1, pageSize: 20, total: 0 } } as any)
+    vi.mocked(reconciliationApi.importCases).mockResolvedValue({ count: 1, unmatched: 0 } as any)
+  })
+
   it('parses quoted CSV fields without shifting LIS columns', () => {
     const rows = parseLisImportData([
       '病理号,检测项目,操作时间,操作人',
@@ -155,5 +185,53 @@ describe('parseLisImportData', () => {
       expect.objectContaining({ row: 1, message: '病理号不能为空' }),
       expect.objectContaining({ row: 2, caseNo: 'P24050192', message: expect.stringContaining('检测时间格式错误') }),
     ])
+  })
+
+  it('refreshes the visible reconciliation data after a successful LIS import', () => {
+    expect(getLisImportRefreshTargets('reconcile')).toEqual({
+      summary: true,
+      projects: true,
+      materials: false,
+      cases: false,
+      clearProjectMaterials: true,
+    })
+    expect(getLisImportRefreshTargets('material')).toEqual({
+      summary: true,
+      projects: false,
+      materials: true,
+      cases: false,
+      clearProjectMaterials: false,
+    })
+    expect(getLisImportRefreshTargets('case')).toEqual({
+      summary: true,
+      projects: true,
+      materials: false,
+      cases: true,
+      clearProjectMaterials: false,
+    })
+  })
+
+  it('refreshes project reconciliation data after importing LIS cases on the project tab', async () => {
+    const { result } = renderHook(() => useReconciliationPage())
+    await waitFor(() => expect(reconciliationApi.getProjects).toHaveBeenCalled())
+    const callsBeforeImport = vi.mocked(reconciliationApi.getProjects).mock.calls.length
+
+    act(() => {
+      result.current.setImportData('CASE-IMPORT-REFRESH,HE制片,2026-06-16 09:00,张三')
+    })
+    await act(async () => {
+      await result.current.handleImport()
+    })
+
+    expect(reconciliationApi.importCases).toHaveBeenCalledWith({
+      items: [{
+        caseNo: 'CASE-IMPORT-REFRESH',
+        projectName: 'HE制片',
+        operateTime: '2026-06-16 09:00',
+        operator: '张三',
+      }],
+    })
+    expect(reconciliationApi.getProjects).toHaveBeenCalledTimes(callsBeforeImport + 1)
+    expect(toast.success).toHaveBeenCalledWith(expect.stringContaining('成功导入 1 条病例数据'))
   })
 })

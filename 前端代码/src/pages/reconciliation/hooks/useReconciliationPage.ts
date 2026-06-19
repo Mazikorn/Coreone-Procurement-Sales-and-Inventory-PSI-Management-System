@@ -327,6 +327,16 @@ export function validateReconciliationDateRange(dateParams: { startDate: string;
   return { valid: true, message: '' }
 }
 
+export function getLisImportRefreshTargets(activeTab: TabType) {
+  return {
+    summary: true,
+    projects: activeTab === 'reconcile' || activeTab === 'case',
+    materials: activeTab === 'material',
+    cases: activeTab === 'case',
+    clearProjectMaterials: activeTab === 'reconcile',
+  }
+}
+
 export function useReconciliationPage() {
   const [activeTab, setActiveTab] = useState<TabType>('reconcile')
   const [period, setPeriod] = useState<PeriodType>('month')
@@ -596,8 +606,17 @@ export function useReconciliationPage() {
       setImportModalOpen(false)
       setImportData('')
       setImportErrors([])
-      fetchSummary()
-      if (activeTab === 'case') casePagination.refresh()
+      const refreshTargets = getLisImportRefreshTargets(activeTab)
+      if (refreshTargets.clearProjectMaterials) {
+        setProjectMaterials({})
+        setExpandedProject(null)
+      }
+      await Promise.all([
+        refreshTargets.summary ? fetchSummary() : Promise.resolve(),
+        refreshTargets.projects ? fetchProjects() : Promise.resolve(),
+        refreshTargets.materials ? fetchMaterials() : Promise.resolve(),
+      ])
+      if (refreshTargets.cases) casePagination.refresh()
     } catch (e: any) {
       toast.error(e?.message || '导入失败')
     }

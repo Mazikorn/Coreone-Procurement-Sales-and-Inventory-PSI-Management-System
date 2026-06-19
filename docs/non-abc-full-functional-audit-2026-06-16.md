@@ -11590,7 +11590,51 @@ git diff --check
 
 - 后端当前统一生成 CSV 字节流；Excel 文件由前端基于收到的文件流转换为真实 `.xlsx`。若未来要求后端直接生成 `.xlsx` Blob，需要单独引入后端 Excel 依赖并补兼容测试。
 
-## 二百三十六、结论
+## 二百三十六、批次 281: LIS 导入成功后必须刷新当前对账数据
+
+**发现的问题**
+
+- REC-10 要求 LIS 导入成功后对账数据更新。
+- 当前 `handleImport` 成功后只刷新顶部 summary；仅当用户正停留在“按病理号查看”时刷新病例列表。
+- 如果用户在默认“按项目对账”页导入 LIS 病例，项目维度病例数和差异列表不会立即刷新；如果项目已展开，旧的项目物料明细缓存还会继续展示，容易让用户误以为导入没有影响对账结果。
+
+**已完成修复**
+
+- `前端代码/src/pages/reconciliation/hooks/useReconciliationPage.ts`
+  - 新增 `getLisImportRefreshTargets`，明确导入成功后不同 Tab 需要刷新的数据。
+  - 默认“按项目对账”页导入成功后刷新 summary 和项目列表，并清空已展开项目物料明细缓存。
+  - “按物料汇总”页导入成功后刷新 summary 和物料汇总。
+  - “按病理号查看”页导入成功后刷新 summary、项目候选列表和病例分页。
+- `前端代码/src/pages/reconciliation/hooks/useReconciliationPage.test.ts`
+  - 新增刷新策略测试，锁定各 Tab 导入后的刷新目标。
+  - 新增 hook 级红灯测试，验证默认按项目页导入成功后必须再次调用项目对账列表接口。
+- `前端代码/e2e/reconciliation.spec.ts`
+  - 新增 `RECON-IMPORT-09` 浏览器验证，确认真实 `POST /reconciliation/cases/import` 后会重新请求 `/reconciliation/projects`，并关闭导入弹窗。
+
+**ABC 影响评估**
+
+- 本批不修改 ABC 本体、成本公式、成本池、收费映射、成本异常判定或废弃 `/cost-analysis` 代码。
+- 变更只影响非 ABC 对账页面导入成功后的前端刷新策略，不新增或改变 LIS 导入后端写入、库存、BOM、项目、出库、成本异常或 ABC 明细写入。
+- LIS 导入后端回归、对账异常闭环回归和精确 ABC 输入侧回归通过，说明刷新策略不会破坏病例导入、项目关联或病例出库后的 ABC 明细重排输入链。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/reconciliation/hooks/useReconciliationPage.test.ts -t "refreshes project reconciliation data"` 修复前失败：导入前 `getProjects` 调用 2 次，导入后仍为 2 次，期望新增 1 次刷新。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/reconciliation/hooks/useReconciliationPage.test.ts src/pages/reconciliation/Reconciliation.test.tsx` 通过，2 files / 14 tests passed。
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/reconciliation.test.ts -t "LIS 导入可按项目名称关联项目|LIS 导入跳过缺少关键字段|LIS 导入必须拒绝检测时间格式错误|项目物料对账差异审计写入成本异常"` 通过，4 tests passed / 8 skipped。
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/cost-exceptions.test.ts -t "同一病例多个BOM|取消非最新病例"` 通过，2 tests passed / 9 skipped。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npm run test:e2e -- reconciliation.spec.ts -g "RECON-IMPORT-09"` 通过，真实浏览器确认导入接口和项目列表刷新接口均返回 200。
+- 浏览器复核:
+  - 使用用户已验证的 Chrome for Testing 路径完成 headless Playwright 复核；验证重点为真实导入请求、导入后当前对账数据刷新请求、弹窗关闭。
+
+**后续风险**
+
+- REC-10 文档中的 `POST /reconciliation/import-lis` + FormData 文件上传接口仍未实现；当前实现是前端解析 `.csv/.txt/.xlsx` 后调用既有 `POST /reconciliation/cases/import` JSON 接口。若未来要求后端直接接收原始文件，需要单独做接口兼容批次。
+
+## 二百三十七、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

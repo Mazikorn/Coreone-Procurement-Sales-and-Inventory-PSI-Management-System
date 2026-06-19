@@ -747,6 +747,24 @@ test.describe('消耗对账 -> 导入LIS数据', () => {
     await expect(page.locator('body')).toBeVisible()
   })
 
+  test('RECON-IMPORT-09. 导入成功后刷新当前对账数据', async ({ page }) => {
+    await loginAs(page, 'admin')
+    await page.goto(`${FE_BASE}/reconciliation`)
+    await expect(page.locator('h1', { hasText: '消耗对账' })).toBeVisible()
+    await page.click('text=导入LIS数据')
+    const caseNo = `E2E-LIS-REFRESH-${Date.now()}`
+    await page.fill('textarea', `${caseNo},HE制片,2026-06-19 09:00,自动化`)
+
+    const [importResponse, projectsResponse] = await Promise.all([
+      page.waitForResponse(res => res.url().includes('/api/v1/reconciliation/cases/import') && res.request().method() === 'POST'),
+      page.waitForResponse(res => res.url().includes('/api/v1/reconciliation/projects') && res.request().method() === 'GET'),
+      page.click('button:has-text("确认导入")'),
+    ])
+    expect(importResponse.status()).toBe(200)
+    expect(projectsResponse.status()).toBe(200)
+    await expect(page.locator('text=导入LIS病例数据')).not.toBeVisible()
+  })
+
   test('RECON-IMPORT-07. 权限：非admin导入返回403', async () => {
     const token = await apiLogin('technician')
     const res = await apiFetch(token, 'POST', '/reconciliation/cases/import', {
