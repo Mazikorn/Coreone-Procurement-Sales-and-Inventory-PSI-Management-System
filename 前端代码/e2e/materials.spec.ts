@@ -805,13 +805,125 @@ test.describe('耗材管理 -> 编辑物料', () => {
     await expect(page.getByRole('heading', { name: '物料管理' })).toBeVisible()
     await expect(page.getByRole('button', { name: '编辑' })).toHaveCount(0)
   })
-  test('MAT-EDIT-11. 正常用例：编辑后列表数据更新', async () => {
-    const token = await apiLogin('admin')
-    const id = await getAnyMaterialId(token)
-    if (!id) { test.skip(); return }
-    await apiFetch(token, 'PUT', `/materials/${id}`, { name: `更新名称-${Date.now()}` })
-    const after = await apiFetch(token, 'GET', `/materials/${id}`)
-    expect([200, 404]).toContain(after.status)
+  test('MAT-EDIT-11. 正常用例：编辑弹窗预填编码只读且保存后列表刷新', async ({ page }) => {
+    await loginAs(page, 'admin')
+
+    let materialName = '编辑前Mock物料'
+    let updatePayload: any = null
+    await page.route('**/api/v1/categories**', async (route) => {
+      const url = new URL(route.request().url())
+      if (url.pathname.endsWith('/categories')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              list: [{ id: 'cat-edit', name: '编辑分类', status: 'active' }],
+              pagination: { total: 1, page: 1, pageSize: 999 },
+            },
+          }),
+        })
+        return
+      }
+      await route.fallback()
+    })
+    await page.route('**/api/v1/suppliers**', async (route) => {
+      const url = new URL(route.request().url())
+      if (url.pathname.endsWith('/suppliers')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              list: [{ id: 'sup-edit', name: '编辑供应商', status: 'active' }],
+              pagination: { total: 1, page: 1, pageSize: 999 },
+            },
+          }),
+        })
+        return
+      }
+      await route.fallback()
+    })
+    await page.route('**/api/v1/materials**', async (route) => {
+      const request = route.request()
+      const url = new URL(request.url())
+      if (url.pathname.endsWith('/materials/stats')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: { total: 1, active: 1, inactive: 0, lowStock: 0 },
+          }),
+        })
+        return
+      }
+      if (url.pathname.endsWith('/materials/mock-edit-material') && request.method() === 'PUT') {
+        updatePayload = request.postDataJSON()
+        materialName = updatePayload.name
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: { id: 'mock-edit-material', ...updatePayload, code: 'EDIT-001' },
+          }),
+        })
+        return
+      }
+      if (url.pathname.endsWith('/materials')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              list: [{
+                id: 'mock-edit-material',
+                code: 'EDIT-001',
+                name: materialName,
+                spec: '10/ml',
+                unit: '瓶',
+                categoryId: 'cat-edit',
+                supplierId: 'sup-edit',
+                price: 12.5,
+                stock: 5,
+                minStock: 1,
+                maxStock: 20,
+                safetyStock: 2,
+                status: 'active',
+                remark: '原备注',
+              }],
+              pagination: { total: 1, page: Number(url.searchParams.get('page') || '1'), pageSize: Number(url.searchParams.get('pageSize') || '20') },
+            },
+          }),
+        })
+        return
+      }
+      await route.fallback()
+    })
+
+    await page.goto(`${FE_BASE}/materials`, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByText('编辑前Mock物料')).toBeVisible({ timeout: 15000 })
+    await page.getByRole('button', { name: '编辑' }).click()
+
+    const codeInput = page.getByPlaceholder('选择分类后自动生成')
+    await expect(codeInput).toHaveValue('EDIT-001')
+    await expect(codeInput).toBeDisabled()
+    await expect(page.getByPlaceholder('请输入物料名称')).toHaveValue('编辑前Mock物料')
+
+    await page.getByPlaceholder('请输入物料名称').fill('编辑后Mock物料')
+    await page.getByPlaceholder('请输入备注信息').fill('编辑后备注')
+    await page.getByRole('button', { name: '保存' }).click()
+
+    await expect(page.getByText('编辑后Mock物料')).toBeVisible()
+    expect(updatePayload).toEqual(expect.objectContaining({
+      name: '编辑后Mock物料',
+      remark: '编辑后备注',
+    }))
+    expect(updatePayload).not.toHaveProperty('code')
   })
   test('MAT-EDIT-12. 表单校验：编辑不存在的物料返回404', async () => {
     const token = await apiLogin('admin')

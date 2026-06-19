@@ -290,7 +290,8 @@ export function useMaterialsPage() {
     }
     try {
       if (editingId) {
-        await materialApi.update(editingId, form)
+        const { code: _readonlyCode, ...editableForm } = form
+        await materialApi.update(editingId, editableForm)
         toast.success('物料更新成功')
       } else {
         await materialApi.create(form)

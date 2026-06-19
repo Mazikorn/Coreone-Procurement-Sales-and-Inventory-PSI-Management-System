@@ -12307,7 +12307,51 @@ git diff --check
 - MAT-13 详情弹窗字段完整性、行数据一致和空字段占位主路径已补页面级证据。
 - 下一步应继续 MAT-14 编辑弹窗预填、编码只读和保存后刷新，不在本批扩展到写操作。
 
-## 二百五十一、结论
+## 二百五十一、批次 296: 物料编辑不得提交只读编码
+
+**发现的问题**
+
+- `materials.md` 的 MAT-14 要求编辑弹窗预填已有数据、物料编码不可修改，保存后刷新列表。
+- 当前 `MaterialFormModal` 已把编码输入框设为 disabled/readOnly，但 `useMaterialsPage.handleSubmit` 在编辑路径仍把完整 `form` 提交给 `materialApi.update`，其中包含只读 `code`。
+- 如果未来 UI 形态变化、测试绕过禁用态或接口直接复用该 hook，编辑物料时仍可能把业务身份字段一起提交，和“编码不可修改”的交互与数据保护目标不一致。
+
+**已完成修复**
+
+- `前端代码/src/pages/master/hooks/useMaterialsPage.tsx`
+  - 编辑路径提交前剥离只读 `code` 字段，只把可编辑字段传给 `materialApi.update`。
+  - 新建路径继续提交完整 `form`，不改变创建物料时由分类生成/携带编码的既有行为。
+- `前端代码/src/pages/master/hooks/useMaterialsPage.test.tsx`
+  - 新增红绿测试：打开编辑弹窗后即使 hook 内部 `form.code` 被改成 `MUTATED-CODE`，提交给 `materialApi.update` 的 payload 也不得包含 `code`，同时保留名称、备注等可编辑字段。
+- `前端代码/e2e/materials.spec.ts`
+  - 将 `MAT-EDIT-11` 升级为真实浏览器编辑验收：mock 物料列表，打开编辑弹窗，确认编码预填且禁用、名称预填，修改名称和备注后保存，确认列表刷新为编辑后数据，并确认 PUT 请求体不包含 `code`。
+
+**ABC 影响评估**
+
+- 物料是 ABC 上游主数据维度，本批属于保护物料业务身份的收敛修复，避免编辑路径污染物料编码。
+- 本批不修改库存、入库、出库、BOM、成本异常、ABC API 或 ABC 本体，也不改变库存数量、批次成本或出库扣减。
+- 因不触碰 ABC 上游写入数量链或成本输入计算链，本批不补跑 ABC 输入侧成本回归；通过物料 hook、共享分页 hook、材料页 E2E 和前端构建验证物料编辑保护。
+- 未触碰废弃 `/cost-analysis` 或 `前端代码/deprecated/legacy-cost-analysis/`。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/master/hooks/useMaterialsPage.test.tsx -t "readonly material code"` 修复前失败：`materialApi.update` payload 中仍包含 `code: "MUTATED-CODE"`。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/master/hooks/useMaterialsPage.test.tsx -t "readonly material code"` 通过，1 test passed / 6 skipped。
+  - `前端代码 npm test -- --run src/pages/master/hooks/useMaterialsPage.test.tsx src/hooks/usePagination.test.ts` 通过，2 files / 20 tests passed。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/materials.spec.ts -g "MAT-EDIT-11|MAT-DETAIL-03|MAT-PAGE-01|MAT-FILTER-01|MAT-SEARCH-03|MAT-LIST-11" --project=chromium` 通过，6 tests passed。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only | rg "deprecated/legacy-cost-analysis|前端代码/deprecated|/cost-analysis"` 无匹配，确认未改废弃范围。
+- 浏览器复核:
+  - 使用用户已验证的 Chrome for Testing 路径完成 headless Playwright 复核；验证重点为编辑按钮真实点击、弹窗预填、编码禁用、保存后列表刷新、PUT 请求体不包含只读编码，以及详情/分页/筛选/搜索回归。
+
+**后续风险**
+
+- MAT-14 编辑弹窗的预填、编码只读、保存刷新和只读编码不提交主路径已补 hook 与页面级证据。
+- 下一步应继续 MAT-15 删除影响弹窗与引用保护，不在本批扩展到删除业务规则。
+
+## 二百五十二、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

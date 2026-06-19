@@ -184,4 +184,50 @@ describe('useMaterialsPage', () => {
     expect(result.current.supplierId).toBe('')
     expect(result.current.quickFilter).toBe('all')
   })
+
+  it('does not submit readonly material code when editing', async () => {
+    vi.mocked(materialApi.update).mockResolvedValue({} as any)
+    const { result } = renderHook(() => useMaterialsPage())
+    await waitFor(() => expect(materialApi.getList).toHaveBeenCalled())
+
+    act(() => {
+      result.current.openEdit({
+        id: 'mat-edit',
+        code: 'MAT-READONLY-001',
+        name: '原名称',
+        spec: '10/ml',
+        unit: '瓶',
+        categoryId: 'cat-1',
+        supplierId: 'sup-1',
+        price: 12.5,
+        stock: 5,
+        minStock: 1,
+        maxStock: 20,
+        safetyStock: 2,
+        status: 'active',
+        remark: '原备注',
+      } as any)
+    })
+
+    act(() => {
+      result.current.setForm({
+        ...result.current.form,
+        code: 'MUTATED-CODE',
+        name: '更新名称',
+        remark: '更新备注',
+      })
+    })
+
+    await act(async () => {
+      await result.current.handleSubmit()
+    })
+
+    expect(materialApi.update).toHaveBeenCalledWith('mat-edit', expect.not.objectContaining({
+      code: expect.anything(),
+    }))
+    expect(materialApi.update).toHaveBeenCalledWith('mat-edit', expect.objectContaining({
+      name: '更新名称',
+      remark: '更新备注',
+    }))
+  })
 })
