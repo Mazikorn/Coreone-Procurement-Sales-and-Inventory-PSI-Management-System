@@ -411,6 +411,11 @@ router.get('/', (req, res) => {
         i.material_id, i.stock as total_stock,
         COALESCE(il.location_id, i.location_id) as location_id,
         COALESCE(il.stock, CASE WHEN i.location_id = ? THEN i.stock ELSE 0 END) as location_stock,
+        COALESCE((
+          SELECT COUNT(*)
+          FROM inventory_locations ilc
+          WHERE ilc.material_id = i.material_id AND ilc.stock > 0
+        ), CASE WHEN i.location_id IS NOT NULL AND i.stock > 0 THEN 1 ELSE 0 END) as active_location_count,
         m.code, m.name, m.spec, m.unit, m.min_stock, m.max_stock,
         m.category_id, m.supplier_id,
         s.name as supplier_name,
@@ -442,11 +447,15 @@ router.get('/', (req, res) => {
       const totalStock = Number(row.total_stock) || 0
       const locationStock = locationId ? Number(row.location_stock) || 0 : totalStock
       const batchStock = row.batch_id ? Number(row.batch_stock) || 0 : null
-      const stock = locationId ? locationStock : (batchStock ?? totalStock)
+      const activeLocationCount = Number(row.active_location_count) || 0
+      const stock = locationId
+        ? (activeLocationCount <= 1 ? (batchStock ?? locationStock) : locationStock)
+        : (batchStock ?? totalStock)
+      const stockForStatus = locationId ? stock : totalStock
       const minStock = Number(row.min_stock) || 0
       const expiry = row.expiry
 
-      if (totalStock <= 0) {
+      if (stockForStatus <= 0) {
         status = 'out-of-stock'
       } else if (expiry && expiry !== '') {
         const today = new Date().toISOString().slice(0, 10)
@@ -456,7 +465,7 @@ router.get('/', (req, res) => {
           status = 'warning'
         }
       }
-      if (status === 'normal' && minStock > 0 && totalStock <= minStock) {
+      if (status === 'normal' && minStock > 0 && stockForStatus <= minStock) {
         status = 'low-stock'
       }
 
@@ -493,6 +502,15 @@ router.get('/stats', (req, res) => {
   try {
     const db = getDatabase()
     const { where, params } = buildInventoryWhere(req.query)
+    const locationId = typeof req.query.locationId === 'string' ? req.query.locationId : ''
+    const stockExpr = locationId
+      ? `COALESCE((
+          SELECT SUM(il.stock)
+          FROM inventory_locations il
+          WHERE il.material_id = i.material_id AND il.location_id = ?
+        ), CASE WHEN i.location_id = ? THEN i.stock ELSE 0 END)`
+      : 'i.stock'
+    const stockParams = locationId ? [locationId, locationId] : []
 
     const batchStats = db.prepare(`
       SELECT
@@ -524,14 +542,14 @@ router.get('/stats', (req, res) => {
         END) as out_of_stock
       FROM (
         SELECT
-          i.stock,
+          ${stockExpr} as stock,
           m.min_stock,
           ${getBatchSubQuery('expiry_date')} as expiry
         FROM inventory i
         JOIN materials m ON i.material_id = m.id
         WHERE ${where}
       ) t
-    `).get(...params) as any
+    `).get(...stockParams, ...params) as any
 
     const totalMaterials = (db.prepare(`
       SELECT COUNT(*) as c
@@ -541,11 +559,11 @@ router.get('/stats', (req, res) => {
     `).get(...params) as any)?.c || 0
 
     const totalStockValue = (db.prepare(`
-      SELECT SUM(i.stock * COALESCE(m.price, 0)) as v
+      SELECT SUM((${stockExpr}) * COALESCE(m.price, 0)) as v
       FROM inventory i
       JOIN materials m ON i.material_id = m.id
       WHERE ${where}
-    `).get(...params) as any)?.v || 0
+    `).get(...stockParams, ...params) as any)?.v || 0
 
     const catDist = db.prepare(`
       SELECT c.id as category_id, c.name as category_name, COUNT(m.id) as count

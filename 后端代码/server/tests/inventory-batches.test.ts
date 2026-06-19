@@ -44,7 +44,7 @@ function seedInventoryBatches(db: any, suffix: string) {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
   `).run(lateBatchId, materialId, `BATCH-INV-LATE-${suffix}`, 7, 7, '2028-12-31', `inbound-inv-late-${suffix}`, 13)
 
-  return { materialId, earlyBatchId, lateBatchId }
+  return { materialId, locationId, earlyBatchId, lateBatchId }
 }
 
 describe('库存列表批次契约', () => {
@@ -89,6 +89,24 @@ describe('库存列表批次契约', () => {
     expect(res.body.data.list.every((row: any) => row.materialId === second.materialId)).toBe(true)
     expect(res.body.data.list.some((row: any) => row.materialId === first.materialId)).toBe(false)
     expect(new Set(res.body.data.list.map((row: any) => row.batchId))).toEqual(new Set([second.earlyBatchId, second.lateBatchId]))
+  })
+
+  it('INV-FILTER-002: 按库位筛选多批次库存时每行显示对应批次库存', async () => {
+    const suffix = `location-${Date.now()}`
+    const { materialId, locationId, earlyBatchId, lateBatchId } = seedInventoryBatches(db, suffix)
+
+    const res = await request(app)
+      .get('/api/v1/inventory')
+      .query({ locationId, materialId, page: 1, pageSize: 20 })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(200)
+    const rows = res.body.data.list.filter((row: any) => row.materialId === materialId)
+    expect(rows).toHaveLength(2)
+    expect(rows.find((row: any) => row.batchId === earlyBatchId)?.stock).toBe(5)
+    expect(rows.find((row: any) => row.batchId === lateBatchId)?.stock).toBe(7)
+    expect(rows.every((row: any) => row.locationId === locationId)).toBe(true)
+    expect(rows.every((row: any) => row.totalStock === 12)).toBe(true)
   })
 
   it('INV-BATCH-002: 普通出库带 batchId 时只扣减用户选择的批次', async () => {

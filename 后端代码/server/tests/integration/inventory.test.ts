@@ -173,6 +173,49 @@ describe('集成测试：库存管理', () => {
       expect(statsRes.body.data.totalQuantity).toBe(15)
     })
 
+    it('按库位筛选库存统计时数量、金额和低库存判断使用该库位库存', async () => {
+      const suffix = Date.now()
+      const categoryId = `cat-inv-loc-stats-${suffix}`
+      const locationAId = `loc-inv-loc-stats-a-${suffix}`
+      const locationBId = `loc-inv-loc-stats-b-${suffix}`
+      const materialId = `mat-inv-loc-stats-${suffix}`
+
+      db.prepare('INSERT INTO material_categories (id, code, name, level) VALUES (?, ?, ?, ?)')
+        .run(categoryId, `C-INV-LS-${suffix}`, '库位统计分类', 1)
+      db.prepare('INSERT INTO locations (id, code, name, type, zone) VALUES (?, ?, ?, ?, ?)')
+        .run(locationAId, `L-INV-LS-A-${suffix}`, '库位统计A', 'shelf', 'A区')
+      db.prepare('INSERT INTO locations (id, code, name, type, zone) VALUES (?, ?, ?, ?, ?)')
+        .run(locationBId, `L-INV-LS-B-${suffix}`, '库位统计B', 'shelf', 'B区')
+      db.prepare(`
+        INSERT INTO materials (id, code, name, spec, unit, category_id, price, min_stock, location_id)
+        VALUES (?, ?, ?, '1ml', '瓶', ?, 10, 6, ?)
+      `).run(materialId, `INV-LS-${suffix}`, '库位统计物料', categoryId, locationAId)
+      db.prepare(`
+        INSERT INTO inventory (id, material_id, stock, locked_stock, location_id)
+        VALUES (?, ?, 12, 0, ?)
+      `).run(`inv-loc-stats-${suffix}`, materialId, locationBId)
+      db.prepare(`
+        INSERT INTO inventory_locations (id, material_id, location_id, stock, locked_stock)
+        VALUES (?, ?, ?, 5, 0)
+      `).run(`invloc-loc-stats-a-${suffix}`, materialId, locationAId)
+      db.prepare(`
+        INSERT INTO inventory_locations (id, material_id, location_id, stock, locked_stock)
+        VALUES (?, ?, ?, 7, 0)
+      `).run(`invloc-loc-stats-b-${suffix}`, materialId, locationBId)
+
+      const res = await request(app)
+        .get('/api/v1/inventory/stats')
+        .query({ categoryId, locationId: locationAId })
+        .set('Authorization', `Bearer ${token}`)
+
+      expect(res.status).toBe(200)
+      expect(res.body.data.totalMaterials).toBe(1)
+      expect(res.body.data.totalStockCount).toBe(1)
+      expect(res.body.data.totalQuantity).toBe(5)
+      expect(res.body.data.totalStockValue).toBe(50)
+      expect(res.body.data.lowStockCount).toBe(1)
+    })
+
     it('按关键词搜索库存', async () => {
       const res = await request(app)
         .get('/api/v1/inventory?page=1&pageSize=20&keyword=INV-L1')

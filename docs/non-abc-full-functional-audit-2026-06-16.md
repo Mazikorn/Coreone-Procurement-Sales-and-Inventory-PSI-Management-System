@@ -13322,7 +13322,60 @@ git diff --check
 - 如果生产或开发库已经存在总账、批次和库位明细三者不一致，需要后续在诊断结果基础上设计治理流程，不在本批直接扩大范围。
 - 后续继续按库存主链路检查库存批次/库位页面可见性、出库和调拨的候选来源有效性；发现计划外问题先登记到待评估清单。
 
-## 二百七十一、结论
+## 二百七十一、批次 316: 库存库位筛选必须使用库位库存口径
+
+**发现的问题**
+
+- 本轮继续复核库存主链路中的“库存总量与批次/库位一致”不变量。
+- `GET /inventory/stats` 在按 `locationId` 筛选时，先用库位条件筛出物料，但统计数量、库存金额和低库存判断仍使用物料总库存 `inventory.stock`。
+- 同一物料拆分到多个库位后，库位 A 只有 5 个、总账 12 个时，库位 A 的统计会错误显示总数量 12、金额 120，并可能漏报该库位低库存。
+- `GET /inventory` 在按库位筛选且物料有多个批次时，会把该库位总库存重复显示到每个批次行；而跨库位调拨后又不能用全局批次数量替代库位库存，因为当前数据模型没有批次-库位分摊表。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/inventory-v1.1.ts`
+  - 库存统计增加库位库存表达式：按 `locationId` 筛选时，`totalQuantity`、`totalStockValue`、低库存/缺货判断均使用该库位的 `inventory_locations.stock`。
+  - 库存列表增加正库存库位数量判断。
+  - 单库位库存下保留批次展开，批次行显示对应批次剩余量。
+  - 跨库位拆分库存下按筛选库位库存展示，避免在缺少批次-库位分摊表时虚构批次分摊数量。
+- `后端代码/server/tests/integration/inventory.test.ts`
+  - 新增红绿测试：按库位筛选库存统计时，数量、金额和低库存判断必须使用该库位库存。
+- `后端代码/server/tests/inventory-batches.test.ts`
+  - 新增红绿测试 `INV-FILTER-002`：按库位筛选单库位多批次库存时，每行显示对应批次库存，不重复展示库位总量。
+
+**ABC 影响评估**
+
+- 库位库存、批次剩余量和库存金额是出库、调拨、报废、盘点、成本异常解释和 ABC 输入侧可信库存事实的上游数据。
+- 本批只修正非 ABC 的库存列表与统计接口口径，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 已补跑库存一致性、入库批次、调拨和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+- 未触碰 `前端代码/deprecated/legacy-cost-analysis/`。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/integration/inventory.test.ts tests/inventory-batches.test.ts` 修复前失败：库位统计 `totalQuantity` 实际返回 12，期望 5；库位筛选多批次行实际返回 12，期望批次行 5/7。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/integration/inventory.test.ts tests/inventory-batches.test.ts` 通过，2 files / 18 tests passed。
+  - `后端代码/server npm test -- --run tests/integration/inventory.test.ts tests/inventory-batches.test.ts tests/transfers.test.ts` 通过，3 files / 28 tests passed。
+  - `后端代码/server npm test -- --run tests/inventory-consistency.test.ts tests/inbound-batch.test.ts tests/integration/outbound.test.ts tests/transfers.test.ts tests/integration/cost-exceptions.test.ts` 通过，5 files / 72 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npm run test:e2e:ci -- e2e/inventory.spec.ts` 通过，4 chromium tests passed。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff -- 前端代码/deprecated/legacy-cost-analysis 后端代码/server/src/routes/abc-v1.1.ts 后端代码/server/src/utils/abc-calculator.test.ts` 无输出，确认未改废弃范围和 ABC 本体。
+- 浏览器复核:
+  - 使用用户已验证的 Chrome for Testing 路径完成库存页 headless Playwright 复核；覆盖数据诊断弹窗、入库后批次可见、从具体批次出库和从具体批次报废，验证重点为真实数据变化、弹窗关闭和刷新后状态。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 当前数据模型没有批次-库位分摊表；当同一物料库存已经跨库位拆分时，列表只能准确展示库位总量，不能声明某个批次在该库位的精确剩余。
+- 后续如果业务要求跨库位下也支持“按库位选择具体批次”，需要单独设计批次-库位分摊结构和迁移，本批不扩大范围。
+
+## 二百七十二、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 
