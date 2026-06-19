@@ -476,6 +476,107 @@ test.describe('BOM清单 -> 检测服务绑定候选', () => {
   })
 })
 
+test.describe('BOM清单 -> 复制版本', () => {
+  test('BOM-COPY-STATUS-01. 复制停用BOM时新副本保持停用状态', async ({ page }) => {
+    const inactiveBom = {
+      id: 'bom-copy-inactive-source',
+      code: 'BOM-COPY-INACTIVE',
+      name: '复制停用源BOM',
+      version: 'v1.0',
+      type: 'ihc',
+      serviceId: null,
+      description: '',
+      materialCount: 1,
+      supportableSamples: 20,
+      unitCost: 12,
+      feeStandardId: '',
+      feeCategory: '',
+      status: 'inactive',
+      materials: [{ materialId: 'mat-copy-status', name: '复制状态物料', spec: '10ml', usagePerSample: 1, unit: '瓶' }],
+      generalReagents: [],
+      generalConsumables: [],
+      qualityControls: [],
+      versionHistory: [],
+      updatedAt: '2026-06-19T00:00:00.000Z',
+    }
+    const createBodies: any[] = []
+    const statusUpdates: any[] = []
+
+    await loginAs(page, 'admin')
+    await page.route('**/api/v1/alerts**', async route => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: { list: [], items: [], pagination: { total: 0, page: 1, pageSize: 5 } } }),
+      })
+    })
+    await page.route('**/api/v1/materials**', async route => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: { list: [], pagination: { total: 0, page: 1, pageSize: 1000 } } }),
+      })
+    })
+    await page.route('**/api/v1/projects**', async route => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: { list: [], pagination: { total: 0, page: 1, pageSize: 1000 } } }),
+      })
+    })
+    await page.route('**/api/v1/boms**', async route => {
+      const url = new URL(route.request().url())
+      if (route.request().method() === 'GET' && url.pathname.endsWith('/boms')) {
+        await route.fulfill({
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true, data: { list: [inactiveBom], pagination: { total: 1, page: 1, pageSize: 20 } } }),
+        })
+        return
+      }
+      if (route.request().method() === 'GET' && url.pathname.endsWith('/boms/bom-copy-inactive-source')) {
+        await route.fulfill({
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true, data: inactiveBom }),
+        })
+        return
+      }
+      if (route.request().method() === 'POST' && url.pathname.endsWith('/boms')) {
+        createBodies.push(await route.request().postDataJSON())
+        await route.fulfill({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true, data: { id: 'bom-copy-inactive-created' } }),
+        })
+        return
+      }
+      if (route.request().method() === 'PATCH' && url.pathname.endsWith('/boms/bom-copy-inactive-created/status')) {
+        statusUpdates.push(await route.request().postDataJSON())
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true, data: { id: 'bom-copy-inactive-created', status: 'inactive' } }),
+        })
+        return
+      }
+      await route.fallback()
+    })
+
+    await page.goto(`${FE_BASE}/bom`, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByRole('heading', { name: 'BOM清单' })).toBeVisible({ timeout: 15000 })
+    await expect(page.getByText('BOM-COPY-INACTIVE')).toBeVisible({ timeout: 10000 })
+    await page.getByRole('row', { name: /BOM-COPY-INACTIVE/ }).getByRole('button', { name: '复制' }).click()
+    const modal = page.getByText('复制BOM').last().locator('xpath=ancestor::div[contains(@class,"fixed")]')
+    await expect(modal.getByText('复制BOM')).toBeVisible({ timeout: 10000 })
+    await modal.getByRole('button', { name: '确认复制' }).click()
+
+    await expect(page.getByText('BOM已复制')).toBeVisible({ timeout: 10000 })
+    expect(createBodies).toHaveLength(1)
+    expect(createBodies[0]).toEqual(expect.objectContaining({
+      name: '复制停用源BOM 副本',
+      materials: [expect.objectContaining({ materialId: 'mat-copy-status', usagePerSample: 1 })],
+    }))
+    expect(createBodies[0]).not.toHaveProperty('serviceId')
+    expect(statusUpdates).toEqual([{ status: 'inactive' }])
+  })
+})
+
 // 1. 查看BOM列表 (10)
 test.describe('BOM清单 -> 查看BOM列表', () => {
   for (const role of BOM_READ_ROLES) {

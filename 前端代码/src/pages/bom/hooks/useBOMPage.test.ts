@@ -78,6 +78,14 @@ const serviceBoundBom = {
   serviceName: '免疫组化检测服务',
 } as const
 
+const inactiveBom = {
+  ...activeBom,
+  id: 'bom-inactive-1',
+  code: 'BOM-INACTIVE-001',
+  name: '已停用BOM',
+  status: 'inactive',
+} as const
+
 const noMaterialBom = {
   ...activeBom,
   id: 'bom-no-material',
@@ -337,6 +345,31 @@ describe('useBOMPage', () => {
         expect.objectContaining({ materialId: 'mat-1', usagePerSample: 1 }),
       ],
     }))
+  })
+
+  it('keeps copied BOM inactive when the original BOM is inactive', async () => {
+    vi.mocked(bomApi.getDetail).mockResolvedValue(inactiveBom as any)
+    vi.mocked(bomApi.create).mockResolvedValue({ id: 'bom-copy-inactive-1' } as any)
+
+    const { result } = renderHook(() => useBOMPage())
+
+    await act(async () => {
+      await result.current.openCopy(inactiveBom as any)
+    })
+    await waitFor(() => expect(result.current.modalType).toBe('copy'))
+
+    await act(async () => {
+      await result.current.handleCopyConfirm()
+    })
+
+    expect(bomApi.create).toHaveBeenCalledWith(expect.objectContaining({
+      name: '已停用BOM 副本',
+      serviceId: undefined,
+      materials: [
+        expect.objectContaining({ materialId: 'mat-1', usagePerSample: 1 }),
+      ],
+    }))
+    expect(bomApi.updateStatus).toHaveBeenCalledWith('bom-copy-inactive-1', 'inactive')
   })
 
   it('blocks copying a BOM without material list because BOM drafts are not supported', async () => {

@@ -591,7 +591,7 @@ export function useBOMPage() {
     setSubmitting(true)
     try {
       const payload = buildPayload(toForm(selectedBom))
-      await bomApi.create({
+      const created = await bomApi.create({
         ...payload,
         code: `${selectedBom.code}-COPY-${Date.now().toString().slice(-4)}`,
         name: copyForm.name.trim(),
@@ -602,6 +602,9 @@ export function useBOMPage() {
         generalConsumables: copyForm.copyMaterials ? payload.generalConsumables : [],
         qualityControls: copyForm.copyMaterials ? payload.qualityControls : [],
       })
+      if (selectedBom.status === 'inactive' && created?.id) {
+        await bomApi.updateStatus(created.id, 'inactive')
+      }
       toast.success('BOM已复制')
       closeModal()
       reload()

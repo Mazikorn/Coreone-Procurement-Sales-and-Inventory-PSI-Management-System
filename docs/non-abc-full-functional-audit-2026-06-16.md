@@ -12866,7 +12866,58 @@ git diff --check
 - 本批只处理编辑保存时的状态影响预检查，不扩展到 BOM 历史使用后的内容字段保护。
 - 后续可继续按基础资料阶段检查 BOM 复制版本、历史使用后保护，或转入项目/检测服务绑定边界；发现计划外问题先登记到待评估清单。
 
-## 二百六十二、结论
+## 二百六十二、批次 307: BOM 复制停用版本不得静默激活
+
+**发现的问题**
+
+- 本轮计划要求 BOM 覆盖复制版本，复制入口必须证明真实副作用正确，而不是只证明弹窗可点。
+- BOM 新建接口默认创建启用 BOM；复制弹窗没有状态选择，也没有在复制停用 BOM 后恢复停用状态。
+- 因此从已停用 BOM 复制时，新副本会被静默创建为启用状态，可能绕过原 BOM 停用背后的历史保护、依赖检查或业务冻结意图。
+- 这会让检测服务、BOM 出库和后续成本追溯拿到一个用户并未明确启用的新标准配置。
+
+**已完成修复**
+
+- `前端代码/src/pages/bom/hooks/useBOMPage.ts`
+  - `handleCopyConfirm` 保存 `bomApi.create` 返回的新 BOM id。
+  - 若原 BOM 为 `inactive`，复制成功后立即调用 `bomApi.updateStatus(newId, 'inactive')`，让副本继承停用状态。
+  - 继续保持复制不继承原检测服务绑定，避免制造服务一对一绑定冲突。
+- `前端代码/src/pages/bom/hooks/useBOMPage.test.ts`
+  - 新增红绿测试：复制已停用 BOM 时，必须先创建副本，再把新副本更新为停用。
+- `前端代码/e2e/bom.spec.ts`
+  - 新增 `BOM-COPY-STATUS-01` 页面级验收：从表格点击复制停用 BOM，确认弹窗后断言创建请求已发送、检测服务绑定未继承，并且对新 BOM 发送 `PATCH status=inactive`。
+
+**ABC 影响评估**
+
+- BOM 状态决定检测服务、BOM 出库、标准用量、成本异常和 ABC 上游成本事实能否继续使用该配置。
+- 本批避免停用 BOM 通过复制入口变成启用副本，减少未经确认的标准配置进入库存扣减和成本追溯链路。
+- 本批只修改非 ABC 的 BOM 页面复制流程，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 已补跑 BOM、出库、入库和物料保护输入链回归，覆盖 BOM 状态对相邻库存/成本输入链的影响。
+- 未触碰 `前端代码/deprecated/legacy-cost-analysis/`。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/bom/hooks/useBOMPage.test.ts -t "copied BOM inactive"` 修复前失败：`bomApi.updateStatus('bom-copy-inactive-1', 'inactive')` 调用次数为 0。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/bom/hooks/useBOMPage.test.ts -t "copied BOM inactive"` 通过，1 test passed / 11 skipped。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/bom.spec.ts -g "BOM-COPY-STATUS-01" --project=chromium` 通过，1 test passed。
+  - `前端代码 npm test -- --run src/pages/bom/hooks/useBOMPage.test.ts src/pages/bom/components/BOMFormModal.test.tsx src/pages/bom/components/BOMCopyModal.test.tsx src/pages/bom/components/BOMBatchImpactModal.test.tsx src/hooks/usePagination.test.ts` 通过，5 files / 33 tests passed。
+  - `后端代码/server npm run test:node -- --run tests/bom-batch.test.ts tests/integration/bom.test.ts tests/integration/outbound.test.ts tests/materials-guard.test.ts tests/inbound-batch.test.ts` 通过，5 files / 101 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/bom.spec.ts -g "BOM-COPY-STATUS-01|BOM-STATUS-EDIT-01|BOM-SERVICE-CAND-01|BOM-STATUS-SINGLE-01|BOM-MAT-GROUP-01|BOM-CREATE-01|BOM-CREATE-02|BOM-CREATE-15|BOM-EDIT-01|BOM-EDIT-09|BOM-DETAIL-03" --project=chromium` 通过，11 tests passed。
+  - `git diff --check` 通过。
+  - `git diff --name-only | rg "deprecated/legacy-cost-analysis|前端代码/deprecated|/cost-analysis"` 无匹配，确认未改废弃范围。
+  - `lsof -nP -iTCP:3001 -sTCP:LISTEN` 和 `lsof -nP -iTCP:8080 -sTCP:LISTEN` 均无监听残留。
+- 浏览器复核:
+  - 使用用户已验证的 Chrome for Testing 路径完成 headless Playwright 复核；验证重点为复制停用 BOM 时新副本保持停用、检测服务绑定不继承，以及 BOM 编辑状态预检查、服务候选、单行状态检查、跨分组重复、创建、编辑和详情回归。
+
+**后续风险**
+
+- 本批只处理复制停用 BOM 的状态继承，不扩展到复制编码生成策略、导入入口或历史使用后内容字段保护。
+- 后续可继续按基础资料阶段检查 BOM 历史使用后保护，或转入项目/检测服务绑定边界；发现计划外问题先登记到待评估清单。
+
+## 二百六十三、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 
