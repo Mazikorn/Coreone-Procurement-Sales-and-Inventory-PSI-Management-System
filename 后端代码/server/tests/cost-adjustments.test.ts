@@ -125,6 +125,61 @@ describe('季度成本调整', () => {
     })
   })
 
+  it('创建调整单必须拒绝停用成本中心和同季度重复调整', async () => {
+    const suffix = Date.now()
+    const activeCenterId = `cost-adj-candidate-active-${suffix}`
+    const inactiveCenterId = `cost-adj-candidate-inactive-${suffix}`
+
+    db.prepare(`
+      INSERT INTO indirect_cost_centers (id, code, name, cost_type, monthly_amount, allocation_base, status)
+      VALUES
+        (?, ?, '调整单有效候选成本中心', 'rent', 1000, 'sample_count', 1),
+        (?, ?, '调整单停用候选成本中心', 'rent', 1000, 'sample_count', 0)
+    `).run(
+      activeCenterId, `COST-ADJ-CANDIDATE-ACTIVE-${suffix}`,
+      inactiveCenterId, `COST-ADJ-CANDIDATE-INACTIVE-${suffix}`,
+    )
+
+    const inactiveCreate = await request(app)
+      .post('/api/v1/cost-adjustments')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ costCenterId: inactiveCenterId, yearQuarter: '2026-Q4', actualAmount: 1200 })
+
+    expect(inactiveCreate.status).toBe(400)
+    expect(inactiveCreate.body.success).toBe(false)
+    expect(inactiveCreate.body.error.code).toBe('BUSINESS_RULE')
+
+    const firstCreate = await request(app)
+      .post('/api/v1/cost-adjustments')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ costCenterId: activeCenterId, yearQuarter: '2026-Q4', actualAmount: 1200 })
+
+    expect(firstCreate.status).toBe(201)
+
+    const duplicateCreate = await request(app)
+      .post('/api/v1/cost-adjustments')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ costCenterId: activeCenterId, yearQuarter: '2026-Q4', actualAmount: 1300 })
+
+    expect(duplicateCreate.status).toBe(409)
+    expect(duplicateCreate.body.success).toBe(false)
+    expect(duplicateCreate.body.error.code).toBe('RESOURCE_CONFLICT')
+
+    const activeCount = (db.prepare(`
+      SELECT COUNT(*) as count
+      FROM cost_adjustments
+      WHERE cost_center_id = ? AND year_quarter = '2026-Q4'
+    `).get(activeCenterId) as any)?.count || 0
+    const inactiveCount = (db.prepare(`
+      SELECT COUNT(*) as count
+      FROM cost_adjustments
+      WHERE cost_center_id = ? AND year_quarter = '2026-Q4'
+    `).get(inactiveCenterId) as any)?.count || 0
+
+    expect(Number(activeCount)).toBe(1)
+    expect(Number(inactiveCount)).toBe(0)
+  })
+
   it('审核调整单必须阻止提交人自审，并记录真实审核人', async () => {
     const suffix = Date.now()
     const costCenterId = `cost-adj-review-center-${suffix}`

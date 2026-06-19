@@ -15868,9 +15868,57 @@ git diff --check
 
 **后续风险**
 
-- 季度成本调整创建、审核和列表筛选已收口；重复季度调整和停用成本中心是否允许创建调整单仍可作为后续独立批次评估，不在本批扩大范围。
+- 季度成本调整创建基础校验、审核身份和列表筛选已收口；创建候选来源有效性作为下一独立批次处理，避免在列表筛选批次中扩大范围。
 
-## 三百二十四、结论
+## 三百二十四、批次 369: 季度成本调整创建来源必须仍是有效候选
+
+**发现的问题**
+
+- 本轮继续复核季度成本调整创建面，聚焦“API 绕过也必须遵守建议接口候选来源规则”不变量。
+- 建议接口只返回 `status = 1` 且同季度尚未创建调整单的成本中心，但创建接口旧实现只校验成本中心存在。
+- API 绕过可以给停用成本中心创建调整单，红灯中 `POST /api/v1/cost-adjustments` 对停用成本中心返回 201，期望 400。
+- 同一成本中心同一季度也可重复创建多张调整单，容易让财务复核列表出现多套互相冲突的实际金额和调整原因。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/cost-adjustment-v1.1.ts`
+  - 创建调整单时先规范化 `costCenterId`，空值仍返回 `400 INVALID_PARAMETER`。
+  - 成本中心必须存在且 `status = 1`，停用成本中心返回 `400 BUSINESS_RULE`。
+  - 创建前检查 `cost_center_id + year_quarter` 是否已有调整单，重复时返回 `409 RESOURCE_CONFLICT`。
+  - 预提金额计算和落库统一使用规范化后的成本中心 ID，避免空白字符污染来源身份。
+- `后端代码/server/tests/cost-adjustments.test.ts`
+  - 新增创建候选来源红绿测试，覆盖停用成本中心拒绝、合法首张调整单创建、同季度重复创建拒绝，以及数据库只保留一条有效调整单。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 季度成本调整创建 API 和后端测试，不修改 ABC 本体、ABC API、ABC 调整单、成本算法或废弃 `/cost-analysis`。
+- 成本调整创建来源属于非 ABC 间接成本/全成本说明链路；本批不改变合法分摊、全成本报表、ABC 成本任务或成本异常闭环，只阻断无效候选来源和重复调整污染财务复核。
+- 已补跑成本调整专项、间接成本保护、全成本和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/cost-adjustments.test.ts -t "创建调整单必须拒绝停用成本中心"` 修复前失败：停用成本中心创建返回 201，期望 400。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/cost-adjustments.test.ts -t "创建调整单必须拒绝停用成本中心"` 通过，1 test passed / 5 skipped。
+  - `后端代码/server npm test -- --run tests/cost-adjustments.test.ts` 通过，6 tests passed。
+  - `后端代码/server npm test -- --run tests/cost-adjustments.test.ts tests/indirect-cost-guard.test.ts tests/integration/full-cost.test.ts tests/integration/cost-exceptions.test.ts` 通过，4 files / 28 tests passed；`cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr 为既有异常台账测试场景，最终通过。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis` 无输出，确认未改废弃范围。
+- 浏览器复核:
+  - 本批为成本调整创建 API 候选来源校验修复，不新增或改变页面组件、弹窗或可见交互；核心风险是 API 副作用是否正确拒绝停用/重复来源并保留合法创建，已用接口级红绿测试和数据库断言覆盖，不新增截图证据。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 季度成本调整创建、审核和列表筛选已阶段性收口；后续若继续成本相关复核，应转向其他非废弃报表/效率/LIS/对账页面，不从旧 `/cost-analysis` 推导需求。
+
+## 三百二十五、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

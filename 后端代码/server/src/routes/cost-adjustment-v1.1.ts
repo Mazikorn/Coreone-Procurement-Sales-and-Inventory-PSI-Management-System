@@ -101,7 +101,8 @@ router.get('/suggestions', authenticateToken, requireRole('admin', 'finance'), (
 router.post('/', authenticateToken, requireRole('admin', 'finance'), (req, res) => {
   try {
     const { costCenterId, yearQuarter, actualAmount, adjustmentReason } = req.body
-    if (!costCenterId || !yearQuarter || actualAmount === undefined) {
+    const normalizedCostCenterId = String(costCenterId || '').trim()
+    if (!normalizedCostCenterId || !yearQuarter || actualAmount === undefined) {
       error(res, '缺少必填字段', 'INVALID_PARAMETER', 400); return
     }
     if (!isValidYearQuarter(yearQuarter)) {
@@ -114,10 +115,21 @@ router.post('/', authenticateToken, requireRole('admin', 'finance'), (req, res) 
     const db = getDatabase()
 
     // 验证成本中心存在
-    const center = db.prepare('SELECT * FROM indirect_cost_centers WHERE id = ?').get(costCenterId) as any
+    const center = db.prepare('SELECT * FROM indirect_cost_centers WHERE id = ?').get(normalizedCostCenterId) as any
     if (!center) { error(res, '成本中心不存在', 'NOT_FOUND', 404); return }
+    if (Number(center.status) !== 1) {
+      error(res, '停用成本中心不可创建季度调整', 'BUSINESS_RULE', 400); return
+    }
 
     const normalizedYearQuarter = String(yearQuarter)
+    const existing = db.prepare(`
+      SELECT id FROM cost_adjustments
+      WHERE cost_center_id = ? AND year_quarter = ?
+    `).get(normalizedCostCenterId, normalizedYearQuarter) as any
+    if (existing) {
+      error(res, '该成本中心本季度已有调整单', 'RESOURCE_CONFLICT', 409); return
+    }
+
     const months = quarterMonths(normalizedYearQuarter)
 
     const monthPlaceholders = months.map(() => '?').join(',')
@@ -125,7 +137,7 @@ router.post('/', authenticateToken, requireRole('admin', 'finance'), (req, res) 
       SELECT SUM(total_amount) as total
       FROM indirect_cost_allocations
       WHERE cost_center_id = ? AND year_month IN (${monthPlaceholders})
-    `).get(costCenterId, ...months) as any
+    `).get(normalizedCostCenterId, ...months) as any
 
     const preProvisionAmount = allocRows?.total || 0
     const adjustmentAmount = actualAmountValue - preProvisionAmount
@@ -135,7 +147,7 @@ router.post('/', authenticateToken, requireRole('admin', 'finance'), (req, res) 
     db.prepare(`
       INSERT INTO cost_adjustments (id, cost_center_id, year_quarter, pre_provision_amount, actual_amount, adjustment_amount, adjustment_reason, submitted_by, submitted_at, review_status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 'pending')
-    `).run(id, costCenterId, normalizedYearQuarter, preProvisionAmount, actualAmountValue, adjustmentAmount, adjustmentReason || null, userId)
+    `).run(id, normalizedCostCenterId, normalizedYearQuarter, preProvisionAmount, actualAmountValue, adjustmentAmount, adjustmentReason || null, userId)
 
     success(res, { id, adjustmentAmount: Math.round(adjustmentAmount * 100) / 100 }, 'Created', 201)
   } catch (err: any) { error(res, err.message) }
