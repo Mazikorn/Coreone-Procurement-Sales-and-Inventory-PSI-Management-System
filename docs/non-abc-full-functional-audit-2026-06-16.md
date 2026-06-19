@@ -13426,7 +13426,53 @@ git diff --check
 - 本批只处理普通出库接口的未知 `type`，不扩展到旧 E2E 中把 `transfer/scrap` 作为普通出库类型使用的历史设计。
 - 后续继续按库存主链路检查退货、报废、调拨、供应商退货、盘点等模块的候选来源和历史回滚边界；发现计划外问题先登记到待评估清单。
 
-## 二百七十三、结论
+## 二百七十三、批次 318: 退库库位库存不足必须返回业务错误并回滚
+
+**发现的问题**
+
+- 本轮继续复核库存主链路中的退库模块，聚焦“库存总量与批次/库位一致”和“异常可解释”不变量。
+- `POST /returns` 已先校验总库存和批次剩余量，但当总库存、批次均足够而 `inventory_locations` 库位明细不足时，底层 `LOCATION_STOCK_INSUFFICIENT` 会被外层默认包装为 `500 INTERNAL_ERROR`。
+- 该路径虽然事务会回滚，但对前端和审计人员不可解释，也无法区分真实系统故障和可治理的库位库存不一致。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/returns-v1.1.ts`
+  - 创建退库接口捕获库位库存不足异常，返回 `422 STOCK_INSUFFICIENT` 和可读错误“库位库存不足，无法创建退库记录”。
+  - 保持原事务回滚顺序不变，不新增 schema，不改退库成功路径。
+- `后端代码/server/tests/returns.test.ts`
+  - 新增红绿测试 `RT-007`：总库存和批次足够但库位明细不足时，退库必须拒绝，并确认退库记录、库存总账、批次剩余量、库位库存和库存日志均无副作用。
+
+**ABC 影响评估**
+
+- 退库会真实扣减库存总账、批次剩余量和库位明细，是后续出库、库存异常解释和 ABC 输入侧可信库存事实的上游链路。
+- 本批只把非 ABC 退库接口的库位不足异常翻译为业务错误，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 已补跑库存一致性、入库批次、出库、调拨和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+- 未触碰 `前端代码/deprecated/legacy-cost-analysis/`。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/returns.test.ts -t "RT-007"` 修复前失败：库位库存不足实际返回 500，期望 422。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/returns.test.ts -t "RT-007"` 通过，1 test passed / 7 skipped。
+  - `后端代码/server npm test -- --run tests/returns.test.ts` 通过，8 tests passed。
+  - `后端代码/server npm test -- --run tests/inventory-consistency.test.ts tests/inbound-batch.test.ts tests/integration/outbound.test.ts tests/transfers.test.ts tests/integration/cost-exceptions.test.ts` 通过，5 files / 73 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+- 浏览器复核:
+  - 本批是退库 API 异常翻译与事务回滚保护，不新增或改变页面交互；页面/弹窗级 Playwright 不是本批必要门槛。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 本批只处理退库创建路径的库位库存不足错误翻译，不直接治理历史总账、批次和库位明细不一致的数据。
+- 报废、供应商退货等同样消费库位库存的模块后续仍需按各自批次独立复核，发现类似问题时单独登记和修复。
+
+## 二百七十四、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

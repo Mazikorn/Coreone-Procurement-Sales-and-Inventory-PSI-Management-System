@@ -42,6 +42,12 @@ function hasActiveBatch(db: any, materialId: string): boolean {
   return Number(row?.count || 0) > 0
 }
 
+function handleReturnStockError(res: any, err: any): boolean {
+  if (err?.message !== 'LOCATION_STOCK_INSUFFICIENT') return false
+  error(res, '库位库存不足，无法创建退库记录', 'STOCK_INSUFFICIENT', 422)
+  return true
+}
+
 router.get('/', (req, res) => {
   try {
     const { page = 1, pageSize = 20, keyword } = req.query
@@ -160,7 +166,10 @@ router.post('/', (req, res) => {
       db.exec('ROLLBACK')
       throw e
     }
-  } catch (err: any) { error(res, err.message) }
+  } catch (err: any) {
+    if (handleReturnStockError(res, err)) return
+    error(res, err.message)
+  }
 })
 
 router.delete('/:id', (req, res) => {

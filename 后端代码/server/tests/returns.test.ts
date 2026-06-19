@@ -243,6 +243,46 @@ describe('退库管理', () => {
     expect(cancelLogs.count).toBe(0)
   })
 
+  it('RT-007: 总库存和批次足够但库位库存不足时拒绝退库并回滚全部副作用', async () => {
+    const suffix = `location-insufficient-${Date.now()}`
+    const { materialId, batchId } = seedReturnMaterialWithBatch(db, suffix, 10)
+    const material = db.prepare('SELECT location_id FROM materials WHERE id = ?').get(materialId) as any
+    db.prepare(`
+      INSERT INTO inventory_locations (id, material_id, location_id, stock, locked_stock)
+      VALUES (?, ?, ?, 1, 0)
+    `).run(`invloc-return-${suffix}`, materialId, material.location_id)
+
+    const res = await request(app)
+      .post('/api/v1/returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ materialId, batchId, quantity: 3, reason: '库位库存不足退库' })
+
+    expect(res.status).toBe(422)
+    expect(res.body.error.code).toBe('STOCK_INSUFFICIENT')
+    expect(res.body.error.message).toContain('库位库存不足')
+
+    const inventory = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+    const batch = db.prepare('SELECT remaining FROM batches WHERE id = ?').get(batchId) as any
+    const locationStock = db.prepare(`
+      SELECT stock
+      FROM inventory_locations
+      WHERE material_id = ? AND location_id = ?
+    `).get(materialId, material.location_id) as any
+    const records = db.prepare('SELECT COUNT(*) as count FROM return_records WHERE material_id = ?')
+      .get(materialId) as any
+    const logs = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM stock_logs
+      WHERE material_id = ? AND related_type = 'return'
+    `).get(materialId) as any
+
+    expect(inventory.stock).toBe(10)
+    expect(batch.remaining).toBe(10)
+    expect(locationStock.stock).toBe(1)
+    expect(records.count).toBe(0)
+    expect(logs.count).toBe(0)
+  })
+
   it('RT-REF-001: 创建退库拒绝停用物料且不扣库存', async () => {
     const materialId = seedReturnMaterial(db, `inactive-ref-${Date.now()}`)
     db.prepare('UPDATE materials SET status = 0 WHERE id = ?').run(materialId)
