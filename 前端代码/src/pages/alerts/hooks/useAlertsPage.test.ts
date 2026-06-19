@@ -105,4 +105,27 @@ describe('buildAlertHandleRemark', () => {
     expect(window.location.search).toContain('level=important')
     expect(window.location.search).not.toContain('page=4')
   })
+
+  it('resets all filters and removes query parameters', async () => {
+    window.history.replaceState(null, '', '/alerts?page=7&pageSize=20&keyword=abc&type=stock_low&level=urgent&quick=pending&status=ignored&startDate=2026-01-01&endDate=2026-01-31')
+
+    const { result } = renderHook(() => useAlertsPage())
+    await waitFor(() => expect(alertsApi.getList).toHaveBeenCalled())
+
+    act(() => {
+      result.current.resetFilters()
+    })
+
+    await waitFor(() => expect(window.location.search).toBe(''))
+    expect(result.current.filter).toEqual({
+      keyword: '',
+      type: 'all',
+      level: 'all',
+      status: 'all',
+      dateRange: ['', ''],
+    })
+    expect(result.current.quickFilter).toBe('all')
+    expect(result.current.page).toBe(1)
+    expect(result.current.pageSize).toBe(10)
+  })
 })

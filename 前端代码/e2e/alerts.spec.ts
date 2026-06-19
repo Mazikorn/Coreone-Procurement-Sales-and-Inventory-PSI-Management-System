@@ -440,8 +440,17 @@ test.describe('预警中心 -> 按状态筛选', () => {
   })
   test('ALERT-STATUS-04. 正常用例：重置筛选', async ({ page }) => {
     await loginAs(page, 'admin')
-    await page.goto(`${FE_BASE}/alerts`)
-    await page.waitForTimeout(800)
+    await page.goto(`${FE_BASE}/alerts?page=5&pageSize=20&quick=pending&type=stock_low&level=urgent&keyword=AL11&startDate=2026-01-01&endDate=2026-01-31`, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByRole('heading', { name: '预警中心' })).toBeVisible({ timeout: 15000 })
+
+    await page.getByRole('button', { name: '重置' }).click()
+
+    await expect.poll(() => new URL(page.url()).search).toBe('')
+    await expect(page.getByPlaceholder('搜索物料或预警内容')).toHaveValue('')
+    await expect(page.locator('select').nth(0)).toHaveValue('all')
+    await expect(page.locator('select').nth(1)).toHaveValue('all')
+    await expect(page.locator('input[type="date"]').nth(0)).toHaveValue('')
+    await expect(page.locator('input[type="date"]').nth(1)).toHaveValue('')
   })
   test('ALERT-STATUS-05. UI差异：各角色可见', async ({ page }) => {
     for (const role of ALL_ROLES) {

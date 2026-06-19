@@ -11891,9 +11891,56 @@ git diff --check
 
 **后续风险**
 
-- AL-11 重置筛选和 AL-21 翻页 URL/服务端分页仍需独立批次复核；本批不扩大到重置按钮和翻页行为。
+- AL-21 翻页 URL/服务端分页仍需独立批次复核；本批不扩大到翻页行为。
 
-## 二百四十二、结论
+## 二百四十二、批次 287: 预警重置筛选必须清空规范 URL
+
+**发现的问题**
+
+- `alerts.md` 的 AL-11 要求点击“重置”后清空所有筛选条件、快速筛选回到“全部”、类型/级别下拉回到“全部”、URL 无 query 参数，并把分页重置到第 1 页。
+- 当前预警中心表格没有“重置”按钮，Hook 也没有统一的重置动作。
+- 旧 `ALERT-STATUS-04` 只打开页面等待，无法证明重置入口存在，更无法证明 URL 和控件状态被清空。
+
+**已完成修复**
+
+- `前端代码/src/pages/alerts/hooks/useAlertsPage.ts`
+  - 新增 `resetFilters`，统一复位关键词、类型、级别、状态、日期范围、快速筛选、页码和每页条数。
+  - 重置时调用 URL 清空，并由现有 URL 同步 effect 保持最终地址无 query 参数。
+- `前端代码/src/pages/alerts/components/AlertTable.tsx`
+  - 筛选区新增“重置”按钮，使用 `RotateCcw` 图标，与现有筛选控件在同一操作区域。
+- `前端代码/src/pages/alerts/Alerts.tsx`
+  - 将 `page.resetFilters` 传入表格组件。
+- `前端代码/src/pages/alerts/hooks/useAlertsPage.test.ts`
+  - 新增 Hook 测试，覆盖复杂 query 入参后调用重置，最终 `filter/quickFilter/page/pageSize` 复位且 `window.location.search` 为空。
+- `前端代码/e2e/alerts.spec.ts`
+  - 将旧 `ALERT-STATUS-04` 从浅层等待升级为真实浏览器验收：带 `page/pageSize/quick/type/level/keyword/startDate/endDate` 打开页面，点击“重置”，确认 URL 清空、搜索框/类型/级别/日期控件全部复位。
+
+**ABC 影响评估**
+
+- 本批只修改预警中心前端筛选状态和 URL 同步，不修改后端查询、库存写入、预警处理、扫描生成、出库、BOM、成本异常或 ABC 本体。
+- 该变更不改变 ABC 上游输入链的数据事实，也不改变库存/出库/BOM/成本异常的写入路径，因此本批不补跑 ABC 输入侧回归。
+- 未触碰废弃 `/cost-analysis` 或 `前端代码/deprecated/legacy-cost-analysis/`。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/alerts/hooks/useAlertsPage.test.ts -t "resets all filters"` 修复前失败：`result.current.resetFilters is not a function`。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npm run test:e2e -- alerts.spec.ts -g "ALERT-STATUS-04"` 修复前失败：页面找不到 `重置` 按钮并超时。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/alerts/hooks/useAlertsPage.test.ts -t "resets all filters"` 通过，1 test passed / 6 skipped。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npm run test:e2e -- alerts.spec.ts -g "ALERT-STATUS-04"` 通过，1 test passed。
+  - `前端代码 npm test -- --run src/pages/alerts/hooks/useAlertsPage.test.ts` 通过，7 tests passed。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npm run test:e2e -- alerts.spec.ts -g "ALERT-STATUS-00|ALERT-FILTER-09|ALERT-STATUS-04"` 通过，3 tests passed。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+- 浏览器复核:
+  - 使用用户已验证的 Chrome for Testing 路径完成 headless Playwright 复核；验证重点为重置按钮可见、点击后 URL 清空、搜索/类型/级别/日期控件真实复位。
+
+**后续风险**
+
+- AL-21 翻页 URL/服务端分页仍需独立批次复核；本批不扩大到分页控件和服务端分页行为。
+- 旧 `ALERT-TYPE-04` 仍是浅层等待用例，但其语义已被 `ALERT-STATUS-04` 覆盖；是否清理或重命名旧用例作为测试债另列待评估，不在本批扩范围。
+
+## 二百四十三、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

@@ -1,4 +1,4 @@
-import { CheckCircle2, Eye, Search, Trash2 } from 'lucide-react'
+import { CheckCircle2, Eye, RotateCcw, Search, Trash2 } from 'lucide-react'
 import { Pagination } from '@/components/ui/Pagination'
 import type {
   AlertItem,
@@ -21,6 +21,7 @@ interface Props {
   selectedIds: Set<string>
   onFilterChange: (filter: FilterState) => void
   onQuickFilterChange: (value: AlertStatusFilter) => void
+  onResetFilters: () => void
   onSelect: (id: string) => void
   onSelectAll: () => void
   onClearSelection: () => void
@@ -70,6 +71,7 @@ export function AlertTable({
   selectedIds,
   onFilterChange,
   onQuickFilterChange,
+  onResetFilters,
   onSelect,
   onSelectAll,
   onClearSelection,
@@ -130,6 +132,14 @@ export function AlertTable({
               onChange={(e) => onFilterChange({ ...filter, dateRange: [filter.dateRange[0], e.target.value] })}
               className="h-10 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10"
             />
+            <button
+              type="button"
+              onClick={onResetFilters}
+              className="inline-flex h-10 items-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-700 hover:bg-gray-50"
+            >
+              <RotateCcw className="h-4 w-4" />
+              重置
+            </button>
           </div>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-3">

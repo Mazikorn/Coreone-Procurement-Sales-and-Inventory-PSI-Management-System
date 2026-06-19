@@ -66,6 +66,7 @@ export default function Alerts() {
         selectedIds={page.selectedIds}
         onFilterChange={(filter) => { page.setFilter(filter); page.setPage(1) }}
         onQuickFilterChange={(v) => { page.setQuickFilter(v); page.setPage(1) }}
+        onResetFilters={page.resetFilters}
         onSelect={page.handleSelect}
         onSelectAll={page.handleSelectAll}
         onClearSelection={page.clearSelection}

@@ -215,6 +215,20 @@ export function useAlertsPage() {
     setPage(1)
   }, [setPage])
 
+  const resetFilters = useCallback(() => {
+    setFilter({
+      keyword: '',
+      type: 'all',
+      level: 'all',
+      status: 'all',
+      dateRange: ['', ''],
+    })
+    setQuickFilterState('all')
+    setPageSize(10)
+    setPage(1)
+    url.clear()
+  }, [setPage, setPageSize, url])
+
   // URL 同步
   useEffect(() => {
     url.setMultiple({
@@ -378,6 +392,7 @@ export function useAlertsPage() {
   return {
     filter,
     setFilter,
+    resetFilters,
     quickFilter,
     setQuickFilter,
     selectedIds,
