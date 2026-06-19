@@ -133,6 +133,12 @@ function buildStocktakingWhere(query: any) {
   return { where, params }
 }
 
+function handleStocktakingStockError(res: any, err: any): boolean {
+  if (err?.message !== 'LOCATION_STOCK_INSUFFICIENT') return false
+  error(res, '库位库存不足，无法确认盘点差异', 'STOCK_INSUFFICIENT', 422)
+  return true
+}
+
 router.get('/', (req, res) => {
   try {
     let { page = 1, pageSize = 20 } = req.query
@@ -307,7 +313,10 @@ router.post('/:id/confirm', (req, res) => {
       db.exec('ROLLBACK')
       throw e
     }
-  } catch (err: any) { error(res, err.message) }
+  } catch (err: any) {
+    if (handleStocktakingStockError(res, err)) return
+    error(res, err.message)
+  }
 })
 
 router.delete('/:id', (req, res) => {

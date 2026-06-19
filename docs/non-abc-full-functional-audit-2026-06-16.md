@@ -13566,7 +13566,55 @@ git diff --check
 - 本批只处理供应商退货创建路径的库位库存不足错误翻译，不直接治理历史总账、批次和库位明细不一致的数据。
 - 后续继续按计划复核盘点、库存日志和报表，重点检查历史事实、异常解释和真实副作用。
 
-## 二百七十六、结论
+## 二百七十六、批次 321: 盘点确认库位库存不足必须返回业务错误并回滚
+
+**发现的问题**
+
+- 本轮继续复核库存主链路中的库存盘点模块，聚焦“库存总量与批次/库位一致”和“异常可解释”不变量。
+- 盘亏确认已校验当前库存未变化，并会同步扣减批次；但当库存总账和批次足够、`inventory_locations` 库位明细不足时，底层 `LOCATION_STOCK_INSUFFICIENT` 会被默认包装成 `500 INTERNAL_ERROR`。
+- 该路径事务会回滚，但前端和审计侧无法识别这是库位明细不足的可治理库存问题，也无法得到可解释业务错误。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/stocktaking-v1.1.ts`
+  - 盘点确认接口捕获库位库存不足异常，返回 `422 STOCK_INSUFFICIENT` 和可读错误“库位库存不足，无法确认盘点差异”。
+  - 保持原事务回滚、批次调整、库存日志和成功确认路径不变，不新增 schema。
+- `后端代码/server/tests/stocktaking.test.ts`
+  - 新增红绿测试 `ST-011`：盘亏确认遇到总账/批次足够但库位明细不足时必须拒绝，并确认盘点状态、库存总账、批次剩余量、库位库存、盘点批次调整和库存日志均无副作用。
+
+**ABC 影响评估**
+
+- 库存盘点会真实改写库存总账、批次剩余量和库位明细，是库存异常解释、后续出库可用量和 ABC 输入侧可信事实链的一部分。
+- 本批只修改非 ABC 的盘点确认错误翻译和盘点测试，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 已补跑库存一致性、入库批次、出库、退库、报废、调拨、供应商退货和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+- 未触碰 `前端代码/deprecated/legacy-cost-analysis/`。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/stocktaking.test.ts -t "ST-011"` 修复前失败：盘点确认库位库存不足实际返回 500，期望 422。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/stocktaking.test.ts -t "ST-011"` 通过，1 test passed / 11 skipped。
+  - `后端代码/server npm test -- --run tests/stocktaking.test.ts` 通过，12 tests passed。
+  - `后端代码/server npm test -- --run tests/inventory-consistency.test.ts tests/inbound-batch.test.ts tests/integration/outbound.test.ts tests/returns.test.ts tests/scraps.test.ts tests/transfers.test.ts tests/integration/cost-exceptions.test.ts` 通过，7 files / 93 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `后端代码/server npm test -- --config vitest.supplier-returns.config.ts` 通过，15 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff -- 前端代码/deprecated/legacy-cost-analysis 后端代码/server/src/routes/abc-v1.1.ts 后端代码/server/src/utils/abc-calculator.test.ts` 无输出，确认未改废弃范围和 ABC 本体。
+- 浏览器复核:
+  - 本批是盘点确认 API 异常翻译与事务回滚保护，不新增或改变页面交互；页面/弹窗级 Playwright 不是本批必要门槛。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 本批只处理盘点确认路径的库位库存不足错误翻译，不直接治理历史总账、批次和库位明细不一致的数据。
+- 后续继续按计划复核库存日志和报表，重点检查历史事实、筛选导出和报表口径是否被后续编辑污染。
+
+## 二百七十七、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

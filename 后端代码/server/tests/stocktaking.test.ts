@@ -444,6 +444,51 @@ describe('库存盘点 API', () => {
     expect(getLocationStock(db, surplusFixture.materialId)).toBe(12)
   })
 
+  it('ST-011: 盘亏确认遇到库位库存不足时返回业务错误并回滚全部副作用', async () => {
+    const suffix = `location-insufficient-${Date.now()}`
+    const { materialId, recordId, batchId } = seedStocktakingFixtureWithBatch(db, suffix, 10)
+    const material = db.prepare('SELECT location_id FROM materials WHERE id = ?').get(materialId) as any
+    db.prepare(`
+      INSERT INTO inventory_locations (id, material_id, location_id, stock, locked_stock)
+      VALUES (?, ?, ?, 1, 0)
+    `).run(`invloc-stocktaking-${suffix}`, materialId, material.location_id)
+
+    const res = await request(app)
+      .post(`/api/v1/stocktaking/${recordId}/confirm`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ reason: 'physical', remark: '库位库存不足盘亏确认' })
+
+    expect(res.status).toBe(422)
+    expect(res.body.error.code).toBe('STOCK_INSUFFICIENT')
+    expect(res.body.error.message).toContain('库位库存不足')
+
+    const record = db.prepare('SELECT status FROM stocktaking_records WHERE id = ?').get(recordId) as any
+    const inventory = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+    const batch = db.prepare('SELECT remaining FROM batches WHERE id = ?').get(batchId) as any
+    const locationStock = db.prepare(`
+      SELECT stock
+      FROM inventory_locations
+      WHERE material_id = ? AND location_id = ?
+    `).get(materialId, material.location_id) as any
+    const batchAdjustments = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM stocktaking_batch_adjustments
+      WHERE stocktaking_id = ?
+    `).get(recordId) as any
+    const logs = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM stock_logs
+      WHERE related_id = ? AND related_type = 'stocktaking'
+    `).get(recordId) as any
+
+    expect(record.status).toBe('completed')
+    expect(inventory.stock).toBe(10)
+    expect(batch.remaining).toBe(10)
+    expect(locationStock.stock).toBe(1)
+    expect(batchAdjustments.count).toBe(0)
+    expect(logs.count).toBe(0)
+  })
+
   it('ST-010: 创建盘点拒绝没有库存记录的物料，避免生成无法确认的盘点单', async () => {
     const suffix = `no-inventory-${Date.now()}`
     const { materialId } = seedMaterialWithoutInventory(db, suffix)
