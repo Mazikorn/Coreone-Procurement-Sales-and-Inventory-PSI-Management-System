@@ -69,6 +69,16 @@ describe('供应商退货', () => {
     token = await loginAdmin(app)
   })
 
+  it('SR-FILTER-001: 列表拒绝非法状态筛选，避免返回伪空结果', async () => {
+    const res = await request(app)
+      .get('/api/v1/supplier-returns')
+      .query({ status: 'ghost' })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(400)
+    expect(res.body.error.code).toBe('INVALID_PARAMETER')
+  })
+
   it('SR-001: 创建供应商退货时忽略请求体伪造operator，使用登录用户', async () => {
     const { materialId, supplierId } = seedSupplierReturnMaterial(db, `op-${Date.now()}`)
 

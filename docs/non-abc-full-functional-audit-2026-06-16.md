@@ -15388,7 +15388,54 @@ git diff --check
 
 - 预警列表/统计的枚举和日期筛选已收口；如果后续要支持更复杂的相对日期或自然语言日期，应先在前端和后端共同定义规范参数，不应让后端静默接受。
 
-## 三百一十四、结论
+## 三百一十四、批次 359: 供应商退货状态筛选必须拒绝非法枚举
+
+**发现的问题**
+
+- 本轮回到库存主链路，复核供应商退货列表查询，聚焦“固定状态筛选不能把非法输入伪装成空结果”不变量。
+- 供应商退货状态流转接口已有合法状态集合：`pending/shipped/received/refunded/cancelled`。
+- 但列表接口 `/api/v1/supplier-returns` 对 `status` 查询参数没有白名单校验，`status=ghost` 会返回 200 空列表。
+- 这会让 URL、集成方或手工请求把错误状态误判为“没有供应商退货记录”，削弱库存退货链路的可解释性。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/supplier-returns-v1.1.ts`
+  - 新增 `SUPPLIER_RETURN_STATUSES` 统一状态集合。
+  - 列表查询收到非空 `status` 时先校验，非法状态返回 `400 INVALID_PARAMETER`。
+  - 状态流转接口改为复用同一状态集合，避免列表筛选和状态更新的合法值漂移。
+- `后端代码/server/tests/supplier-returns.test.ts`
+  - 新增 `SR-FILTER-001`，覆盖列表拒绝非法状态筛选，避免返回伪空结果。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 供应商退货列表只读筛选校验和后端测试，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 供应商退货会影响库存总账、批次余额和供应商成本追溯；本批不改变创建、删除、取消、发货、收货或退款副作用，只收紧错误状态查询。
+- 已补跑供应商退货专项、供应商退货审计、库存集成、库存一致性、出库和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --config vitest.supplier-returns.config.ts -t "SR-FILTER-001"` 修复前失败：`status=ghost` 返回 200，期望 400。
+- 修复后验证:
+  - `后端代码/server npm test -- --config vitest.supplier-returns.config.ts -t "SR-FILTER-001"` 通过，1 test passed / 16 skipped。
+  - `后端代码/server npm test -- --config vitest.supplier-returns.config.ts` 通过，17 tests passed。
+  - `后端代码/server npm test -- --run tests/integration/supplier-returns-audit.test.ts tests/integration/inventory.test.ts tests/inventory-consistency.test.ts` 通过，3 files / 26 tests passed。
+  - `后端代码/server npm test -- --run tests/integration/outbound.test.ts tests/integration/cost-exceptions.test.ts` 通过，2 files / 40 tests passed；`cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr 为既有异常台账测试场景，最终通过。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+- 浏览器复核:
+  - 本批为供应商退货列表 API 参数校验修复，不新增或改变页面组件、弹窗或可见交互；核心风险是 API 是否拒绝非法状态枚举，已用接口级红绿测试覆盖，不新增截图证据。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 供应商退货列表仍可继续单独复核日期范围、供应商来源和分页参数的异常输入语义；本批只收口状态枚举，不扩大到其它筛选项。
+
+## 三百一十五、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

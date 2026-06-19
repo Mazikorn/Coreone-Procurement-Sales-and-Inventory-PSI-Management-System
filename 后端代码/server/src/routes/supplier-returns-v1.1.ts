@@ -7,6 +7,7 @@ import { consumeInventoryLocationStock, restoreInventoryLocationStock } from '..
 
 const router = Router()
 const BATCH_RESTORE_EPSILON = 0.000001
+const SUPPLIER_RETURN_STATUSES = new Set(['pending', 'shipped', 'received', 'refunded', 'cancelled'])
 
 function generateSupplierReturnNo(): string {
   return generateNo('SR')
@@ -102,6 +103,12 @@ function handleSupplierReturnStockError(res: any, err: any): boolean {
 router.get('/', (req, res) => {
   try {
     let { keyword, status, supplierId, startDate, endDate, page = '1', pageSize = '20' } = req.query
+    const normalizedStatus = String(status || '').trim()
+    if (normalizedStatus && !SUPPLIER_RETURN_STATUSES.has(normalizedStatus)) {
+      error(res, '供应商退货状态筛选无效', 'INVALID_PARAMETER', 400)
+      return
+    }
+    status = normalizedStatus
     pageSize = String(Math.min(Number(pageSize), 200))
     const db = getDatabase()
     let sql = `
@@ -351,8 +358,7 @@ router.post('/', (req, res) => {
 router.put('/:id/status', (req, res) => {
   try {
     const { status } = req.body
-    const validStatuses = ['pending', 'shipped', 'received', 'refunded', 'cancelled']
-    if (!status || !validStatuses.includes(status)) {
+    if (!status || !SUPPLIER_RETURN_STATUSES.has(status)) {
       error(res, '无效的状态', 'INVALID_PARAMETER', 400); return
     }
     const db = getDatabase()
