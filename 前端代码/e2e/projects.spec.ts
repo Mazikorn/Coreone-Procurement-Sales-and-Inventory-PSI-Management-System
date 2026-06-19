@@ -297,4 +297,63 @@ test.describe('检测服务状态影响检查', () => {
     expect(detail.status).toBe(200)
     expect(detail.data?.data?.type).toBe('he')
   })
+
+  test('PROJECT-EDIT-CODE-01. 已有出库历史的检测服务编辑时不得篡改只读服务编号', async ({ page }) => {
+    const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+    const code = `E2E-PRJ-CODE-HIS-${suffix}`
+    const created = await apiFetch(token, 'POST', '/projects', {
+      code,
+      name: `E2E历史编号项目-${suffix}`,
+      type: 'he',
+      cycle: '1天',
+      manager: 'E2E',
+      status: 'active',
+    })
+    expect(created.status, `创建历史编号检测服务失败: ${JSON.stringify(created.data)}`).toBe(201)
+    projectId = created.data?.data?.id
+    expect(projectId).toBeTruthy()
+    await createProjectOutboundHistory(suffix)
+
+    await loginAs(page, 'admin')
+    await page.goto(`${FE_BASE}/projects?keyword=${encodeURIComponent(code)}`, { waitUntil: 'domcontentloaded' })
+    const row = page.locator('tbody tr').filter({ hasText: code }).first()
+    await expect(row).toBeVisible({ timeout: 15000 })
+
+    await row.getByRole('button', { name: '编辑' }).click()
+    await expect(page.getByText('编辑检测服务')).toBeVisible({ timeout: 10000 })
+    const editDialog = page.locator('.fixed').filter({ hasText: '编辑检测服务' }).first()
+    const codeInput = editDialog.locator(`input[value="${code}"]`)
+    await expect(codeInput).toHaveAttribute('readonly', '')
+    await expect(codeInput).toBeVisible()
+    await editDialog.locator(`input[value="E2E历史编号项目-${suffix}"]`).fill(`E2E历史编号项目-${suffix}-更新`)
+
+    await page.route(`**/api/v1/projects/${projectId}`, async route => {
+      if (route.request().method() !== 'PUT') {
+        await route.continue()
+        return
+      }
+      const body = JSON.parse(route.request().postData() || '{}')
+      await route.continue({
+        headers: {
+          ...route.request().headers(),
+          'content-type': 'application/json',
+        },
+        postData: JSON.stringify({
+          ...body,
+          code: `${code}-RENAMED`,
+        }),
+      })
+    })
+
+    const updateResponse = page.waitForResponse(res =>
+      res.url().endsWith(`/api/v1/projects/${projectId}`) &&
+      res.request().method() === 'PUT'
+    )
+    await page.getByRole('button', { name: '保存' }).click()
+    await expect((await updateResponse).status()).toBe(409)
+
+    const detail = await apiFetch(token, 'GET', `/projects/${projectId}`)
+    expect(detail.status).toBe(200)
+    expect(detail.data?.data?.code).toBe(code)
+  })
 })

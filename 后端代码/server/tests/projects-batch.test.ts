@@ -532,6 +532,33 @@ describe('检测项目批量操作', () => {
     expect(row.type).toBe('he')
   })
 
+  it('PRJ-CODE-001: 检测项目已有出库或LIS记录后禁止直接更换服务编号', async () => {
+    const suffix = `code-change-history-${Date.now()}`
+    const outboundId = `out-prj-code-history-${suffix}`
+    const caseId = `case-prj-code-history-${suffix}`
+    const originalCode = `PRJ-BATCH-${suffix}-project`
+    const projectId = await createProject(app, token, `${suffix}-project`, { type: 'he' })
+
+    db.prepare("INSERT INTO outbound_records (id, outbound_no, type, project_id, total_cost, sample_count, operator, status) VALUES (?, ?, 'project', ?, 40, 4, 'admin', 'completed')")
+      .run(outboundId, `OUT-PRJ-CODE-HIS-${suffix}`, projectId)
+    db.prepare('INSERT INTO lis_cases (id, case_no, project_id, project_name, operator, operate_time, status) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(caseId, `CASE-PRJ-CODE-HIS-${suffix}`, projectId, `历史编号项目-${suffix}`, 'admin', '2026-06-18 12:30:00', 'normal')
+
+    const res = await request(app)
+      .put(`/api/v1/projects/${projectId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        code: `${originalCode}-RENAMED`,
+        name: `历史禁止换编号项目-${suffix}`,
+        type: 'he',
+      })
+
+    expect(res.status).toBe(409)
+    expect(res.body.error?.code || res.body.code).toBe('PROJECT_CODE_CHANGE_BLOCKED')
+    const row = db.prepare('SELECT code FROM projects WHERE id = ?').get(projectId) as any
+    expect(row.code).toBe(originalCode)
+  })
+
   it('PRJ-STATUS-001: 更新检测项目状态必须拒绝页面选项以外的状态', async () => {
     const suffix = `status-update-${Date.now()}`
     const projectId = await createProject(app, token, `${suffix}-project`, { status: 'active' })

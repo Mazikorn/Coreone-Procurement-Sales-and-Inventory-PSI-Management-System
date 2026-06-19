@@ -13178,7 +13178,59 @@ git diff --check
 - 本批只处理已有历史出库/LIS 后的服务类型变更，不扩展到服务名称、编码展示快照或历史报表是否使用冗余快照。
 - 后续可继续按基础资料阶段检查项目删除弹窗文案、批量状态可见影响和其他项目历史字段边界；发现计划外问题先登记到待评估清单。
 
-## 二百六十八、结论
+## 二百六十八、批次 313: 检测服务已有历史业务后不得直接更换服务编号
+
+**发现的问题**
+
+- 本轮计划要求项目/检测服务覆盖历史出库/LIS 引用保护，业务身份不能被后续编辑污染。
+- 前端编辑弹窗中“服务编号”已经是只读字段，但后端 `PUT /projects/:id` 仍接收 `code` 更新。
+- 已有出库或 LIS 记录的检测服务如果被 API 绕过改编号，历史出库和 LIS 仍指向同一项目 id，但页面列表、详情和后续成本解释会展示新的服务编号。
+- 这会造成“历史事实使用旧编号发生、当前解释显示新编号”的身份漂移，影响出库候选、BOM 标准配置、LIS 归属和 ABC 上游成本事实解释。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/projects-v1.1.ts`
+  - 更新检测服务时，如果请求提交了 `code` 且与原服务编号不同，先查询该项目的出库和 LIS 历史引用。
+  - 已有出库或 LIS 记录时返回 `409 PROJECT_CODE_CHANGE_BLOCKED`，并保留原服务编号不变。
+  - 同值编号随编辑 payload 一起提交不受影响，不扩大阻断到名称、周期、负责人、描述或状态编辑。
+- `后端代码/server/tests/projects-batch.test.ts`
+  - 新增红绿测试 `PRJ-CODE-001`：已有出库和 LIS 记录后尝试更换服务编号必须被 409 拦截，数据库原编号保持不变。
+- `前端代码/e2e/projects.spec.ts`
+  - 新增 `PROJECT-EDIT-CODE-01` 页面级验收：创建检测服务、物料、入库和普通项目出库形成历史引用；打开编辑弹窗确认服务编号输入框只读；通过 Playwright route 篡改 `PUT /projects/:id` payload 中的 `code`；确认后端返回 409 且详情读回仍为原编号。
+
+**ABC 影响评估**
+
+- 检测服务编号是出库候选、BOM 标准配置、LIS 归属、成本异常解释和 ABC 上游成本事实中的业务身份字段。
+- 本批阻止已有历史业务的服务编号被直接改写，避免旧出库/LIS 事实在后续报表或成本解释中被新的编号污染。
+- 本批只修改非 ABC 的检测服务更新接口和项目页面验收测试，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 已补跑项目、BOM 和出库后端回归，确认服务编号历史保护不破坏相邻库存/成本输入链。
+- 未触碰 `前端代码/deprecated/legacy-cost-analysis/`。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/projects-batch.test.ts -t "PRJ-CODE-001"` 修复前失败：期望 409，实际返回 200，项目编号被允许更新。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/projects-batch.test.ts -t "PRJ-CODE-001"` 通过，1 test passed / 20 skipped。
+  - `后端代码/server npm test -- --run tests/projects-batch.test.ts` 通过，21 tests passed。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/projects.spec.ts --project=chromium --grep "PROJECT-EDIT-CODE-01"` 通过，1 test passed。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/projects.spec.ts --project=chromium` 通过，5 tests passed。
+  - `后端代码/server npm test -- --run tests/projects-batch.test.ts tests/integration/outbound.test.ts tests/integration/bom.test.ts` 通过，3 files / 63 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `前端代码 npm test -- --run src/pages/master/components/ProjectImportModal.test.ts src/pages/master/components/ProjectCopyModal.test.tsx src/pages/master/hooks/useProjectsPage.test.tsx src/pages/master/components/ProjectStatusModal.test.tsx` 通过，4 files / 9 tests passed。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis ':(glob)**/*cost-analysis*'` 无输出，确认未改废弃范围。
+  - `lsof -nP -iTCP:3001 -sTCP:LISTEN` 和 `lsof -nP -iTCP:8080 -sTCP:LISTEN` 均无监听残留。
+- 浏览器复核:
+  - 使用用户已验证的 Chrome for Testing 路径完成 headless Playwright 复核；验证重点为编辑弹窗服务编号只读、篡改更新请求被 409 拦截、刷新详情后服务编号仍保持历史原值。
+
+**后续风险**
+
+- 本批只处理已有历史出库/LIS 后的服务编号变更，不扩展到服务名称展示快照或历史报表是否需要冗余保存当时名称。
+- 后续可继续按基础资料阶段检查项目删除弹窗文案、批量状态可见影响和其他项目历史字段边界；发现计划外问题先登记到待评估清单。
+
+## 二百六十九、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 
