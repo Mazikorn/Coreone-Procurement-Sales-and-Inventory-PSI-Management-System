@@ -102,20 +102,31 @@ export default function Reconciliation() {
             </button>
           ))}
         </div>
-        <div className="flex items-center gap-2">
-          <input
-            type="date"
-            value={page.startDate}
-            onChange={event => page.setStartDate(event.target.value)}
-            className="h-8 rounded-md border border-gray-300 px-2 text-sm"
-          />
-          <span className="text-sm text-gray-400">至</span>
-          <input
-            type="date"
-            value={page.endDate}
-            onChange={event => page.setEndDate(event.target.value)}
-            className="h-8 rounded-md border border-gray-300 px-2 text-sm"
-          />
+        <div className="flex flex-col items-start gap-1 sm:items-end">
+          <div className="flex items-center gap-2">
+            <input
+              type="date"
+              value={page.startDate}
+              onChange={event => page.setStartDate(event.target.value)}
+              aria-invalid={!page.dateValidation.valid}
+              aria-describedby={!page.dateValidation.valid ? 'reconciliation-date-error' : undefined}
+              className="h-8 rounded-md border border-gray-300 px-2 text-sm aria-[invalid=true]:border-red-500"
+            />
+            <span className="text-sm text-gray-400">至</span>
+            <input
+              type="date"
+              value={page.endDate}
+              onChange={event => page.setEndDate(event.target.value)}
+              aria-invalid={!page.dateValidation.valid}
+              aria-describedby={!page.dateValidation.valid ? 'reconciliation-date-error' : undefined}
+              className="h-8 rounded-md border border-gray-300 px-2 text-sm aria-[invalid=true]:border-red-500"
+            />
+          </div>
+          {!page.dateValidation.valid && (
+            <p id="reconciliation-date-error" role="alert" className="text-sm text-red-600">
+              {page.dateValidation.message}
+            </p>
+          )}
         </div>
       </div>
 

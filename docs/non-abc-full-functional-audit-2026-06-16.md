@@ -14027,7 +14027,55 @@ git diff --check
 
 - 当前修复只补齐物料汇总日期校验，不改变对账页面是否应在前端日期控件层提前阻断倒置日期；前端提示一致性可在后续页面级复核中继续检查，发现计划外问题先登记到待评估清单。
 
-## 二百八十六、结论
+## 二百八十六、批次 331: 消耗对账页面必须可见提示非法日期范围
+
+**发现的问题**
+
+- 本轮继续复核 LIS、对账、异常和成本展示链路，聚焦“前端页面不能让非法日期范围只表现为空数据或旧数据，必须给出可见解释”不变量。
+- `useReconciliationPage` 已能识别非法日期范围，并会阻断对账汇总、项目、物料、病例和日志请求，但 `Reconciliation` 页面没有展示 `dateValidation.message`。
+- 当用户在消耗对账页面输入 `2026-06-30` 至 `2026-06-01` 时，旧页面不会显示“开始日期不能晚于结束日期”，用户可能误以为当前期间没有差异或数据刷新失败。
+- 对账页面是 LIS 病例量、BOM 理论消耗、实际出库和成本异常处理的前端入口，非法筛选条件必须在页面层可解释。
+
+**已完成修复**
+
+- `前端代码/src/pages/reconciliation/hooks/useReconciliationPage.ts`
+  - 将既有 `dateValidation` 返回给页面组件，保持原有请求阻断逻辑不变。
+- `前端代码/src/pages/reconciliation/Reconciliation.tsx`
+  - 日期输入区新增 `role="alert"` 的错误提示，非法范围时显示 `dateValidation.message`。
+  - 两个日期输入在非法范围时设置 `aria-invalid=true` 并关联错误提示，便于浏览器和辅助技术识别当前筛选条件不可用。
+- `前端代码/src/pages/reconciliation/Reconciliation.test.tsx`
+  - 新增页面级红绿测试，覆盖非法日期范围必须在用户继续操作前可见提示。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 消耗对账页面的错误展示和页面测试，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 消耗对账是 ABC 输入侧异常判断的上游说明面；本批增强非法筛选条件的前端可解释性，不改变出库、BOM、成本异常或 ABC 明细计算。
+- 已补跑对账 hook/页面、后端对账、出库和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+- 已确认本批 diff 不涉及 `前端代码/deprecated/legacy-cost-analysis/`、`后端代码/server/src/routes/abc-v1.1.ts`、`后端代码/server/src/utils/abc-calculator.test.ts` 或前端 ABC 页面。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/reconciliation/Reconciliation.test.tsx -t "shows a visible date range validation error"` 修复前失败：页面找不到 `开始日期不能晚于结束日期`。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/reconciliation/Reconciliation.test.tsx -t "shows a visible date range validation error"` 通过，1 test passed / 2 skipped。
+  - `前端代码 npm test -- --run src/pages/reconciliation/hooks/useReconciliationPage.test.ts src/pages/reconciliation/Reconciliation.test.tsx` 通过，2 files / 17 tests passed。
+  - `后端代码/server npm test -- --run tests/integration/reconciliation.test.ts tests/integration/outbound.test.ts tests/integration/cost-exceptions.test.ts` 通过，3 files / 55 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。`cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr 为既有异常台账测试场景，最终通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `后端代码/server npm run build` 通过。
+- 浏览器复核:
+  - 使用用户指定 Chrome for Testing 路径 `/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing` 跑一次性 headless Playwright。
+  - 真实登录 admin，进入 `/reconciliation`，填写 `2026-06-30` 至 `2026-06-01` 后，`role=alert` 可见显示 `开始日期不能晚于结束日期`，两个日期输入均为 `aria-invalid=true`。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 当前修复只覆盖消耗对账页面日期控件层的可见提示；其它报表页面若存在同类“后端已拒绝但前端无解释”的日期筛选入口，应在后续页面级复核中按同一不变量逐项检查。
+
+## 二百八十七、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

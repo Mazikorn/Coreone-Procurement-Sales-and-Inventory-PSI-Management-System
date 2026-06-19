@@ -803,6 +803,7 @@ export function useReconciliationPage() {
     openEditCaseModal,
     resetCaseFilters,
     dateParams,
+    dateValidation,
     fetchSummary,
     fetchMaterials,
     setProjectMaterials,

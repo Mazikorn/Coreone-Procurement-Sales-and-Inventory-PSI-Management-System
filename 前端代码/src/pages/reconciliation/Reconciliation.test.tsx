@@ -6,6 +6,7 @@ import type { TabType } from './hooks/useReconciliationPage'
 
 const mockHandleExport = vi.fn()
 let activeTab: TabType = 'reconcile'
+let dateValidation = { valid: true, message: '' }
 
 vi.mock('./hooks/useReconciliationPage', () => ({
   useReconciliationPage: () => ({
@@ -67,12 +68,14 @@ vi.mock('./hooks/useReconciliationPage', () => ({
     getDiffClass: vi.fn(() => 'text-gray-600'),
     getStatusBadge: vi.fn(() => 'text-gray-600'),
     getStatusLabel: vi.fn((status: string) => status),
+    dateValidation,
   }),
 }))
 
 describe('Reconciliation export dialog', () => {
   beforeEach(() => {
     activeTab = 'material'
+    dateValidation = { valid: true, message: '' }
     mockHandleExport.mockReset()
   })
 
@@ -105,5 +108,13 @@ describe('Reconciliation export dialog', () => {
       format: 'xlsx',
       scope: 'all',
     })
+  })
+
+  it('shows a visible date range validation error before users act on stale reconciliation data', () => {
+    dateValidation = { valid: false, message: '开始日期不能晚于结束日期' }
+
+    render(<Reconciliation />)
+
+    expect(screen.getByText('开始日期不能晚于结束日期')).toBeInTheDocument()
   })
 })
