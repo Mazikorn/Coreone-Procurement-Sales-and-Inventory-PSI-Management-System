@@ -113,6 +113,37 @@ describe('供应商退货', () => {
     expect(res.body.error.code).toBe('INVALID_PARAMETER')
   })
 
+  it('SR-FILTER-004: 列表拒绝非法分页参数', async () => {
+    const invalidPage = await request(app)
+      .get('/api/v1/supplier-returns')
+      .query({ page: 'abc' })
+      .set('Authorization', `Bearer ${token}`)
+
+    const zeroPage = await request(app)
+      .get('/api/v1/supplier-returns')
+      .query({ page: '0' })
+      .set('Authorization', `Bearer ${token}`)
+
+    const invalidPageSize = await request(app)
+      .get('/api/v1/supplier-returns')
+      .query({ pageSize: 'abc' })
+      .set('Authorization', `Bearer ${token}`)
+
+    const oversizedPageSize = await request(app)
+      .get('/api/v1/supplier-returns')
+      .query({ pageSize: '201' })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(invalidPage.status).toBe(400)
+    expect(invalidPage.body.error.code).toBe('INVALID_PARAMETER')
+    expect(zeroPage.status).toBe(400)
+    expect(zeroPage.body.error.code).toBe('INVALID_PARAMETER')
+    expect(invalidPageSize.status).toBe(400)
+    expect(invalidPageSize.body.error.code).toBe('INVALID_PARAMETER')
+    expect(oversizedPageSize.status).toBe(400)
+    expect(oversizedPageSize.body.error.code).toBe('INVALID_PARAMETER')
+  })
+
   it('SR-001: 创建供应商退货时忽略请求体伪造operator，使用登录用户', async () => {
     const { materialId, supplierId } = seedSupplierReturnMaterial(db, `op-${Date.now()}`)
 

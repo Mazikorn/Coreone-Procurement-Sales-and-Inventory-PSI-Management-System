@@ -42,6 +42,15 @@ function isValidDateOnly(value: string) {
   return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value
 }
 
+function parsePositiveIntegerParam(value: unknown, max?: number) {
+  const text = String(value || '').trim()
+  if (!/^\d+$/.test(text)) return null
+  const numberValue = Number(text)
+  if (!Number.isSafeInteger(numberValue) || numberValue < 1) return null
+  if (max !== undefined && numberValue > max) return null
+  return numberValue
+}
+
 function validateSupplierReturnReferences(db: any, payload: {
   materialId: string
   supplierId?: string | null
@@ -131,7 +140,16 @@ router.get('/', (req, res) => {
     }
     startDate = normalizedStartDate
     endDate = normalizedEndDate
-    pageSize = String(Math.min(Number(pageSize), 200))
+    const normalizedPage = parsePositiveIntegerParam(page)
+    const normalizedPageSize = parsePositiveIntegerParam(pageSize, 200)
+    if (!normalizedPage) {
+      error(res, '页码必须为正整数', 'INVALID_PARAMETER', 400)
+      return
+    }
+    if (!normalizedPageSize) {
+      error(res, '每页数量必须为 1-200 的整数', 'INVALID_PARAMETER', 400)
+      return
+    }
     const db = getDatabase()
     supplierId = String(supplierId || '').trim()
     if (supplierId) {
@@ -160,8 +178,8 @@ router.get('/', (req, res) => {
       params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`)
     }
     sql += ' ORDER BY sr.created_at DESC'
-    const limit = parseInt(pageSize as string, 10)
-    const offset = (parseInt(page as string, 10) - 1) * limit
+    const limit = normalizedPageSize
+    const offset = (normalizedPage - 1) * limit
     sql += ' LIMIT ? OFFSET ?'
     params.push(limit, offset)
     const list = db.prepare(sql).all(...params) as any[]
@@ -206,7 +224,7 @@ router.get('/', (req, res) => {
       remark: r.remark,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
-    })), parseInt(page as string, 10), limit, total)
+    })), normalizedPage, limit, total)
   } catch (err: any) { error(res, err.message) }
 })
 
