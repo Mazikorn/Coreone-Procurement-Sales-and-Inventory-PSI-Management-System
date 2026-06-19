@@ -83,19 +83,31 @@ export function useCostCenterPage() {
   const { data, loading, page, pageSize, total, setPage, setPageSize, refresh } =
     usePagination<IndirectCostCenter>({ fetchFn, initialPage: 1, initialPageSize: 20, deps: [keyword, filterStatus] })
 
-  useEffect(() => {
-    indirectCostApi.getStats({
-      keyword: keyword || undefined,
-      status: filterStatus && filterStatus !== 'all' ? filterStatus : undefined,
-    })
-      .then((res: any) => setStats({
+  const loadStats = useCallback(async () => {
+    try {
+      const res: any = await indirectCostApi.getStats({
+        keyword: keyword || undefined,
+        status: filterStatus && filterStatus !== 'all' ? filterStatus : undefined,
+      })
+      setStats({
         total: Number(res?.total || 0),
         active: Number(res?.active || 0),
         totalMonthly: Number(res?.totalMonthly || 0),
         allocationCount: Number(res?.allocationCount || 0),
-      }))
-      .catch(() => setStats({ total, active: 0, totalMonthly: 0, allocationCount: 0 }))
+      })
+    } catch {
+      setStats({ total, active: 0, totalMonthly: 0, allocationCount: 0 })
+    }
   }, [keyword, filterStatus, total])
+
+  useEffect(() => {
+    loadStats()
+  }, [loadStats])
+
+  const refreshPage = async () => {
+    refresh()
+    await loadStats()
+  }
 
   const handleSearch = () => {
     setKeyword(searchInput)
@@ -184,7 +196,7 @@ export function useCostCenterPage() {
         toast.success('成本中心创建成功')
       }
       setModalType(null)
-      refresh()
+      await refreshPage()
     } catch {
       toast.error('操作失败')
     }
@@ -197,7 +209,7 @@ export function useCostCenterPage() {
       toast.success('成本中心已删除')
       setModalType(null)
       setEditingId(null)
-      refresh()
+      await refreshPage()
     } catch (err: any) {
       toast.error(getErrorMessage(err, '删除失败'))
     }
@@ -233,6 +245,7 @@ export function useCostCenterPage() {
       toast.success(`分摊录入成功，单位分摊率：¥${(res?.rate || 0).toFixed(4)}`)
       const listRes: any = await indirectCostApi.getAllocations(editingId, { page: 1, pageSize: 12 })
       setAllocations(listRes?.list || [])
+      await loadStats()
     } catch {
       toast.error('分摊录入失败')
     }

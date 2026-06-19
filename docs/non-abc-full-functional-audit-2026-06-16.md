@@ -16108,9 +16108,57 @@ git diff --check
 
 **后续风险**
 
-- 间接成本中心列表分页、状态筛选、分摊录入 API、页面停用来源提交和删除引用保护解释已阶段性保护；后续若继续成本配置层，应按独立批次复核编辑后统计刷新与统计卡片口径一致性。
+- 间接成本中心列表分页、状态筛选、分摊录入 API、页面停用来源提交和删除引用保护解释已阶段性保护；编辑后统计刷新与统计卡片口径一致性作为下一独立批次处理，避免在删除引用保护批次中扩大范围。
 
-## 三百二十九、结论
+## 三百二十九、批次 374: 间接成本编辑后必须刷新统计卡片
+
+**发现的问题**
+
+- 本轮继续复核非 ABC 间接成本配置页面，聚焦“列表刷新不等于统计刷新，写操作真实副作用必须反映到统计卡片”不变量。
+- 页面统计卡片由 `indirectCostApi.getStats` 独立拉取；编辑成本中心成功后只调用列表 `refresh()`。
+- 当编辑只改变 `monthlyAmount` 或 `status`，列表总数不变，原有 `useEffect` 不一定重新拉取统计，导致“月度费用合计”“已启用”等统计卡片可能保留旧值。
+- 分摊录入成功会改变 `allocationCount`，但此前也只刷新分摊列表，不刷新统计卡片，存在相同的真实副作用展示滞后。
+
+**已完成修复**
+
+- `前端代码/src/pages/cost-center/hooks/useCostCenterPage.ts`
+  - 将统计加载抽为 `loadStats`，继续复用当前关键字和状态筛选口径。
+  - 新增 `refreshPage`，写操作成功后同时刷新列表和统计。
+  - 成本中心创建、编辑、删除成功后调用 `refreshPage`，避免只刷新列表。
+  - 分摊录入成功后调用 `loadStats`，确保 `allocationCount` 与后端真实结果一致。
+- `前端代码/src/pages/cost-center/hooks/useCostCenterPage.test.ts`
+  - 新增红绿测试：编辑成本中心但列表总数不变时，断言成功调用更新接口后会重新调用 `getStats`，并把统计状态更新为后端返回的新口径。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 间接成本中心页面 hook 和前端测试，不修改 ABC 本体、ABC API、成本算法、库存、出库或废弃 `/cost-analysis`。
+- 间接成本分摊是全成本/成本说明上游配置；本批不改变后端计算和写入规则，只保证页面统计卡片不会展示写操作前的旧口径。
+- 已补跑间接成本后端专项、全成本和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/cost-center/hooks/useCostCenterPage.test.ts -t "refreshes stats after editing"` 修复前失败：编辑成功后 `getStats` 调用次数为 0，统计未刷新。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/cost-center/hooks/useCostCenterPage.test.ts -t "refreshes stats after editing"` 通过。
+  - `前端代码 npm test -- --run src/pages/cost-center/hooks/useCostCenterPage.test.ts` 通过，7 tests passed。
+  - `后端代码/server npm test -- --run tests/indirect-cost-guard.test.ts tests/integration/full-cost.test.ts tests/integration/cost-exceptions.test.ts` 通过，3 files / 24 tests passed；命令退出码为 0，保留既有 Vite close timeout 提示和 `cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis` 无输出，确认未改废弃范围。
+- 浏览器复核:
+  - 本批为页面 hook 写操作后的数据刷新修复，不新增组件结构、路由或接口；核心风险是 `getStats` 是否在写操作成功后真实触发，已用 hook 级红绿测试覆盖调用副作用和状态更新，不新增截图证据。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 间接成本中心配置页的分页、状态筛选、分摊录入 API、停用来源提交、删除引用保护解释和写操作后统计刷新已阶段性保护；后续可转入下一非 ABC 模块或按审计报告剩余风险继续成本相关展示页。
+
+## 三百三十、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

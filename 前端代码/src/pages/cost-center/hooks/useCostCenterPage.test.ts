@@ -170,6 +170,48 @@ describe('useCostCenterPage', () => {
     expect(toast.error).toHaveBeenCalledWith(reason)
   })
 
+  it('refreshes stats after editing a cost center without changing list total', async () => {
+    const { result } = renderHook(() => useCostCenterPage())
+    await waitFor(() => expect(indirectCostApi.getStats).toHaveBeenCalledTimes(1))
+    vi.mocked(indirectCostApi.getStats).mockClear()
+    vi.mocked(indirectCostApi.update).mockResolvedValueOnce({} as any)
+    vi.mocked(indirectCostApi.getStats).mockResolvedValueOnce({
+      total: 1,
+      active: 0,
+      totalMonthly: 2000,
+      allocationCount: 0,
+    } as any)
+
+    act(() => {
+      result.current.openEdit(mockCenter as any)
+      result.current.setForm({
+        code: mockCenter.code,
+        name: mockCenter.name,
+        costType: mockCenter.costType,
+        monthlyAmount: 2000,
+        allocationBase: mockCenter.allocationBase,
+        description: '',
+        status: 'inactive',
+      })
+    })
+
+    await act(async () => {
+      await result.current.handleSubmit()
+    })
+
+    expect(indirectCostApi.update).toHaveBeenCalledWith(mockCenter.id, expect.objectContaining({
+      monthlyAmount: 2000,
+      status: 'inactive',
+    }))
+    await waitFor(() => expect(indirectCostApi.getStats).toHaveBeenCalledTimes(1))
+    expect(result.current.stats).toMatchObject({
+      total: 1,
+      active: 0,
+      totalMonthly: 2000,
+      allocationCount: 0,
+    })
+  })
+
   it('does not send all as a real status filter', async () => {
     const { result } = renderHook(() => useCostCenterPage())
     await waitFor(() => expect(indirectCostApi.getList).toHaveBeenCalled())
