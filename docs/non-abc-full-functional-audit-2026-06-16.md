@@ -11490,7 +11490,57 @@ git diff --check
 
 - 本批只收口 REC-11 的确认弹窗和真实 CSV 下载；Excel/CSV 格式选择、后端 blob/POST 导出协议、以及“当前页/全部数据”的完整导出策略仍需后续单独设计与验收。
 
-## 二百三十四、结论
+## 二百三十四、批次 279: 对账导出格式和范围选择必须进入真实请求
+
+**发现的问题**
+
+- REC-11 要求导出弹窗可选择 Excel / CSV，并可选择“当前 Tab 全部数据 / 当前筛选结果”。
+- 上一批已补确认弹窗和真实 CSV 下载，但弹窗内格式仍固定为 CSV，范围也固定展示当前日期筛选，用户没有办法选择 Excel 或全部数据。
+- 更关键的是，导出请求参数没有 `format` 和 `scope`，即使未来补 UI，也可能变成只改显示不改真实导出行为。
+
+**已完成修复**
+
+- `前端代码/src/pages/reconciliation/Reconciliation.tsx`
+  - 导出弹窗新增“导出格式”单选项：CSV、Excel。
+  - 导出弹窗新增“导出范围”单选项：当前筛选结果、当前 Tab 全部数据。
+  - 默认保持 CSV + 当前筛选结果，避免改变既有点击路径。
+  - 点击“确认导出”时把 `{ format, scope }` 传给页面导出函数。
+- `前端代码/src/pages/reconciliation/hooks/useReconciliationPage.ts`
+  - `buildReconciliationExportParams` 支持 `format` 和 `scope`。
+  - `scope=filtered` 时保留日期和病例筛选；`scope=all` 时只带当前 Tab 类型、格式和范围，不夹带当前日期/病例筛选。
+  - `format=xlsx` 时使用前端已有 `xlsx` 依赖把后端返回的 CSV 内容转换为真实 `.xlsx` 下载；CSV 路径继续使用 `downloadTextFile`。
+- `前端代码/src/pages/reconciliation/Reconciliation.test.tsx`
+  - 新增页面级测试，验证选择 Excel + 当前 Tab 全部数据后，确认导出会把 `{ format: 'xlsx', scope: 'all' }` 传入导出函数。
+- `前端代码/src/pages/reconciliation/hooks/useReconciliationPage.test.ts`
+  - 新增参数构造测试，验证“全部数据”导出不会夹带当前筛选。
+- `前端代码/e2e/reconciliation.spec.ts`
+  - 新增 `RECON-EXPORT-02` 浏览器验证，确认 Excel + 全部数据会进入真实导出请求，并捕获 `.xlsx` 下载。
+
+**ABC 影响评估**
+
+- 本批不修改 ABC 本体、成本公式、成本池、收费映射、成本异常判定或废弃 `/cost-analysis` 代码。
+- 变更仅影响非 ABC 对账页面导出选项、请求参数和前端文件生成，不新增或改变库存、BOM、项目、出库、成本异常或 ABC 明细写入。
+- 精确 ABC 输入侧回归通过，说明该页面导出增强没有破坏病例出库后的成本异常/ABC 明细重排输入链。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/reconciliation/hooks/useReconciliationPage.test.ts src/pages/reconciliation/Reconciliation.test.tsx` 修复前失败：
+    - 弹窗内找不到 `Excel` 标签。
+    - `buildReconciliationExportParams` 返回值没有 `format/scope`，且仍夹带当前日期和病例筛选。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/reconciliation/hooks/useReconciliationPage.test.ts src/pages/reconciliation/Reconciliation.test.tsx` 通过，2 files / 11 tests passed。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npm run test:e2e -- reconciliation.spec.ts -g "RECON-EXPORT-0"` 通过，2 tests passed，覆盖默认 CSV 下载和 Excel + 全部数据下载。
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/cost-exceptions.test.ts -t "同一病例多个BOM|取消非最新病例"` 通过，2 tests passed / 9 skipped。
+- 浏览器复核:
+  - 使用用户已验证的 Chrome for Testing 路径完成 headless Playwright 复核；验证重点为弹窗选项、请求参数、是否去掉日期筛选、`.csv/.xlsx` 真实下载。
+
+**后续风险**
+
+- 当前仍沿用既有 `GET /reconciliation/export` + JSON 内容返回协议，Excel 文件由前端把 CSV 内容转换生成；REC-11 文档里的 `POST /reconciliation/export` + Blob 文件流协议尚未完成，需要作为后续独立接口兼容批次评估。
+
+## 二百三十五、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

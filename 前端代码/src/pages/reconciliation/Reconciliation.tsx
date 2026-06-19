@@ -6,7 +6,13 @@ import { FixBomModal } from './components/FixBomModal'
 import { ImportLisModal } from './components/ImportLisModal'
 import { LogListTab } from './components/LogListTab'
 import { ReconcileProjectTab } from './components/ReconcileProjectTab'
-import { useReconciliationPage, type TabType, type PeriodType } from './hooks/useReconciliationPage'
+import {
+  useReconciliationPage,
+  type ReconciliationExportFormat,
+  type ReconciliationExportScope,
+  type TabType,
+  type PeriodType,
+} from './hooks/useReconciliationPage'
 
 const tabs: Array<{ key: TabType; label: string }> = [
   { key: 'reconcile', label: '按项目对账' },
@@ -25,11 +31,13 @@ const periods: Array<{ key: PeriodType; label: string }> = [
 export default function Reconciliation() {
   const page = useReconciliationPage()
   const [exportModalOpen, setExportModalOpen] = React.useState(false)
+  const [exportFormat, setExportFormat] = React.useState<ReconciliationExportFormat>('csv')
+  const [exportScope, setExportScope] = React.useState<ReconciliationExportScope>('filtered')
 
   const activeTabLabel = tabs.find(tab => tab.key === page.activeTab)?.label || '当前页面'
   const openExportModal = () => setExportModalOpen(true)
   const confirmExport = async () => {
-    await page.handleExport()
+    await page.handleExport({ format: exportFormat, scope: exportScope })
     setExportModalOpen(false)
   }
 
@@ -244,7 +252,7 @@ export default function Reconciliation() {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h2 className="text-lg font-semibold text-gray-900">导出对账报表</h2>
-                <p className="mt-1 text-sm text-gray-500">确认导出当前筛选结果。</p>
+                <p className="mt-1 text-sm text-gray-500">确认导出内容、范围和格式。</p>
               </div>
               <button
                 type="button"
@@ -263,13 +271,69 @@ export default function Reconciliation() {
               </div>
               <div className="flex items-center justify-between gap-4">
                 <dt className="text-gray-500">范围</dt>
-                <dd className="font-medium text-gray-900">{page.startDate} 至 {page.endDate}</dd>
+                <dd className="font-medium text-gray-900">
+                  {exportScope === 'filtered' ? `${page.startDate} 至 ${page.endDate}` : '当前 Tab 全部数据'}
+                </dd>
               </div>
               <div className="flex items-center justify-between gap-4">
                 <dt className="text-gray-500">格式</dt>
-                <dd className="font-medium text-gray-900">CSV</dd>
+                <dd className="font-medium text-gray-900">{exportFormat === 'csv' ? 'CSV' : 'Excel'}</dd>
               </div>
             </dl>
+
+            <div className="mt-5 space-y-4 text-sm">
+              <fieldset>
+                <legend className="mb-2 font-medium text-gray-700">导出格式</legend>
+                <div className="flex gap-3">
+                  <label className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-gray-700">
+                    <input
+                      type="radio"
+                      name="reconciliation-export-format"
+                      value="csv"
+                      checked={exportFormat === 'csv'}
+                      onChange={() => setExportFormat('csv')}
+                    />
+                    CSV
+                  </label>
+                  <label className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-gray-700">
+                    <input
+                      type="radio"
+                      name="reconciliation-export-format"
+                      value="xlsx"
+                      checked={exportFormat === 'xlsx'}
+                      onChange={() => setExportFormat('xlsx')}
+                    />
+                    Excel
+                  </label>
+                </div>
+              </fieldset>
+
+              <fieldset>
+                <legend className="mb-2 font-medium text-gray-700">导出范围</legend>
+                <div className="grid gap-2">
+                  <label className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-gray-700">
+                    <input
+                      type="radio"
+                      name="reconciliation-export-scope"
+                      value="filtered"
+                      checked={exportScope === 'filtered'}
+                      onChange={() => setExportScope('filtered')}
+                    />
+                    当前筛选结果
+                  </label>
+                  <label className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-gray-700">
+                    <input
+                      type="radio"
+                      name="reconciliation-export-scope"
+                      value="all"
+                      checked={exportScope === 'all'}
+                      onChange={() => setExportScope('all')}
+                    />
+                    当前 Tab 全部数据
+                  </label>
+                </div>
+              </fieldset>
+            </div>
 
             <div className="mt-6 flex justify-end gap-2">
               <button

@@ -81,6 +81,13 @@ export interface ReconcileLog {
 
 export type TabType = 'reconcile' | 'material' | 'case' | 'log'
 export type PeriodType = 'week' | 'month' | 'quarter' | 'year'
+export type ReconciliationExportFormat = 'csv' | 'xlsx'
+export type ReconciliationExportScope = 'filtered' | 'all'
+
+export interface ReconciliationExportOptions {
+  format: ReconciliationExportFormat
+  scope: ReconciliationExportScope
+}
 
 export interface LisImportItem {
   caseNo: string
@@ -255,12 +262,16 @@ export function buildReconciliationExportParams({
   caseSearch,
   caseFilterProject,
   caseFilterStatus,
+  format,
+  scope,
 }: {
   activeTab: TabType
   dateParams: { startDate: string; endDate: string }
   caseSearch?: string
   caseFilterProject?: string
   caseFilterStatus?: string
+  format?: ReconciliationExportFormat
+  scope?: ReconciliationExportScope
 }) {
   const typeMap: Record<TabType, string> = {
     reconcile: 'project',
@@ -269,8 +280,19 @@ export function buildReconciliationExportParams({
     log: 'log',
   }
 
-  return {
+  const exportScope = scope || 'filtered'
+  const params = {
     type: typeMap[activeTab],
+    ...(format ? { format } : {}),
+    ...(scope ? { scope } : {}),
+  }
+
+  if (exportScope === 'all') {
+    return params
+  }
+
+  return {
+    ...params,
     ...dateParams,
     ...(activeTab === 'case' && caseSearch ? { search: caseSearch } : {}),
     ...(activeTab === 'case' && caseFilterProject ? { projectId: caseFilterProject } : {}),
@@ -504,8 +526,8 @@ export function useReconciliationPage() {
     }
   }
 
-  const handleExport = async () => {
-    if (!dateValidation.valid) {
+  const handleExport = async (options: ReconciliationExportOptions = { format: 'csv', scope: 'filtered' }) => {
+    if (options.scope === 'filtered' && !dateValidation.valid) {
       toast.error(dateValidation.message)
       return
     }
@@ -517,8 +539,17 @@ export function useReconciliationPage() {
         caseSearch,
         caseFilterProject,
         caseFilterStatus,
+        format: options.format,
+        scope: options.scope,
       }))
-      downloadTextFile(res?.filename || `reconciliation-${activeTab}.csv`, res?.content || '', res?.contentType || 'text/csv;charset=utf-8')
+      if (options.format === 'xlsx') {
+        const XLSX = await import('xlsx')
+        const workbook = XLSX.read(res?.content || '', { type: 'string' })
+        const filename = (res?.filename || `reconciliation-${activeTab}.csv`).replace(/\.csv$/i, '.xlsx')
+        XLSX.writeFile(workbook, filename)
+      } else {
+        downloadTextFile(res?.filename || `reconciliation-${activeTab}.csv`, res?.content || '', res?.contentType || 'text/csv;charset=utf-8')
+      }
       toast.success(`已导出 ${res?.rowCount || 0} 行对账数据`)
     } catch (e: any) {
       toast.error(e?.message || '导出失败')

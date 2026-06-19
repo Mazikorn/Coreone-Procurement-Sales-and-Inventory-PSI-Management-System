@@ -88,4 +88,20 @@ describe('Reconciliation export dialog', () => {
     fireEvent.click(screen.getByRole('button', { name: '确认导出' }))
     expect(mockHandleExport).toHaveBeenCalledTimes(1)
   })
+
+  it('passes selected export format and scope to the download handler', () => {
+    render(<Reconciliation />)
+
+    fireEvent.click(screen.getByRole('button', { name: '导出报表' }))
+    const dialog = screen.getByRole('dialog', { name: '导出对账报表' })
+
+    fireEvent.click(within(dialog).getByLabelText('Excel'))
+    fireEvent.click(within(dialog).getByLabelText('当前 Tab 全部数据'))
+    fireEvent.click(screen.getByRole('button', { name: '确认导出' }))
+
+    expect(mockHandleExport).toHaveBeenCalledWith({
+      format: 'xlsx',
+      scope: 'all',
+    })
+  })
 })

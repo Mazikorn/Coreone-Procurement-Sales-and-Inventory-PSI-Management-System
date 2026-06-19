@@ -279,6 +279,30 @@ test.describe('消耗对账 -> 时间段筛选', () => {
     expect(download.suggestedFilename()).toMatch(/^reconciliation-project-.*\.csv$/)
     await expect(dialog).toBeHidden()
   })
+
+  test('RECON-EXPORT-02. 导出选择Excel和全部数据必须进入真实请求', async ({ page }) => {
+    await loginAs(page, 'admin')
+    await page.goto(`${FE_BASE}/reconciliation`)
+    await page.getByRole('button', { name: '导出报表' }).click()
+
+    const dialog = page.getByRole('dialog', { name: '导出对账报表' })
+    await dialog.getByLabel('Excel').check()
+    await dialog.getByLabel('当前 Tab 全部数据').check()
+    await expect(dialog.getByText('当前 Tab 全部数据').first()).toBeVisible()
+
+    const [request, download] = await Promise.all([
+      page.waitForRequest(req => req.url().includes('/api/v1/reconciliation/export') && req.url().includes('format=xlsx')),
+      page.waitForEvent('download'),
+      dialog.getByRole('button', { name: '确认导出' }).click(),
+    ])
+    const url = new URL(request.url())
+    expect(url.searchParams.get('format')).toBe('xlsx')
+    expect(url.searchParams.get('scope')).toBe('all')
+    expect(url.searchParams.has('startDate')).toBe(false)
+    expect(url.searchParams.has('endDate')).toBe(false)
+    expect(download.suggestedFilename()).toMatch(/^reconciliation-project-.*\.xlsx$/)
+    await expect(dialog).toBeHidden()
+  })
 })
 
 // ── 4. 按项目对账 ──

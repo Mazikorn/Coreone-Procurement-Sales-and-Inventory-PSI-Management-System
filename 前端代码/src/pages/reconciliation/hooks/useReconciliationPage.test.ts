@@ -64,6 +64,22 @@ describe('parseLisImportData', () => {
     })
   })
 
+  it('includes selected export format and omits filters for current tab all-data exports', () => {
+    expect(buildReconciliationExportParams({
+      activeTab: 'case',
+      dateParams: { startDate: '2026-06-01', endDate: '2026-06-30' },
+      caseSearch: 'CASE-001',
+      caseFilterProject: 'project-1',
+      caseFilterStatus: 'modified',
+      format: 'xlsx',
+      scope: 'all',
+    })).toEqual({
+      type: 'case',
+      format: 'xlsx',
+      scope: 'all',
+    })
+  })
+
   it('rejects impossible and reversed reconciliation date ranges before requests', () => {
     expect(validateReconciliationDateRange({ startDate: '2026-02-30', endDate: '2026-03-01' })).toEqual({
       valid: false,
