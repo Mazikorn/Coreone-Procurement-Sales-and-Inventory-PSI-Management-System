@@ -13276,7 +13276,53 @@ git diff --check
 - 本批只处理采购订单入库缺省单价继承，不扩展到采购订单编辑后是否需要保留历史价格快照。
 - 后续继续按库存主链路检查采购订单取消/删除、入库恢复、库存批次/库位一致性和来源候选有效性；发现计划外问题先登记到待评估清单。
 
-## 二百七十、结论
+## 二百七十、批次 315: 库存一致性巡检必须暴露总账有库存但库位明细缺失
+
+**发现的问题**
+
+- 本轮继续复核库存主链路中的“库存总量与批次/库位一致”不变量。
+- `GET /inventory/consistency-check` 已能发现库存总账与库位库存汇总不一致，但原查询只在 `location_stock > 0` 时才做差异判断。
+- 因此当库存总账为正、批次余额也正确，但 `inventory_locations` 明细缺失或汇总为 0 时，巡检不会返回 `INVENTORY_LOCATION_MISMATCH`。
+- 这会让“总账有库存但库位不可追踪”的历史脏状态逃过诊断，影响后续按库位出库、调拨、报废、盘点和 ABC 上游库存事实解释。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/inventory-v1.1.ts`
+  - 调整库存一致性巡检的库位差异判断。
+  - 不再要求库位库存汇总大于 0；只要 `inventory.stock` 与 `COALESCE(location_stock, 0)` 存在差异，即返回 `INVENTORY_LOCATION_MISMATCH`。
+  - 干净库 `stock=0/location_stock=0` 不会误报。
+- `后端代码/server/tests/inventory-consistency.test.ts`
+  - 新增红绿测试 `INV-CONSISTENCY-006`：库存总账 5、启用批次剩余 5、但库位明细缺失时，巡检必须返回 `INVENTORY_LOCATION_MISMATCH`，并给出 `inventoryStock=5/locationStock=0`。
+- `前端代码/e2e/inventory.spec.ts`
+  - 新增 `INV-CONSISTENCY-UI-01`：在库存页点击“数据诊断”，验证弹窗能展示“库存总账与库位不一致”、实体编码和 `locationStock: 0`。
+
+**ABC 影响评估**
+
+- 库位库存明细是出库、调拨、报废、盘点和库存异常解释的上游事实，也会影响 ABC 成本链路中对库存来源和异常输入的可信判断。
+- 本批只增强非 ABC 的库存一致性巡检和库存页诊断展示验收，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 已补跑库存一致性、库存、入库、出库、BOM 后端回归，并跑库存诊断前端单测和 Playwright 弹窗验证。
+- 未触碰 `前端代码/deprecated/legacy-cost-analysis/`。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/inventory-consistency.test.ts -t "INV-CONSISTENCY-006"` 修复前失败：期望 `INVENTORY_LOCATION_MISMATCH`，实际未返回该问题。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/inventory-consistency.test.ts -t "INV-CONSISTENCY-006"` 通过，1 test passed / 6 skipped。
+  - `后端代码/server npm test -- --run tests/inventory-consistency.test.ts` 通过，7 tests passed。
+  - `后端代码/server npm test -- --run tests/integration/inventory.test.ts tests/inbound-batch.test.ts tests/integration/outbound.test.ts tests/integration/bom.test.ts` 通过，4 files / 72 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `前端代码 npm test -- --run src/pages/inventory/components/InventoryConsistencyModal.test.tsx src/pages/inventory/hooks/useInventoryPage.test.ts` 通过，2 files / 9 tests passed。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npm run test:e2e:ci -- e2e/inventory.spec.ts -g "INV-CONSISTENCY-UI-01"` 通过，1 chromium test passed。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+
+**后续风险**
+
+- 本批只增强库存一致性巡检对库位明细缺失的暴露，不自动修复历史数据。
+- 如果生产或开发库已经存在总账、批次和库位明细三者不一致，需要后续在诊断结果基础上设计治理流程，不在本批直接扩大范围。
+- 后续继续按库存主链路检查库存批次/库位页面可见性、出库和调拨的候选来源有效性；发现计划外问题先登记到待评估清单。
+
+## 二百七十一、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

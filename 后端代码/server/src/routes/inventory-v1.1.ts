@@ -302,8 +302,7 @@ function buildInventoryConsistencyIssues(db: any): ConsistencyIssue[] {
     JOIN materials m ON m.id = i.material_id AND m.is_deleted = 0
     LEFT JOIN inventory_locations il ON il.material_id = i.material_id
     GROUP BY i.material_id, m.code, m.name, i.stock
-    HAVING COALESCE(location_stock, 0) > 0
-      AND ABS(COALESCE(i.stock, 0) - location_stock) > 0.0001
+    HAVING ABS(COALESCE(i.stock, 0) - COALESCE(location_stock, 0)) > 0.0001
   `).all() as any[]
   locationMismatches.forEach(row => addIssue({
     code: 'INVENTORY_LOCATION_MISMATCH',

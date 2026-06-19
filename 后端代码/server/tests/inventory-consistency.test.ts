@@ -274,4 +274,42 @@ describe('库存与主数据一致性扫描', () => {
       },
     })
   })
+
+  it('INV-CONSISTENCY-006: 扫描库存总账有库存但库位明细缺失的历史脏状态', async () => {
+    const suffix = `${Date.now()}`
+    const categoryId = `cat-consistency-location-missing-${suffix}`
+    const materialId = `mat-consistency-location-missing-${suffix}`
+    const locationId = `loc-consistency-location-missing-${suffix}`
+
+    db.prepare('INSERT INTO material_categories (id, code, name, level) VALUES (?, ?, ?, 1)')
+      .run(categoryId, `CAT-CONS-LOC-MISS-${suffix}`, '库位明细缺失扫描分类')
+    db.prepare('INSERT INTO locations (id, code, name, type, zone, status) VALUES (?, ?, ?, ?, ?, 1)')
+      .run(locationId, `LOC-CONS-MISS-${suffix}`, '库位明细缺失库位', 'shelf', 'A区')
+    db.prepare('INSERT INTO materials (id, code, name, unit, category_id, status, location_id) VALUES (?, ?, ?, ?, ?, 1, ?)')
+      .run(materialId, `MAT-CONS-LOC-MISS-${suffix}`, '总账有库存但库位缺失物料', '瓶', categoryId, locationId)
+    db.prepare('INSERT INTO inventory (id, material_id, stock, locked_stock, location_id) VALUES (?, ?, ?, 0, ?)')
+      .run(`inv-cons-loc-miss-${suffix}`, materialId, 5, locationId)
+    db.prepare(`
+      INSERT INTO batches (id, material_id, batch_no, quantity, remaining, expiry_date, inbound_id, inbound_price, status)
+      VALUES (?, ?, ?, 5, 5, ?, ?, 10, 1)
+    `).run(`batch-cons-loc-miss-${suffix}`, materialId, `BATCH-CONS-LOC-MISS-${suffix}`, '2028-12-31', `inbound-cons-loc-miss-${suffix}`)
+
+    const res = await request(app)
+      .get('/api/v1/inventory/consistency-check')
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(200)
+    const issue = res.body.data.issues.find((item: any) =>
+      item.code === 'INVENTORY_LOCATION_MISMATCH' && item.entityId === materialId
+    )
+    expect(issue).toMatchObject({
+      severity: 'critical',
+      entityType: 'material',
+      entityId: materialId,
+      impacts: {
+        inventoryStock: 5,
+        locationStock: 0,
+      },
+    })
+  })
 })

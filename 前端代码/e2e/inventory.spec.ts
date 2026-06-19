@@ -87,6 +87,43 @@ async function expandMaterialGroup(page: Page, materialName: string) {
 }
 
 test.describe('库存列表 -> 入库批次跨页面可见性', () => {
+  test('INV-CONSISTENCY-UI-01. 数据诊断弹窗展示库存总账与库位不一致', async ({ page }) => {
+    await loginAs(page, 'admin')
+    await page.route('**/api/v1/inventory/consistency-check', async route => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          data: {
+            summary: { issueCount: 1, criticalCount: 1, warningCount: 0 },
+            issues: [{
+              code: 'INVENTORY_LOCATION_MISMATCH',
+              severity: 'critical',
+              entityType: 'material',
+              entityId: 'mat-location-missing',
+              entityCode: 'MAT-LOC-MISS',
+              entityName: '总账有库存但库位缺失物料',
+              message: '库存总账与库位库存汇总不一致',
+              impacts: { inventoryStock: 5, locationStock: 0 },
+            }],
+          },
+        }),
+      })
+    })
+
+    await page.goto(`${FE_BASE}/inventory`, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByRole('heading', { name: '库存列表' })).toBeVisible({ timeout: 15000 })
+    await page.getByRole('button', { name: '数据诊断' }).click()
+
+    const dialog = page.getByRole('dialog', { name: '库存数据诊断' })
+    await expect(dialog).toBeVisible({ timeout: 10000 })
+    await expect(dialog).toContainText('发现 1 个数据问题')
+    await expect(dialog).toContainText('库存总账与库位不一致')
+    await expect(dialog).toContainText('MAT-LOC-MISS')
+    await expect(dialog).toContainText('locationStock: 0')
+  })
+
   test('INV-VIS-01. 入库后库存列表按物料直达并显示对应批次和数量', async ({ page }) => {
     const token = await apiLogin()
     const suffix = Date.now()
