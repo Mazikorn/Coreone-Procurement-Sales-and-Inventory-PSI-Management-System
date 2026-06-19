@@ -86,6 +86,12 @@ function validateSupplierReturnReferences(db: any, payload: {
   return { ok: true }
 }
 
+function handleSupplierReturnStockError(res: any, err: any): boolean {
+  if (err?.message !== 'LOCATION_STOCK_INSUFFICIENT') return false
+  error(res, '库位库存不足，无法创建供应商退货', 'STOCK_INSUFFICIENT', 422)
+  return true
+}
+
 // 列表查询
 router.get('/', (req, res) => {
   try {
@@ -328,7 +334,10 @@ router.post('/', (req, res) => {
       db.exec('ROLLBACK')
       throw e
     }
-  } catch (err: any) { error(res, err.message) }
+  } catch (err: any) {
+    if (handleSupplierReturnStockError(res, err)) return
+    error(res, err.message)
+  }
 })
 
 // 更新状态

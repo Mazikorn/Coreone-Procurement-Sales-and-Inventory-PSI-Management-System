@@ -418,6 +418,51 @@ describe('供应商退货', () => {
     expect(Number(cancelLogs.count)).toBe(0)
   })
 
+  it('SR-012: 总库存和批次足够但库位库存不足时拒绝供应商退货并回滚全部副作用', async () => {
+    const suffix = `location-insufficient-${Date.now()}`
+    const { materialId, supplierId, batchId, locationId } = seedSupplierReturnMaterialWithBatch(db, suffix)
+    db.prepare(`
+      INSERT INTO inventory_locations (id, material_id, location_id, stock, locked_stock)
+      VALUES (?, ?, ?, 1, 0)
+    `).run(`invloc-sr-${suffix}`, materialId, locationId)
+
+    const res = await request(app)
+      .post('/api/v1/supplier-returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId,
+        supplierId,
+        batchId,
+        quantity: 3,
+        reason: '库位库存不足供应商退货',
+      })
+
+    expect(res.status).toBe(422)
+    expect(res.body.error.code).toBe('STOCK_INSUFFICIENT')
+    expect(res.body.error.message).toContain('库位库存不足')
+
+    const inventory = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+    const batch = db.prepare('SELECT remaining FROM batches WHERE id = ?').get(batchId) as any
+    const locationStock = db.prepare(`
+      SELECT stock
+      FROM inventory_locations
+      WHERE material_id = ? AND location_id = ?
+    `).get(materialId, locationId) as any
+    const records = db.prepare('SELECT COUNT(*) as count FROM supplier_returns WHERE material_id = ?')
+      .get(materialId) as any
+    const logs = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM stock_logs
+      WHERE material_id = ? AND related_type = 'supplier_return'
+    `).get(materialId) as any
+
+    expect(Number(inventory.stock)).toBe(10)
+    expect(Number(batch.remaining)).toBe(10)
+    expect(Number(locationStock.stock)).toBe(1)
+    expect(Number(records.count)).toBe(0)
+    expect(Number(logs.count)).toBe(0)
+  })
+
   it('SR-008: 默认仓管和采购角色可访问并创建供应商退货', async () => {
     const warehouseToken = await loginRole(app, 'wangkq')
     const procurementToken = await loginRole(app, 'zhaohp')
