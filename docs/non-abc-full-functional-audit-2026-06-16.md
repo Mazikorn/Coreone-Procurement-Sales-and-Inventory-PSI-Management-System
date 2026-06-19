@@ -11371,7 +11371,44 @@ git diff --check
 
 - 当前物料汇总对账仍依赖当前 BOM 用量和当前物料名称/规格/单位/价格解释历史 LIS/出库；彻底历史快照化需要单独设计 LIS、BOM 和出库对账快照字段及兼容迁移。
 
-## 二百三十一、结论
+## 二百三十一、批次 276: 对账汇总关联出库数不得统计已取消出库
+
+**发现的问题**
+
+- `/api/v1/reconciliation/summary` 的 `linkedOutbounds` 只过滤 `project_id` 和 `is_deleted = 0`，没有过滤 `status = 'completed'`。
+- 同一个日期范围内，已取消但仍保留项目 ID 的出库会被计入“关联出库数”；而 `unlinkedOutbounds` 已经只统计 completed，两个顶部统计卡口径不一致。
+- 这会让对账页 summary 高估已经进入实际消耗对账的关联出库数量，影响用户判断 LIS 与出库关联程度。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/reconciliation-v1.1.ts`
+  - `linkedOutbounds` 增加 `o.status = 'completed'` 条件，与未关联出库、项目/物料对账实际消耗统计保持一致。
+- `后端代码/server/tests/integration/reconciliation.test.ts`
+  - 新增“对账汇总的关联出库数不应统计已取消出库”，同一独立月份内造 1 条关联 completed、1 条关联 cancelled、1 条未关联 completed、1 条未关联 cancelled，summary 必须返回 linked=1、unlinked=1。
+
+**ABC 影响评估**
+
+- 本批不修改 ABC 本体、成本公式、成本池、收费映射、成本异常判定或废弃 `/cost-analysis` 代码。
+- 变更只影响非 ABC 对账 summary 的读取统计口径，不写库存、BOM、项目、出库、成本异常或 ABC 明细。
+- 对账完整集成测试、出库流程回归和精确 ABC 输入回归通过，说明 summary 口径修复没有破坏真实出库链路或 ABC 病例收费重排。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/reconciliation.test.ts -t "对账汇总的关联出库数不应统计已取消出库"` 修复前失败：`linkedOutbounds` 返回 2，期望 1。
+- 修复后验证:
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/reconciliation.test.ts -t "对账汇总的关联出库数不应统计已取消出库"` 通过，1 file / 1 test passed / 10 skipped。
+  - 首次扩大回归时发现该用例使用 2026-06 日期范围会被同文件既有 fixture 污染；已改为独立未来月份 2033-04 后重跑通过。
+  - `后端代码/server npm test -- --config vitest.native.config.ts --run tests/integration/reconciliation.test.ts tests/integration/outbound-flow.test.ts tests/integration/cost-exceptions.test.ts -t "成本对账异常闭环|完整流程|同一病例多个BOM|取消非最新病例"` 通过，3 files / 14 tests passed / 9 skipped。
+  - `后端代码/server npm run build` 通过。
+- 浏览器复核:
+  - 本批为后端对账 summary 读取口径修复，核心风险在 API 统计是否排除取消出库；已用接口级测试覆盖，不新增截图证据。
+
+**后续风险**
+
+- 对账 summary 仍是顶部聚合指标，不证明各 Tab 页面交互、导出文件下载动作和筛选 UI 已完成浏览器级验收；后续页面批次仍需用 Chrome for Testing 检查真实点击、筛选和下载副作用。
+
+## 二百三十二、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

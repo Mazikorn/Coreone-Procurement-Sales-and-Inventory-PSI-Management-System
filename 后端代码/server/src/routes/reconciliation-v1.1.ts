@@ -328,7 +328,7 @@ router.get('/summary', (req, res) => {
     const linkedOutbounds = db.prepare(`
       SELECT COUNT(DISTINCT o.id) as count
       FROM outbound_records o
-      WHERE o.project_id IS NOT NULL AND o.project_id != '' AND o.is_deleted = 0
+      WHERE o.project_id IS NOT NULL AND o.project_id != '' AND o.status = 'completed' AND o.is_deleted = 0
       ${outDateFilter}
     `).get(...outDateParams) as any
 

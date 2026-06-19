@@ -331,6 +331,37 @@ describe('成本对账异常闭环', () => {
     expect(auditRes.status).toBe(400)
   })
 
+  it('对账汇总的关联出库数不应统计已取消出库', async () => {
+    const suffix = Date.now()
+    const projectId = `proj-summary-status-${suffix}`
+
+    db.prepare(`
+      INSERT INTO projects (id, code, name, type, status)
+      VALUES (?, ?, ?, 'ihc', 1)
+    `).run(projectId, `P-SUMMARY-STATUS-${suffix}`, '汇总状态项目')
+    db.prepare(`
+      INSERT INTO outbound_records (id, outbound_no, type, project_id, total_cost, operator, status, created_at)
+      VALUES
+        (?, ?, 'project', ?, 100, 'admin', 'completed', '2033-04-18 09:00:00'),
+        (?, ?, 'project', ?, 120, 'admin', 'cancelled', '2033-04-18 10:00:00'),
+        (?, ?, 'direct', NULL, 80, 'admin', 'completed', '2033-04-18 11:00:00'),
+        (?, ?, 'direct', NULL, 60, 'admin', 'cancelled', '2033-04-18 12:00:00')
+    `).run(
+      `out-summary-linked-ok-${suffix}`, `OUT-SUMMARY-LINKED-OK-${suffix}`, projectId,
+      `out-summary-linked-cancel-${suffix}`, `OUT-SUMMARY-LINKED-CANCEL-${suffix}`, projectId,
+      `out-summary-unlinked-ok-${suffix}`, `OUT-SUMMARY-UNLINKED-OK-${suffix}`,
+      `out-summary-unlinked-cancel-${suffix}`, `OUT-SUMMARY-UNLINKED-CANCEL-${suffix}`,
+    )
+
+    const res = await request(app)
+      .get('/api/v1/reconciliation/summary?startDate=2033-04-01&endDate=2033-04-30')
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(200)
+    expect(res.body.data.linkedOutbounds).toBe(1)
+    expect(res.body.data.unlinkedOutbounds).toBe(1)
+  })
+
   it('BOM 修正日志必须真实更新用量和单位，未命中 BOM 物料时拒绝写日志', async () => {
     const suffix = Date.now()
     const materialId = `mat-fix-${suffix}`
