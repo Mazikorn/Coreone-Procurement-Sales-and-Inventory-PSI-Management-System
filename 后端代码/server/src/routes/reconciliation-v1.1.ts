@@ -120,6 +120,23 @@ function validateCaseStatus(value?: string) {
   return !status || CASE_STATUSES.has(status)
 }
 
+function hasText(value: unknown) {
+  return typeof value === 'string' && value.trim().length > 0
+}
+
+function validateBomFixLogPayload(payload: any) {
+  if (payload?.type !== 'bom_fix') return '日志类型无效'
+  if (!hasText(payload.targetId) || !hasText(payload.targetName)) return '修正对象不能为空'
+  if (payload.field !== 'usage_per_sample,unit') return '修正字段无效'
+  if (!hasText(payload.oldValue) || !hasText(payload.newValue)) return '修正前后值不能为空'
+  if (!hasText(payload.reason)) return '修正原因不能为空'
+  if (!hasText(payload.projectId) || !hasText(payload.materialId)) return '项目和物料不能为空'
+  if (!hasText(payload.newUnit)) return '修正单位不能为空'
+  const usage = Number(payload.newUsage)
+  if (!Number.isFinite(usage) || usage <= 0) return 'newUsage 必须大于0'
+  return ''
+}
+
 function buildExportPayload(params: Record<string, string>) {
   const db = getDatabase()
   const type = normalizeExportType(params.type || params.tab)
@@ -1177,16 +1194,16 @@ router.post('/logs', (req, res) => {
   try {
     const db = getDatabase()
     const { type, targetId, targetName, field, oldValue, newValue, reason, projectId, materialId, newUsage, newUnit } = req.body
+    const validationError = validateBomFixLogPayload(req.body || {})
+    if (validationError) {
+      error(res, validationError, 'INVALID_PARAMETER', 400); return
+    }
 
     db.exec('BEGIN IMMEDIATE')
     try {
       // 如果提供了projectId、materialId和newUsage，先更新bom_items
-      if (projectId && materialId && newUsage !== undefined) {
+      {
         const usage = Number(newUsage)
-        if (!Number.isFinite(usage) || usage <= 0) {
-          db.exec('ROLLBACK')
-          error(res, 'newUsage 必须大于0', 'INVALID_PARAMETER', 400); return
-        }
         const project = db.prepare('SELECT bom_id FROM projects WHERE id = ? AND is_deleted = 0').get(projectId) as any
         if (!project?.bom_id) {
           db.exec('ROLLBACK')
@@ -1207,7 +1224,7 @@ router.post('/logs', (req, res) => {
       db.prepare(`
         INSERT INTO reconciliation_logs (id, type, target_id, target_name, field, old_value, new_value, reason, operator, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-      `).run(id, type || 'bom_fix', targetId, targetName, field, oldValue, newValue, reason, (req as any).user?.username || 'system')
+      `).run(id, type, targetId, targetName, field, oldValue, newValue, reason.trim(), (req as any).user?.username || 'system')
 
       db.exec('COMMIT')
       success(res, { id }, 'BOM修正已生效，日志已记录')

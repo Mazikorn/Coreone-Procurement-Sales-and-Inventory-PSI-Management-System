@@ -14808,7 +14808,56 @@ git diff --check
 
 - 当前修复覆盖 LIS 病例状态枚举；其它对账日志类型、修正字段或导入来源若存在非法枚举值直接写入，应继续按同一不变量逐项处理。
 
-## 三百零二、结论
+## 三百零二、批次 347: BOM 修正日志必须完整且只允许真实修正
+
+**发现的问题**
+
+- 本轮继续复核非 ABC 对账/BOM 修正链路，聚焦“修正日志不是普通备注，必须对应一次完整、可追溯、真实生效的 BOM 用量修正”不变量。
+- `POST /api/v1/reconciliation/logs` 会在同一事务里更新 `bom_items.usage_per_sample/unit` 并写入 `reconciliation_logs`，是会直接影响后续 BOM 出库理论用量和成本异常解释的写入口。
+- 旧接口允许任意 `type` 写入日志；例如 `type=manual_note` 会返回 200 并生成修正日志，但没有对应的 BOM 修正副作用。
+- 旧接口也没有强制修正原因、修正对象、项目、物料、字段、单位和前后值完整；缺少原因时仍可能先改 BOM 再写不可解释日志。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/reconciliation-v1.1.ts`
+  - 新增 `hasText` 和 `validateBomFixLogPayload`，在开启事务前校验日志 payload。
+  - `POST /reconciliation/logs` 只允许 `type='bom_fix'` 的真实 BOM 修正请求。
+  - 强制要求 `targetId/targetName`、`field='usage_per_sample,unit'`、`oldValue/newValue`、`reason`、`projectId/materialId`、`newUsage>0` 和 `newUnit` 完整。
+  - 无效请求统一返回 `400 INVALID_PARAMETER`，不会进入事务、不会更新 BOM、不会写入修正日志。
+  - 合法修正日志继续在同一事务中更新 BOM 用量和单位，并记录当前 token 用户为 operator。
+- `后端代码/server/tests/integration/reconciliation.test.ts`
+  - 新增“BOM 修正日志必须拒绝非法类型和缺少修正原因且不改BOM”红绿测试，覆盖非法类型不写日志、缺少原因不改 BOM、不写日志。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 对账模块的 BOM 修正日志写入口和集成测试，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- BOM 用量是 BOM 出库和 ABC 输入侧成本事实的重要上游；本批只阻断不完整或假日志，不改变合法 BOM 修正的更新口径。
+- 已补跑对账集成、成本异常、出库主链、前端对账页面/Hook/日志组件测试和前后端构建，确认合法 BOM 修正、出库、成本异常与 ABC 输入侧闭环不被破坏。
+- 已确认本批 diff 不涉及 `前端代码/deprecated/legacy-cost-analysis/`、`后端代码/server/src/routes/abc-v1.1.ts`、`后端代码/server/src/utils/abc-calculator.test.ts` 或前端 ABC 本体页面。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/integration/reconciliation.test.ts -t "非法类型和缺少修正原因"` 修复前失败：非法日志类型返回 200，期望 400。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/integration/reconciliation.test.ts -t "非法类型和缺少修正原因"` 通过，1 test passed / 19 skipped；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `后端代码/server npm test -- --run tests/integration/reconciliation.test.ts tests/integration/cost-exceptions.test.ts` 通过，2 files / 31 tests passed；`cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr 为既有异常台账测试场景，最终通过。
+  - `后端代码/server npm test -- --run tests/integration/outbound.test.ts` 通过，1 file / 29 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `前端代码 npm test -- --run src/pages/reconciliation/Reconciliation.test.tsx src/pages/reconciliation/hooks/useReconciliationPage.test.ts src/pages/reconciliation/components/LogListTab.test.tsx` 通过，3 files / 19 tests passed。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `后端代码/server npm run build` 通过。
+- 浏览器复核:
+  - 本批不新增或改变修正 BOM 弹窗、日志列表或页面可见组件；核心风险是 API 绕过能否写入假日志或无原因改 BOM，已用接口级红绿测试覆盖，不新增截图证据。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 当前修复覆盖 BOM 修正日志写入口；修正日志列表的展示字段、导出字段和其它历史日志类型如果后续恢复写入口，应重新定义可写类型并补同等级校验。
+
+## 三百零三、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

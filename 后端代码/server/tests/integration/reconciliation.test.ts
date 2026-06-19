@@ -714,6 +714,77 @@ describe('成本对账异常闭环', () => {
     expect(afterLogCount).toBe(beforeLogCount)
   })
 
+  it('BOM 修正日志必须拒绝非法类型和缺少修正原因且不改BOM', async () => {
+    const suffix = Date.now()
+    const materialId = `mat-fix-guard-${suffix}`
+    const bomId = `bom-fix-guard-${suffix}`
+    const projectId = `proj-fix-guard-${suffix}`
+
+    db.prepare('INSERT INTO material_categories (id, code, name, level) VALUES (?, ?, ?, ?)')
+      .run(`cat-fix-guard-${suffix}`, `FG${suffix}`, '修正校验试剂', 1)
+    db.prepare(`
+      INSERT INTO materials (id, code, name, spec, unit, category_id, price, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+    `).run(materialId, `M-FIX-GUARD-${suffix}`, '修正校验物料', '1ml', '支', `cat-fix-guard-${suffix}`, 10)
+    db.prepare(`
+      INSERT INTO boms (id, code, name, version, type, status)
+      VALUES (?, ?, ?, 'v1.0', 'ihc', 1)
+    `).run(bomId, `BOM-FIX-GUARD-${suffix}`, '修正校验BOM')
+    db.prepare(`
+      INSERT INTO bom_items (id, bom_id, material_id, usage_per_sample, unit)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(`bi-fix-guard-${suffix}`, bomId, materialId, 1, '支')
+    db.prepare(`
+      INSERT INTO projects (id, code, name, type, bom_id, status)
+      VALUES (?, ?, ?, 'ihc', ?, 1)
+    `).run(projectId, `P-FIX-GUARD-${suffix}`, '修正校验项目', bomId)
+
+    const beforeLogCount = (db.prepare('SELECT COUNT(*) as count FROM reconciliation_logs').get() as any).count
+    const invalidTypeRes = await request(app)
+      .post('/api/v1/reconciliation/logs')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        type: 'manual_note',
+        targetId: materialId,
+        targetName: '修正校验物料',
+        field: 'usage_per_sample,unit',
+        oldValue: '1 支',
+        newValue: '2 ml',
+        reason: '非法日志类型不应写入',
+      })
+
+    expect(invalidTypeRes.status).toBe(400)
+    expect(invalidTypeRes.body.success).toBe(false)
+    expect(invalidTypeRes.body.error.code).toBe('INVALID_PARAMETER')
+
+    const missingReasonRes = await request(app)
+      .post('/api/v1/reconciliation/logs')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        type: 'bom_fix',
+        targetId: materialId,
+        targetName: '修正校验物料',
+        field: 'usage_per_sample,unit',
+        oldValue: '1 支',
+        newValue: '2 ml',
+        reason: '   ',
+        projectId,
+        materialId,
+        newUsage: 2,
+        newUnit: 'ml',
+      })
+
+    expect(missingReasonRes.status).toBe(400)
+    expect(missingReasonRes.body.success).toBe(false)
+    expect(missingReasonRes.body.error.code).toBe('INVALID_PARAMETER')
+    const item = db.prepare('SELECT usage_per_sample, unit FROM bom_items WHERE bom_id = ? AND material_id = ?')
+      .get(bomId, materialId) as any
+    expect(item.usage_per_sample).toBe(1)
+    expect(item.unit).toBe('支')
+    const afterLogCount = (db.prepare('SELECT COUNT(*) as count FROM reconciliation_logs').get() as any).count
+    expect(afterLogCount).toBe(beforeLogCount)
+  })
+
   it('修正日志列表必须按创建时间范围过滤', async () => {
     const suffix = Date.now()
     const insideLogId = `log-range-inside-${suffix}`
