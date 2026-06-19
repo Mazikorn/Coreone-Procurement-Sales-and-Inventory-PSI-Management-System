@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Plus, Search, Shield, CheckCircle, XCircle, AlertTriangle } from 'lucide-react'
 import { toast } from 'sonner'
 import { abcApi } from '@/api/abc'
@@ -76,6 +76,22 @@ const COST_TYPE_COLORS: Record<string, { bg: string; text: string; border: strin
   external_failure: { bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200' },
 }
 
+const getSubTypeLabel = (costType: string, subType: string) =>
+  SUB_TYPE_OPTIONS[costType]?.find(option => option.value === subType)?.label || subType
+
+const normalizeQualityCosts = (response: any): QualityCost[] => {
+  if (Array.isArray(response)) return response
+  if (Array.isArray(response?.list)) return response.list
+  if (Array.isArray(response?.items)) return response.items
+  if (Array.isArray(response?.data)) return response.data
+  if (Array.isArray(response?.data?.list)) return response.data.list
+  if (Array.isArray(response?.data?.items)) return response.data.items
+  return []
+}
+
+const normalizeQualitySummary = (response: any): QualitySummary | null =>
+  response?.data || response || null
+
 export default function QualityCostAnalysis() {
   const [costs, setCosts] = useState<QualityCost[]>([])
   const [summary, setSummary] = useState<QualitySummary | null>(null)
@@ -102,8 +118,8 @@ export default function QualityCostAnalysis() {
         abcApi.getQualityCosts({ yearMonth: filterMonth }),
         abcApi.getQualityCostSummary(filterMonth),
       ])
-      setCosts(costsRes.data?.list || costsRes.data?.items || costsRes.data || [])
-      setSummary(summaryRes.data)
+      setCosts(normalizeQualityCosts(costsRes))
+      setSummary(normalizeQualitySummary(summaryRes))
     } catch {
       toast.error('加载质量成本数据失败')
     } finally {
@@ -159,8 +175,10 @@ export default function QualityCostAnalysis() {
   const filteredCosts = costs.filter(c => {
     if (!searchKeyword) return true
     const typeLabel = COST_TYPE_LABELS[c.costType] || c.costType
+    const subTypeLabel = getSubTypeLabel(c.costType, c.subType)
     return (
       typeLabel.includes(searchKeyword) ||
+      subTypeLabel.includes(searchKeyword) ||
       c.subType.includes(searchKeyword) ||
       c.description?.includes(searchKeyword)
     )
@@ -272,7 +290,7 @@ export default function QualityCostAnalysis() {
                         {COST_TYPE_LABELS[cost.costType] || cost.costType}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-sm text-gray-500">{cost.subType}</td>
+                    <td className="px-4 py-3 text-sm text-gray-500">{getSubTypeLabel(cost.costType, cost.subType)}</td>
                     <td className="px-4 py-3 text-sm text-gray-900 text-right font-mono">{formatCurrency(cost.amount)}</td>
                     <td className="px-4 py-3 text-sm text-gray-500">{cost.description || '-'}</td>
                   </tr>

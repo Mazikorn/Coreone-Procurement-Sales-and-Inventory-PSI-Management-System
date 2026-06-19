@@ -16752,7 +16752,62 @@ git diff --check
 
 - 收费对照项目类型显示、盈亏/映射筛选和导出归档口径已阶段性保护；下一批可继续复核非废弃成本读面中预算、质量成本、差异分析等页面的筛选、导入导出和异常态。
 
-## 三百四十二、结论
+## 三百四十二、批次 387: 质量成本显示与搜索必须使用业务口径
+
+**发现的问题**
+
+- 本轮继续复核非废弃成本读面，聚焦“质量成本明细列表和搜索必须使用业务显示口径，不能泄露内部枚举”不变量。
+- `QualityCostAnalysis` 的录入弹窗子类型下拉使用 `培训费用 / 流程改进 / 检验费用` 等业务标签，但旧表格直接渲染 `cost.subType`，导致列表显示 `training` 等内部枚举。
+- 旧搜索同样只匹配 `c.subType` 内部值；用户按页面上的业务标签 `培训费用` 搜索时，明细行会被错误过滤掉。
+- 页面级红灯测试和浏览器拦截复核还暴露旧 `loadData` 仍按 `costsRes.data.list`、`summaryRes.data` 读取数据；当前 `request.ts` 已把后端 `{ success, data }` 解包为业务数据，导致真实 API 口径下列表和汇总可能显示为空。
+- 页面级红灯测试还暴露 `QualityCostAnalysis.tsx` 在当前 Vitest/JSX 配置下缺少 React 导入，导致质量成本页无法稳定进行页面级验证。
+
+**已完成修复**
+
+- `前端代码/src/pages/cost/QualityCostAnalysis.tsx`
+  - 补充 React 导入，让页面在当前测试配置下可被页面级测试渲染。
+  - 新增 `getSubTypeLabel`，把质量成本子类型枚举转换成弹窗同款业务标签，未知值保留原值回退。
+  - 表格子类型列改为显示业务标签，不再直接展示 `training` 等内部值。
+  - 搜索过滤同时匹配成本类型标签、子类型业务标签、原始子类型值和描述，确保按页面可见标签搜索不会误清空数据。
+  - 新增 `normalizeQualityCosts` 和 `normalizeQualitySummary`，兼容当前 request 解包后的 `{ list }` / summary 直返，也兼容旧 `data.list` / `data.items` 包装形状，避免真实 API 口径下读面落空。
+- `前端代码/src/pages/cost/QualityCostAnalysis.test.tsx`
+  - 新增页面级红绿测试：接口返回 `subType: 'training'` 时，`入职培训` 所在行必须显示 `培训费用`，不能显示内部枚举 `training`。
+  - 同一测试覆盖按 `培训费用` 搜索后明细仍保留，确认搜索口径与页面可见口径一致。
+  - 测试 mock 使用当前 `abcApi` 解包后的返回形状，防止页面只在旧包装数据下可用。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 质量成本分析页面的前端读取、显示、搜索口径和页面级测试，不修改 ABC 本体、ABC API 后端、成本算法、库存、出库或废弃 `/cost-analysis`。
+- 质量成本页读取的是质量成本台账和汇总数据；本批不改变写入、重算、费用归集、成本异常、关账或出库 ABC 明细。
+- 已补跑全成本和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/cost/QualityCostAnalysis.test.tsx -t "displays and searches"` 首次暴露 `QualityCostAnalysis.tsx` 缺少 React 导入。
+  - 补齐 React 导入后，同一命令按预期失败：`入职培训` 所在行展示内部枚举 `training`，找不到 `培训费用`。
+  - 将测试 mock 改为当前 `abcApi` 解包后的真实返回形状后，同一测试再次按预期失败：页面显示 `暂无质量成本数据`，汇总为 0，证明旧响应读取口径不兼容当前 request 解包。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/cost/QualityCostAnalysis.test.tsx` 通过，1 test passed。
+  - `前端代码 npm test -- --run src/pages/cost/QualityCostAnalysis.test.tsx src/pages/cost/FeeComparison.test.tsx src/pages/cost/CostTrend.test.ts src/pages/cost/SlideCostAnalysis.test.ts src/pages/cost/ProfitabilityAnalysis.test.ts src/pages/cost/PersonnelEfficiency.render.test.tsx src/pages/cost/CostVarianceAnalysis.render.test.tsx` 通过，7 files / 16 tests passed。
+  - `后端代码/server npm test -- --run tests/integration/full-cost.test.ts tests/integration/cost-exceptions.test.ts` 通过，2 files / 14 tests passed；命令退出码为 0，保留既有 Vite close timeout 提示和 `cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis` 无输出，确认未改废弃范围。
+- 浏览器复核:
+  - 使用用户指定 Chrome for Testing 路径启动 headless Playwright，并拦截 `/api/v1/abc/quality-costs`、`/api/v1/abc/quality-costs/summary` 和顶栏 `/api/v1/alerts` 返回 `{ success: true, data }` 形状。
+  - 页面 `/abc/quality-costs` 复核结果：`hasPage=true`、`hasBusinessSubTypeLabel=true`、`leaksInternalEnum=false`、`searchKeepsRow=true`、`showsSummary=true`、`consoleErrors=[]`、`badResponses=[]`。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 质量成本显示、搜索和响应读取口径已阶段性保护；下一批可继续复核预算管理编辑/保存真实副作用，或转入成本差异分析的筛选、导出和异常态，不在本批继续扩展。
+
+## 三百四十三、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 
