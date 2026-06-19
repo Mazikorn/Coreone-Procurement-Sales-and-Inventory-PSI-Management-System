@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { abcApi } from '@/api/abc'
@@ -124,5 +124,32 @@ describe('ProfitabilityAnalysis', () => {
       'ok',
       'text/csv;charset=utf-8',
     )
+  })
+
+  it('displays project type labels in the table instead of internal enum values', async () => {
+    vi.mocked(abcApi.getProfitability).mockResolvedValue({
+      list: [
+        {
+          outboundId: 'out-he-1',
+          projectId: 'proj-he',
+          projectName: 'HE检测',
+          projectType: 'he',
+          costMonth: new Date().toISOString().slice(0, 7),
+          sampleCount: 2,
+          totalCost: 60,
+          feeAmount: 120,
+          profit: 60,
+        },
+      ],
+    } as any)
+
+    render(React.createElement(ProfitabilityAnalysis))
+
+    await waitFor(() => expect(screen.getByText('HE检测')).toBeInTheDocument())
+
+    const row = screen.getByText('HE检测').closest('tr')
+    expect(row).not.toBeNull()
+    expect(within(row!).getByText('HE染色')).toBeInTheDocument()
+    expect(within(row!).queryByText('he')).not.toBeInTheDocument()
   })
 })

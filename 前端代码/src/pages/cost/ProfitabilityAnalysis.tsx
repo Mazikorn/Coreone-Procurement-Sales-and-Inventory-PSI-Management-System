@@ -18,6 +18,19 @@ interface ProfitabilityData {
   profitRate: number
 }
 
+const PROJECT_TYPE_OPTIONS = [
+  { value: 'all', label: '全部类型' },
+  { value: 'ihc', label: '免疫组化' },
+  { value: 'he', label: 'HE染色' },
+  { value: 'ss', label: '特殊染色' },
+  { value: 'mp', label: '分子病理' },
+  { value: 'cyto', label: '细胞病理' },
+]
+
+function getProjectTypeLabel(projectTypeValue: string) {
+  return PROJECT_TYPE_OPTIONS.find(option => option.value === projectTypeValue)?.label || projectTypeValue
+}
+
 export function aggregateProfitabilityRows(rows: any[], month: string, projectType: string): ProfitabilityData[] {
   const projectMap = new Map<string, ProfitabilityData>()
 
@@ -172,12 +185,9 @@ export function ProfitabilityAnalysis() {
             onChange={(e) => setProjectType(e.target.value)}
             className="h-10 px-3 border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
           >
-            <option value="all">全部类型</option>
-            <option value="ihc">免疫组化</option>
-            <option value="he">HE染色</option>
-            <option value="ss">特殊染色</option>
-            <option value="mp">分子病理</option>
-            <option value="cyto">细胞病理</option>
+            {PROJECT_TYPE_OPTIONS.map(option => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
           </select>
           <input
             type="month"
@@ -213,7 +223,7 @@ export function ProfitabilityAnalysis() {
               sortedData.map(item => (
                 <tr key={item.projectId} className="hover:bg-gray-50">
                   <td className="px-4 py-3 text-sm font-medium text-gray-900">{item.projectName}</td>
-                  <td className="px-4 py-3 text-sm text-gray-500">{item.projectType}</td>
+                  <td className="px-4 py-3 text-sm text-gray-500">{getProjectTypeLabel(item.projectType)}</td>
                   <td className="px-4 py-3 text-sm text-right text-gray-500">{item.sampleCount?.toLocaleString()}</td>
                   <td className="px-4 py-3 text-sm text-right text-gray-500">{formatCurrency(item.totalCost)}</td>
                   <td className="px-4 py-3 text-sm text-right text-gray-500">{formatCurrency(item.feeAmount)}</td>
