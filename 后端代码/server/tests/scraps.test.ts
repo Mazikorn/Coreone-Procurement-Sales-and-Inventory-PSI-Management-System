@@ -376,6 +376,88 @@ describe('报废管理 API', () => {
     expect(records.map(record => record.batch_id).sort()).toEqual([materialA.batchId, materialB.batchId].sort())
   })
 
+  it('SC-011: 单条和批量报废在库位库存不足时返回业务错误并回滚全部副作用', async () => {
+    const singleSuffix = `location-insufficient-single-${Date.now()}`
+    const single = seedScrapMaterialWithBatch(db, singleSuffix, 10)
+    const singleMaterial = db.prepare('SELECT location_id FROM materials WHERE id = ?').get(single.materialId) as any
+    db.prepare(`
+      INSERT INTO inventory_locations (id, material_id, location_id, stock, locked_stock)
+      VALUES (?, ?, ?, 1, 0)
+    `).run(`invloc-scrap-single-${singleSuffix}`, single.materialId, singleMaterial.location_id)
+
+    const singleRes = await request(app)
+      .post('/api/v1/scraps')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ materialId: single.materialId, batchId: single.batchId, quantity: 3, reason: '库位库存不足报废' })
+
+    expect(singleRes.status).toBe(422)
+    expect(singleRes.body.error.code).toBe('STOCK_INSUFFICIENT')
+    expect(singleRes.body.error.message).toContain('库位库存不足')
+
+    const singleInventory = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(single.materialId) as any
+    const singleBatch = db.prepare('SELECT remaining FROM batches WHERE id = ?').get(single.batchId) as any
+    const singleLocation = db.prepare(`
+      SELECT stock
+      FROM inventory_locations
+      WHERE material_id = ? AND location_id = ?
+    `).get(single.materialId, singleMaterial.location_id) as any
+    const singleRecords = db.prepare('SELECT COUNT(*) as count FROM scrap_records WHERE material_id = ?')
+      .get(single.materialId) as any
+    const singleLogs = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM stock_logs
+      WHERE material_id = ? AND related_type = 'scrap'
+    `).get(single.materialId) as any
+
+    expect(singleInventory.stock).toBe(10)
+    expect(singleBatch.remaining).toBe(10)
+    expect(singleLocation.stock).toBe(1)
+    expect(singleRecords.count).toBe(0)
+    expect(singleLogs.count).toBe(0)
+
+    const batchSuffix = `location-insufficient-batch-${Date.now()}`
+    const batch = seedScrapMaterialWithBatch(db, batchSuffix, 8)
+    const batchMaterial = db.prepare('SELECT location_id FROM materials WHERE id = ?').get(batch.materialId) as any
+    db.prepare(`
+      INSERT INTO inventory_locations (id, material_id, location_id, stock, locked_stock)
+      VALUES (?, ?, ?, 1, 0)
+    `).run(`invloc-scrap-batch-${batchSuffix}`, batch.materialId, batchMaterial.location_id)
+
+    const batchRes = await request(app)
+      .post('/api/v1/scraps/batch')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        records: [
+          { materialId: batch.materialId, batchId: batch.batchId, quantity: 3, reason: '库位库存不足批量报废' },
+        ],
+      })
+
+    expect(batchRes.status).toBe(422)
+    expect(batchRes.body.error.code).toBe('STOCK_INSUFFICIENT')
+    expect(batchRes.body.error.message).toContain('库位库存不足')
+
+    const batchInventory = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(batch.materialId) as any
+    const batchRecord = db.prepare('SELECT remaining FROM batches WHERE id = ?').get(batch.batchId) as any
+    const batchLocation = db.prepare(`
+      SELECT stock
+      FROM inventory_locations
+      WHERE material_id = ? AND location_id = ?
+    `).get(batch.materialId, batchMaterial.location_id) as any
+    const batchRecords = db.prepare('SELECT COUNT(*) as count FROM scrap_records WHERE material_id = ?')
+      .get(batch.materialId) as any
+    const batchLogs = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM stock_logs
+      WHERE material_id = ? AND related_type = 'scrap_batch'
+    `).get(batch.materialId) as any
+
+    expect(batchInventory.stock).toBe(8)
+    expect(batchRecord.remaining).toBe(8)
+    expect(batchLocation.stock).toBe(1)
+    expect(batchRecords.count).toBe(0)
+    expect(batchLogs.count).toBe(0)
+  })
+
   it('SC-REF-001: 单条和批量报废拒绝停用物料且不扣库存', async () => {
     const singleMaterialId = seedScrapMaterial(db, `inactive-single-${Date.now()}`, 10)
     const batchMaterialId = seedScrapMaterial(db, `inactive-batch-${Date.now()}`, 8)
