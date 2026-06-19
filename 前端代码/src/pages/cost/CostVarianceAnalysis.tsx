@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect, useMemo } from 'react'
+import React, { Fragment, useState, useEffect, useMemo } from 'react'
 import { Search, TrendingUp, TrendingDown, Minus, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -45,6 +45,13 @@ const COMPARE_TYPES = [
   { value: 'material', label: '按物料' },
 ]
 
+function validateMonthRange(startMonth: string, endMonth: string) {
+  if (startMonth && endMonth && startMonth > endMonth) {
+    return { valid: false, message: '开始月份不能晚于结束月份' }
+  }
+  return { valid: true, message: '' }
+}
+
 export default function CostVarianceAnalysis() {
   const [summary, setSummary] = useState<VarianceSummary | null>(null)
   const [items, setItems] = useState<VarianceItem[]>([])
@@ -58,10 +65,17 @@ export default function CostVarianceAnalysis() {
   const [compareType, setCompareType] = useState('project')
   const [searchKeyword, setSearchKeyword] = useState('')
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
+  const monthRangeValidation = useMemo(() => validateMonthRange(startDate, endDate), [startDate, endDate])
 
   useEffect(() => {
+    if (!monthRangeValidation.valid) {
+      setSummary(null)
+      setItems([])
+      setLoading(false)
+      return
+    }
     loadData()
-  }, [startDate, endDate, compareType])
+  }, [startDate, endDate, compareType, monthRangeValidation.valid])
 
   const loadData = async () => {
     try {
@@ -174,7 +188,8 @@ export default function CostVarianceAnalysis() {
           <h1 className="text-2xl font-bold text-gray-900">成本差异分析</h1>
           <p className="text-sm text-gray-500 mt-1">标准成本与实际成本对比，识别超支项目</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-col items-start gap-1 lg:items-end">
+          <div className="flex items-center gap-3">
           <select
             value={compareType}
             onChange={e => setCompareType(e.target.value)}
@@ -188,15 +203,25 @@ export default function CostVarianceAnalysis() {
             type="month"
             value={startDate}
             onChange={e => setStartDate(e.target.value)}
-            className="h-10 px-3 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
+            aria-invalid={!monthRangeValidation.valid}
+            aria-describedby={!monthRangeValidation.valid ? 'cost-variance-month-error' : undefined}
+            className="h-10 px-3 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500 aria-[invalid=true]:border-red-500"
           />
           <span className="text-gray-400">至</span>
           <input
             type="month"
             value={endDate}
             onChange={e => setEndDate(e.target.value)}
-            className="h-10 px-3 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
+            aria-invalid={!monthRangeValidation.valid}
+            aria-describedby={!monthRangeValidation.valid ? 'cost-variance-month-error' : undefined}
+            className="h-10 px-3 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500 aria-[invalid=true]:border-red-500"
           />
+          </div>
+          {!monthRangeValidation.valid && (
+            <p id="cost-variance-month-error" role="alert" className="text-sm text-red-600">
+              {monthRangeValidation.message}
+            </p>
+          )}
         </div>
       </div>
 

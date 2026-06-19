@@ -14121,7 +14121,57 @@ git diff --check
 
 - 当前修复统一了报表 API 日期入口；前端报表页面若存在“后端已拒绝但页面无可见解释”的日期控件，需要在后续页面级复核中继续按批次处理。
 
-## 二百八十八、结论
+## 二百八十八、批次 333: 成本差异页面必须可见阻断倒置月份范围
+
+**发现的问题**
+
+- 本轮继续复核非废弃报表页面，聚焦“后端已拒绝非法日期后，前端页面也必须在用户操作时给出可见解释，不能继续发起倒置范围请求”不变量。
+- `CostVarianceAnalysis` 页面使用两个 `type="month"` 控件生成 `/reports/cost-variance` 的 `startDate/endDate`，但页面层没有校验开始月份晚于结束月份。
+- 当用户选择 `2026-07` 至 `2026-06` 时，旧页面不会显示 `开始月份不能晚于结束月份`，并可能继续发起倒置范围请求，导致用户只能通过泛化 toast 或空表格猜测问题。
+- 成本差异页面解释标准成本、实际成本、差异额和差异率，是出库、BOM、物料和成本异常输入侧可信成本事实的上游说明面，非法筛选条件必须在页面层可解释。
+
+**已完成修复**
+
+- `前端代码/src/pages/cost/CostVarianceAnalysis.tsx`
+  - 新增月份范围校验，开始月份晚于结束月份时清空当前汇总和明细，并停止发起报表请求。
+  - 月份输入区新增 `role="alert"` 的错误提示，显示 `开始月份不能晚于结束月份`。
+  - 两个月份输入在非法范围时设置 `aria-invalid=true` 并关联错误提示。
+  - 补齐页面渲染测试所需的 `React` import，保证该页面可被 Vitest 真实渲染验证。
+- `前端代码/src/pages/cost/CostVarianceAnalysis.render.test.tsx`
+  - 新增页面级红绿测试，覆盖倒置月份必须可见提示，并且不得向 `reportsApi.getCostVariance` 发起 `2026-07-01` 至 `2026-06-28` 请求。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 成本差异页面的月份范围提示和页面测试，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 成本差异页面是 ABC 输入侧可信成本事实的上游说明面；本批只阻断非法筛选条件，不改变正常月份范围内的出库、BOM、成本异常或差异计算口径。
+- 已补跑成本页面、报表接口、全成本、出库和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+- 已确认本批 diff 不涉及 `前端代码/deprecated/legacy-cost-analysis/`、`后端代码/server/src/routes/abc-v1.1.ts`、`后端代码/server/src/utils/abc-calculator.test.ts` 或前端 ABC 本体页面。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/cost/CostVarianceAnalysis.render.test.tsx -t "shows a visible month range validation error"` 业务红灯失败：页面找不到 `开始月份不能晚于结束月份`。
+  - 首次运行该测试先暴露 `React is not defined` 渲染前提问题，已补齐 import 后重跑，确认失败点转为真实业务缺口。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/cost/CostVarianceAnalysis.render.test.tsx -t "shows a visible month range validation error"` 通过，1 test passed。
+  - `前端代码 npm test -- --run src/pages/cost/CostVarianceAnalysis.render.test.tsx src/pages/cost/CostTrend.test.ts src/pages/cost/ProfitabilityAnalysis.test.ts src/pages/cost/SlideCostAnalysis.test.ts` 通过，4 files / 5 tests passed。
+  - `后端代码/server npm test -- --run tests/integration/reports-date-validation.test.ts tests/integration/reports-cost-by-material.test.ts tests/integration/reports-cost-by-project.test.ts tests/integration/full-cost.test.ts` 通过，4 files / 13 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `后端代码/server npm test -- --run tests/integration/outbound.test.ts tests/integration/cost-exceptions.test.ts` 通过，2 files / 40 tests passed；`cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr 为既有异常台账测试场景，最终通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `后端代码/server npm run build` 通过。
+- 浏览器复核:
+  - 使用用户指定 Chrome for Testing 路径 `/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing` 跑一次性 headless Playwright。
+  - 真实登录 admin，进入 `/abc/variance`，填写 `2026-07` 至 `2026-06` 后，`role=alert` 可见显示 `开始月份不能晚于结束月份`，两个月份输入均为 `aria-invalid=true`。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 当前修复只覆盖成本差异页面；其它带日期或月份筛选的非 ABC 报表页面若存在同类“后端已拒绝但页面无可见解释”的入口，应在后续页面级复核中按同一不变量逐项处理。
+
+## 二百八十九、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 
