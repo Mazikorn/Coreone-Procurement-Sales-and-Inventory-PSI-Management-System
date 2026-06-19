@@ -400,6 +400,11 @@ export function useMaterialsPage() {
       loadStats()
     } catch (e) {
       toast.error('操作失败')
+      setStatusTarget(null)
+      setStatusCheck(null)
+      refresh()
+      fetchRefs()
+      loadStats()
     } finally {
       setUpdatingStatus(false)
     }

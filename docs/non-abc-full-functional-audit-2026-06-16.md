@@ -12458,7 +12458,57 @@ git diff --check
 - MAT-16 的启用失败阻断反馈已补组件和页面级证据。
 - 下一步应继续 MAT-16 成功停用/启用刷新、失败回滚和停用后入库/出库候选过滤的页面级证据，不在本批扩展到批量状态或其它模块。
 
-## 二百五十四、结论
+## 二百五十四、批次 299: 物料状态提交失败必须回滚到服务端状态
+
+**发现的问题**
+
+- `materials.md` 的 MAT-16 要求状态切换失败时回滚 UI 状态。
+- 当前物料状态切换已经保留影响检查弹窗，用于避免绕过库存、BOM 和历史引用保护；本批继续保留该保护，不改成无检查的即时写入。
+- 但在影响检查返回 `canChange=true` 后，如果真正 `PUT /materials/:id` 被后端拒绝，前端只提示 `操作失败`，状态弹窗仍停留在“确认停用/启用”的可操作状态。
+- 这会把已经过期的影响检查结果留在屏幕上，用户可能重复提交同一个已被服务端拒绝的状态变更，也无法明确看到列表已回到服务端权威状态。
+
+**已完成修复**
+
+- `前端代码/src/pages/master/hooks/useMaterialsPage.tsx`
+  - `confirmStatusChange` 的失败分支在 toast 后清空 `statusTarget` 和 `statusCheck`，关闭旧弹窗。
+  - 同时触发 `refresh()`、`fetchRefs()` 和 `loadStats()`，用服务端结果回填列表、引用候选和统计卡片。
+  - 成功路径和后端状态保护规则不变。
+- `前端代码/src/pages/master/hooks/useMaterialsPage.test.tsx`
+  - 新增红绿测试：影响检查通过但 `materialApi.update` 失败时，必须关闭状态弹窗并重新拉取物料列表。
+- `前端代码/e2e/materials.spec.ts`
+  - 新增 `MAT-STATUS-02` 页面级验收：点击停用、影响检查通过、提交被 409 拒绝后，停用弹窗关闭，行仍显示 `已启用` 和 `停用` 操作，并且物料列表发生重新请求。
+
+**ABC 影响评估**
+
+- 物料状态是 ABC 上游主数据输入，本批只修复前端失败回滚和刷新，不直接修改 ABC 本体、ABC API、成本计算、库存扣减或 BOM 成本算法。
+- 失败后刷新列表、引用候选和统计，有助于避免用户基于过期物料状态继续进行入库、出库或 BOM 相关操作。
+- 已补跑物料状态保护、入库、出库和 BOM 集成回归，覆盖物料作为入库、库存、BOM 出库和成本输入的上游链路；本批不需要改 ABC 本体。
+- 未触碰废弃 `/cost-analysis` 或 `前端代码/deprecated/legacy-cost-analysis/`。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/master/hooks/useMaterialsPage.test.tsx -t "rolls back"` 修复前失败：`statusTarget` 仍为被操作物料，没有清空为 `null`。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/materials.spec.ts -g "MAT-STATUS-02" --project=chromium` 修复前失败：页面仍存在 `停用物料` 弹窗。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/master/hooks/useMaterialsPage.test.tsx -t "rolls back"` 通过，1 test passed / 8 skipped。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/materials.spec.ts -g "MAT-STATUS-02" --project=chromium` 通过，1 test passed。
+  - `前端代码 npm test -- --run src/pages/master/hooks/useMaterialsPage.test.tsx src/pages/master/components/MaterialImpactModals.test.tsx src/hooks/usePagination.test.ts` 通过，3 files / 27 tests passed。
+  - `后端代码/server npm run test:node -- --run tests/materials-guard.test.ts tests/inbound-batch.test.ts tests/integration/outbound.test.ts tests/integration/bom.test.ts` 通过，4 files / 79 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/materials.spec.ts -g "MAT-STATUS-01|MAT-STATUS-02|MAT-DEL-11|MAT-DEL-12|MAT-EDIT-11|MAT-DETAIL-03|MAT-PAGE-01|MAT-FILTER-01|MAT-SEARCH-03|MAT-LIST-11" --project=chromium` 通过，10 tests passed。
+  - `git diff --check` 通过。
+  - `git diff --name-only | rg "deprecated/legacy-cost-analysis|前端代码/deprecated|/cost-analysis"` 无匹配，确认未改废弃范围。
+- 浏览器复核:
+  - 使用用户已验证的 Chrome for Testing 路径完成 headless Playwright 复核；验证重点为停用影响检查通过、提交失败、弹窗关闭、列表重新请求、原行保持 `已启用` 和 `停用` 操作，以及状态/删除/编辑/详情/分页/筛选/搜索回归。
+
+**后续风险**
+
+- MAT-16 的失败回滚主路径已补 hook 和页面级证据。
+- 下一步应继续 MAT-16 成功停用/启用刷新和停用后入库/出库候选过滤的页面级证据，不在本批扩展到批量状态或其它模块。
+
+## 二百五十五、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

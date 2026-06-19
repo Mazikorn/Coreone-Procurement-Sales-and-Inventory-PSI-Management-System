@@ -239,4 +239,57 @@ describe('useMaterialsPage', () => {
 
     expect(result.current.canWrite).toBe(true)
   })
+
+  it('rolls back to the refreshed server state when a status update fails after impact check', async () => {
+    const material = {
+      id: 'mat-status-fail',
+      code: 'STS-FAIL-001',
+      name: '状态失败物料',
+      spec: '1ml',
+      unit: '瓶',
+      categoryId: 'cat-1',
+      supplierId: 'sup-1',
+      price: 12,
+      stock: 0,
+      minStock: 1,
+      maxStock: 20,
+      safetyStock: 1,
+      status: 'active',
+      remark: '',
+    }
+    vi.mocked(materialApi.getList).mockResolvedValue({
+      list: [material],
+      pagination: { total: 1, page: 1, pageSize: 20 },
+    } as any)
+    vi.mocked(materialApi.checkStatus).mockResolvedValue({
+      material,
+      targetStatus: 'inactive',
+      canChange: true,
+      impacts: {
+        currentInventoryCount: 0,
+        inventoryLocationCount: 0,
+        activeBomCount: 0,
+      },
+      reasons: [],
+    } as any)
+    vi.mocked(materialApi.update).mockRejectedValue(new Error('server rejected status change'))
+
+    const { result } = renderHook(() => useMaterialsPage())
+    await waitFor(() => expect(result.current.data[0]?.id).toBe('mat-status-fail'))
+
+    await act(async () => {
+      await result.current.handleToggleStatus(material as any)
+    })
+    await waitFor(() => expect(result.current.statusCheck?.canChange).toBe(true))
+
+    const listCallsBeforeSubmit = vi.mocked(materialApi.getList).mock.calls.length
+
+    await act(async () => {
+      await result.current.confirmStatusChange()
+    })
+
+    expect(materialApi.update).toHaveBeenCalledWith('mat-status-fail', { status: 'inactive' })
+    await waitFor(() => expect(result.current.statusTarget).toBe(null))
+    expect(vi.mocked(materialApi.getList).mock.calls.length).toBeGreaterThan(listCallsBeforeSubmit)
+  })
 })
