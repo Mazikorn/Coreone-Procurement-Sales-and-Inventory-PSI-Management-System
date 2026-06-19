@@ -35,6 +35,43 @@ function getProjectTypeLabel(projectTypeValue: string) {
   return PROJECT_TYPE_OPTIONS.find(option => option.value === projectTypeValue)?.label || projectTypeValue
 }
 
+function escapeCsvValue(value: string | number) {
+  const text = String(value ?? '')
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
+}
+
+export function buildSlideCostExportCsv(rows: BomProfit[]) {
+  const headers = [
+    'BOM/项目名称',
+    '项目类型',
+    '病例数',
+    '样本数',
+    '物料成本',
+    '作业成本',
+    '切片均成本',
+    '总成本',
+    '总收入',
+    '利润',
+    '利润率',
+  ]
+  const body = rows.map(item => [
+    item.bomName,
+    getProjectTypeLabel(item.projectType),
+    item.caseCount,
+    item.sampleCount,
+    item.materialCost,
+    item.activityCost,
+    item.avgCostPerSlide,
+    item.totalCost,
+    item.feeAmount,
+    item.profit,
+    `${(item.profitRate * 100).toFixed(1)}%`,
+  ])
+  return [headers, ...body]
+    .map(row => row.map(escapeCsvValue).join(','))
+    .join('\n')
+}
+
 export function normalizeProfitabilityRows(rows: any[], month: string, projectType: string): BomProfit[] {
   const groups = new Map<string, BomProfit>()
 
@@ -124,14 +161,10 @@ export default function SlideCostAnalysis() {
   const handleExport = async () => {
     try {
       setExporting(true)
-      const data = await abcApi.exportData({
-        month,
-        projectType: projectType !== 'all' ? projectType : undefined,
-      })
-      downloadTextFile(data.filename || `abc-slide-cost-${month}.csv`, data.content || '', data.mimeType)
+      downloadTextFile(`abc-slide-cost-${month}.csv`, buildSlideCostExportCsv(data), 'text/csv;charset=utf-8')
       toast.success('导出完成')
     } catch {
-      // 统一错误提示已在请求拦截器处理
+      toast.error('导出切片成本数据失败')
     } finally {
       setExporting(false)
     }

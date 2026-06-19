@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { abcApi } from '@/api/abc'
@@ -13,6 +13,7 @@ vi.mock('@/api/abc', () => ({
 }))
 
 vi.mock('@/lib/utils', () => ({
+  cn: (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(' '),
   downloadTextFile: vi.fn(),
   formatCurrency: (num: number | undefined) => {
     if (num === undefined || num === null) return '-'
@@ -132,5 +133,41 @@ describe('SlideCostAnalysis', () => {
     expect(row).not.toBeNull()
     expect(within(row!).getByText('HE染色')).toBeInTheDocument()
     expect(within(row!).queryByText('he')).not.toBeInTheDocument()
+  })
+
+  it('exports the filtered full table data with project type labels', async () => {
+    vi.mocked(abcApi.getProfitability).mockResolvedValue({
+      list: Array.from({ length: 21 }, (_, index) => ({
+        outboundId: `out-he-${index + 1}`,
+        projectId: `proj-he-${index + 1}`,
+        projectName: `HE检测${String(index + 1).padStart(2, '0')}`,
+        projectType: 'he',
+        costMonth: new Date().toISOString().slice(0, 7),
+        sampleCount: 1,
+        materialCost: 10,
+        activityCost: 5,
+        totalCost: 15,
+        feeAmount: 30,
+        profit: 15,
+      })),
+    } as any)
+    vi.mocked(abcApi.exportData).mockResolvedValue({
+      filename: 'abc-cost-export.csv',
+      content: 'project_type\nhe',
+      mimeType: 'text/csv;charset=utf-8',
+    } as any)
+
+    render(React.createElement(SlideCostAnalysis))
+
+    await waitFor(() => expect(screen.getByText('HE检测01')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('button', { name: /导出/ }))
+
+    await waitFor(() => expect(downloadTextFile).toHaveBeenCalled())
+    const [, content, mimeType] = vi.mocked(downloadTextFile).mock.calls[0]
+    expect(mimeType).toBe('text/csv;charset=utf-8')
+    expect(content).toContain('HE染色')
+    expect(content).toContain('HE检测21')
+    expect(content).not.toContain('project_type\nhe')
   })
 })
