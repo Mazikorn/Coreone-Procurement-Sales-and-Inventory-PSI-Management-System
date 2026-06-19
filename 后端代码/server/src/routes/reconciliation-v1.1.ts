@@ -14,6 +14,7 @@ const upload = multer({
 
 const dateRegex = /^\d{4}-\d{2}-\d{2}$/
 const dateTimeRegex = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/
+const CASE_STATUSES = new Set(['normal', 'modified', 'unmatched'])
 
 function isValidDateOnly(value: string) {
   if (!dateRegex.test(value)) return false
@@ -110,6 +111,15 @@ function validateExportFormat(format: string) {
   return ['csv', 'xlsx'].includes(format)
 }
 
+function normalizeCaseStatus(value?: string) {
+  return String(value || '').trim()
+}
+
+function validateCaseStatus(value?: string) {
+  const status = normalizeCaseStatus(value)
+  return !status || CASE_STATUSES.has(status)
+}
+
 function buildExportPayload(params: Record<string, string>) {
   const db = getDatabase()
   const type = normalizeExportType(params.type || params.tab)
@@ -123,6 +133,9 @@ function buildExportPayload(params: Record<string, string>) {
   }
   if (!validateDateRange(startDate, endDate)) {
     throw Object.assign(new Error('Invalid date format'), { statusCode: 400, code: 'INVALID_PARAMETER' })
+  }
+  if (type === 'case' && !validateCaseStatus(status)) {
+    throw Object.assign(new Error('Invalid case status'), { statusCode: 400, code: 'INVALID_PARAMETER' })
   }
 
   const hasDate = startDate && endDate
@@ -257,9 +270,10 @@ function buildCaseFilterClause(filters: {
     where += ` AND ${prefix}project_id = ?`
     params.push(filters.projectId)
   }
-  if (filters.status) {
+  const status = normalizeCaseStatus(filters.status)
+  if (status) {
     where += ` AND ${prefix}status = ?`
-    params.push(filters.status)
+    params.push(status)
   }
   if (filters.startDate && filters.endDate) {
     where += ` AND ${prefix}operate_time >= ? AND ${prefix}operate_time <= ?`
@@ -988,6 +1002,9 @@ router.get('/cases', (req, res) => {
     if (!validateDateRange(startDate, endDate)) {
       error(res, 'Invalid date format', 'INVALID_PARAMETER', 400); return
     }
+    if (!validateCaseStatus(status)) {
+      error(res, 'Invalid case status', 'INVALID_PARAMETER', 400); return
+    }
 
     const pageNum = parsePaginationParam(page, 1)
     const safePageSize = parsePaginationParam(pageSize, 20)
@@ -1084,6 +1101,11 @@ router.put('/cases/:id', (req, res) => {
     const db = getDatabase()
     const { id } = req.params
     const { projectId, projectName, status } = req.body
+    const hasStatus = Object.prototype.hasOwnProperty.call(req.body || {}, 'status')
+    const nextStatus = normalizeCaseStatus(status)
+    if (hasStatus && !CASE_STATUSES.has(nextStatus)) {
+      error(res, 'Invalid case status', 'INVALID_PARAMETER', 400); return
+    }
 
     const existing = db.prepare('SELECT * FROM lis_cases WHERE id = ?').get(id)
     if (!existing) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
@@ -1101,7 +1123,7 @@ router.put('/cases/:id', (req, res) => {
         status = COALESCE(?, status),
         updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(projectId, nextProjectName, status, id)
+    `).run(projectId, nextProjectName, hasStatus ? nextStatus : undefined, id)
 
     success(res, null, '病例信息已更新')
   } catch (e: any) {

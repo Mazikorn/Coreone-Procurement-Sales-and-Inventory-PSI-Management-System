@@ -160,6 +160,51 @@ describe('成本对账异常闭环', () => {
     expect(updated.status).toBe('modified')
   })
 
+  it('病例编辑、列表筛选和导出必须拒绝非法病例状态', async () => {
+    const suffix = Date.now()
+    const projectId = `proj-case-status-${suffix}`
+    const caseId = `case-status-${suffix}`
+    const caseNo = `CASE-STATUS-${suffix}`
+
+    db.prepare(`
+      INSERT INTO projects (id, code, name, type, status)
+      VALUES (?, ?, ?, 'ihc', 1)
+    `).run(projectId, `P-CASE-STATUS-${suffix}`, '状态校验项目')
+    db.prepare(`
+      INSERT INTO lis_cases (id, case_no, project_id, project_name, operator, operate_time, status, import_batch)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(caseId, caseNo, projectId, '状态校验项目', 'lis', '2026-06-21 09:00:00', 'normal', `batch-status-${suffix}`)
+
+    const updateRes = await request(app)
+      .put(`/api/v1/reconciliation/cases/${caseId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ status: 'archived' })
+
+    expect(updateRes.status).toBe(400)
+    expect(updateRes.body.success).toBe(false)
+    expect(updateRes.body.error.code).toBe('INVALID_PARAMETER')
+    const unchanged = db.prepare('SELECT status FROM lis_cases WHERE id = ?').get(caseId) as any
+    expect(unchanged.status).toBe('normal')
+
+    const listRes = await request(app)
+      .get('/api/v1/reconciliation/cases')
+      .query({ status: 'archived' })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(listRes.status).toBe(400)
+    expect(listRes.body.success).toBe(false)
+    expect(listRes.body.error.code).toBe('INVALID_PARAMETER')
+
+    const exportRes = await request(app)
+      .post('/api/v1/reconciliation/export')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ tab: 'case', filters: { status: 'archived' } })
+
+    expect(exportRes.status).toBe(400)
+    expect(exportRes.body.success).toBe(false)
+    expect(exportRes.body.error.code).toBe('INVALID_PARAMETER')
+  })
+
   it('LIS 重新导入未匹配项目时不得清空既有关联项目', async () => {
     const suffix = Date.now()
     const projectId = `proj-import-preserve-${suffix}`

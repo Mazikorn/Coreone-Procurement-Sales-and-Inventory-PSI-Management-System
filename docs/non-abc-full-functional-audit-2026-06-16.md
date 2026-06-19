@@ -14759,7 +14759,56 @@ git diff --check
 
 - 当前修复覆盖对账导出的 `format` 参数和 xlsx/csv 文件流；其它非 ABC 导出入口若存在“格式选项不生效”或“后端忽略非法格式”，应继续按同一不变量逐项处理。
 
-## 三百零一、结论
+## 三百零一、批次 346: LIS 病例状态必须拒绝非法值
+
+**发现的问题**
+
+- 本轮继续复核非 ABC 对账/LIS 运营页面，聚焦“病例状态是业务事实字段，编辑、筛选和导出必须使用同一套合法枚举”不变量。
+- 前端病例编辑和筛选只暴露 `normal / modified / unmatched`，数据库默认状态也是 `normal`，BOM 出库只会把 `unmatched` 修正回 `normal`。
+- 旧后端没有校验病例状态：`PUT /reconciliation/cases/:id`、`GET /reconciliation/cases?status=...` 和病例导出筛选都会直接信任传入值。
+- 当 API 绕过提交 `status=archived` 时，旧接口没有返回可解释的 `400 INVALID_PARAMETER`，病例状态可能被写脏或变成 500/空结果，进而污染 LIS 对账、病例导出和后续 BOM 出库项目回填判断。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/reconciliation-v1.1.ts`
+  - 新增 `CASE_STATUSES` 白名单，只允许 `normal / modified / unmatched`。
+  - 新增 `normalizeCaseStatus` 和 `validateCaseStatus`，统一处理空值、空白和非法状态。
+  - 病例列表入口在查询前拒绝非法 `status`，避免非法筛选静默返回空页。
+  - 病例导出在 `type=case` 时拒绝非法 `status`，避免非法筛选生成误导性文件。
+  - 病例编辑写入口在更新前拒绝非法或空白状态，避免 API 绕过写脏 `lis_cases.status`。
+- `后端代码/server/tests/integration/reconciliation.test.ts`
+  - 新增“病例编辑、列表筛选和导出必须拒绝非法病例状态”红绿测试，覆盖写入不变、列表 400、导出 400 三个入口。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 对账/LIS 病例状态校验和集成测试，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- LIS 病例是 BOM 出库、项目归集和成本异常解释的上游事实；本批只阻断非法病例状态，不改变合法 `normal / modified / unmatched` 状态的显示、筛选、导出或 BOM 出库回填语义。
+- 已补跑对账集成、成本异常、出库主链、前端对账页面/Hook 测试和前后端构建，确认不会破坏已完成的 ABC 成本透明化闭环。
+- 已确认本批 diff 不涉及 `前端代码/deprecated/legacy-cost-analysis/`、`后端代码/server/src/routes/abc-v1.1.ts`、`后端代码/server/src/utils/abc-calculator.test.ts` 或前端 ABC 本体页面。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/integration/reconciliation.test.ts -t "非法病例状态"` 修复前失败：非法 `status=archived` 未返回 400，而是进入旧写入路径并返回 500。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/integration/reconciliation.test.ts -t "非法病例状态"` 通过，1 test passed / 18 skipped；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `后端代码/server npm test -- --run tests/integration/reconciliation.test.ts tests/integration/cost-exceptions.test.ts` 通过，2 files / 30 tests passed；`cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr 为既有异常台账测试场景，最终通过。
+  - `后端代码/server npm test -- --run tests/integration/outbound.test.ts` 通过，1 file / 29 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `前端代码 npm test -- --run src/pages/reconciliation/Reconciliation.test.tsx src/pages/reconciliation/hooks/useReconciliationPage.test.ts` 通过，2 files / 18 tests passed。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `后端代码/server npm run build` 通过。
+- 浏览器复核:
+  - 本批不新增或改变病例编辑弹窗、病例列表或导出弹窗的可见组件；核心风险是 API 绕过写入和筛选/导出状态参数是否被拒绝，已用接口级红绿测试覆盖，不新增截图证据。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 当前修复覆盖 LIS 病例状态枚举；其它对账日志类型、修正字段或导入来源若存在非法枚举值直接写入，应继续按同一不变量逐项处理。
+
+## 三百零二、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 
