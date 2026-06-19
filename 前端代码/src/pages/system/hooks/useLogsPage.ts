@@ -182,6 +182,7 @@ export function useLogsPage() {
     includeBasic: true, includeDetail: true, includeIP: false, includeDiff: false,
   })
   const dateError = getDateRangeError(startDate, endDate)
+  const exportDateError = getDateRangeError(exportForm.startDate, exportForm.endDate)
 
   const handleSearch = () => {
     if (dateError) {
@@ -249,9 +250,8 @@ export function useLogsPage() {
       toast.warning('请至少选择一项导出内容')
       return
     }
-    const message = getDateRangeError(exportForm.startDate, exportForm.endDate)
-    if (message) {
-      toast.error(message)
+    if (exportDateError) {
+      toast.error(exportDateError)
       return
     }
     try {
@@ -308,6 +308,7 @@ export function useLogsPage() {
     stats,
     userOptions,
     dateError,
+    exportDateError,
     handleSearch, handleReset,
     openDetail, openExport,
     getLogType, getAvatarChar, getModuleLabel,

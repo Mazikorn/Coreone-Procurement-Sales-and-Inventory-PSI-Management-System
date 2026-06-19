@@ -1,15 +1,17 @@
+import React from 'react'
 import { X } from 'lucide-react'
 import type { LogFormData } from '../hooks/useLogsPage'
 
 interface Props {
   open: boolean
   form: LogFormData
+  dateError?: string
   onClose: () => void
   onChange: (form: LogFormData) => void
   onExport: () => void
 }
 
-export function LogExportModal({ open, form, onClose, onChange, onExport }: Props) {
+export function LogExportModal({ open, form, dateError = '', onClose, onChange, onExport }: Props) {
   if (!open) return null
 
   return (
@@ -31,16 +33,25 @@ export function LogExportModal({ open, form, onClose, onChange, onExport }: Prop
                 type="date"
                 value={form.startDate}
                 onChange={e => onChange({ ...form, startDate: e.target.value })}
-                className="flex-1 h-10 px-3 text-sm text-gray-900 bg-white border border-gray-300 rounded-md outline-none transition-all focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10"
+                aria-invalid={Boolean(dateError)}
+                aria-describedby={dateError ? 'logs-export-date-error' : undefined}
+                className="flex-1 h-10 px-3 text-sm text-gray-900 bg-white border border-gray-300 rounded-md outline-none transition-all focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 aria-[invalid=true]:border-red-500"
               />
               <span className="text-gray-500">至</span>
               <input
                 type="date"
                 value={form.endDate}
                 onChange={e => onChange({ ...form, endDate: e.target.value })}
-                className="flex-1 h-10 px-3 text-sm text-gray-900 bg-white border border-gray-300 rounded-md outline-none transition-all focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10"
+                aria-invalid={Boolean(dateError)}
+                aria-describedby={dateError ? 'logs-export-date-error' : undefined}
+                className="flex-1 h-10 px-3 text-sm text-gray-900 bg-white border border-gray-300 rounded-md outline-none transition-all focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10 aria-[invalid=true]:border-red-500"
               />
             </div>
+            {dateError && (
+              <p id="logs-export-date-error" role="alert" className="mt-2 text-sm text-red-600">
+                {dateError}
+              </p>
+            )}
           </div>
 
           <div className="mb-5">
