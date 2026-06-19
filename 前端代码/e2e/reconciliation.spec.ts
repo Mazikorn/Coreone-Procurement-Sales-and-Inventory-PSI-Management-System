@@ -703,6 +703,39 @@ test.describe('消耗对账 -> 修正日志', () => {
     await logsRequest
     await expect(page.locator('text=BOM修正记录')).toBeVisible()
   })
+
+  test('RECON-LOG-08. 正常用例：查看修正日志完整上下文', async ({ page }) => {
+    const token = await apiLogin('admin')
+    const reason = `详情上下文复核-${Date.now()}`
+    const createRes = await apiFetch(token, 'POST', '/reconciliation/logs', {
+      type: 'bom_fix',
+      targetId: `mat-log-detail-${Date.now()}`,
+      targetName: '详情测试物料',
+      field: 'usage_per_sample,unit',
+      oldValue: '1 支',
+      newValue: '2 ml',
+      reason,
+    })
+    expect(createRes.status).toBe(200)
+
+    await loginAs(page, 'admin')
+    await page.goto(`${FE_BASE}/reconciliation`)
+    const dateInputs = page.locator('input[type="date"]')
+    await dateInputs.nth(0).fill('2026-06-01')
+    await dateInputs.nth(1).fill('2026-06-30')
+    await page.click('text=修正日志')
+    const logRow = page.locator('.border-b.border-gray-100').filter({ hasText: reason }).first()
+    await expect(logRow).toBeVisible()
+
+    await logRow.getByRole('button', { name: '查看详情' }).click()
+    const dialog = page.getByRole('dialog', { name: '修正日志详情' })
+    await expect(dialog).toBeVisible()
+    await expect(dialog).toContainText('详情测试物料')
+    await expect(dialog).toContainText('usage_per_sample,unit')
+    await expect(dialog).toContainText('1 支')
+    await expect(dialog).toContainText('2 ml')
+    await expect(dialog).toContainText(reason)
+  })
 })
 
 // ── 8. 导入LIS数据 ──
