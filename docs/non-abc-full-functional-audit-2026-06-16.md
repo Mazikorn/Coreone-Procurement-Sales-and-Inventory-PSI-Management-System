@@ -15774,7 +15774,53 @@ git diff --check
 
 - 季度成本调整创建入口的季度和金额校验已收口；列表分页、筛选来源、重复季度调整和停用成本中心是否允许创建调整单仍可作为后续独立批次评估，不在本批扩大范围。
 
-## 三百二十二、结论
+## 三百二十二、批次 367: 季度成本调整审核必须记录真实审核人
+
+**发现的问题**
+
+- 本轮继续复核季度成本调整审核流，聚焦“审核不是普通状态切换，必须阻止提交人自审，并留下真实审核人”不变量。
+- `POST /api/v1/cost-adjustments/:id/review` 旧实现读取 `(req as any).user?.id`，但认证 payload 实际字段是 `userId`。
+- 这会导致自审保护无法正确比较提交人和审核人，并在合法审核更新 `reviewed_by` 时把 `undefined` 绑定进 SQLite，最终返回 500。
+- 调整单审核结果会影响财务复核追踪和后续成本说明，不能出现“状态变了但审核人不可追溯”或“自审绕过”的风险。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/cost-adjustment-v1.1.ts`
+  - 审核路径改用认证 payload 中真实存在的 `userId`。
+  - 自审判断继续在更新前执行，命中时返回 `403 FORBIDDEN`。
+  - 财务审核通过时写入真实 `reviewed_by` 和 `review_reason`，保留既有乐观锁和状态约束。
+- `后端代码/server/tests/cost-adjustments.test.ts`
+  - 新增审核流红绿测试：管理员创建调整单后自审必须被拒绝，财务账号审核必须成功并落库真实审核人。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 季度成本调整审核 API 和后端测试，不修改 ABC 本体、ABC API、ABC 调整单、成本算法或废弃 `/cost-analysis`。
+- 成本调整审核属于财务复核与成本说明链路；本批不改变合法分摊、全成本计算或 ABC 成本异常闭环，只修复审核身份和自审保护。
+- 已补跑成本调整专项、间接成本保护、全成本和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/cost-adjustments.test.ts -t "审核调整单必须阻止提交人自审"` 修复前失败：提交人自审返回 500，期望 403。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/cost-adjustments.test.ts -t "审核调整单必须阻止提交人自审"` 通过，1 test passed / 2 skipped。
+  - `后端代码/server npm test -- --run tests/cost-adjustments.test.ts tests/indirect-cost-guard.test.ts tests/integration/full-cost.test.ts tests/integration/cost-exceptions.test.ts` 通过，4 files / 25 tests passed；`cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr 为既有异常台账测试场景，最终通过。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis` 无输出，确认未改废弃范围。
+- 浏览器复核:
+  - 本批为成本调整审核 API 身份校验修复，不新增或改变页面组件、弹窗或可见交互；核心风险是 API 审核副作用和身份追踪，已用接口级红绿测试和数据库断言覆盖，不新增截图证据。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 季度成本调整创建与审核身份已收口；列表分页、筛选来源、重复季度调整和停用成本中心是否允许创建调整单仍可作为后续独立批次评估，不在本批扩大范围。
+
+## 三百二十三、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

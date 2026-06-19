@@ -9,10 +9,10 @@ const getApp = async () => {
   return { app, db: getDatabase() }
 }
 
-async function loginAdmin(app: any): Promise<{ token: string; userId: string }> {
+async function loginUser(app: any, username: string, password: string): Promise<{ token: string; userId: string }> {
   const res = await request(app)
     .post('/api/v1/auth/login')
-    .send({ username: 'admin', password: 'admin123' })
+    .send({ username, password })
   expect(res.status).toBe(200)
   expect(res.body.success).toBe(true)
   return { token: res.body.data.token, userId: res.body.data.user.id }
@@ -23,12 +23,17 @@ describe('季度成本调整', () => {
   let db: any
   let token: string
   let adminUserId: string
+  let financeToken: string
+  let financeUserId: string
 
   beforeAll(async () => {
     ;({ app, db } = await getApp())
-    const admin = await loginAdmin(app)
+    const admin = await loginUser(app, 'admin', 'admin123')
+    const finance = await loginUser(app, 'caiwu', 'CoreOne2026!')
     token = admin.token
     adminUserId = admin.userId
+    financeToken = finance.token
+    financeUserId = finance.userId
   })
 
   it('COST-ADJ-001: 创建调整单必须拒绝非法季度和不可解释实际金额且不写入脏记录', async () => {
@@ -117,6 +122,54 @@ describe('季度成本调整', () => {
       adjustment_amount: 150,
       submitted_by: adminUserId,
       review_status: 'pending',
+    })
+  })
+
+  it('审核调整单必须阻止提交人自审，并记录真实审核人', async () => {
+    const suffix = Date.now()
+    const costCenterId = `cost-adj-review-center-${suffix}`
+
+    db.prepare(`
+      INSERT INTO indirect_cost_centers (id, code, name, cost_type, monthly_amount, allocation_base, status)
+      VALUES (?, ?, '审核调整单成本中心', 'rent', 1000, 'sample_count', 1)
+    `).run(costCenterId, `COST-ADJ-REVIEW-${suffix}`)
+
+    const create = await request(app)
+      .post('/api/v1/cost-adjustments')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ costCenterId, yearQuarter: '2026-Q3', actualAmount: 900, adjustmentReason: '审核流测试' })
+
+    expect(create.status).toBe(201)
+    const adjustmentId = create.body.data.id
+
+    const selfReview = await request(app)
+      .post(`/api/v1/cost-adjustments/${adjustmentId}/review`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ status: 'approved', reason: '自己审核自己' })
+
+    expect(selfReview.status).toBe(403)
+    expect(selfReview.body.success).toBe(false)
+    expect(selfReview.body.error.code).toBe('FORBIDDEN')
+
+    const financeReview = await request(app)
+      .post(`/api/v1/cost-adjustments/${adjustmentId}/review`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({ status: 'approved', reason: '财务复核通过' })
+
+    expect(financeReview.status).toBe(200)
+    expect(financeReview.body.success).toBe(true)
+
+    const reviewed = db.prepare(`
+      SELECT submitted_by, review_status, reviewed_by, review_reason
+      FROM cost_adjustments
+      WHERE id = ?
+    `).get(adjustmentId) as any
+
+    expect(reviewed).toMatchObject({
+      submitted_by: adminUserId,
+      review_status: 'approved',
+      reviewed_by: financeUserId,
+      review_reason: '财务复核通过',
     })
   })
 })

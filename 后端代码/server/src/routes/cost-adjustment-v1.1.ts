@@ -141,7 +141,7 @@ router.post('/:id/review', authenticateToken, requireRole('admin', 'finance'), (
       error(res, '状态应为 approved 或 rejected', 'INVALID_PARAMETER', 400); return
     }
     const db = getDatabase()
-    const userId = (req as any).user?.id
+    const userId = (req as any).user?.userId
 
     const existing = db.prepare('SELECT * FROM cost_adjustments WHERE id = ?').get(id) as any
     if (!existing) { error(res, '调整记录不存在', 'NOT_FOUND', 404); return }
