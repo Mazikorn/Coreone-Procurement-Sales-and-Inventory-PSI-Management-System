@@ -15630,7 +15630,55 @@ git diff --check
 
 - 盘点列表状态和分页异常语义已阶段性收口；下一批应继续沿库存主链路复核库存日志、报表或其它列表读取面的来源/日期/分页参数，不在本批继续扩展。
 
-## 三百一十九、结论
+## 三百一十九、批次 364: 物料成本报表分类来源必须未删除
+
+**发现的问题**
+
+- 本轮进入库存主链路后的报表读取面，聚焦“候选来源必须存在且有效，不能把已废弃来源当成合法筛选条件”不变量。
+- `/api/v1/reports/cost-by-material?categoryId=...` 已能拒绝不存在的物料分类，但旧校验只查 `material_categories.id`，没有排除 `is_deleted = 1` 的已删除分类。
+- 当 API 绕过前端候选传入已删除分类时，旧接口返回 200 空结果，用户可能误判为该分类当前没有物料成本，而不是筛选来源已不可用。
+- 历史出库里的软删除物料仍必须保留在报表中；本批只处理“筛选候选来源有效性”，不改变历史事实保留。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/reports-v1.1.ts`
+  - `rejectUnknownMaterialCategory` 改为只接受 `is_deleted = 0` 的物料分类。
+  - 已删除或不存在的物料分类筛选统一返回 `400 INVALID_PARAMETER`。
+  - 合法分类筛选和无分类筛选仍沿用原有报表口径，不改变出库、退库或历史软删除物料展示。
+- `后端代码/server/tests/integration/reports-cost-by-material.test.ts`
+  - 新增 `REPORT-MATERIAL-006`，覆盖物料成本报表拒绝已删除物料分类筛选。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 物料成本报表只读分类来源校验和后端测试，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 物料成本报表依赖出库、退库、物料分类和历史物料事实；本批不改变任何库存、出库、退库或成本异常写入副作用，只阻断错误分类来源污染报表查询语义。
+- 已补跑物料成本报表专项、报表日期/趋势/项目/分组/差异回归、库存集成、库存一致性、出库和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/integration/reports-cost-by-material.test.ts -t "REPORT-MATERIAL-006"` 修复前失败：已删除 `categoryId` 返回 200，期望 400。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/integration/reports-cost-by-material.test.ts -t "REPORT-MATERIAL-006"` 通过，1 test passed / 5 skipped。
+  - `后端代码/server npm test -- --run tests/integration/reports-cost-by-material.test.ts` 通过，6 tests passed。
+  - `后端代码/server npm test -- --run tests/integration/reports-date-validation.test.ts tests/integration/reports-cost-trend.test.ts tests/integration/reports-cost-by-project.test.ts tests/integration/reports-cost-by-project-group.test.ts tests/integration/reports-cost-variance.test.ts` 通过，5 files / 17 tests passed。
+  - `后端代码/server npm test -- --run tests/integration/inventory.test.ts tests/inventory-consistency.test.ts tests/integration/outbound.test.ts tests/integration/cost-exceptions.test.ts` 通过，4 files / 64 tests passed；`cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr 为既有异常台账测试场景，最终通过。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only | rg "deprecated/legacy-cost-analysis|前端代码/deprecated|/cost-analysis"` 无匹配，确认未改废弃范围。
+- 浏览器复核:
+  - 本批为报表 API 来源参数校验修复，不新增或改变页面组件、弹窗或可见交互；核心风险是 API 是否拒绝已删除分类来源，已用接口级红绿测试覆盖，不新增截图证据。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 报表读取面的物料分类来源已补齐“未删除”约束；下一批应继续按计划复核其它报表来源候选、日期和导出参数，不在本批继续扩展。
+
+## 三百二十、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

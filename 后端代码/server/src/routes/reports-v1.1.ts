@@ -58,7 +58,7 @@ function rejectInvalidDateRange(req: any, res: any) {
 
 function rejectUnknownMaterialCategory(db: any, categoryId: string, res: any) {
   if (!categoryId) return false
-  const category = db.prepare('SELECT id FROM material_categories WHERE id = ?').get(categoryId)
+  const category = db.prepare('SELECT id FROM material_categories WHERE id = ? AND is_deleted = 0').get(categoryId)
   if (!category) {
     error(res, '物料分类筛选不存在', 'INVALID_PARAMETER', 400)
     return true

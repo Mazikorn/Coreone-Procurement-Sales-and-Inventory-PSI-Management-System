@@ -207,4 +207,20 @@ describe('集成测试：非ABC物料成本报表', () => {
     expect(res.body.success).toBe(false)
     expect(res.body.error.code).toBe('INVALID_PARAMETER')
   })
+
+  it('REPORT-MATERIAL-006: 物料成本报表必须拒绝已删除的物料分类筛选', async () => {
+    const suffix = Date.now()
+    const categoryId = `report-material-deleted-category-${suffix}`
+
+    db.prepare('INSERT INTO material_categories (id, code, name, level, is_deleted) VALUES (?, ?, ?, 1, 1)')
+      .run(categoryId, `REPORT-MAT-DEL-CAT-${suffix}`, '已删除报表分类')
+
+    const res = await request(app)
+      .get(`/api/v1/reports/cost-by-material?categoryId=${categoryId}&startDate=2033-05-01&endDate=2033-05-31`)
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(400)
+    expect(res.body.success).toBe(false)
+    expect(res.body.error.code).toBe('INVALID_PARAMETER')
+  })
 })
