@@ -294,4 +294,81 @@ describe('集成测试：非ABC项目分组成本报表', () => {
       }),
     ])
   })
+
+  it('REPORT-GROUP-005: 项目分组成本报表项目样本数必须跨不同分组汇总去重后的出库样本', async () => {
+    const suffix = Date.now()
+    const categoryId = `report-group-split-cat-${suffix}`
+    const coreMaterialId = `report-group-split-core-${suffix}`
+    const qcMaterialId = `report-group-split-qc-${suffix}`
+    const bomId = `report-group-split-bom-${suffix}`
+    const projectId = `report-group-split-project-${suffix}`
+    const coreOutboundId = `report-group-split-out-core-${suffix}`
+    const qcOutboundId = `report-group-split-out-qc-${suffix}`
+
+    db.prepare(`
+      INSERT INTO material_categories (id, code, name, level)
+      VALUES (?, ?, '分组拆分样本报表分类', 1)
+    `).run(categoryId, `REPORT-GROUP-SPLIT-CAT-${suffix}`)
+    db.prepare(`
+      INSERT INTO materials (id, code, name, spec, unit, category_id, price, status, is_deleted)
+      VALUES
+        (?, ?, '拆分核心物料', '1ml', '瓶', ?, 10, 1, 0),
+        (?, ?, '拆分质控物料', '1ml', '瓶', ?, 15, 1, 0)
+    `).run(
+      coreMaterialId, `REPORT-GROUP-SPLIT-CORE-${suffix}`, categoryId,
+      qcMaterialId, `REPORT-GROUP-SPLIT-QC-${suffix}`, categoryId,
+    )
+    db.prepare(`
+      INSERT INTO boms (id, code, name, version, type, status, is_deleted)
+      VALUES (?, ?, '分组拆分样本BOM', 'v1', 'ihc', 1, 0)
+    `).run(bomId, `REPORT-GROUP-SPLIT-BOM-${suffix}`)
+    db.prepare(`
+      INSERT INTO bom_items (id, bom_id, material_id, usage_per_sample, unit, group_name)
+      VALUES
+        (?, ?, ?, 1, '瓶', '核心试剂'),
+        (?, ?, ?, 1, '瓶', '质控品')
+    `).run(
+      `report-group-split-bi-core-${suffix}`, bomId, coreMaterialId,
+      `report-group-split-bi-qc-${suffix}`, bomId, qcMaterialId,
+    )
+    db.prepare(`
+      INSERT INTO projects (id, code, name, type, bom_id, status, is_deleted)
+      VALUES (?, ?, '分组拆分样本项目', 'ihc', ?, 1, 0)
+    `).run(projectId, `REPORT-GROUP-SPLIT-PROJECT-${suffix}`, bomId)
+    db.prepare(`
+      INSERT INTO outbound_records (
+        id, outbound_no, type, project_id, total_cost, sample_count,
+        operator, status, created_at, is_deleted
+      )
+      VALUES
+        (?, ?, 'bom', ?, 50, 5, 'admin', 'completed', '2033-03-10T09:00:00', 0),
+        (?, ?, 'bom', ?, 105, 7, 'admin', 'completed', '2033-03-11T09:00:00', 0)
+    `).run(
+      coreOutboundId, `REPORT-GROUP-SPLIT-OUT-CORE-${suffix}`, projectId,
+      qcOutboundId, `REPORT-GROUP-SPLIT-OUT-QC-${suffix}`, projectId,
+    )
+    db.prepare(`
+      INSERT INTO outbound_items (id, outbound_id, material_id, quantity, unit, unit_cost, total_cost)
+      VALUES
+        (?, ?, ?, 5, '瓶', 10, 50),
+        (?, ?, ?, 7, '瓶', 15, 105)
+    `).run(
+      `report-group-split-item-core-${suffix}`, coreOutboundId, coreMaterialId,
+      `report-group-split-item-qc-${suffix}`, qcOutboundId, qcMaterialId,
+    )
+
+    const res = await request(app)
+      .get(`/api/v1/reports/cost-by-project-group?projectId=${projectId}&startDate=2033-03-01&endDate=2033-03-31`)
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(200)
+    expect(res.body.success).toBe(true)
+    const project = res.body.data.projects.find((row: any) => row.projectId === projectId)
+    expect(project).toBeDefined()
+    expect(project.sampleCount).toBe(12)
+    expect(project.groups).toEqual([
+      expect.objectContaining({ groupName: '质控品', sampleCount: 7, totalCost: 105 }),
+      expect.objectContaining({ groupName: '核心试剂', sampleCount: 5, totalCost: 50 }),
+    ])
+  })
 })

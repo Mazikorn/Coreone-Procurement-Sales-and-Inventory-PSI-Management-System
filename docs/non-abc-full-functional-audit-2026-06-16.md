@@ -13895,7 +13895,51 @@ git diff --check
 - 当前物料成本报表仍只展示有出库成本的物料；仅有退库但无同期间出库的物料不会单独以负数展示，避免在现有报表结构中引入负成本语义。
 - 后续继续复核非废弃成本相关和实验运营页面，重点检查取消、删除、恢复等业务状态是否被报表误计入真实成本。
 
-## 二百八十三、结论
+## 二百八十三、批次 328: 项目分组成本报表项目样本数必须按出库去重汇总
+
+**发现的问题**
+
+- 本轮继续复核非废弃成本展示页面，聚焦“项目级样本数必须反映真实出库样本合计，不能被 BOM 分组切分后低估”不变量。
+- `GET /reports/cost-by-project-group` 的项目级 `sampleCount` 来自各分组样本数的最大值：`Math.max(proj.sampleCount, row.sample_count || 0)`。
+- 当同一项目下两笔 BOM 出库分别落在不同 BOM 分组时，项目级样本数会返回最大分组样本数，而不是该项目真实出库样本合计。例如核心试剂 5 个样本、质控品 7 个样本时，项目返回 7，正确值应为 12。
+- 这会低估项目级单位成本，影响项目成本复盘、分组成本解释和 ABC 输入侧异常判断。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/reports-v1.1.ts`
+  - 为项目分组成本报表新增项目级样本数查询：按 `outbound_records.project_id` 汇总同一过滤条件下的 `SUM(COALESCE(r.sample_count, 1))`。
+  - 项目级 `sampleCount` 改用按出库记录去重后的项目样本数；分组级 `sampleCount` 继续保留原有分组维度，避免改变分组解释口径。
+- `后端代码/server/tests/integration/reports-cost-by-project-group.test.ts`
+  - 新增 `REPORT-GROUP-005` 红绿测试：同一项目两笔 BOM 出库分别进入核心试剂和质控品分组，项目级样本数必须返回 12，两个分组仍分别返回 5 和 7。
+
+**ABC 影响评估**
+
+- 项目分组成本报表读取出库、BOM、项目和物料事实，是非 ABC 成本展示和 ABC 输入侧异常判断的上游解释面。
+- 本批只修改非 ABC 项目分组成本报表聚合口径和报表测试，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 已补跑项目分组成本、项目成本、成本趋势和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+- 已确认本批 diff 不涉及 `前端代码/deprecated/legacy-cost-analysis/`、`后端代码/server/src/routes/abc-v1.1.ts`、`后端代码/server/src/utils/abc-calculator.test.ts` 或前端 ABC 页面。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/integration/reports-cost-by-project-group.test.ts -t "REPORT-GROUP-005"` 修复前失败：项目级 `sampleCount=7`，期望 `12`。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/integration/reports-cost-by-project-group.test.ts -t "REPORT-GROUP-005"` 通过，1 test passed / 4 skipped。
+  - `后端代码/server npm test -- --run tests/integration/reports-cost-by-project-group.test.ts tests/integration/reports-cost-by-project.test.ts tests/integration/reports-cost-trend.test.ts tests/integration/cost-exceptions.test.ts` 通过，4 files / 23 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。`cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr 为既有异常台账测试场景，最终通过。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+- 浏览器复核:
+  - 本批是项目分组成本报表 API 聚合口径修复，不新增或改变页面组件和弹窗交互；核心风险在接口返回的项目级样本数是否正确，已用接口级红绿测试覆盖，不新增截图证据。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 当前项目分组成本报表仍依赖当前项目、BOM、BOM 分组和物料名称解释历史出库；如果后续 BOM 分组定义被改名或重写，彻底历史快照化需要单独设计出库项目/BOM/分组/物料快照字段和兼容迁移，已列入后续待评估，不在本批扩展。
+
+## 二百八十四、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

@@ -313,6 +313,15 @@ router.get('/cost-by-project-group', (req, res) => {
       ORDER BY r.project_id, group_name, total_cost DESC
     `).all(...params) as any[]
 
+    const sampleRows = db.prepare(`
+      SELECT r.project_id, SUM(COALESCE(r.sample_count, 1)) as sample_count
+      FROM outbound_records r
+      LEFT JOIN projects p ON r.project_id = p.id
+      WHERE ${where}
+      GROUP BY r.project_id
+    `).all(...params) as any[]
+    const sampleCountByProject = new Map(sampleRows.map((row: any) => [row.project_id, Number(row.sample_count) || 0]))
+
     // 构建嵌套结构
     const projectMap = new Map<string, any>()
 
@@ -329,7 +338,7 @@ router.get('/cost-by-project-group', (req, res) => {
       }
       const proj = projectMap.get(pid)
       proj.totalCost += row.total_cost || 0
-      proj.sampleCount = Math.max(proj.sampleCount, row.sample_count || 0)
+      proj.sampleCount = sampleCountByProject.get(pid) || 0
       proj.groups.push({
         groupName: row.group_name,
         sampleCount: row.sample_count || 0,
