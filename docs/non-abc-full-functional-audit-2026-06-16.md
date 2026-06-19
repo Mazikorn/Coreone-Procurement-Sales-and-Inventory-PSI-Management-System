@@ -12968,7 +12968,60 @@ git diff --check
 - 本批只处理版本号手工编辑假入口，不扩展到追溯/仅未来生效范围的显式 UI 选择。
 - 后续可继续按基础资料阶段检查 BOM 历史使用后保护的生效范围提示和项目/检测服务绑定边界；发现计划外问题先登记到待评估清单。
 
-## 二百六十四、结论
+## 二百六十四、批次 309: 检测服务编辑变更状态必须先做影响检查
+
+**发现的问题**
+
+- 本轮计划要求项目/检测服务覆盖 BOM 绑定、历史出库/LIS 引用保护、批量状态和删除边界，状态变更不能只证明按钮可点。
+- 检测服务列表里的单行“启用/停用”和批量状态操作已接入 `/projects/:id/check-status`，会展示 BOM、出库和 LIS 影响。
+- 但编辑弹窗里仍可通过状态单选把服务从启用改为停用或反向启用，点击保存会直接调用 `PUT /projects/:id`。
+- 这会绕过页面级影响确认；停用后会影响新出库候选服务，启用前也应向用户证明 BOM 仍可用。
+
+**已完成修复**
+
+- `前端代码/src/pages/master/hooks/useProjectsPage.ts`
+  - 编辑保存时若检测到 `status` 与原检测服务状态不同，先调用 `projectApi.checkStatus`。
+  - 状态影响检查完成后复用现有 `ProjectStatusModal` 展示 BOM、出库、LIS 影响。
+  - 用户确认前不发送 `PUT /projects/:id`；确认后提交完整编辑 payload，避免同次编辑里的名称、周期、负责人、描述和 BOM 绑定被丢弃。
+  - 取消状态影响弹窗时清理待确认编辑 payload，保留编辑弹窗让用户重新决策。
+- `前端代码/src/pages/master/hooks/useProjectsPage.test.tsx`
+  - 新增红绿测试：编辑弹窗保存状态变化时必须先调用 `projectApi.checkStatus`，且确认前不得调用 `projectApi.update`。
+  - 新增保护测试：影响确认后必须提交完整编辑 payload。
+- `前端代码/e2e/projects.spec.ts`
+  - 新增 `PROJECT-EDIT-STATUS-01` 页面级验收：创建专用检测服务，从编辑弹窗改为停用，确认保存后先出现影响检查弹窗，确认前没有 PUT，确认后接口状态变为 `inactive`。
+
+**ABC 影响评估**
+
+- 检测服务状态会影响出库候选服务、BOM 出库标准配置入口、历史出库/LIS 解释和后续成本输入链。
+- 本批让编辑入口与列表/批量状态入口共享影响确认，避免检测服务状态被静默改变后污染出库和成本上游事实。
+- 本批只修改非 ABC 的项目/检测服务页面 hook 和测试，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 已补跑项目、BOM 和出库后端回归，覆盖检测服务状态对相邻库存/成本输入链的影响。
+- 未触碰 `前端代码/deprecated/legacy-cost-analysis/`。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/master/hooks/useProjectsPage.test.tsx -t "checks status impacts"` 修复前失败：`projectApi.checkStatus` 调用次数为 0。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/master/hooks/useProjectsPage.test.tsx -t "checks status impacts"` 通过，1 test passed。
+  - `前端代码 npm test -- --run src/pages/master/hooks/useProjectsPage.test.tsx` 通过，2 tests passed。
+  - `前端代码 npm test -- --run src/pages/master/hooks/useProjectsPage.test.tsx src/pages/master/components/ProjectStatusModal.test.tsx` 通过，2 files / 6 tests passed。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/projects.spec.ts --project=chromium --grep "PROJECT-EDIT-STATUS-01"` 通过，1 test passed。
+  - `后端代码/server npm test -- --run tests/projects-batch.test.ts tests/integration/outbound.test.ts tests/integration/bom.test.ts` 通过，3 files / 61 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `后端代码/server npm run build` 通过。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis ':(glob)**/*cost-analysis*'` 无输出，确认未改废弃范围。
+  - `lsof -nP -iTCP:3001 -sTCP:LISTEN` 和 `lsof -nP -iTCP:8080 -sTCP:LISTEN` 均无监听残留。
+- 浏览器复核:
+  - 使用用户已验证的 Chrome for Testing 路径完成 headless Playwright 复核；验证重点为编辑弹窗变更状态时先展示影响检查、确认前无 PUT、确认后接口状态真实更新。
+
+**后续风险**
+
+- 本批只处理编辑弹窗内的状态变更绕过影响检查，不扩展到项目导入、复制或 BOM 绑定历史提示。
+- 后续可继续按基础资料阶段检查项目复制、导入、删除和历史出库/LIS 引用保护；发现计划外问题先登记到待评估清单。
+
+## 二百六十五、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

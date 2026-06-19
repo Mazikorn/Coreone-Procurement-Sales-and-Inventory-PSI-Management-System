@@ -85,6 +85,7 @@ export function useProjectsPage() {
   const [statusCheck, setStatusCheck] = useState<ProjectStatusCheck | null>(null)
   const [checkingStatus, setCheckingStatus] = useState(false)
   const [updatingStatus, setUpdatingStatus] = useState(false)
+  const [pendingEditStatusPayload, setPendingEditStatusPayload] = useState<ReturnType<typeof buildPayload> | null>(null)
   const [batchStatusAction, setBatchStatusAction] = useState<ProjectBatchStatusAction | null>(null)
   const [batchStatusTargets, setBatchStatusTargets] = useState<Project[]>([])
   const [batchStatusResults, setBatchStatusResults] = useState<ProjectBatchStatusResult[]>([])
@@ -262,7 +263,8 @@ export function useProjectsPage() {
     resetForm()
   }
 
-  const buildPayload = () => ({
+  function buildPayload() {
+    return {
     type: form.type,
     code: form.code.trim(),
     name: form.name.trim(),
@@ -271,7 +273,8 @@ export function useProjectsPage() {
     status: form.status,
     description: form.description.trim(),
     bomId: form.bomId || undefined,
-  })
+    }
+  }
 
   const handleSubmit = async () => {
     if (!canWrite) {
@@ -283,9 +286,30 @@ export function useProjectsPage() {
       return
     }
 
+    const payload = buildPayload()
+    if (modalType === 'edit' && editingRow && payload.status !== editingRow.status) {
+      setPendingEditStatusPayload(payload)
+      setStatusTarget({
+        ...editingRow,
+        ...payload,
+        bomId: payload.bomId || '',
+      })
+      setStatusTargetStatus(payload.status)
+      setStatusCheck(null)
+      setCheckingStatus(true)
+      try {
+        const check = await projectApi.checkStatus(editingRow.id, payload.status)
+        setStatusCheck(check)
+      } catch (e) {
+        toast.error('状态变更影响检查失败')
+      } finally {
+        setCheckingStatus(false)
+      }
+      return
+    }
+
     setIsSubmitting(true)
     try {
-      const payload = buildPayload()
       if (modalType === 'edit' && editingRow) {
         await projectApi.update(editingRow.id, payload)
         toast.success('检测服务更新成功')
@@ -360,6 +384,7 @@ export function useProjectsPage() {
     setStatusTarget(null)
     setStatusCheck(null)
     setCheckingStatus(false)
+    setPendingEditStatusPayload(null)
   }
 
   const handleStatusConfirm = async () => {
@@ -370,15 +395,22 @@ export function useProjectsPage() {
     if (!statusTarget || !statusCheck?.canChange) return
     setUpdatingStatus(true)
     try {
-      await projectApi.update(statusTarget.id, {
-        code: statusTarget.code,
-        name: statusTarget.name,
-        type: statusTarget.type,
-        status: statusTargetStatus,
-      })
-      toast.success(statusTargetStatus === 'active' ? '检测服务已启用' : '检测服务已停用')
+      if (pendingEditStatusPayload) {
+        await projectApi.update(statusTarget.id, pendingEditStatusPayload)
+        toast.success('检测服务更新成功')
+        closeModal()
+      } else {
+        await projectApi.update(statusTarget.id, {
+          code: statusTarget.code,
+          name: statusTarget.name,
+          type: statusTarget.type,
+          status: statusTargetStatus,
+        })
+        toast.success(statusTargetStatus === 'active' ? '检测服务已启用' : '检测服务已停用')
+      }
       setStatusTarget(null)
       setStatusCheck(null)
+      setPendingEditStatusPayload(null)
       setSelectedIds(prev => {
         const next = new Set(prev)
         next.delete(statusTarget.id)
