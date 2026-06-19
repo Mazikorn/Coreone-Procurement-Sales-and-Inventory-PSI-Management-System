@@ -43,6 +43,13 @@ function parsePositiveBaseValue(value: unknown) {
   return { ok: true as const, value: baseValue }
 }
 
+function parsePaginationParam(value: unknown, fallback: number, max = 1000) {
+  const raw = String(value ?? fallback).trim()
+  if (!/^\d+$/.test(raw)) return null
+  const parsed = Number(raw)
+  return Number.isInteger(parsed) && parsed >= 1 && parsed <= max ? parsed : null
+}
+
 function isValidYearMonth(value: unknown) {
   return typeof value === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(value)
 }
@@ -78,8 +85,11 @@ router.get('/', (req, res) => {
     const { where, params } = buildCostCenterWhere(req.query)
 
     const count = (db.prepare(`SELECT COUNT(*) as total FROM indirect_cost_centers WHERE ${where}`).get(...params) as any)?.total || 0
-    const pageNum = Math.max(1, Number(page))
-    const safePageSize = Math.max(1, Math.min(1000, Number(pageSize)))
+    const pageNum = parsePaginationParam(page, 1)
+    const safePageSize = parsePaginationParam(pageSize, 20)
+    if (!pageNum || !safePageSize) {
+      error(res, '分页参数无效', 'INVALID_PARAMETER', 400); return
+    }
     const offset = (pageNum - 1) * safePageSize
     const list = db.prepare(`SELECT * FROM indirect_cost_centers WHERE ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`).all(...params, safePageSize, offset) as any[]
 
@@ -265,8 +275,11 @@ router.get('/:id/allocations', (req, res) => {
     const costCenter = db.prepare('SELECT id FROM indirect_cost_centers WHERE id = ?').get(id)
     if (!costCenter) { error(res, 'Cost center not found', 'NOT_FOUND', 404); return }
     const count = (db.prepare('SELECT COUNT(*) as total FROM indirect_cost_allocations WHERE cost_center_id = ?').get(id) as any)?.total || 0
-    const pageNum = Math.max(1, Number(page))
-    const safePageSize = Math.max(1, Math.min(1000, Number(pageSize)))
+    const pageNum = parsePaginationParam(page, 1)
+    const safePageSize = parsePaginationParam(pageSize, 20)
+    if (!pageNum || !safePageSize) {
+      error(res, '分页参数无效', 'INVALID_PARAMETER', 400); return
+    }
     const offset = (pageNum - 1) * safePageSize
     const list = db.prepare('SELECT * FROM indirect_cost_allocations WHERE cost_center_id = ? ORDER BY year_month DESC LIMIT ? OFFSET ?').all(id, safePageSize, offset) as any[]
 

@@ -15918,7 +15918,54 @@ git diff --check
 
 - 季度成本调整创建、审核和列表筛选已阶段性收口；后续若继续成本相关复核，应转向其他非废弃报表/效率/LIS/对账页面，不从旧 `/cost-analysis` 推导需求。
 
-## 三百二十五、结论
+## 三百二十五、批次 370: 间接成本中心列表分页参数必须可解释
+
+**发现的问题**
+
+- 本轮转入非 ABC 间接成本配置读面，聚焦“列表分页参数必须可解释，不能把错误参数变成 500 或静默兜底”不变量。
+- `GET /api/v1/indirect-costs?page=abc` 旧实现用 `Math.max(1, Number(page))`，`NaN` 会进入 SQLite `OFFSET`，红灯返回 500，期望 400。
+- `pageSize=0` 旧实现会被静默改成 1，用户或集成方难以判断请求参数错误。
+- 成本中心分摊列表 `GET /api/v1/indirect-costs/:id/allocations` 使用同一类分页口径，也存在不可解释参数风险。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/indirect-cost-v1.1.ts`
+  - 新增本路由分页参数解析，要求 `page >= 1`，`pageSize` 为 `1-1000` 的整数，保留旧实现的最大页大小上限。
+  - 成本中心列表遇到非法分页返回 `400 INVALID_PARAMETER`，不再触发 SQLite 500。
+  - 成本中心分摊列表使用同一分页校验口径，非法页码或每页数量同样返回 `400 INVALID_PARAMETER`。
+- `后端代码/server/tests/indirect-cost-guard.test.ts`
+  - 新增 `IDC-PAGE-001` 红绿测试，覆盖成本中心列表和分摊列表的非法页码、非法每页数量，并断言错误码。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 间接成本中心/分摊列表 API 和后端测试，不修改 ABC 本体、ABC API、成本算法、库存、出库或废弃 `/cost-analysis`。
+- 间接成本中心和分摊记录是全成本/成本说明的上游配置；本批不改变合法分摊录入、统计、全成本计算或成本异常闭环，只让错误分页参数变成可解释错误。
+- 已补跑间接成本专项、全成本和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/indirect-cost-guard.test.ts -t "IDC-PAGE-001"` 修复前失败：成本中心非法页码返回 500，期望 400。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/indirect-cost-guard.test.ts -t "IDC-PAGE-001"` 通过，1 test passed / 8 skipped。
+  - `后端代码/server npm test -- --run tests/indirect-cost-guard.test.ts` 通过，9 tests passed。
+  - `后端代码/server npm test -- --run tests/indirect-cost-guard.test.ts tests/integration/full-cost.test.ts tests/integration/cost-exceptions.test.ts` 通过，3 files / 23 tests passed；`cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr 为既有异常台账测试场景，最终通过。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis` 无输出，确认未改废弃范围。
+- 浏览器复核:
+  - 本批为间接成本列表 API 参数校验修复，不新增或改变页面组件、弹窗或可见交互；核心风险是 API 是否拒绝错误分页并保留合法列表语义，已用接口级红绿测试覆盖，不新增截图证据。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 间接成本中心列表、分摊录入和统计已有阶段性保护；后续若继续成本配置层，应按独立批次复核页面级导出、编辑刷新和更多候选来源边界。
+
+## 三百二十六、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

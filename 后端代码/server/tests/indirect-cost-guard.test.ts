@@ -173,6 +173,29 @@ describe('间接成本中心删除保护', () => {
     expect(res.status).toBe(404)
   })
 
+  it('IDC-PAGE-001: 成本中心和分摊列表必须拒绝非法分页参数', async () => {
+    const suffix = `page-${Date.now()}`
+    const costCenterId = await createCostCenter(app, token, suffix)
+
+    const cases = [
+      { path: '/api/v1/indirect-costs', query: { page: 'abc', pageSize: '20' }, label: '成本中心非法页码' },
+      { path: '/api/v1/indirect-costs', query: { page: '1', pageSize: '0' }, label: '成本中心非法每页数量' },
+      { path: `/api/v1/indirect-costs/${costCenterId}/allocations`, query: { page: 'abc', pageSize: '20' }, label: '分摊非法页码' },
+      { path: `/api/v1/indirect-costs/${costCenterId}/allocations`, query: { page: '1', pageSize: '0' }, label: '分摊非法每页数量' },
+    ]
+
+    for (const item of cases) {
+      const res = await request(app)
+        .get(item.path)
+        .query(item.query)
+        .set('Authorization', `Bearer ${token}`)
+
+      expect(res.status, item.label).toBe(400)
+      expect(res.body.success, item.label).toBe(false)
+      expect(res.body.error.code, item.label).toBe('INVALID_PARAMETER')
+    }
+  })
+
   it('IDC-ALLOC-STATUS-001: 停用成本中心不可新增或更新分摊记录', async () => {
     const suffix = `inactive-alloc-${Date.now()}`
     const inactive = await request(app)
