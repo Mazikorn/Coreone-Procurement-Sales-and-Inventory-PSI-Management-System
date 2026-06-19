@@ -16201,9 +16201,57 @@ git diff --check
 
 **后续风险**
 
-- 对账页面导入、导出、日期筛选、日志筛选和病例编辑后的 summary/project 刷新已有阶段性保护；后续可继续复核 BOM 修正弹窗提交后的物料汇总/异常台账提示、或转入效率/报表展示页。
+- 对账页面导入、导出、日期筛选、日志筛选和病例编辑后的 summary/project 刷新已有阶段性保护；BOM 修正弹窗提交后的刷新失败解释作为下一独立批次处理，避免在病例编辑刷新批次中扩大范围。
 
-## 三百三十一、结论
+## 三百三十一、批次 376: BOM 修正成功后不得把刷新失败误报为修正失败
+
+**发现的问题**
+
+- 本轮继续复核 ABC 之外的 LIS/对账页面，聚焦“写入副作用已成功和后续读面刷新失败必须区分解释”不变量。
+- `handleFixBom` 在 `createLog` 成功后会关闭弹窗并提示 `BOM用量已修正`，随后继续刷新项目物料明细。
+- 刷新明细失败和写入失败共用同一个外层 `catch`，会把已经成功的 BOM 修正写入解释成底层刷新错误或 `修正失败`，用户无法判断历史事实是否已经改变。
+- 这会破坏对账修正、日志追踪和后续成本异常解释链的可信度：真正需要用户处理的是刷新读面，而不是重复提交一次 BOM 修正。
+
+**已完成修复**
+
+- `前端代码/src/pages/reconciliation/hooks/useReconciliationPage.ts`
+  - 保留 `createLog` 写入失败走原有 `修正失败` 路径。
+  - 将写入成功后的项目物料明细/物料汇总刷新拆入独立 `try/catch`。
+  - 刷新失败时提示 `BOM已修正，刷新对账明细失败，请重新展开项目`，避免误导用户重复提交已成功的修正。
+  - 物料汇总页刷新改为 `await fetchMaterials()`，让刷新失败也能进入独立解释路径。
+- `前端代码/src/pages/reconciliation/hooks/useReconciliationPage.test.ts`
+  - 新增红绿测试：模拟 `createLog` 成功但 `getProjectMaterials` 刷新失败，断言仍提示 BOM 已修正，并显示刷新失败解释，不再把本次写入误报为修正失败。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 对账页面 hook 和前端测试，不修改 ABC 本体、ABC API、成本算法、库存、出库或废弃 `/cost-analysis`。
+- BOM 修正会影响后续 BOM 理论消耗、对账差异和成本异常输入侧判断；本批不改变后端 BOM 更新、日志落库、出库或成本异常写入规则，只修正页面对“写入成功但刷新失败”的解释。
+- 已补跑对账专项、出库和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/reconciliation/hooks/useReconciliationPage.test.ts -t "does not report BOM correction"` 修复前失败：刷新失败时页面只展示底层 `刷新失败`，没有说明 BOM 修正已经成功。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/reconciliation/hooks/useReconciliationPage.test.ts -t "does not report BOM correction"` 通过。
+  - `前端代码 npm test -- --run src/pages/reconciliation/hooks/useReconciliationPage.test.ts` 通过，17 tests passed。
+  - `后端代码/server npm test -- --run tests/integration/reconciliation.test.ts tests/integration/outbound.test.ts tests/integration/cost-exceptions.test.ts` 通过，3 files / 62 tests passed；命令退出码为 0，保留既有 Vite close timeout 提示和 `cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis` 无输出，确认未改废弃范围。
+- 浏览器复核:
+  - 本批为对账页面 hook 写入后刷新失败解释修复，不新增组件结构、路由或接口；核心风险是成功写入和刷新失败是否被区分，已用 hook 级红绿测试覆盖真实调用副作用和 toast 结果，不新增截图证据。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 对账页面导入、导出、日期筛选、日志筛选、病例编辑后的 summary/project 刷新，以及 BOM 修正成功后刷新失败解释已阶段性保护；后续可继续复核 BOM 修正后是否需要引导重新审计成本异常，或转入效率/报表展示页。
+
+## 三百三十二、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

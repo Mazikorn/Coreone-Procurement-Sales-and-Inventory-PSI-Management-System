@@ -330,4 +330,46 @@ describe('parseLisImportData', () => {
     expect(reconciliationApi.getProjects).toHaveBeenCalled()
     expect(toast.success).toHaveBeenCalledWith('病例信息已更新')
   })
+
+  it('does not report BOM correction as failed when only the detail refresh fails', async () => {
+    const { result } = renderHook(() => useReconciliationPage())
+    await waitFor(() => expect(reconciliationApi.getProjects).toHaveBeenCalled())
+    vi.mocked(reconciliationApi.createLog).mockResolvedValueOnce({ id: 'log-1' } as any)
+    vi.mocked(reconciliationApi.getProjectMaterials).mockRejectedValueOnce(new Error('刷新失败'))
+
+    act(() => {
+      result.current.openFixBomModal({
+        materialId: 'mat-1',
+        materialName: '苏木精',
+        spec: '500ml',
+        bomUsagePerSample: 1,
+        bomUnit: 'ml',
+        theoryQty: 10,
+        actualQty: 15,
+        actualUnit: 'ml',
+        diff: -5,
+        diffRate: 50,
+        status: 'danger',
+        price: 1,
+        theoryUnit: 'ml',
+      }, 'project-1')
+      result.current.setFixNewUsage(1.5)
+      result.current.setFixNewUnit('ml')
+      result.current.setFixReason('复核后更新标准用量')
+    })
+
+    await act(async () => {
+      await result.current.handleFixBom()
+    })
+
+    expect(reconciliationApi.createLog).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: 'project-1',
+      materialId: 'mat-1',
+      newUsage: 1.5,
+      newUnit: 'ml',
+    }))
+    expect(toast.success).toHaveBeenCalledWith('BOM用量已修正')
+    expect(toast.error).toHaveBeenCalledWith('BOM已修正，刷新对账明细失败，请重新展开项目')
+    expect(toast.error).not.toHaveBeenCalledWith('修正失败')
+  })
 })

@@ -685,11 +685,15 @@ export function useReconciliationPage() {
       setFixBomModalOpen(false)
       setFixTarget(null)
       setFixTargetProjectId(null)
-      if (activeTab === 'reconcile') {
-        const res = await reconciliationApi.getProjectMaterials(fixTargetProjectId, dateParams)
-        setProjectMaterials(prev => ({ ...prev, [fixTargetProjectId]: res?.list || [] }))
+      try {
+        if (activeTab === 'reconcile') {
+          const res = await reconciliationApi.getProjectMaterials(fixTargetProjectId, dateParams)
+          setProjectMaterials(prev => ({ ...prev, [fixTargetProjectId]: res?.list || [] }))
+        }
+        if (activeTab === 'material') await fetchMaterials()
+      } catch {
+        toast.error('BOM已修正，刷新对账明细失败，请重新展开项目')
       }
-      if (activeTab === 'material') fetchMaterials()
     } catch (e: any) {
       toast.error(e?.message || '修正失败')
     }
