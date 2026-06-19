@@ -1050,21 +1050,261 @@ test.describe('耗材管理 -> 删除物料', () => {
     }
   })
   test('MAT-DEL-11. 正常用例：删除后物料列表刷新', async ({ page }) => {
-    const token = await apiLogin('admin')
-    const cid = await getAnyCategoryId(token)
-    if (!cid) { test.skip(); return }
-    const create = await apiFetch(token, 'POST', '/materials', {
-      code: `TEST-DEL-REF-${Date.now()}`, name: '刷新删除', unit: '瓶', categoryId: cid,
+    await loginAs(page, 'admin')
+
+    let materialVisible = true
+    let checkCalled = false
+    let deleteCalled = false
+
+    await page.route('**/api/v1/categories**', async (route) => {
+      const url = new URL(route.request().url())
+      if (url.pathname.endsWith('/categories')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              list: [{ id: 'cat-delete', name: '删除分类', status: 'active' }],
+              pagination: { total: 1, page: 1, pageSize: 999 },
+            },
+          }),
+        })
+        return
+      }
+      await route.fallback()
     })
-    const id = create.data?.data?.id
-    if (id) {
-      await apiFetch(token, 'DELETE', `/materials/${id}`)
-    }
+    await page.route('**/api/v1/suppliers**', async (route) => {
+      const url = new URL(route.request().url())
+      if (url.pathname.endsWith('/suppliers')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              list: [],
+              pagination: { total: 0, page: 1, pageSize: 999 },
+            },
+          }),
+        })
+        return
+      }
+      await route.fallback()
+    })
+    await page.route('**/api/v1/materials**', async (route) => {
+      const request = route.request()
+      const url = new URL(request.url())
+      if (url.pathname.endsWith('/materials/stats')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: { total: materialVisible ? 1 : 0, active: materialVisible ? 1 : 0, inactive: 0, lowStock: 0 },
+          }),
+        })
+        return
+      }
+      if (url.pathname.endsWith('/materials/mock-delete-material/check-deletable')) {
+        checkCalled = true
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              material: { id: 'mock-delete-material', code: 'DEL-001', name: '待删除Mock物料' },
+              deletable: true,
+              impacts: {
+                currentInventoryCount: 0,
+                inventoryLocationCount: 0,
+                batchCount: 0,
+                inboundCount: 0,
+                outboundCount: 0,
+                bomCount: 0,
+                returnCount: 0,
+                scrapCount: 0,
+                supplierReturnCount: 0,
+                stockLogCount: 0,
+                usageTrackingCount: 0,
+              },
+              reasons: [],
+            },
+          }),
+        })
+        return
+      }
+      if (url.pathname.endsWith('/materials/mock-delete-material') && request.method() === 'DELETE') {
+        deleteCalled = true
+        materialVisible = false
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true, data: null, message: 'Deleted' }),
+        })
+        return
+      }
+      if (url.pathname.endsWith('/materials')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              list: materialVisible ? [{
+                id: 'mock-delete-material',
+                code: 'DEL-001',
+                name: '待删除Mock物料',
+                spec: '1ml',
+                unit: '瓶',
+                categoryId: 'cat-delete',
+                price: 5,
+                stock: 0,
+                minStock: 1,
+                status: 'active',
+              }] : [],
+              pagination: { total: materialVisible ? 1 : 0, page: Number(url.searchParams.get('page') || '1'), pageSize: Number(url.searchParams.get('pageSize') || '20') },
+            },
+          }),
+        })
+        return
+      }
+      await route.fallback()
+    })
+
+    await page.goto(`${FE_BASE}/materials`, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByText('待删除Mock物料')).toBeVisible({ timeout: 15000 })
+    await page.getByRole('button', { name: '删除' }).click()
+
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await expect(page.getByRole('heading', { name: '删除物料' })).toBeVisible()
+    await expect(page.getByText('未发现业务引用，可以删除。')).toBeVisible()
+    expect(checkCalled).toBe(true)
+
+    await page.getByRole('button', { name: '确认删除' }).click()
+
+    await expect(page.getByText('待删除Mock物料')).toHaveCount(0)
+    await expect(page.getByText('暂无数据')).toBeVisible()
+    expect(deleteCalled).toBe(true)
   })
-  test('MAT-DEL-12. UI差异：warehouse_manager不显示删除按钮', async ({ page }) => {
+  test('MAT-DEL-12. UI差异：warehouse_manager显示删除按钮并执行影响检查', async ({ page }) => {
     await loginAs(page, 'warehouse_manager')
-    await page.goto(`${FE_BASE}/materials`)
-    await page.waitForTimeout(1000)
+    let checkCalled = false
+
+    await page.route('**/api/v1/categories**', async (route) => {
+      const url = new URL(route.request().url())
+      if (url.pathname.endsWith('/categories')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              list: [{ id: 'cat-wh-delete', name: '仓管分类', status: 'active' }],
+              pagination: { total: 1, page: 1, pageSize: 999 },
+            },
+          }),
+        })
+        return
+      }
+      await route.fallback()
+    })
+    await page.route('**/api/v1/suppliers**', async (route) => {
+      const url = new URL(route.request().url())
+      if (url.pathname.endsWith('/suppliers')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              list: [],
+              pagination: { total: 0, page: 1, pageSize: 999 },
+            },
+          }),
+        })
+        return
+      }
+      await route.fallback()
+    })
+    await page.route('**/api/v1/materials**', async (route) => {
+      const url = new URL(route.request().url())
+      if (url.pathname.endsWith('/materials/stats')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: { total: 1, active: 1, inactive: 0, lowStock: 0 },
+          }),
+        })
+        return
+      }
+      if (url.pathname.endsWith('/materials/mock-wh-delete/check-deletable')) {
+        checkCalled = true
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              material: { id: 'mock-wh-delete', code: 'WH-DEL-001', name: '仓管可删Mock物料' },
+              deletable: false,
+              impacts: {
+                currentInventoryCount: 1,
+                inventoryLocationCount: 0,
+                batchCount: 0,
+                inboundCount: 0,
+                outboundCount: 0,
+                bomCount: 1,
+                returnCount: 0,
+                scrapCount: 0,
+                supplierReturnCount: 0,
+                stockLogCount: 0,
+                usageTrackingCount: 0,
+              },
+              reasons: ['存在 1 条当前库存引用', '存在 1 条BOM明细引用'],
+            },
+          }),
+        })
+        return
+      }
+      if (url.pathname.endsWith('/materials')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              list: [{
+                id: 'mock-wh-delete',
+                code: 'WH-DEL-001',
+                name: '仓管可删Mock物料',
+                spec: '1ml',
+                unit: '瓶',
+                categoryId: 'cat-wh-delete',
+                price: 5,
+                stock: 1,
+                minStock: 1,
+                status: 'active',
+              }],
+              pagination: { total: 1, page: Number(url.searchParams.get('page') || '1'), pageSize: Number(url.searchParams.get('pageSize') || '20') },
+            },
+          }),
+        })
+        return
+      }
+      await route.fallback()
+    })
+
+    await page.goto(`${FE_BASE}/materials`, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByText('仓管可删Mock物料')).toBeVisible({ timeout: 15000 })
+    await page.getByRole('button', { name: '删除' }).click()
+
+    await expect(page.getByText('无法删除物料')).toBeVisible()
+    await expect(page.getByRole('button', { name: '确认删除' })).toBeDisabled()
+    expect(checkCalled).toBe(true)
   })
 })
 

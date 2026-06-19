@@ -17,6 +17,14 @@ async function loginAdmin(app: any): Promise<string> {
   return res.body.data.token
 }
 
+async function loginWarehouseManager(app: any): Promise<string> {
+  const res = await request(app)
+    .post('/api/v1/auth/login')
+    .send({ username: 'wangkq', password: 'CoreOne2026!' })
+  expect(res.status).toBe(200)
+  return res.body.data.token
+}
+
 function seedRefs(db: any, suffix: string) {
   const categoryId = `cat-mat-guard-${suffix}`
   const supplierId = `sup-mat-guard-${suffix}`
@@ -51,10 +59,12 @@ describe('物料删除与批量状态保护', () => {
   let app: any
   let db: any
   let token: string
+  let warehouseToken: string
 
   beforeAll(async () => {
     ;({ app, db } = await getApp())
     token = await loginAdmin(app)
+    warehouseToken = await loginWarehouseManager(app)
   })
 
   it('MAT-GUARD-001: 物料当前库存为0但被BOM引用时不可删除', async () => {
@@ -117,6 +127,25 @@ describe('物料删除与批量状态保护', () => {
       .set('Authorization', `Bearer ${token}`)
 
     expect(deleted.status).toBe(409)
+  })
+
+  it('MAT-DELETE-004: 仓库管理员可执行物料删除影响检查', async () => {
+    const suffix = `warehouse-delete-check-${Date.now()}`
+    const refs = seedRefs(db, suffix)
+    const materialId = await createMaterial(app, token, refs, suffix)
+
+    const check = await request(app)
+      .get(`/api/v1/materials/${materialId}/check-deletable`)
+      .set('Authorization', `Bearer ${warehouseToken}`)
+
+    expect(check.status).toBe(200)
+    expect(check.body.data).toMatchObject({
+      material: {
+        id: materialId,
+        code: `MAT-GUARD-${suffix}`,
+      },
+      deletable: true,
+    })
   })
 
   it('MAT-GUARD-002: 批量状态遇到不存在物料时整批拒绝，不部分更新', async () => {

@@ -230,4 +230,13 @@ describe('useMaterialsPage', () => {
       remark: '更新备注',
     }))
   })
+
+  it('allows warehouse managers to use material write actions required by the spec', async () => {
+    window.localStorage.setItem('user', JSON.stringify({ role: 'warehouse_manager', username: 'wangkq' }))
+
+    const { result } = renderHook(() => useMaterialsPage())
+    await waitFor(() => expect(materialApi.getList).toHaveBeenCalled())
+
+    expect(result.current.canWrite).toBe(true)
+  })
 })

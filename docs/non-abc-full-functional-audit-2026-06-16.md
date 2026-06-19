@@ -12351,7 +12351,64 @@ git diff --check
 - MAT-14 编辑弹窗的预填、编码只读、保存刷新和只读编码不提交主路径已补 hook 与页面级证据。
 - 下一步应继续 MAT-15 删除影响弹窗与引用保护，不在本批扩展到删除业务规则。
 
-## 二百五十二、结论
+## 二百五十二、批次 297: 物料删除权限和影响弹窗必须覆盖仓库管理员
+
+**发现的问题**
+
+- `materials.md` 的 MAT-14、MAT-15、MAT-16 都将物料写操作角色定义为 `admin, warehouse_manager`。
+- 当前前端 `useMaterialsPage` 的 `canWrite` 只允许 `admin`，导致仓库管理员看不到新建、编辑、停用、删除等物料写入口；旧 `MAT-DEL-12` 甚至以“不显示删除按钮”为测试标题且没有断言，和规范相反。
+- 当前后端 `materials.ts` 外层路由允许仓库管理员访问物料模块，但物料写接口又使用 `requireStrictRole('admin')`，导致仓库管理员调用 `GET /materials/:id/check-deletable` 直接返回 403，无法完成 MAT-15 的删除影响预检查。
+- 旧页面 E2E 对删除只做 API 宽断言或空等待，不能证明“自定义弹窗、影响展示、阻断禁用、确认删除后刷新列表”的真实副作用。
+
+**已完成修复**
+
+- `前端代码/src/pages/master/hooks/useMaterialsPage.tsx`
+  - 新增 `canManageMaterials`，统一允许 `admin` 和 `warehouse_manager` 使用物料写操作入口。
+  - 保留采购等只读角色对供应商下拉的既有访问规则，不扩大到其他角色。
+- `后端代码/server/src/routes/materials.ts`
+  - 物料写接口权限从仅 `admin` 调整为 `admin, warehouse_manager`，和 MAT-14~16 的角色定义一致。
+- `前端代码/src/pages/master/hooks/useMaterialsPage.test.tsx`
+  - 新增红绿测试，确认仓库管理员进入物料页时 `canWrite=true`。
+- `后端代码/server/tests/materials-guard.test.ts`
+  - 新增仓库管理员登录和删除影响检查测试，确认 `warehouse_manager` 能调用 `GET /materials/:id/check-deletable` 并拿到可删除影响结果。
+- `前端代码/e2e/materials.spec.ts`
+  - 将 `MAT-DEL-11` 升级为真实浏览器删除验收：点击删除后显示自定义弹窗和影响结果，确认删除后发 DELETE，列表刷新为暂无数据。
+  - 将 `MAT-DEL-12` 改为规范口径：仓库管理员显示删除按钮，点击后执行影响检查；有库存/BOM 引用时显示“无法删除物料”并禁用确认删除。
+
+**ABC 影响评估**
+
+- 物料是 ABC 上游主数据维度，本批改变的是物料写入权限边界，不直接修改 ABC 本体、ABC API、成本计算、库存扣减或 BOM 成本算法。
+- 权限放开到 `warehouse_manager` 后，物料新建/编辑/启停/删除仍经过既有后端校验：删除引用保护、批量状态原子校验、停用库存/BOM 阻断、分类/供应商/库位引用校验、编码/条码唯一性和数值合法性均未放松。
+- 已补跑 `materials-guard`、库存集成和 BOM 集成，覆盖物料作为库存、批次、BOM 和成本输入的上游链路；本批不需要改 ABC 本体。
+- 未触碰废弃 `/cost-analysis` 或 `前端代码/deprecated/legacy-cost-analysis/`。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/master/hooks/useMaterialsPage.test.tsx -t "warehouse managers"` 修复前失败：仓库管理员 `result.current.canWrite` 为 `false`。
+  - `后端代码/server npm run test:node -- --run tests/materials-guard.test.ts -t "仓库管理员可执行物料删除影响检查"` 修复前失败：`GET /api/v1/materials/:id/check-deletable` 返回 403。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/master/hooks/useMaterialsPage.test.tsx -t "warehouse managers"` 通过，1 test passed / 7 skipped。
+  - `后端代码/server npm run test:node -- --run tests/materials-guard.test.ts -t "仓库管理员可执行物料删除影响检查"` 通过，1 test passed / 19 skipped。
+  - `前端代码 npm test -- --run src/pages/master/hooks/useMaterialsPage.test.tsx -t "warehouse managers|readonly material code"` 通过，2 tests passed / 6 skipped。
+  - `后端代码/server npm run test:node -- --run tests/materials-guard.test.ts -t "仓库管理员可执行物料删除影响检查|物料删除前检查"` 通过，2 tests passed / 18 skipped。
+  - `前端代码 npm test -- --run src/pages/master/hooks/useMaterialsPage.test.tsx src/pages/master/components/MaterialImpactModals.test.tsx src/hooks/usePagination.test.ts` 通过，3 files / 25 tests passed。
+  - `后端代码/server npm run test:node -- --run tests/materials-guard.test.ts tests/integration/inventory.test.ts tests/integration/bom.test.ts` 通过，3 files / 48 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/materials.spec.ts -g "MAT-DEL-11|MAT-DEL-12" --project=chromium` 通过，2 tests passed。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/materials.spec.ts -g "MAT-DEL-11|MAT-DEL-12|MAT-EDIT-11|MAT-DETAIL-03|MAT-PAGE-01|MAT-FILTER-01|MAT-SEARCH-03|MAT-LIST-11" --project=chromium` 通过，8 tests passed。
+  - `git diff --check` 通过。
+  - `git diff --name-only | rg "deprecated/legacy-cost-analysis|前端代码/deprecated|/cost-analysis"` 无匹配，确认未改废弃范围。
+- 浏览器复核:
+  - 使用用户已验证的 Chrome for Testing 路径完成 headless Playwright 复核；验证重点为 admin 删除成功刷新、warehouse_manager 删除按钮与影响检查、阻断删除禁用确认按钮，以及编辑/详情/分页/筛选/搜索回归。
+
+**后续风险**
+
+- MAT-15 的自定义删除弹窗、影响展示、不可删禁用、确认后刷新，以及 warehouse_manager 权限口径已补前后端和页面级证据。
+- 下一步应继续 MAT-16 启停用即时切换、失败回滚和停用后入库/出库候选过滤；不在本批扩展到状态规则之外的批量操作。
+
+## 二百五十三、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

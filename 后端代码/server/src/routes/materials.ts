@@ -7,8 +7,8 @@ import { normalizeDisplayText, requireValidText, type TextGuardResult } from '..
 
 const router = Router()
 
-// 物料写入权限：仅 admin 可操作
-const requireMaterialWrite = requireStrictRole('admin')
+// 物料写入权限：物料规范 MAT-14~16 允许 admin 和 warehouse_manager 操作
+const requireMaterialWrite = requireStrictRole('admin', 'warehouse_manager')
 
 function buildMaterialWhere(query: any) {
   const { keyword, categoryId, supplierId, status, lowStock } = query

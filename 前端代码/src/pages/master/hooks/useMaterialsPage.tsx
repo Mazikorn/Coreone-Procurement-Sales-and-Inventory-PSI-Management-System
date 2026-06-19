@@ -40,6 +40,10 @@ function canAccessSuppliers(role: string | null): boolean {
   return role === 'admin' || role === 'warehouse_manager' || role === 'procurement'
 }
 
+function canManageMaterials(role: string | null): boolean {
+  return role === 'admin' || role === 'warehouse_manager'
+}
+
 interface MaterialStats {
   total: number
   active: number
@@ -63,7 +67,7 @@ export interface MaterialBatchStatusResult {
 
 export function useMaterialsPage() {
   const { get, getNumber, setMultiple } = useUrlParams()
-  const canWrite = getUserRole() === 'admin'
+  const canWrite = canManageMaterials(getUserRole())
 
   const initialQuickFilter = normalizeQuickFilter(get('quick', get('status', 'all')))
 
