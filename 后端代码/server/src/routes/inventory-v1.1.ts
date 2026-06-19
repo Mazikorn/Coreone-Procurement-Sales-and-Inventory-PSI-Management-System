@@ -559,10 +559,35 @@ router.get('/stats', (req, res) => {
     `).get(...params) as any)?.c || 0
 
     const totalStockValue = (db.prepare(`
-      SELECT SUM((${stockExpr}) * COALESCE(m.price, 0)) as v
-      FROM inventory i
-      JOIN materials m ON i.material_id = m.id
-      WHERE ${where}
+      SELECT SUM(
+        CASE
+          WHEN COALESCE(active_batch_quantity, 0) > 0
+          THEN scoped_stock * (COALESCE(active_batch_value, 0) / active_batch_quantity)
+          ELSE scoped_stock * COALESCE(price, 0)
+        END
+      ) as v
+      FROM (
+        SELECT
+          ${stockExpr} as scoped_stock,
+          m.price,
+          (
+            SELECT SUM(b.remaining)
+            FROM batches b
+            WHERE b.material_id = i.material_id
+              AND b.status = 1
+              AND b.remaining > 0
+          ) as active_batch_quantity,
+          (
+            SELECT SUM(b.remaining * COALESCE(b.inbound_price, 0))
+            FROM batches b
+            WHERE b.material_id = i.material_id
+              AND b.status = 1
+              AND b.remaining > 0
+          ) as active_batch_value
+        FROM inventory i
+        JOIN materials m ON i.material_id = m.id
+        WHERE ${where}
+      ) t
     `).get(...stockParams, ...params) as any)?.v || 0
 
     const catDist = db.prepare(`

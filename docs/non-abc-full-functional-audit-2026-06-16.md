@@ -13660,7 +13660,55 @@ git diff --check
 - 本批只修复操作日志的日期筛选/清理边界，不新增独立 `stock_logs` 列表页或库存流水导出能力。
 - 后续继续按计划复核库存报表和非废弃成本/实验运营页面，重点检查报表口径是否使用历史事实而不是被后续编辑污染的当前值。
 
-## 二百七十八、结论
+## 二百七十八、批次 323: 库存统计金额必须使用批次入库价历史事实
+
+**发现的问题**
+
+- 本轮继续复核库存报表口径，聚焦“报表金额不能被后续主数据编辑污染”不变量。
+- `GET /inventory/stats` 的 `totalStockValue` 使用 `库存数量 * materials.price`，而 `materials.price` 是物料参考价，会被后续编辑改变。
+- 已入库批次的真实成本事实在 `batches.inbound_price`，若入库后修改物料参考价，库存金额会从批次真实金额漂移到当前参考价金额，影响库存报表、异常解释和 ABC 输入侧可信度。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/inventory-v1.1.ts`
+  - 库存统计金额改为优先使用启用批次的 `remaining * inbound_price` 汇总口径。
+  - 对库位筛选场景，使用筛选后的库位库存数量乘以该物料启用批次加权平均入库价。
+  - 仅当物料没有可用启用批次成本时，才回退到 `materials.price`。
+- `后端代码/server/tests/integration/inventory.test.ts`
+  - 新增红绿测试：同一物料库存为 5，两个启用批次入库价分别为 10 和 20，物料参考价后续为 999；库存统计金额必须返回批次历史金额 80，而不是 4995。
+
+**ABC 影响评估**
+
+- 库存金额、批次剩余量和入库价是出库、报废、盘点、库存异常解释以及 ABC 输入侧可信库存事实的上游数据。
+- 本批只修改非 ABC 库存统计接口和库存集成测试，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 已补跑库存、库存一致性、入库批次、出库和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+- 已确认本批 diff 不涉及 `前端代码/deprecated/legacy-cost-analysis/`、`后端代码/server/src/routes/abc-v1.1.ts`、`后端代码/server/src/utils/abc-calculator.test.ts` 或前端 ABC 页面。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/integration/inventory.test.ts -t "库存金额使用批次入库价"` 修复前失败：实际返回 `4995`，期望 `80`。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/integration/inventory.test.ts -t "库存金额使用批次入库价"` 通过，1 test passed / 14 skipped。
+  - `后端代码/server npm test -- --run tests/integration/inventory.test.ts tests/inventory-consistency.test.ts tests/inbound-batch.test.ts tests/integration/outbound.test.ts tests/integration/cost-exceptions.test.ts` 通过，5 files / 78 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。`cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr 为既有异常台账测试场景，最终通过。
+  - `前端代码 npm test -- --run src/pages/inventory/hooks/useInventoryPage.test.ts` 通过，7 tests passed。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only | rg '(^前端代码/deprecated/legacy-cost-analysis/|abc-v1.1|src/api/abc|pages/cost|cost-analysis)' || true` 无输出，确认未改废弃范围和 ABC 本体。
+- 浏览器复核:
+  - 本批是库存统计 API 口径修复，不新增或改变页面交互；库存页面 hook 已覆盖统计接口参数传递，页面级 Playwright 不是本批必要门槛。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 当前数据模型没有批次到库位的精确分摊表；库位筛选金额使用该物料启用批次加权平均入库价乘以库位库存数量，是在现有 schema 下的最小可信口径。
+- 后续继续按计划复核非废弃成本相关和实验运营页面，重点检查出库、BOM、项目和库存快照是否使用历史事实而不是当前主数据。
+
+## 二百七十九、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

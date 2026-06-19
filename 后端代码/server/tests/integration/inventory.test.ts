@@ -216,6 +216,40 @@ describe('集成测试：库存管理', () => {
       expect(res.body.data.lowStockCount).toBe(1)
     })
 
+    it('库存金额使用批次入库价而不是后续修改的物料参考价', async () => {
+      const suffix = Date.now()
+      const categoryId = `cat-inv-value-${suffix}`
+      const materialId = `mat-inv-value-${suffix}`
+
+      db.prepare('INSERT INTO material_categories (id, code, name, level) VALUES (?, ?, ?, ?)')
+        .run(categoryId, `C-INV-V-${suffix}`, '库存金额分类', 1)
+      db.prepare(`
+        INSERT INTO materials (id, code, name, spec, unit, category_id, price, min_stock, location_id)
+        VALUES (?, ?, ?, '1ml', '瓶', ?, 999, 1, 'loc-inv')
+      `).run(materialId, `INV-V-${suffix}`, '库存金额物料', categoryId)
+      db.prepare(`
+        INSERT INTO inventory (id, material_id, stock, locked_stock, location_id)
+        VALUES (?, ?, 5, 0, 'loc-inv')
+      `).run(`inv-value-${suffix}`, materialId)
+      db.prepare(`
+        INSERT INTO batches (id, material_id, batch_no, quantity, remaining, inbound_id, inbound_price, status)
+        VALUES (?, ?, ?, 2, 2, ?, 10, 1)
+      `).run(`batch-value-a-${suffix}`, materialId, `B-V-A-${suffix}`, `inbound-value-a-${suffix}`)
+      db.prepare(`
+        INSERT INTO batches (id, material_id, batch_no, quantity, remaining, inbound_id, inbound_price, status)
+        VALUES (?, ?, ?, 3, 3, ?, 20, 1)
+      `).run(`batch-value-b-${suffix}`, materialId, `B-V-B-${suffix}`, `inbound-value-b-${suffix}`)
+
+      const res = await request(app)
+        .get('/api/v1/inventory/stats')
+        .query({ categoryId })
+        .set('Authorization', `Bearer ${token}`)
+
+      expect(res.status).toBe(200)
+      expect(res.body.data.totalQuantity).toBe(5)
+      expect(res.body.data.totalStockValue).toBe(80)
+    })
+
     it('按关键词搜索库存', async () => {
       const res = await request(app)
         .get('/api/v1/inventory?page=1&pageSize=20&keyword=INV-L1')
