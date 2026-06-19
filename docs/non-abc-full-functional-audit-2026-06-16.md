@@ -12408,7 +12408,57 @@ git diff --check
 - MAT-15 的自定义删除弹窗、影响展示、不可删禁用、确认后刷新，以及 warehouse_manager 权限口径已补前后端和页面级证据。
 - 下一步应继续 MAT-16 启停用即时切换、失败回滚和停用后入库/出库候选过滤；不在本批扩展到状态规则之外的批量操作。
 
-## 二百五十三、结论
+## 二百五十三、批次 298: 物料启用失败必须展示启用阻断文案
+
+**发现的问题**
+
+- `materials.md` 的 MAT-16 要求物料启用/停用失败时给出清晰反馈，且停用物料不得进入新的入库/出库候选。
+- 当前物料状态切换保留了影响检查弹窗，这是保护库存、BOM 和历史引用的必要拦截；本批不改成无确认的危险即时写入。
+- 但在启用停用物料、且启用前检查返回 `canChange=false` 时，弹窗标题仍显示 `无法停用物料`，原因后缀仍显示 `请先解除引用后再停用。`。
+- 这会让用户误以为当前操作是停用，无法明确知道应修正停用分类、供应商或库位后再启用，影响物料恢复到有效候选流的判断。
+
+**已完成修复**
+
+- `前端代码/src/pages/master/components/MaterialStatusModal.tsx`
+  - 阻断态标题、说明标题和原因后缀改为按 `targetStatus` 派生。
+  - 停用阻断继续显示 `无法停用物料` 和引用解除提示。
+  - 启用阻断改为显示 `无法启用物料`，并提示先修正绑定后再启用。
+- `前端代码/src/pages/master/components/MaterialImpactModals.test.tsx`
+  - 新增组件红绿测试，覆盖启用失败时的标题、原因后缀、错误文案不存在，以及确认启用按钮禁用。
+- `前端代码/e2e/materials.spec.ts`
+  - 新增 `MAT-STATUS-01` 页面级验收：点击停用物料行上的启用按钮，mock `check-status?status=active` 返回阻断，确认弹窗展示启用阻断文案、确认按钮禁用，并且不发送 `PUT /materials/:id` 更新请求。
+
+**ABC 影响评估**
+
+- 物料状态是 ABC 上游主数据输入，本批修复的是启用失败的阻断反馈，不直接修改 ABC 本体、ABC API、成本计算、库存扣减或 BOM 成本算法。
+- 停用物料进入新业务候选的保护仍由既有链路承担：入库/出库页面候选请求使用 `status: 'active'`，后端入库和出库写入也会拒绝停用物料。
+- 已补跑物料状态保护、入库、出库和 BOM 集成回归，覆盖物料作为入库、库存、BOM 出库和成本输入的上游链路；本批不需要改 ABC 本体。
+- 未触碰废弃 `/cost-analysis` 或 `前端代码/deprecated/legacy-cost-analysis/`。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/master/components/MaterialImpactModals.test.tsx -t "activation blockers"` 修复前失败：期望 `无法启用物料`，实际弹窗仍显示 `无法停用物料`，且原因后缀为停用提示。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/master/components/MaterialImpactModals.test.tsx -t "activation blockers"` 通过，1 test passed / 4 skipped。
+  - `前端代码 npm test -- --run src/pages/master/components/MaterialImpactModals.test.tsx` 通过，5 tests passed。
+  - `前端代码 npm test -- --run src/pages/master/hooks/useMaterialsPage.test.tsx src/pages/master/components/MaterialImpactModals.test.tsx src/hooks/usePagination.test.ts` 通过，3 files / 26 tests passed。
+  - `后端代码/server npm run test:node -- --run tests/materials-guard.test.ts tests/inbound-batch.test.ts tests/integration/outbound.test.ts tests/integration/bom.test.ts` 通过，4 files / 79 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/materials.spec.ts -g "MAT-STATUS-01" --project=chromium` 通过，1 test passed。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/materials.spec.ts -g "MAT-STATUS-01|MAT-DEL-11|MAT-DEL-12|MAT-EDIT-11|MAT-DETAIL-03|MAT-PAGE-01|MAT-FILTER-01|MAT-SEARCH-03|MAT-LIST-11" --project=chromium` 通过，9 tests passed。
+  - `git diff --check` 通过。
+  - `git diff --name-only | rg "deprecated/legacy-cost-analysis|前端代码/deprecated|/cost-analysis"` 无匹配，确认未改废弃范围。
+- 浏览器复核:
+  - 使用用户已验证的 Chrome for Testing 路径完成 headless Playwright 复核；验证重点为点击行内启用按钮、状态检查请求携带 `status=active`、弹窗标题为 `无法启用物料`、原因后缀为启用修正提示、确认启用按钮禁用、且未发送更新请求。
+
+**后续风险**
+
+- MAT-16 的启用失败阻断反馈已补组件和页面级证据。
+- 下一步应继续 MAT-16 成功停用/启用刷新、失败回滚和停用后入库/出库候选过滤的页面级证据，不在本批扩展到批量状态或其它模块。
+
+## 二百五十四、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

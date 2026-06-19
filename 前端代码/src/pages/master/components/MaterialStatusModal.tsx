@@ -27,6 +27,7 @@ export function MaterialStatusModal({
   if (!open || !target) return null
 
   const isDisabling = targetStatus === 'inactive'
+  const isBlocked = statusCheck?.canChange === false
   const disabled = checkingStatus || updatingStatus || !statusCheck || statusCheck.canChange === false
   const impacts = statusCheck?.impacts
   const impactItems = impacts ? [
@@ -34,24 +35,27 @@ export function MaterialStatusModal({
     { label: '库位库存', value: impacts.inventoryLocationCount },
     { label: '启用BOM明细', value: impacts.activeBomCount },
   ] : []
+  const blockedTitle = isDisabling ? '无法停用物料' : '无法启用物料'
+  const blockedHeading = isDisabling ? '该物料仍被业务数据使用' : '该物料绑定的基础资料不可用'
+  const reasonSuffix = isDisabling ? '请先解除引用后再停用。' : '请先修正绑定后再启用。'
 
   return (
     <Modal
       onClose={onClose}
-      title={statusCheck?.canChange === false ? '无法停用物料' : isDisabling ? '停用物料' : '启用物料'}
+      title={isBlocked ? blockedTitle : isDisabling ? '停用物料' : '启用物料'}
       size="md"
     >
       <div className="flex flex-col items-center text-center">
-        <div className={`mb-4 flex h-12 w-12 items-center justify-center rounded-full ${statusCheck?.canChange === false ? 'bg-amber-50' : 'bg-blue-50'}`}>
-          {statusCheck?.canChange === false ? (
+        <div className={`mb-4 flex h-12 w-12 items-center justify-center rounded-full ${isBlocked ? 'bg-amber-50' : 'bg-blue-50'}`}>
+          {isBlocked ? (
             <AlertTriangle className="h-6 w-6 text-amber-500" />
           ) : (
             <Power className="h-6 w-6 text-blue-500" />
           )}
         </div>
         <h3 className="text-base font-semibold text-gray-900">
-          {statusCheck?.canChange === false
-            ? '该物料仍被业务数据使用'
+          {isBlocked
+            ? blockedHeading
             : isDisabling
               ? '确定要停用该物料吗？'
               : '确定要启用该物料吗？'}
@@ -84,7 +88,7 @@ export function MaterialStatusModal({
               </div>
               {statusCheck.reasons.length > 0 ? (
                 <div className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-700">
-                  {statusCheck.reasons.join('；')}，请先解除引用后再停用。
+                  {statusCheck.reasons.join('；')}，{reasonSuffix}
                 </div>
               ) : (
                 <div className="mt-3 rounded-md bg-green-50 px-3 py-2 text-xs text-green-700">

@@ -96,6 +96,39 @@ describe('Material impact modals', () => {
     expect(screen.getByRole('button', { name: '确认停用' })).toBeDisabled()
   })
 
+  it('shows activation blockers with enable-specific copy', () => {
+    const statusCheck: MaterialStatusCheck = {
+      material: { id: 'mat-1', code: 'MAT-001', name: '测试物料' },
+      targetStatus: 'active',
+      canChange: false,
+      impacts: {
+        currentInventoryCount: 0,
+        inventoryLocationCount: 0,
+        activeBomCount: 0,
+      },
+      reasons: ['停用物料分类不能用于物料'],
+    }
+
+    render(
+      <MaterialStatusModal
+        open
+        target={{ ...material, status: 'inactive' }}
+        targetStatus="active"
+        statusCheck={statusCheck}
+        checkingStatus={false}
+        updatingStatus={false}
+        onClose={vi.fn()}
+        onConfirm={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('无法启用物料')).toBeInTheDocument()
+    expect(screen.getByText('停用物料分类不能用于物料，请先修正绑定后再启用。')).toBeInTheDocument()
+    expect(screen.queryByText('无法停用物料')).not.toBeInTheDocument()
+    expect(screen.queryByText(/再停用/)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '确认启用' })).toBeDisabled()
+  })
+
   it('shows batch delete blockers and disables confirm when any selected material is referenced', () => {
     const deleteCheck: MaterialDeleteCheck = {
       material: { id: 'mat-1', code: 'MAT-001', name: '测试物料' },

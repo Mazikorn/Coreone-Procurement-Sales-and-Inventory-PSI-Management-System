@@ -1309,7 +1309,142 @@ test.describe('耗材管理 -> 删除物料', () => {
 })
 
 // ────────────────────────────────────────────
-// 8. 批量启用/停用 (8 tests)
+// 8. 切换启用/停用 (1 test)
+// ────────────────────────────────────────────
+test.describe('耗材管理 -> 切换启用停用', () => {
+  test('MAT-STATUS-01. 异常用例：启用失败展示启用阻断文案且不提交更新', async ({ page }) => {
+    await loginAs(page, 'admin')
+
+    let checkCalled = false
+    let updateCalled = false
+
+    await page.route('**/api/v1/categories**', async (route) => {
+      const url = new URL(route.request().url())
+      if (url.pathname.endsWith('/categories')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              list: [{ id: 'cat-status', name: '状态分类', status: 'active' }],
+              pagination: { total: 1, page: 1, pageSize: 999 },
+            },
+          }),
+        })
+        return
+      }
+      await route.fallback()
+    })
+    await page.route('**/api/v1/suppliers**', async (route) => {
+      const url = new URL(route.request().url())
+      if (url.pathname.endsWith('/suppliers')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              list: [],
+              pagination: { total: 0, page: 1, pageSize: 999 },
+            },
+          }),
+        })
+        return
+      }
+      await route.fallback()
+    })
+    await page.route('**/api/v1/materials**', async (route) => {
+      const request = route.request()
+      const url = new URL(request.url())
+      if (url.pathname.endsWith('/materials/stats')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: { total: 1, active: 0, inactive: 1, lowStock: 0 },
+          }),
+        })
+        return
+      }
+      if (url.pathname.endsWith('/materials/mock-status-material/check-status')) {
+        checkCalled = true
+        expect(url.searchParams.get('status')).toBe('active')
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              material: { id: 'mock-status-material', code: 'STS-001', name: '待启用Mock物料' },
+              targetStatus: 'active',
+              canChange: false,
+              impacts: {
+                currentInventoryCount: 0,
+                inventoryLocationCount: 0,
+                activeBomCount: 0,
+              },
+              reasons: ['停用物料分类不能用于物料'],
+            },
+          }),
+        })
+        return
+      }
+      if (url.pathname.endsWith('/materials/mock-status-material') && request.method() === 'PUT') {
+        updateCalled = true
+        await route.fulfill({
+          status: 409,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: false,
+            error: { message: '停用物料分类不能用于物料', code: 'CONFLICT' },
+          }),
+        })
+        return
+      }
+      if (url.pathname.endsWith('/materials')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              list: [{
+                id: 'mock-status-material',
+                code: 'STS-001',
+                name: '待启用Mock物料',
+                spec: '1ml',
+                unit: '瓶',
+                categoryId: 'cat-status',
+                price: 5,
+                stock: 0,
+                minStock: 1,
+                status: 'inactive',
+              }],
+              pagination: { total: 1, page: Number(url.searchParams.get('page') || '1'), pageSize: Number(url.searchParams.get('pageSize') || '20') },
+            },
+          }),
+        })
+        return
+      }
+      await route.fallback()
+    })
+
+    await page.goto(`${FE_BASE}/materials`, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByText('待启用Mock物料')).toBeVisible({ timeout: 15000 })
+    await page.getByRole('button', { name: '启用', exact: true }).click()
+
+    await expect(page.getByRole('heading', { name: '无法启用物料' })).toBeVisible()
+    await expect(page.getByText('停用物料分类不能用于物料，请先修正绑定后再启用。')).toBeVisible()
+    await expect(page.getByRole('button', { name: '确认启用' })).toBeDisabled()
+    expect(checkCalled).toBe(true)
+    expect(updateCalled).toBe(false)
+  })
+})
+
+// ────────────────────────────────────────────
+// 9. 批量启用/停用 (8 tests)
 // ────────────────────────────────────────────
 test.describe('耗材管理 -> 批量启用停用', () => {
   test('MAT-BATCH-01. 正常用例：admin批量停用物料', async () => {
