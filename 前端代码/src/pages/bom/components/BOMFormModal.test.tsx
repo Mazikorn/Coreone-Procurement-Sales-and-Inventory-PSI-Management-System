@@ -80,4 +80,10 @@ describe('BOMFormModal service options', () => {
 
     expect(screen.getByText('CUR - 当前已绑定服务')).toBeInTheDocument()
   })
+
+  it('keeps backend-controlled version read-only while editing a BOM', () => {
+    renderModal({ ...baseForm, version: 'v1.3' }, [])
+
+    expect(screen.getByDisplayValue('v1.3')).toHaveAttribute('readonly')
+  })
 })

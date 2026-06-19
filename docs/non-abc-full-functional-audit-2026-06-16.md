@@ -12917,7 +12917,58 @@ git diff --check
 - 本批只处理复制停用 BOM 的状态继承，不扩展到复制编码生成策略、导入入口或历史使用后内容字段保护。
 - 后续可继续按基础资料阶段检查 BOM 历史使用后保护，或转入项目/检测服务绑定边界；发现计划外问题先登记到待评估清单。
 
-## 二百六十三、结论
+## 二百六十三、批次 308: BOM 编辑弹窗当前版本不得手动修改
+
+**发现的问题**
+
+- 本轮计划要求 BOM 覆盖历史使用后保护和版本追溯，版本号必须反映系统保存后的真实版本历史，而不是用户在表单里手工改出的显示值。
+- 后端 `PUT /boms/:id` 会自动把当前版本递增并写入 `bom_versions` 快照，前端 payload 也不提交 `version` 字段。
+- 但编辑弹窗把“当前版本”输入框做成可编辑，用户修改后点击保存不会改变后端版本；如果只改版本，页面还会提示“没有需要保存的变更”。
+- 这属于版本追溯假入口：页面看起来能改版本，真实副作用却由后端自动生成，容易误导用户对历史版本和成本重算范围的理解。
+
+**已完成修复**
+
+- `前端代码/src/pages/bom/components/BOMFormModal.tsx`
+  - BOM 版本输入在新建和编辑态都改为只读。
+  - 编辑态不再触发 `onChange({ version })`，版本号继续由后端保存时自动递增并写入版本历史。
+  - 只读样式保持与新建态一致，降低用户误判为可手工编辑字段的概率。
+- `前端代码/src/pages/bom/components/BOMFormModal.test.tsx`
+  - 新增红绿测试：编辑 BOM 时，当前版本输入必须带 `readonly`。
+- `前端代码/e2e/bom.spec.ts`
+  - 新增 `BOM-VERSION-EDIT-01` 页面级验收：从 BOM 列表打开编辑弹窗，确认当前版本输入为只读。
+
+**ABC 影响评估**
+
+- BOM 版本历史会进入出库成本明细、成本重算说明、对账和 ABC 上游成本事实解释。
+- 本批避免用户通过表单制造“看似可改、实际不生效”的版本号，保护版本追溯证据只来自真实保存和后端快照。
+- 本批只修改非 ABC 的 BOM 编辑弹窗，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 已补跑 BOM、出库、入库和物料保护输入链回归，确认 BOM 版本展示保护不破坏相邻库存/成本输入链。
+- 未触碰 `前端代码/deprecated/legacy-cost-analysis/`。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/bom/components/BOMFormModal.test.tsx -t "backend-controlled version"` 修复前失败：编辑态版本输入没有 `readonly` 属性。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/bom/components/BOMFormModal.test.tsx -t "backend-controlled version"` 通过，1 test passed / 2 skipped。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/bom.spec.ts -g "BOM-VERSION-EDIT-01" --project=chromium` 通过，1 test passed。
+  - `前端代码 npm test -- --run src/pages/bom/hooks/useBOMPage.test.ts src/pages/bom/components/BOMFormModal.test.tsx src/pages/bom/components/BOMCopyModal.test.tsx src/pages/bom/components/BOMBatchImpactModal.test.tsx src/hooks/usePagination.test.ts` 通过，5 files / 34 tests passed。
+  - `后端代码/server npm run test:node -- --run tests/bom-batch.test.ts tests/integration/bom.test.ts tests/integration/outbound.test.ts tests/materials-guard.test.ts tests/inbound-batch.test.ts` 通过，5 files / 101 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/bom.spec.ts -g "BOM-VERSION-EDIT-01|BOM-COPY-STATUS-01|BOM-STATUS-EDIT-01|BOM-SERVICE-CAND-01|BOM-STATUS-SINGLE-01|BOM-MAT-GROUP-01|BOM-CREATE-01|BOM-CREATE-02|BOM-CREATE-15|BOM-EDIT-01|BOM-EDIT-09|BOM-DETAIL-03" --project=chromium` 通过，12 tests passed。
+  - `git diff --check` 通过。
+  - `git diff --name-only | rg "deprecated/legacy-cost-analysis|前端代码/deprecated|/cost-analysis"` 无匹配，确认未改废弃范围。
+  - `lsof -nP -iTCP:3001 -sTCP:LISTEN` 和 `lsof -nP -iTCP:8080 -sTCP:LISTEN` 均无监听残留。
+- 浏览器复核:
+  - 使用用户已验证的 Chrome for Testing 路径完成 headless Playwright 复核；验证重点为编辑弹窗当前版本只读，以及 BOM 复制停用状态、编辑状态预检查、服务候选、单行状态检查、跨分组重复、创建、编辑和详情回归。
+
+**后续风险**
+
+- 本批只处理版本号手工编辑假入口，不扩展到追溯/仅未来生效范围的显式 UI 选择。
+- 后续可继续按基础资料阶段检查 BOM 历史使用后保护的生效范围提示和项目/检测服务绑定边界；发现计划外问题先登记到待评估清单。
+
+## 二百六十四、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

@@ -117,13 +117,8 @@ export function BOMFormModal({
               </label>
               <input
                 value={form.version}
-                readOnly={type === 'create'}
-                onChange={(e) =>
-                  type === 'edit' && onChange({ ...form, version: e.target.value })
-                }
-                className={`w-full h-10 px-3 border border-gray-300 rounded-md text-sm text-gray-700 transition-colors ${
-                  type === 'create' ? 'bg-gray-50 text-gray-400' : ''
-                }`}
+                readOnly
+                className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm bg-gray-50 text-gray-400 transition-colors"
               />
               {type === 'create' && (
                 <p className="text-xs text-gray-400 mt-1">

@@ -577,6 +577,80 @@ test.describe('BOM清单 -> 复制版本', () => {
   })
 })
 
+test.describe('BOM清单 -> 版本追溯保护', () => {
+  test('BOM-VERSION-EDIT-01. 编辑弹窗当前版本只读由系统递增', async ({ page }) => {
+    const editableBom = {
+      id: 'bom-version-readonly',
+      code: 'BOM-VERSION-RO',
+      name: '版本只读BOM',
+      version: 'v1.3',
+      type: 'ihc',
+      serviceId: null,
+      description: '',
+      materialCount: 1,
+      supportableSamples: 20,
+      unitCost: 12,
+      feeStandardId: '',
+      feeCategory: '',
+      status: 'active',
+      materials: [{ materialId: 'mat-version-readonly', name: '版本物料', spec: '10ml', usagePerSample: 1, unit: '瓶' }],
+      generalReagents: [],
+      generalConsumables: [],
+      qualityControls: [],
+      versionHistory: [],
+      updatedAt: '2026-06-19T00:00:00.000Z',
+    }
+
+    await loginAs(page, 'admin')
+    await page.route('**/api/v1/alerts**', async route => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: { list: [], items: [], pagination: { total: 0, page: 1, pageSize: 5 } } }),
+      })
+    })
+    await page.route('**/api/v1/materials**', async route => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: { list: [], pagination: { total: 0, page: 1, pageSize: 1000 } } }),
+      })
+    })
+    await page.route('**/api/v1/projects**', async route => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: { list: [], pagination: { total: 0, page: 1, pageSize: 1000 } } }),
+      })
+    })
+    await page.route('**/api/v1/boms**', async route => {
+      const url = new URL(route.request().url())
+      if (route.request().method() === 'GET' && url.pathname.endsWith('/boms')) {
+        await route.fulfill({
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true, data: { list: [editableBom], pagination: { total: 1, page: 1, pageSize: 20 } } }),
+        })
+        return
+      }
+      if (route.request().method() === 'GET' && url.pathname.endsWith('/boms/bom-version-readonly')) {
+        await route.fulfill({
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true, data: editableBom }),
+        })
+        return
+      }
+      await route.fallback()
+    })
+
+    await page.goto(`${FE_BASE}/bom`, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByRole('heading', { name: 'BOM清单' })).toBeVisible({ timeout: 15000 })
+    await expect(page.getByText('BOM-VERSION-RO')).toBeVisible({ timeout: 10000 })
+    await page.getByRole('row', { name: /BOM-VERSION-RO/ }).getByRole('button', { name: '编辑' }).click()
+    const modal = page.getByText('编辑BOM').last().locator('xpath=ancestor::div[contains(@class,"fixed")]')
+    await expect(modal.getByText('编辑BOM')).toBeVisible({ timeout: 10000 })
+
+    const versionInput = modal.locator('input[value="v1.3"]')
+    await expect(versionInput).toHaveAttribute('readonly', '')
+  })
+})
+
 // 1. 查看BOM列表 (10)
 test.describe('BOM清单 -> 查看BOM列表', () => {
   for (const role of BOM_READ_ROLES) {
