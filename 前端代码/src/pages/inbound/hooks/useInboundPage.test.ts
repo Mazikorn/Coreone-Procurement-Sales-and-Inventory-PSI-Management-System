@@ -185,6 +185,31 @@ describe('useInboundPage', () => {
     expect(inboundApi.create).not.toHaveBeenCalled()
   })
 
+  it('refreshes active material candidates before opening create modal and clears stale material selection', async () => {
+    const staleMaterial = {
+      ...mockMaterials[0],
+      id: 'mat-stale',
+      code: 'STALE-001',
+      name: '已停用旧候选',
+      status: 'active',
+    } as Material
+    vi.mocked(materialApi.getList)
+      .mockResolvedValueOnce({ list: [staleMaterial], pagination: { total: 1 } } as any)
+      .mockResolvedValueOnce({ list: [], pagination: { total: 0 } } as any)
+
+    const { result } = renderHook(() => useInboundPage())
+    await waitFor(() => expect(result.current.materials[0]?.id).toBe('mat-stale'))
+
+    await act(async () => {
+      await result.current.openCreate()
+    })
+
+    expect(materialApi.getList).toHaveBeenLastCalledWith({ page: 1, pageSize: 999, status: 'active' })
+    await waitFor(() => expect(result.current.materials).toHaveLength(0))
+    expect(result.current.modalType).toBe('create')
+    expect(result.current.form.materialId).toBe('')
+  })
+
   it('should create inbound on valid submit', async () => {
     const { result } = renderHook(() => useInboundPage())
     await waitFor(() => expect(result.current.loading).toBe(false))

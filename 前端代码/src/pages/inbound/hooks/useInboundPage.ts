@@ -19,6 +19,12 @@ interface PurchaseOrderOption {
   remainingQty?: number
 }
 
+interface InboundRefs {
+  materials: Material[]
+  suppliers: Supplier[]
+  locations: Location[]
+}
+
 function getTypeLabel(type: string): string {
   const map: Record<string, string> = {
     direct: '直接入库',
@@ -229,11 +235,22 @@ export function useInboundPage() {
       const materialRes = mRes as unknown as PaginationData<Material>
       const supplierRes = sRes as unknown as PaginationData<Supplier>
       const locationRes = lRes as unknown as PaginationData<Location>
-      setMaterials(materialRes?.list || [])
-      setSuppliers(supplierRes?.list || [])
-      setLocations(locationRes?.list || [])
+      const refs: InboundRefs = {
+        materials: materialRes?.list || [],
+        suppliers: supplierRes?.list || [],
+        locations: locationRes?.list || [],
+      }
+      setMaterials(refs.materials)
+      setSuppliers(refs.suppliers)
+      setLocations(refs.locations)
+      return refs
     } catch (e) {
       console.error(e)
+      const refs: InboundRefs = { materials: [], suppliers: [], locations: [] }
+      setMaterials(refs.materials)
+      setSuppliers(refs.suppliers)
+      setLocations(refs.locations)
+      return refs
     }
   }
 
@@ -323,13 +340,13 @@ export function useInboundPage() {
   }
 
   // 弹窗操作
-  const openCreate = () => {
+  const openCreate = async () => {
+    const refs = await fetchRefs()
     setForm({
-      type: canUsePurchaseOrders ? 'purchase' : 'direct', materialId: materials[0]?.id || '', batchNo: '', quantity: 0,
-      price: 0, supplierId: '', locationId: locations[0]?.id || '', fromLocationId: '', fromLocationName: '',
+      type: canUsePurchaseOrders ? 'purchase' : 'direct', materialId: refs.materials[0]?.id || '', batchNo: '', quantity: 0,
+      price: 0, supplierId: '', locationId: refs.locations[0]?.id || '', fromLocationId: '', fromLocationName: '',
       productionDate: '', expiryDate: '', remark: '', purchaseOrderId: ''
     })
-    fetchRefs()
     setModalType('create')
   }
 

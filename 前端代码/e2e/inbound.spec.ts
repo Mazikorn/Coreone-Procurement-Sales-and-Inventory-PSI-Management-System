@@ -56,6 +56,108 @@ async function getInventoryTotalStock(token: string, materialId: string): Promis
   return Number(row?.totalStock ?? row?.stock ?? 0)
 }
 
+test.describe('入库管理 -> 物料候选过滤', () => {
+  test('INBOUND-MAT-CAND-01. 新增入库前刷新启用物料候选并阻断旧物料提交', async ({ page }) => {
+    const staleMaterial = {
+      id: 'mat-stale-inbound',
+      code: 'STALE-IN',
+      name: '已停用旧候选',
+      spec: '10ml',
+      unit: '盒',
+      price: 12,
+      status: 'active',
+    }
+    let materialListCalls = 0
+    const createBodies: any[] = []
+
+    await page.route('**/api/v1/materials**', async route => {
+      const url = new URL(route.request().url())
+      if (route.request().method() !== 'GET') return route.fallback()
+      expect(url.searchParams.get('status')).toBe('active')
+      materialListCalls += 1
+      const list = materialListCalls === 1 ? [staleMaterial] : []
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: { list, pagination: { total: list.length, page: 1, pageSize: 999 } } }),
+      })
+    })
+    await page.route('**/api/v1/suppliers**', async route => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: { list: [], pagination: { total: 0, page: 1, pageSize: 999 } } }),
+      })
+    })
+    await page.route('**/api/v1/locations**', async route => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: { list: [], pagination: { total: 0, page: 1, pageSize: 999 } } }),
+      })
+    })
+    await page.route('**/api/v1/purchase-orders**', async route => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: { list: [], pagination: { total: 0, page: 1, pageSize: 999 } } }),
+      })
+    })
+    await page.route('**/api/v1/alerts**', async route => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: { list: [], items: [], pagination: { total: 0, page: 1, pageSize: 5 } } }),
+      })
+    })
+    await page.route('**/api/v1/inbound**', async route => {
+      const url = new URL(route.request().url())
+      if (route.request().method() === 'GET' && url.pathname.endsWith('/inbound/stats')) {
+        await route.fulfill({
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: { total: 0, monthTotal: 0, completed: 0, cancelled: 0, amount: 0, supplierCount: 0, pendingOrders: 0, quickCounts: { all: 0, today: 0, week: 0, month: 0 } },
+          }),
+        })
+        return
+      }
+      if (route.request().method() === 'GET' && url.pathname.endsWith('/inbound')) {
+        await route.fulfill({
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true, data: { list: [], pagination: { total: 0, page: 1, pageSize: 20 } } }),
+        })
+        return
+      }
+      if (route.request().method() === 'POST' && url.pathname.endsWith('/inbound')) {
+        createBodies.push(await route.request().postDataJSON())
+        await route.fulfill({
+          status: 400,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: false, error: { message: '旧物料不应被提交' } }),
+        })
+        return
+      }
+      await route.fallback()
+    })
+
+    await page.goto(`${FE_BASE}/login`, { waitUntil: 'domcontentloaded' })
+    await page.evaluate(() => {
+      localStorage.setItem('token', 'e2e-token')
+      localStorage.setItem('user', JSON.stringify({ id: 'USER-ADMIN', username: 'admin', realName: '管理员', role: 'admin' }))
+    })
+    await page.goto(`${FE_BASE}/inbound`, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByRole('heading', { name: '入库记录' })).toBeVisible({ timeout: 15000 })
+
+    await page.getByRole('button', { name: '新增入库' }).click()
+    const dialog = page.getByRole('dialog', { name: '新增入库记录' })
+    await expect(dialog).toBeVisible({ timeout: 10000 })
+    await expect(dialog.getByText('已停用旧候选')).toHaveCount(0)
+    await dialog.locator('label', { hasText: '数量' }).locator('input').fill('1')
+    await dialog.getByRole('button', { name: '确认入库' }).click()
+
+    await expect(page.getByText('请选择耗材并输入数量')).toBeVisible({ timeout: 10000 })
+    await page.waitForTimeout(300)
+    expect(materialListCalls).toBeGreaterThanOrEqual(2)
+    expect(createBodies).toEqual([])
+  })
+})
+
 test.describe('入库管理 -> 取消恢复主路径', () => {
   test('INBOUND-CANCEL-01. 浏览器取消采购入库后同步回退库存和采购订单', async ({ page }) => {
     const token = await apiLogin()
