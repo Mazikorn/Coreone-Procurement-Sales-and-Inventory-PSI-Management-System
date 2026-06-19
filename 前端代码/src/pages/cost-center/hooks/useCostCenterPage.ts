@@ -36,6 +36,10 @@ const ALLOCATION_BASE_OPTIONS = [
   { value: 'area', label: '面积' },
 ]
 
+function getErrorMessage(err: any, fallback: string) {
+  return err?.response?.data?.error?.message || err?.message || fallback
+}
+
 export function useCostCenterPage() {
   const [keyword, setKeyword] = useState('')
   const [searchInput, setSearchInput] = useState('')
@@ -194,8 +198,8 @@ export function useCostCenterPage() {
       setModalType(null)
       setEditingId(null)
       refresh()
-    } catch {
-      toast.error('删除失败')
+    } catch (err: any) {
+      toast.error(getErrorMessage(err, '删除失败'))
     }
   }
 

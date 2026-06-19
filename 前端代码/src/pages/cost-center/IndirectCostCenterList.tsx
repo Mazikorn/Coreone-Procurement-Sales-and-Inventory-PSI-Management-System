@@ -213,7 +213,7 @@ export default function IndirectCostCenterList() {
       <ConfirmDialog
         open={page.modalType === 'delete'}
         title="确认删除"
-        description={`确定要删除成本中心「${page.detailRow?.name || ''}」吗？关联的分摊记录也将被删除。`}
+        description={`确定要删除成本中心「${page.detailRow?.name || ''}」吗？已有分摊记录的成本中心不可删除。`}
         confirmText="确认删除"
         confirmVariant="danger"
         onConfirm={page.handleDelete}

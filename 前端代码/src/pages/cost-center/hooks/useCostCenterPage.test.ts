@@ -150,6 +150,26 @@ describe('useCostCenterPage', () => {
     expect(toast.error).toHaveBeenCalledWith('停用成本中心不可录入分摊')
   })
 
+  it('shows the backend delete protection reason when deletion fails', async () => {
+    const { result } = renderHook(() => useCostCenterPage())
+    const reason = '成本中心已有 1 条分摊记录，不可删除'
+    await waitFor(() => expect(indirectCostApi.getList).toHaveBeenCalled())
+    vi.mocked(indirectCostApi.delete).mockRejectedValueOnce({
+      response: { data: { error: { message: reason } } },
+    })
+
+    act(() => {
+      result.current.openDelete(mockCenter as any)
+    })
+
+    await act(async () => {
+      await result.current.handleDelete()
+    })
+
+    expect(indirectCostApi.delete).toHaveBeenCalledWith(mockCenter.id)
+    expect(toast.error).toHaveBeenCalledWith(reason)
+  })
+
   it('does not send all as a real status filter', async () => {
     const { result } = renderHook(() => useCostCenterPage())
     await waitFor(() => expect(indirectCostApi.getList).toHaveBeenCalled())

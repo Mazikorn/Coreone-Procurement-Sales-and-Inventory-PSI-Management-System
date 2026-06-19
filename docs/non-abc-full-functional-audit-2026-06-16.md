@@ -16060,9 +16060,57 @@ git diff --check
 
 **后续风险**
 
-- 间接成本中心列表分页、状态筛选、分摊录入 API 和页面停用来源提交已阶段性保护；后续若继续成本配置层，应按独立批次复核编辑后统计刷新、删除弹窗文案与后端引用保护的一致性。
+- 间接成本中心列表分页、状态筛选、分摊录入 API 和页面停用来源提交已阶段性保护；删除弹窗文案与后端引用保护的一致性作为下一独立批次处理，避免在停用来源提交批次中扩大范围。
 
-## 三百二十八、结论
+## 三百二十八、批次 373: 间接成本删除引用保护必须解释清楚
+
+**发现的问题**
+
+- 本轮继续复核非 ABC 间接成本配置页面，聚焦“有历史引用时删除必须被保护，且页面解释不能误导用户”不变量。
+- 后端删除接口已保护存在分摊记录的成本中心，但页面删除确认文案仍提示“关联的分摊记录也将被删除”，与后端引用保护语义相反。
+- `useCostCenterPage.handleDelete` 捕获删除失败后只显示泛化的 `删除失败`，吞掉后端返回的业务保护原因，用户无法知道是历史分摊引用导致不可删除。
+- 这会把“保护历史事实”的正确后端行为呈现成普通失败，也不符合页面/弹窗必须检查真实副作用的验收标准。
+
+**已完成修复**
+
+- `前端代码/src/pages/cost-center/hooks/useCostCenterPage.ts`
+  - 新增 `getErrorMessage`，优先读取后端 `response.data.error.message`，其次读取普通错误消息，最后才使用兜底文案。
+  - `handleDelete` 删除失败时展示后端引用保护原因，不再统一吞成 `删除失败`。
+- `前端代码/src/pages/cost-center/hooks/useCostCenterPage.test.ts`
+  - 新增红绿测试：模拟删除接口返回 `成本中心已有 1 条分摊记录，不可删除`，断言页面 toast 展示该后端原因。
+- `前端代码/src/pages/cost-center/IndirectCostCenterList.tsx`
+  - 删除确认弹窗改为提示 `已有分摊记录的成本中心不可删除`，避免暗示历史分摊记录会被级联删除。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 间接成本中心页面 hook、弹窗文案和前端测试，不修改 ABC 本体、ABC API、成本算法、库存、出库或废弃 `/cost-analysis`。
+- 间接成本分摊是全成本/成本说明的上游配置；本批不改变合法删除规则和后端保护逻辑，只把后端引用保护原因准确传达到页面。
+- 已补跑间接成本后端专项、全成本和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/cost-center/hooks/useCostCenterPage.test.ts -t "delete protection reason"` 修复前失败：期望 toast 展示后端保护原因，实际得到泛化 `删除失败`。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/cost-center/hooks/useCostCenterPage.test.ts -t "delete protection reason"` 通过。
+  - `前端代码 npm test -- --run src/pages/cost-center/hooks/useCostCenterPage.test.ts` 通过，6 tests passed。
+  - `后端代码/server npm test -- --run tests/indirect-cost-guard.test.ts tests/integration/full-cost.test.ts tests/integration/cost-exceptions.test.ts` 通过，3 files / 24 tests passed；`cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr 为既有异常台账测试场景，最终通过。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis` 无输出，确认未改废弃范围。
+- 浏览器复核:
+  - 本批为间接成本页面 hook 错误解释和确认弹窗文案修复，不新增 API 或组件结构；核心风险是失败原因是否被吞掉，已用 hook 级红绿测试断言真实错误传递，并用后端回归覆盖引用保护语义，不新增截图证据。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 间接成本中心列表分页、状态筛选、分摊录入 API、页面停用来源提交和删除引用保护解释已阶段性保护；后续若继续成本配置层，应按独立批次复核编辑后统计刷新与统计卡片口径一致性。
+
+## 三百二十九、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 
