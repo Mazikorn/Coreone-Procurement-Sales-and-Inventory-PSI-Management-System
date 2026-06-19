@@ -222,6 +222,37 @@ describe('库存盘点 API', () => {
     expect(statsRes.body.error.code).toBe('INVALID_PARAMETER')
   })
 
+  it('ST-013: 盘点列表必须拒绝非法分页参数', async () => {
+    const invalidPage = await request(app)
+      .get('/api/v1/stocktaking')
+      .query({ page: 'abc' })
+      .set('Authorization', `Bearer ${adminToken}`)
+
+    const zeroPage = await request(app)
+      .get('/api/v1/stocktaking')
+      .query({ page: '0' })
+      .set('Authorization', `Bearer ${adminToken}`)
+
+    const invalidPageSize = await request(app)
+      .get('/api/v1/stocktaking')
+      .query({ pageSize: 'abc' })
+      .set('Authorization', `Bearer ${adminToken}`)
+
+    const oversizedPageSize = await request(app)
+      .get('/api/v1/stocktaking')
+      .query({ pageSize: '101' })
+      .set('Authorization', `Bearer ${adminToken}`)
+
+    expect(invalidPage.status).toBe(400)
+    expect(invalidPage.body.error.code).toBe('INVALID_PARAMETER')
+    expect(zeroPage.status).toBe(400)
+    expect(zeroPage.body.error.code).toBe('INVALID_PARAMETER')
+    expect(invalidPageSize.status).toBe(400)
+    expect(invalidPageSize.body.error.code).toBe('INVALID_PARAMETER')
+    expect(oversizedPageSize.status).toBe(400)
+    expect(oversizedPageSize.body.error.code).toBe('INVALID_PARAMETER')
+  })
+
   it('ST-004: 创建盘点不立即调整库存，确认后才写库存和流水', async () => {
     const suffix = `create-confirm-${Date.now()}`
     const { materialId } = seedStocktakingFixture(db, suffix, 10)

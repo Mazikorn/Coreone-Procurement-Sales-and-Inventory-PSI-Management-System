@@ -143,6 +143,15 @@ function rejectInvalidStocktakingStatus(query: any, res: any) {
   return false
 }
 
+function parsePositiveIntegerParam(value: unknown, max?: number) {
+  const text = String(value || '').trim()
+  if (!/^\d+$/.test(text)) return null
+  const numberValue = Number(text)
+  if (!Number.isSafeInteger(numberValue) || numberValue < 1) return null
+  if (max !== undefined && numberValue > max) return null
+  return numberValue
+}
+
 function handleStocktakingStockError(res: any, err: any): boolean {
   if (err?.message !== 'LOCATION_STOCK_INSUFFICIENT') return false
   error(res, '库位库存不足，无法确认盘点差异', 'STOCK_INSUFFICIENT', 422)
@@ -152,9 +161,17 @@ function handleStocktakingStockError(res: any, err: any): boolean {
 router.get('/', (req, res) => {
   try {
     if (rejectInvalidStocktakingStatus(req.query, res)) return
-    let { page = 1, pageSize = 20 } = req.query
-    page = Math.max(1, Number(page) || 1)
-    pageSize = Math.max(1, Math.min(100, Number(pageSize) || 20))
+    const { page = 1, pageSize = 20 } = req.query
+    const normalizedPage = parsePositiveIntegerParam(page)
+    const normalizedPageSize = parsePositiveIntegerParam(pageSize, 100)
+    if (!normalizedPage) {
+      error(res, '页码必须为正整数', 'INVALID_PARAMETER', 400)
+      return
+    }
+    if (!normalizedPageSize) {
+      error(res, '每页数量必须为 1-100 的整数', 'INVALID_PARAMETER', 400)
+      return
+    }
     const db = getDatabase()
     const { where, params } = buildStocktakingWhere(req.query)
     const count = (db.prepare(`
@@ -163,7 +180,7 @@ router.get('/', (req, res) => {
       LEFT JOIN materials m ON m.id = st.material_id
       WHERE ${where}
     `).get(...params) as any)?.total || 0
-    const offset = (page - 1) * pageSize
+    const offset = (normalizedPage - 1) * normalizedPageSize
     const list = db.prepare(`
       SELECT
         st.*,
@@ -179,7 +196,7 @@ router.get('/', (req, res) => {
       WHERE ${where}
       ORDER BY st.created_at DESC
       LIMIT ? OFFSET ?
-    `).all(...params, pageSize, offset) as any[]
+    `).all(...params, normalizedPageSize, offset) as any[]
     successList(res, list.map((r: any) => ({
       id: r.id, stocktakingNo: r.stocktaking_no, materialId: r.material_id,
       materialName: r.material_name, materialCode: r.material_code,
@@ -188,7 +205,7 @@ router.get('/', (req, res) => {
       systemStock: r.system_stock, actualStock: r.actual_stock,
       difference: r.difference, operator: r.operator, status: r.status,
       remark: r.remark, createdAt: r.created_at,
-    })), Number(page), Number(pageSize), count)
+    })), normalizedPage, normalizedPageSize, count)
   } catch (err: any) { error(res, err.message) }
 })
 
