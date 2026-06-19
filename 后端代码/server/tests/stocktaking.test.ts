@@ -204,6 +204,24 @@ describe('库存盘点 API', () => {
     expect(diff.materialId).toBeTruthy()
   })
 
+  it('ST-012: 盘点列表和统计必须拒绝非法状态筛选，避免伪装成空结果', async () => {
+    const listRes = await request(app)
+      .get('/api/v1/stocktaking?status=archived')
+      .set('Authorization', `Bearer ${adminToken}`)
+
+    expect(listRes.status).toBe(400)
+    expect(listRes.body.success).toBe(false)
+    expect(listRes.body.error.code).toBe('INVALID_PARAMETER')
+
+    const statsRes = await request(app)
+      .get('/api/v1/stocktaking/stats?status=archived')
+      .set('Authorization', `Bearer ${adminToken}`)
+
+    expect(statsRes.status).toBe(400)
+    expect(statsRes.body.success).toBe(false)
+    expect(statsRes.body.error.code).toBe('INVALID_PARAMETER')
+  })
+
   it('ST-004: 创建盘点不立即调整库存，确认后才写库存和流水', async () => {
     const suffix = `create-confirm-${Date.now()}`
     const { materialId } = seedStocktakingFixture(db, suffix, 10)

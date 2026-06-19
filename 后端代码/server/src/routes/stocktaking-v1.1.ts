@@ -6,6 +6,7 @@ import { generateNo } from '../utils/generateNo.js'
 import { consumeInventoryLocationStock, ensureInventoryLocationRows, restoreInventoryLocationStock } from '../utils/inventory-locations.js'
 
 const router = Router()
+const STOCKTAKING_STATUSES = new Set(['completed', 'confirmed'])
 
 function generateStocktakingNo(): string {
   return generateNo('ST')
@@ -133,6 +134,15 @@ function buildStocktakingWhere(query: any) {
   return { where, params }
 }
 
+function rejectInvalidStocktakingStatus(query: any, res: any) {
+  const status = typeof query.status === 'string' ? query.status.trim() : ''
+  if (status && !STOCKTAKING_STATUSES.has(status)) {
+    error(res, '盘点状态筛选无效', 'INVALID_PARAMETER', 400)
+    return true
+  }
+  return false
+}
+
 function handleStocktakingStockError(res: any, err: any): boolean {
   if (err?.message !== 'LOCATION_STOCK_INSUFFICIENT') return false
   error(res, '库位库存不足，无法确认盘点差异', 'STOCK_INSUFFICIENT', 422)
@@ -141,6 +151,7 @@ function handleStocktakingStockError(res: any, err: any): boolean {
 
 router.get('/', (req, res) => {
   try {
+    if (rejectInvalidStocktakingStatus(req.query, res)) return
     let { page = 1, pageSize = 20 } = req.query
     page = Math.max(1, Number(page) || 1)
     pageSize = Math.max(1, Math.min(100, Number(pageSize) || 20))
@@ -183,6 +194,7 @@ router.get('/', (req, res) => {
 
 router.get('/stats', (req, res) => {
   try {
+    if (rejectInvalidStocktakingStatus(req.query, res)) return
     const db = getDatabase()
     const { where, params } = buildStocktakingWhere(req.query)
     const row = db.prepare(`
