@@ -13614,7 +13614,53 @@ git diff --check
 - 本批只处理盘点确认路径的库位库存不足错误翻译，不直接治理历史总账、批次和库位明细不一致的数据。
 - 后续继续按计划复核库存日志和报表，重点检查历史事实、筛选导出和报表口径是否被后续编辑污染。
 
-## 二百七十七、结论
+## 二百七十七、批次 322: 操作日志日期清理必须保留边界日当天证据
+
+**发现的问题**
+
+- 本轮继续复核库存主链路后的库存日志/操作日志审计面，聚焦“筛选导出和清理不能破坏历史证据”不变量。
+- `operation_logs.created_at` 既可能来自 SQLite `CURRENT_TIMESTAMP` 的 `YYYY-MM-DD HH:mm:ss`，也可能来自测试或接口写入的 ISO `YYYY-MM-DDTHH:mm:ss`。
+- 日志清理接口用 `beforeDateT00:00:00` 做字符串比较时，会把 `2026-03-01 12:00:00` 这类边界日当天日志误判为小于 `2026-03-01T00:00:00`，导致审计证据被提前清理。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/logs-v1.1.ts`
+  - 新增日志时间比较表达式 `REPLACE(created_at, 'T', ' ')`，统一兼容空格格式和 ISO `T` 格式。
+  - 列表/导出日期筛选改为使用 `YYYY-MM-DD 00:00:00` 到 `YYYY-MM-DD 23:59:59` 的完整日边界。
+  - 日志清理改为只删除 `beforeDate 00:00:00` 之前的记录，保留边界日当天所有操作证据。
+- `后端代码/server/tests/logs.test.ts`
+  - 扩展 `LOG-008` 红绿测试：清理 `beforeDate=2026-03-01` 时，旧日志被删除，`2026-03-01 12:00:00` 边界日当天日志和之后日志必须保留。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 操作日志 API 的日期比较与日志测试，不修改库存数量、批次、库位、出库、BOM、项目、ABC API、ABC 算法或废弃 `/cost-analysis`。
+- 操作日志是库存主链路和成本输入侧的追溯证据面；修复后能避免边界日审计证据被误清理，提升后续库存异常与成本异常追溯可信度。
+- 已确认本批 diff 不涉及 `前端代码/deprecated/legacy-cost-analysis/`、`后端代码/server/src/routes/abc-v1.1.ts`、`后端代码/server/src/utils/abc-calculator.test.ts` 或前端 ABC 页面。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/logs.test.ts` 修复前失败：`LOG-008` 清理返回 `deletedCount=2`，期望只删除 1 条旧日志。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/logs.test.ts` 通过，10 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `前端代码 npm test -- --run src/pages/system/hooks/useLogsPage.test.ts src/pages/system/components/LogCleanModal.test.tsx` 通过，2 files / 10 tests passed。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only | rg '(^前端代码/deprecated/legacy-cost-analysis/|abc-v1.1|src/api/abc|pages/cost|cost-analysis)' || true` 无输出，确认未改废弃范围和 ABC 本体。
+- 浏览器复核:
+  - 本批是操作日志 API 日期边界修复，不新增或改变页面交互；日志清理弹窗现有前端测试已覆盖确认后调用后端并刷新列表/统计，页面级 Playwright 不是本批必要门槛。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 本批只修复操作日志的日期筛选/清理边界，不新增独立 `stock_logs` 列表页或库存流水导出能力。
+- 后续继续按计划复核库存报表和非废弃成本/实验运营页面，重点检查报表口径是否使用历史事实而不是被后续编辑污染的当前值。
+
+## 二百七十八、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

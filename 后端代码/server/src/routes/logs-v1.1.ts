@@ -118,6 +118,7 @@ function mapLogRow(row: any) {
 }
 
 const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/
+const LOG_CREATED_AT_EXPR = "REPLACE(created_at, 'T', ' ')"
 
 function isValidDateOnly(value: string) {
   if (!DATE_ONLY_PATTERN.test(value)) return false
@@ -147,8 +148,8 @@ function buildLogWhere(query: any, includeDate = true) {
   const { startDate, endDate, userId, username, keyword, type, module } = query
   let where = '1=1'
   const params: any[] = []
-  if (includeDate && startDate) { where += ' AND created_at >= ?'; params.push(startDate) }
-  if (includeDate && endDate) { where += ' AND created_at <= ?'; params.push(`${endDate}T23:59:59`) }
+  if (includeDate && startDate) { where += ` AND ${LOG_CREATED_AT_EXPR} >= ?`; params.push(`${startDate} 00:00:00`) }
+  if (includeDate && endDate) { where += ` AND ${LOG_CREATED_AT_EXPR} <= ?`; params.push(`${endDate} 23:59:59`) }
   if (userId) { where += ' AND user_id = ?'; params.push(userId) }
   if (username) { where += ' AND username = ?'; params.push(username) }
   if (keyword) {
@@ -348,7 +349,7 @@ router.delete('/', (req: any, res) => {
     const db = getDatabase()
     db.exec('BEGIN IMMEDIATE')
     try {
-      const result = db.prepare('DELETE FROM operation_logs WHERE created_at < ?').run(`${beforeDate}T00:00:00`)
+      const result = db.prepare(`DELETE FROM operation_logs WHERE ${LOG_CREATED_AT_EXPR} < ?`).run(`${beforeDate} 00:00:00`)
       db.exec('COMMIT')
       success(res, { deletedCount: Number(result.changes || 0), beforeDate }, 'Logs cleaned')
     } catch (e) {

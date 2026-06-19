@@ -312,6 +312,7 @@ describe('操作日志 API', () => {
   it('LOG-008: 管理员可按日期清理历史日志且保留较新的日志', async () => {
     const suffix = Date.now()
     const oldId = `log-clean-old-${suffix}`
+    const boundaryDayId = `log-clean-boundary-day-${suffix}`
     const newId = `log-clean-new-${suffix}`
     seedLog(db, {
       id: oldId,
@@ -321,13 +322,21 @@ describe('操作日志 API', () => {
       requestData: { module: 'system' },
     })
     seedLog(db, {
+      id: boundaryDayId,
+      username: 'admin',
+      operation: 'boundary_day_cleanup_keep',
+      description: '清理测试-边界日当天日志',
+      requestData: { module: 'system' },
+    })
+    seedLog(db, {
       id: newId,
       username: 'admin',
       operation: 'new_cleanup_keep',
       description: '清理测试-新日志',
       requestData: { module: 'system' },
     })
-    db.prepare('UPDATE operation_logs SET created_at = ? WHERE id = ?').run('2026-01-01T00:00:00', oldId)
+    db.prepare('UPDATE operation_logs SET created_at = ? WHERE id = ?').run('2026-01-01 00:00:00', oldId)
+    db.prepare('UPDATE operation_logs SET created_at = ? WHERE id = ?').run('2026-03-01 12:00:00', boundaryDayId)
     db.prepare('UPDATE operation_logs SET created_at = ? WHERE id = ?').run('2026-06-17T00:00:00', newId)
 
     const cleaned = await request(app)
@@ -339,8 +348,10 @@ describe('操作日志 API', () => {
     expect(cleaned.body.data.deletedCount).toBe(1)
 
     const oldRow = db.prepare('SELECT 1 FROM operation_logs WHERE id = ?').get(oldId)
+    const boundaryDayRow = db.prepare('SELECT 1 FROM operation_logs WHERE id = ?').get(boundaryDayId)
     const newRow = db.prepare('SELECT 1 FROM operation_logs WHERE id = ?').get(newId)
     expect(oldRow).toBeUndefined()
+    expect(boundaryDayRow).toBeTruthy()
     expect(newRow).toBeTruthy()
   })
 
