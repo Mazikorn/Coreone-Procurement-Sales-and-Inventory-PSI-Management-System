@@ -681,7 +681,7 @@ export function useReconciliationPage() {
         newUsage: fixNewUsage,
         newUnit: fixNewUnit,
       })
-      toast.success('BOM用量已修正')
+      toast.success('BOM用量已修正，请重新审计差异以同步成本异常')
       setFixBomModalOpen(false)
       setFixTarget(null)
       setFixTargetProjectId(null)

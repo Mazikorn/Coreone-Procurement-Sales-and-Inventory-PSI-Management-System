@@ -368,7 +368,7 @@ describe('parseLisImportData', () => {
       newUsage: 1.5,
       newUnit: 'ml',
     }))
-    expect(toast.success).toHaveBeenCalledWith('BOM用量已修正')
+    expect(toast.success).toHaveBeenCalledWith('BOM用量已修正，请重新审计差异以同步成本异常')
     expect(toast.error).toHaveBeenCalledWith('BOM已修正，刷新对账明细失败，请重新展开项目')
     expect(toast.error).not.toHaveBeenCalledWith('修正失败')
   })
