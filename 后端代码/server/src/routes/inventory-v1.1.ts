@@ -70,6 +70,37 @@ function rejectInvalidInventoryStatus(res: any, status: unknown) {
   return false
 }
 
+function rejectUnknownInventoryFilterSources(db: any, query: any, res: any) {
+  const categoryId = String(query?.categoryId || '').trim()
+  if (categoryId) {
+    const category = db.prepare('SELECT id FROM material_categories WHERE id = ?').get(categoryId)
+    if (!category) {
+      error(res, '物料分类筛选不存在', 'INVALID_PARAMETER', 400)
+      return true
+    }
+  }
+
+  const locationId = String(query?.locationId || '').trim()
+  if (locationId) {
+    const location = db.prepare('SELECT id FROM locations WHERE id = ?').get(locationId)
+    if (!location) {
+      error(res, '库位筛选不存在', 'INVALID_PARAMETER', 400)
+      return true
+    }
+  }
+
+  const materialId = String(query?.materialId || '').trim()
+  if (materialId) {
+    const material = db.prepare('SELECT id FROM materials WHERE id = ?').get(materialId)
+    if (!material) {
+      error(res, '物料筛选不存在', 'INVALID_PARAMETER', 400)
+      return true
+    }
+  }
+
+  return false
+}
+
 function getBatchSubQuery(field: string): string {
   return `(SELECT b.${field} FROM batches b WHERE b.material_id = i.material_id AND b.status = 1 AND b.remaining > 0 ORDER BY b.expiry_date ASC LIMIT 1)`
 }
@@ -404,6 +435,7 @@ router.get('/', (req, res) => {
     page = Math.max(1, Number(page) || 1)
     pageSize = Math.max(1, Math.min(200, Number(pageSize) || 20))
     const db = getDatabase()
+    if (rejectUnknownInventoryFilterSources(db, req.query, res)) return
     const { where, params } = buildInventoryWhere(req.query)
     const statusWhere = buildInventoryStatusWhere(status)
     const locationId = typeof req.query.locationId === 'string' ? req.query.locationId : ''
@@ -512,6 +544,7 @@ router.get('/', (req, res) => {
 router.get('/stats', (req, res) => {
   try {
     const db = getDatabase()
+    if (rejectUnknownInventoryFilterSources(db, req.query, res)) return
     const { where, params } = buildInventoryWhere(req.query)
     const locationId = typeof req.query.locationId === 'string' ? req.query.locationId : ''
     const stockExpr = locationId

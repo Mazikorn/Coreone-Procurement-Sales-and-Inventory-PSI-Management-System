@@ -285,6 +285,27 @@ describe('集成测试：库存管理', () => {
       expect(res.status).toBe(400)
       expect(res.body.error.code).toBe('INVALID_PARAMETER')
     })
+
+    it('INV-FILTER-002: 库存列表和统计必须拒绝不存在的筛选来源', async () => {
+      const cases = [
+        { path: '/api/v1/inventory', query: { categoryId: 'missing-inventory-category' } },
+        { path: '/api/v1/inventory', query: { locationId: 'missing-inventory-location' } },
+        { path: '/api/v1/inventory', query: { materialId: 'missing-inventory-material' } },
+        { path: '/api/v1/inventory/stats', query: { categoryId: 'missing-inventory-category' } },
+        { path: '/api/v1/inventory/stats', query: { locationId: 'missing-inventory-location' } },
+        { path: '/api/v1/inventory/stats', query: { materialId: 'missing-inventory-material' } },
+      ]
+
+      for (const item of cases) {
+        const res = await request(app)
+          .get(item.path)
+          .query(item.query)
+          .set('Authorization', `Bearer ${token}`)
+
+        expect(res.status).toBe(400)
+        expect(res.body.error.code).toBe('INVALID_PARAMETER')
+      }
+    })
   })
 
   describe('库存统计', () => {

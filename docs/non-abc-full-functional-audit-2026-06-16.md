@@ -15198,7 +15198,54 @@ git diff --check
 
 - 本批只覆盖库存列表 `status` 枚举；库存列表和统计中的 `categoryId/locationId/materialId` 来源存在性应继续按“候选来源必须存在，不能伪装空结果”不变量逐项处理。
 
-## 三百一十、结论
+## 三百一十、批次 355: 库存筛选来源必须存在
+
+**发现的问题**
+
+- 本轮继续复核库存查询/库存报表链路，聚焦“候选来源 ID 必须真实存在，不能把参数错误伪装成空库存”不变量。
+- `/api/v1/inventory` 和 `/api/v1/inventory/stats` 共用 `categoryId/locationId/materialId` 筛选，但旧后端没有校验这些来源是否存在。
+- 当调用不存在的分类、库位或物料 ID 时，旧接口返回 200 空列表或空统计，用户可能误以为当前来源下没有库存，而不是 URL、页面状态或 API 参数错误。
+- 本批只处理“明确不存在”的来源 ID；已删除或停用来源是否允许作为历史库存筛选口径，保留为单独业务决策，不在本批擅自扩大。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/inventory-v1.1.ts`
+  - 新增 `rejectUnknownInventoryFilterSources`，统一校验 `categoryId/locationId/materialId` 是否存在。
+  - 库存列表和库存统计在构造 SQL 前共用该校验，非法来源统一返回 `400 INVALID_PARAMETER`。
+  - 合法来源筛选和空筛选口径不变。
+- `后端代码/server/tests/integration/inventory.test.ts`
+  - 新增 `INV-FILTER-002` 红绿测试，覆盖列表和统计遇到不存在分类、库位、物料时必须拒绝。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 库存列表/统计查询参数校验和库存集成测试，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 库存筛选来源是库存总账、库位明细、批次余额和出库候选判断的说明面；本批只阻断不存在来源，不改变库存写入、出库扣减、盘点确认或 ABC 明细写入。
+- 已补跑库存集成、库存一致性、盘点、操作日志、出库和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+- 已确认本批 diff 不涉及 `前端代码/deprecated/legacy-cost-analysis/`、`后端代码/server/src/routes/abc-v1.1.ts`、`后端代码/server/src/utils/abc-calculator.test.ts` 或前端 ABC 本体页面。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/integration/inventory.test.ts -t "INV-FILTER-002"` 修复前失败：不存在 `categoryId` 返回 200，期望 400。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/integration/inventory.test.ts -t "INV-FILTER-002"` 通过，1 test passed / 16 skipped；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `后端代码/server npm test -- --run tests/integration/inventory.test.ts tests/inventory-consistency.test.ts tests/stocktaking.test.ts tests/logs.test.ts` 通过，4 files / 48 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `后端代码/server npm test -- --run tests/integration/outbound.test.ts tests/integration/cost-exceptions.test.ts` 通过，2 files / 40 tests passed；`cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr 为既有异常台账测试场景，最终通过。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+- 浏览器复核:
+  - 本批为库存列表/统计 API 参数校验修复，不新增或改变页面组件、弹窗或可见交互；核心风险是 API 是否拒绝不存在筛选来源，已用接口级红绿测试覆盖，不新增截图证据。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 本批未处理已删除或停用分类、库位、物料作为历史筛选来源时的产品口径；如果后续需要支持历史库存追溯，应单独设计“历史来源可查但明确标记”的交互与接口语义。
+
+## 三百一十一、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 
