@@ -16295,9 +16295,59 @@ git diff --check
 
 **后续风险**
 
-- 对账页面导入、导出、日期筛选、日志筛选、病例编辑刷新、BOM 修正成功/刷新失败解释和重新审计提示已阶段性保护；后续可转入效率/报表展示页，或继续按审计报告剩余风险复核成本相关读面。
+- 对账页面导入、导出、日期筛选、日志筛选、病例编辑刷新、BOM 修正成功/刷新失败解释和重新审计提示已阶段性保护；下一批转入人员效率报表统计卡片展示口径，继续按“读面必须使用后端权威事实，不得用局部明细重算覆盖汇总”不变量推进。
 
-## 三百三十三、结论
+## 三百三十三、批次 378: 人员效率统计卡片必须使用后端汇总口径
+
+**发现的问题**
+
+- 本轮转入 ABC 之外的效率/报表展示页，聚焦“报表读面必须展示后端权威汇总口径”不变量。
+- 后端 `GET /api/v1/reports/personnel-efficiency` 已返回 `summary`、`ranking` 和 `trend`，其中 `summary` 是接口层对当前时间范围和角色筛选后的权威统计。
+- `PersonnelEfficiency` 页面旧实现忽略后端 `summary`，而是从 `ranking` 明细重新计算统计卡片；当后端汇总口径包含更完整的过滤事实、历史快照或后续扩展字段时，页面卡片会被局部排名明细覆盖。
+- 红灯测试用后端 `summary` 返回人员数 3、总人工成本 999、单位产出成本 49.95，同时 `ranking` 只返回一条人工成本 100 的明细，修复前页面展示的是本地重算值而不是后端汇总值。
+- 当前 Vitest 页面渲染配置还暴露出 `PersonnelEfficiency.tsx` 和共享 `EmptyState.tsx` 缺少 React 导入的问题，导致页面级回归测试无法稳定执行。
+
+**已完成修复**
+
+- `前端代码/src/pages/cost/PersonnelEfficiency.tsx`
+  - 新增 `PersonnelSummary` 类型和 `backendSummary` 状态，加载接口数据时保留后端 `summary`。
+  - 统计卡片优先使用后端 `summary` 的 `personCount`、`avgEfficiency`、`totalLaborCost`、`totalOutput` 和 `costPerOutput`。
+  - 仅在后端未返回 `summary` 时回退旧的本地计算，避免空数据或异常响应时页面崩溃。
+  - 保留排名表和导出仍基于当前 `filteredRanking` 明细，不改变导出范围或后端接口。
+- `前端代码/src/components/ui/EmptyState.tsx`
+  - 补充 React 导入，让共享空状态组件在当前 JSX/Vitest 配置下可被页面测试渲染。
+- `前端代码/src/pages/cost/PersonnelEfficiency.render.test.tsx`
+  - 新增红绿测试：模拟后端汇总值与排名明细值不同，断言统计卡片展示后端 `summary`，而不是从 `ranking` 重算出的局部值。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 人员效率报表页面、共享空状态组件导入和前端测试，不修改 ABC 本体、ABC API、成本算法、库存、出库或废弃 `/cost-analysis`。
+- 人员效率报表依赖出库、人员、项目类型和标准工时等历史事实；本批不改变这些事实的写入、计算或后端汇总，只保证前端统计卡片不覆盖接口权威口径。
+- 已补跑人员效率后端专项和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/cost/PersonnelEfficiency.render.test.tsx` 修复前失败：统计卡片展示人员数 1、平均效率 0.50、总人工成本 `¥100.00` 和单位产出成本 `¥20.00`，而不是后端 `summary` 的 3、1.23、`¥999.00`、`¥49.95`。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/cost/PersonnelEfficiency.render.test.tsx` 通过，1 test passed。
+  - `后端代码/server npm test -- --run tests/integration/personnel-efficiency.test.ts tests/integration/cost-exceptions.test.ts` 通过，2 files / 17 tests passed；命令退出码为 0，保留既有 Vite close timeout 提示和 `cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis` 无输出，确认未改废弃范围。
+- 浏览器复核:
+  - 本批为人员效率页面统计卡片数据口径修复，不新增路由、表单、弹窗或接口；核心风险是卡片是否展示后端权威汇总，已用页面级红绿测试覆盖可见文本和接口参数，不新增截图证据。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 人员效率统计卡片已阶段性保护为后端权威汇总口径；后续可继续复核效率/报表展示页中的导出内容、趋势图口径、跨筛选刷新，以及其他依赖历史事实的非 ABC 成本读面。
+
+## 三百三十四、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import { Download, Users } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -32,6 +32,15 @@ interface PersonnelTrendPoint {
   outputPerHour?: number
 }
 
+interface PersonnelSummary {
+  personCount: number
+  totalOutput: number
+  totalLaborCost: number
+  totalStandardHours: number
+  avgEfficiency: number
+  costPerOutput: number
+}
+
 const TIME_RANGE_OPTIONS = [
   { value: '3m', label: '近 3 个月' },
   { value: '6m', label: '近 6 个月' },
@@ -52,6 +61,7 @@ export default function PersonnelEfficiency() {
   const [exporting, setExporting] = useState(false)
   const [ranking, setRanking] = useState<PersonnelRankItem[]>([])
   const [trend, setTrend] = useState<PersonnelTrendPoint[]>([])
+  const [backendSummary, setBackendSummary] = useState<PersonnelSummary | null>(null)
 
   useEffect(() => {
     loadData()
@@ -63,6 +73,7 @@ export default function PersonnelEfficiency() {
       const res = await reportsApi.getPersonnelEfficiency({ timeRange, role })
       setRanking(res?.ranking || [])
       setTrend(res?.trend || [])
+      setBackendSummary(res?.summary || null)
     } catch {
       toast.error('加载人员效率数据失败')
     } finally {
@@ -70,10 +81,22 @@ export default function PersonnelEfficiency() {
     }
   }
 
+  const filteredRanking = useMemo(() => {
+    if (role === 'all') return ranking
+    return ranking.filter(r => r.role === role)
+  }, [ranking, role])
+
   const summary = useMemo(() => {
-    const filteredRanking = role === 'all'
-      ? ranking
-      : ranking.filter(r => r.role === role)
+    if (backendSummary) {
+      return {
+        avgEfficiency: Number(backendSummary.avgEfficiency || 0),
+        totalCost: Number(backendSummary.totalLaborCost || 0),
+        totalOutput: Number(backendSummary.totalOutput || 0),
+        costPerOutput: Number(backendSummary.costPerOutput || 0),
+        personCount: Number(backendSummary.personCount || 0),
+      }
+    }
+
     const avgEfficiency = filteredRanking.length > 0
       ? filteredRanking.reduce((s, r) => s + r.efficiency, 0) / filteredRanking.length
       : 0
@@ -81,12 +104,7 @@ export default function PersonnelEfficiency() {
     const totalOutput = filteredRanking.reduce((s, r) => s + r.outputCount, 0)
     const costPerOutput = totalOutput > 0 ? totalCost / totalOutput : 0
     return { avgEfficiency, totalCost, totalOutput, costPerOutput, personCount: filteredRanking.length }
-  }, [ranking, role])
-
-  const filteredRanking = useMemo(() => {
-    if (role === 'all') return ranking
-    return ranking.filter(r => r.role === role)
-  }, [ranking, role])
+  }, [backendSummary, filteredRanking])
 
   const handleExport = () => {
     try {
