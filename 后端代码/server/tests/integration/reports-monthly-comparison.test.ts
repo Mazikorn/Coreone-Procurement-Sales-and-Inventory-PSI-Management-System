@@ -127,4 +127,24 @@ describe('集成测试：成本月度环比报表', () => {
       source: 'abc',
     })
   })
+
+  it('REPORT-MONTHLY-COMPARISON-001: 拒绝不存在月份，避免伪装成空月度环比', async () => {
+    const res = await request(app)
+      .get('/api/v1/reports/cost-monthly-comparison?month=2099-13')
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(400)
+    expect(res.body.success).toBe(false)
+    expect(res.body.error.code).toBe('INVALID_PARAMETER')
+  })
+
+  it('REPORT-MONTHLY-COMPARISON-002: 拒绝非法数据来源，避免回落成出库口径', async () => {
+    const res = await request(app)
+      .get('/api/v1/reports/cost-monthly-comparison?month=2099-06&source=manual')
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(400)
+    expect(res.body.success).toBe(false)
+    expect(res.body.error.code).toBe('INVALID_PARAMETER')
+  })
 })

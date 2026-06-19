@@ -20,6 +20,12 @@ function formatYearMonth(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
 }
 
+function isValidYearMonth(value: string) {
+  if (!/^\d{4}-\d{2}$/.test(value)) return false
+  const [year, month] = value.split('-').map(Number)
+  return Number.isInteger(year) && Number.isInteger(month) && month >= 1 && month <= 12
+}
+
 function isValidDateOnly(value: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
   const date = new Date(`${value}T00:00:00Z`)
@@ -52,6 +58,7 @@ function rejectInvalidDateRange(req: any, res: any) {
 
 const PERSONNEL_EFFICIENCY_ROLES = new Set(['all', 'technician', 'pathologist', 'warehouse_manager'])
 const COST_TREND_DIMENSIONS = new Set(['monthly', 'quarterly'])
+const MONTHLY_COMPARISON_SOURCES = new Set(['outbound', 'abc'])
 
 function rejectInvalidPersonnelEfficiencyRole(role: string, res: any) {
   if (!PERSONNEL_EFFICIENCY_ROLES.has(role)) {
@@ -64,6 +71,18 @@ function rejectInvalidPersonnelEfficiencyRole(role: string, res: any) {
 function rejectInvalidCostTrendDimension(dimension: string, res: any) {
   if (!COST_TREND_DIMENSIONS.has(dimension)) {
     error(res, '成本趋势聚合维度无效', 'INVALID_PARAMETER', 400)
+    return true
+  }
+  return false
+}
+
+function rejectInvalidMonthlyComparisonParams(month: string, source: string, res: any) {
+  if (month && !isValidYearMonth(month)) {
+    error(res, '月份格式必须为 YYYY-MM', 'INVALID_PARAMETER', 400)
+    return true
+  }
+  if (!MONTHLY_COMPARISON_SOURCES.has(source)) {
+    error(res, '月度环比数据来源无效', 'INVALID_PARAMETER', 400)
     return true
   }
   return false
@@ -969,8 +988,9 @@ router.get('/cost-monthly-comparison', (req, res) => {
     const now = new Date()
     const todayMonth = formatYearMonth(now)
     const requestedMonth = String(req.query.month || '').trim()
-    const source = String(req.query.source || 'outbound')
-    const currentMonth = /^\d{4}-\d{2}$/.test(requestedMonth) ? requestedMonth : todayMonth
+    const source = String(req.query.source || 'outbound').trim()
+    if (rejectInvalidMonthlyComparisonParams(requestedMonth, source, res)) return
+    const currentMonth = requestedMonth || todayMonth
     const [targetYear, targetMonthNumber] = currentMonth.split('-').map(Number)
     const targetDate = new Date(targetYear, targetMonthNumber - 1, 1)
     const prevDate = new Date(targetDate.getFullYear(), targetDate.getMonth() - 1, 1)

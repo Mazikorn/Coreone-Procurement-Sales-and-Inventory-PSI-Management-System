@@ -14425,7 +14425,55 @@ git diff --check
 
 - 当前修复只覆盖成本趋势报表的 `dimension` 枚举；其它非 ABC 报表若存在固定筛选项但后端未校验的入口，应继续按同一不变量逐项处理。
 
-## 二百九十四、结论
+## 二百九十四、批次 339: 成本月度环比必须拒绝非法月份和来源
+
+**发现的问题**
+
+- 本轮继续复核非 ABC 报表参数有效性，聚焦“固定筛选项和结构化日期必须拒绝非法值，不能自动回落或伪装成空报表”不变量。
+- `/api/v1/reports/cost-monthly-comparison` 的 `month` 参数只做 `YYYY-MM` 形状判断，`2099-13` 会进入计算并返回 200，可能生成不可解释的月度环比结果。
+- 同一接口的 `source` 参数没有白名单校验，`source=manual` 会走出库口径分支并返回 200，用户可能把回落后的出库口径误解为请求来源的结果。
+- 成本月度环比既可读取出库成本口径，也可读取 ABC 快照口径，是当前成本展示和 ABC 上游结果说明面；非法月份和非法来源必须显式拒绝。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/reports-v1.1.ts`
+  - 新增 `isValidYearMonth`，在 `YYYY-MM` 形状之外校验月份必须为 `01` 至 `12`。
+  - 新增 `MONTHLY_COMPARISON_SOURCES` 白名单，仅允许 `outbound / abc`。
+  - 新增 `rejectInvalidMonthlyComparisonParams`，非法月份或来源统一返回 `400 INVALID_PARAMETER`。
+  - `/reports/cost-monthly-comparison` 改为先校验参数，再决定当前月份和查询口径；未传 `month` 时仍使用当前月份，合法 `outbound / abc` 行为保持不变。
+- `后端代码/server/tests/integration/reports-monthly-comparison.test.ts`
+  - 新增 `REPORT-MONTHLY-COMPARISON-001` 红绿测试，覆盖 `month=2099-13` 必须返回 `400 INVALID_PARAMETER`。
+  - 新增 `REPORT-MONTHLY-COMPARISON-002` 红绿测试，覆盖 `source=manual` 必须返回 `400 INVALID_PARAMETER`。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 报表接口的参数校验和集成测试，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 成本月度环比在合法 `source=abc` 时读取 ABC 快照，但本批只阻断非法来源和非法月份，不改变合法 ABC 快照口径。
+- 已补跑成本月度环比、成本趋势、非 ABC 报表日期、项目成本、物料成本、人员效率、出库和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+- 已确认本批 diff 不涉及 `前端代码/deprecated/legacy-cost-analysis/`、`后端代码/server/src/routes/abc-v1.1.ts`、`后端代码/server/src/utils/abc-calculator.test.ts` 或前端 ABC 本体页面。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/integration/reports-monthly-comparison.test.ts -t "REPORT-MONTHLY-COMPARISON"` 修复前失败：非法 `month=2099-13` 和 `source=manual` 均返回 200，期望 400。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/integration/reports-monthly-comparison.test.ts -t "REPORT-MONTHLY-COMPARISON"` 通过，2 tests passed / 2 skipped。
+  - `后端代码/server npm test -- --run tests/integration/reports-monthly-comparison.test.ts tests/integration/reports-cost-trend.test.ts tests/integration/reports-date-validation.test.ts tests/integration/reports-cost-by-project.test.ts tests/integration/reports-cost-by-material.test.ts tests/integration/personnel-efficiency.test.ts` 通过，6 files / 22 tests passed；首次与另一组后端测试并行时遇到测试全局数据库锁 `database is locked`，随后单独重跑通过，不作为功能失败结论。
+  - `后端代码/server npm test -- --run tests/integration/outbound.test.ts tests/integration/cost-exceptions.test.ts` 通过，2 files / 40 tests passed；`cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr 为既有异常台账测试场景，最终通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `后端代码/server npm run build` 通过。
+- 浏览器复核:
+  - 本批是非 ABC 报表 API 参数校验修复，不新增或改变页面组件、弹窗或可见交互；核心风险是接口是否拒绝非法月份和非法来源，已用接口级红绿测试覆盖，不新增截图证据。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 当前修复只覆盖成本月度环比的 `month` 和 `source` 参数；其它非 ABC 报表若存在结构化月份、数据来源或固定筛选项但后端未校验的入口，应继续按同一不变量逐项处理。
+
+## 二百九十五、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 
