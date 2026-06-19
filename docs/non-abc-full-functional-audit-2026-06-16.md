@@ -12761,7 +12761,60 @@ git diff --check
 - 本批只处理单行启停用影响检查，不扩展到编辑弹窗内修改状态的二次确认交互；编辑保存路径后端仍有状态保护，若后续要做完全一致的弹窗体验，应单独开批。
 - 后续可继续按基础资料阶段检查 BOM 复制版本、服务绑定和历史使用后保护；发现计划外问题先登记到待评估清单。
 
-## 二百六十、结论
+## 二百六十、批次 305: BOM 新建不得展示已绑定其它 BOM 的检测服务
+
+**发现的问题**
+
+- 本轮计划要求 BOM 覆盖服务绑定，候选来源必须存在、有效、匹配类型，并且不能制造一对一绑定冲突。
+- 后端 `validateBomService` 已拒绝停用服务、类型不匹配服务，以及已关联其它 BOM 的检测服务。
+- 前端 BOM 表单的“关联检测服务”候选只按检测类型过滤，仍会展示 `bomId` 已存在的检测服务。
+- 这会让用户在新建 BOM 时选择一个必然被后端拒绝的服务，页面候选源本身不可信，且可能误导用户以为检测服务可以被多个 BOM 复用。
+
+**已完成修复**
+
+- `前端代码/src/pages/bom/components/BOMFormModal.tsx`
+  - 关联检测服务候选改为只展示同类型且未绑定 BOM 的检测服务。
+  - 编辑已有 BOM 时，如果当前表单已经选中了某个服务，即使该服务带有 `bomId`，仍保留显示，避免编辑当前绑定时丢失已选值。
+  - 补充 `React` 默认导入，保证该组件在 Vitest JSX 转换环境下可直接渲染测试。
+- `前端代码/src/pages/bom/components/BOMFormModal.test.tsx`
+  - 新增红绿测试：新建 BOM 时已绑定其它 BOM 的检测服务不出现在下拉候选中。
+  - 新增编辑态保护测试：当前已选的绑定服务仍可显示。
+- `前端代码/e2e/bom.spec.ts`
+  - 新增 `BOM-SERVICE-CAND-01` 页面级验收：新建 BOM 弹窗打开服务候选时，只显示未绑定服务，不显示已绑定其它 BOM 的服务。
+
+**ABC 影响评估**
+
+- 检测服务与 BOM 的绑定关系决定项目默认 BOM、BOM 出库和后续成本归集的上游事实；错误候选会干扰项目/BOM 一对一配置。
+- 本批只收紧 BOM 页面候选源，不修改 ABC 本体、ABC API、成本算法或废弃 `/cost-analysis`。
+- 后端一对一绑定、类型匹配和停用服务保护保持不变；本批补齐 UI 候选源的前置有效性证据。
+- 已补跑 BOM、出库、入库和物料保护输入链回归，覆盖检测服务/BOM 对相邻库存与成本输入链的影响。
+- 未触碰 `前端代码/deprecated/legacy-cost-analysis/`。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/bom/components/BOMFormModal.test.tsx -t "excludes services already bound"` 修复前失败：`BOUND - 已绑定服务` 仍出现在候选下拉中。
+  - 首次运行该新增测试时还暴露 `BOMFormModal` 在 Vitest JSX 环境下缺少 `React` 默认导入；补导入后重跑，红灯准确落在候选过滤。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/bom/components/BOMFormModal.test.tsx` 通过，2 tests passed。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/bom.spec.ts -g "BOM-SERVICE-CAND-01" --project=chromium` 通过，1 test passed。
+  - `前端代码 npm test -- --run src/pages/bom/components/BOMFormModal.test.tsx src/pages/bom/hooks/useBOMPage.test.ts src/pages/bom/components/BOMCopyModal.test.tsx src/pages/bom/components/BOMBatchImpactModal.test.tsx src/hooks/usePagination.test.ts` 通过，5 files / 32 tests passed。
+  - `后端代码/server npm run test:node -- --run tests/bom-batch.test.ts tests/integration/bom.test.ts tests/integration/outbound.test.ts tests/materials-guard.test.ts tests/inbound-batch.test.ts` 通过，5 files / 101 tests passed；保留 Vitest 退出阶段的既有 close timeout 噪声。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 PLAYWRIGHT_CHROMIUM_PATH="/Users/maxiaoyuan/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" npx playwright test e2e/bom.spec.ts -g "BOM-SERVICE-CAND-01|BOM-STATUS-SINGLE-01|BOM-MAT-GROUP-01|BOM-CREATE-01|BOM-CREATE-02|BOM-CREATE-15|BOM-EDIT-01|BOM-EDIT-09|BOM-DETAIL-03" --project=chromium` 通过，9 tests passed。
+  - `git diff --check` 通过。
+  - `git diff --name-only | rg "deprecated/legacy-cost-analysis|前端代码/deprecated|/cost-analysis"` 无匹配，确认未改废弃范围。
+  - `lsof -nP -iTCP:3001 -sTCP:LISTEN` 和 `lsof -nP -iTCP:8080 -sTCP:LISTEN` 均无监听残留。
+- 浏览器复核:
+  - 使用用户已验证的 Chrome for Testing 路径完成 headless Playwright 复核；验证重点为新建 BOM 检测服务候选过滤、已绑定服务不展示，以及 BOM 单行状态检查、跨分组重复、创建、编辑和详情回归。
+
+**后续风险**
+
+- 本批只处理 BOM 新建/编辑表单的检测服务候选过滤；后端服务绑定保护仍是最终防线。
+- 如果后续继续服务绑定专题，可检查检测服务页面反向绑定 BOM 的候选是否也排除了不可用或已冲突 BOM；不在本批扩展。
+
+## 二百六十一、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

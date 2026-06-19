@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import React, { useState } from 'react'
 import { X, Plus, Trash2, ChevronDown, ChevronRight } from 'lucide-react'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import { TYPE_OPTIONS } from '../constants'
@@ -30,7 +30,7 @@ export function BOMFormModal({
 
   const [activeTab, setActiveTab] = useState<'materials' | 'reagents' | 'consumables' | 'qc'>('materials')
   const serviceOptions = allProjects
-    .filter(project => project.type === form.type)
+    .filter(project => project.type === form.type && (!project.bomId || project.id === form.serviceId))
     .map(project => ({
       value: project.id,
       label: `${project.code} - ${project.name}`,

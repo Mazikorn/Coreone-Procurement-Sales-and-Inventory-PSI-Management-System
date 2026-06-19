@@ -283,6 +283,78 @@ test.describe('BOM清单 -> 单行启停用影响检查', () => {
   })
 })
 
+test.describe('BOM清单 -> 检测服务绑定候选', () => {
+  test('BOM-SERVICE-CAND-01. 新建BOM时不展示已绑定其它BOM的检测服务', async ({ page }) => {
+    const materials = [{
+      id: 'mat-service-candidate',
+      code: 'MAT-SVC-CAND',
+      name: '服务候选物料',
+      spec: '10ml',
+      unit: '瓶',
+      price: 12,
+      status: 'active',
+    }]
+    const projects = [
+      {
+        id: 'project-free-service',
+        code: 'SVC-FREE',
+        name: '未绑定检测服务',
+        type: 'ihc',
+        status: 'active',
+        bomId: null,
+      },
+      {
+        id: 'project-bound-service',
+        code: 'SVC-BOUND',
+        name: '已绑定检测服务',
+        type: 'ihc',
+        status: 'active',
+        bomId: 'bom-other-service',
+      },
+    ]
+
+    await loginAs(page, 'admin')
+    await page.route('**/api/v1/alerts**', async route => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: { list: [], items: [], pagination: { total: 0, page: 1, pageSize: 5 } } }),
+      })
+    })
+    await page.route('**/api/v1/materials**', async route => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: { list: materials, pagination: { total: materials.length, page: 1, pageSize: 1000 } } }),
+      })
+    })
+    await page.route('**/api/v1/projects**', async route => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: { list: projects, pagination: { total: projects.length, page: 1, pageSize: 1000 } } }),
+      })
+    })
+    await page.route('**/api/v1/boms**', async route => {
+      const url = new URL(route.request().url())
+      if (route.request().method() === 'GET' && url.pathname.endsWith('/boms')) {
+        await route.fulfill({
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true, data: { list: [], pagination: { total: 0, page: 1, pageSize: 20 } } }),
+        })
+        return
+      }
+      await route.fallback()
+    })
+
+    await page.goto(`${FE_BASE}/bom`, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByRole('heading', { name: 'BOM清单' })).toBeVisible({ timeout: 15000 })
+    await page.getByRole('button', { name: '新建BOM' }).click()
+    await expect(page.getByText('新建BOM').last()).toBeVisible({ timeout: 10000 })
+
+    await page.getByText('不关联检测服务').click()
+    await expect(page.getByText('SVC-FREE - 未绑定检测服务')).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText('SVC-BOUND - 已绑定检测服务')).toHaveCount(0)
+  })
+})
+
 // 1. 查看BOM列表 (10)
 test.describe('BOM清单 -> 查看BOM列表', () => {
   for (const role of BOM_READ_ROLES) {
