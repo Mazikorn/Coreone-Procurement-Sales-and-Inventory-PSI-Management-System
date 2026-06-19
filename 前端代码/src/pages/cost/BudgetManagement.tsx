@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Plus, Search, DollarSign } from 'lucide-react'
 import { toast } from 'sonner'
 import { abcApi } from '@/api/abc'
@@ -10,8 +10,8 @@ interface Budget {
   category: string
   budgetAmount: number
   actualAmount: number
-  executionRate: number
-  status: string
+  executionRate?: number
+  status?: string
 }
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -31,6 +31,34 @@ const CATEGORY_OPTIONS = [
   { value: 'qc', label: '质控成本' },
   { value: 'indirect', label: '间接成本' },
 ]
+
+const normalizeBudgetResponse = (response: any): Budget[] => {
+  const rows = Array.isArray(response)
+    ? response
+    : Array.isArray(response?.list)
+      ? response.list
+      : Array.isArray(response?.items)
+        ? response.items
+        : Array.isArray(response?.data)
+          ? response.data
+          : Array.isArray(response?.data?.list)
+            ? response.data.list
+            : Array.isArray(response?.data?.items)
+              ? response.data.items
+              : []
+
+  return rows.map((budget: Budget) => {
+    const budgetAmount = Number(budget.budgetAmount) || 0
+    const actualAmount = Number(budget.actualAmount) || 0
+    return {
+      ...budget,
+      budgetAmount,
+      actualAmount,
+      executionRate: budget.executionRate ?? (budgetAmount > 0 ? actualAmount / budgetAmount : 0),
+      status: budget.status || 'active',
+    }
+  })
+}
 
 export default function BudgetManagement() {
   const [budgets, setBudgets] = useState<Budget[]>([])
@@ -55,7 +83,7 @@ export default function BudgetManagement() {
       const params: Record<string, string> = {}
       if (filterMonth) params.yearMonth = filterMonth
       const data = await abcApi.getBudgets(params)
-      setBudgets(data.data?.list || data.data?.items || data.data || [])
+      setBudgets(normalizeBudgetResponse(data))
     } catch {
       toast.error('加载预算数据失败')
     } finally {
@@ -94,11 +122,16 @@ export default function BudgetManagement() {
       return
     }
     try {
-      await abcApi.createBudget({
+      const payload = {
         yearMonth: formData.yearMonth,
         category: formData.category,
         budgetAmount: amount,
-      })
+      }
+      if (editingBudget) {
+        await abcApi.updateBudget(editingBudget.id, payload)
+      } else {
+        await abcApi.createBudget(payload)
+      }
       toast.success(editingBudget ? '更新成功' : '创建成功')
       setShowDialog(false)
       loadBudgets()

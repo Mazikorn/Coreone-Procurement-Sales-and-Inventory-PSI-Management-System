@@ -16807,7 +16807,71 @@ git diff --check
 
 - 质量成本显示、搜索和响应读取口径已阶段性保护；下一批可继续复核预算管理编辑/保存真实副作用，或转入成本差异分析的筛选、导出和异常态，不在本批继续扩展。
 
-## 三百四十三、结论
+## 三百四十三、批次 388: 预算管理编辑必须更新原记录且筛选/执行率使用真实口径
+
+**发现的问题**
+
+- 本轮继续复核非废弃成本读面中的预算管理，聚焦“编辑保存必须产生真实更新副作用，筛选和执行率必须来自可信接口口径”不变量。
+- `BudgetManagement` 页面存在“编辑预算 / 更新”弹窗，但旧 `handleSave` 无论新增还是编辑都调用 `abcApi.createBudget`，导致用户编辑预算时实际创建重复预算记录。
+- 前端预算列表仍按 `data.data.list` 读取响应；当前 `request.ts` 已把后端 `{ success, data }` 解包为业务数据，真实 API 口径下页面可能读不到预算列表。
+- 后端 `GET /api/v1/abc/budgets?yearMonth=...` 旧实现复用通用 `listTable`，没有应用 `yearMonth` 筛选；用户选择月份后仍会返回所有月份预算。
+- 后端预算 payload 旧实现不返回 `executionRate` 和 `status`，前端真实数据下执行进度可能显示 `NaN%`。
+- 后端旧实现没有 `PUT /api/v1/abc/budgets/:id`，前端无法完成真正的编辑更新副作用。
+- 页面级红灯测试还暴露 `BudgetManagement.tsx` 在当前 Vitest/JSX 配置下缺少 React 导入，导致预算页无法稳定进行页面级验证。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/abc-v1.1.ts`
+  - 新增 `budgetPayload`，统一返回 `yearMonth/category/budgetAmount/actualAmount/executionRate/status/description/createdAt`。
+  - `executionRate` 按 `actualAmount / budgetAmount` 派生并保留 4 位小数；预算金额为 0 时返回 0，避免前端 `NaN%`。
+  - `GET /abc/budgets` 改为预算专用查询，支持 `yearMonth` 精确筛选，并保持分页返回结构。
+  - `POST /abc/budgets` 增加预算金额和实际金额非负校验，避免 API 绕过前端录入负数预算。
+  - 新增 `PUT /abc/budgets/:id`，只更新目标预算记录；不存在返回 404，金额为负返回 422，成功后返回更新后的完整预算 payload。
+- `前端代码/src/api/abc.ts`
+  - 新增 `abcApi.updateBudget(id, data)`，对接 `PUT /abc/budgets/:id`。
+- `前端代码/src/pages/cost/BudgetManagement.tsx`
+  - 补充 React 导入，让页面在当前测试配置下可被页面级测试渲染。
+  - 新增 `normalizeBudgetResponse`，兼容当前 request 解包后的 `{ list }` / 数组，也兼容旧 `data.list` / `data.items` 包装。
+  - 前端在缺少 `executionRate` 时按 `actualAmount / budgetAmount` 派生执行率，确保真实接口数据下仍显示正确进度。
+  - 编辑保存时调用 `abcApi.updateBudget(editingBudget.id, payload)`；新增时才调用 `abcApi.createBudget(payload)`。
+- `前端代码/src/pages/cost/BudgetManagement.test.tsx`
+  - 新增页面级红绿测试：真实 API 解包形状下列表显示 `25.0%`，编辑预算改为 1200 后必须调用 `updateBudget('budget-1', ...)`，并且不得调用 `createBudget`。
+- `后端代码/server/tests/integration/abc-budgets.test.ts`
+  - 新增后端集成测试：创建预算后 `PUT /abc/budgets/:id` 必须更新同一条记录并返回最新执行率；按月份查询只能返回目标月份预算。
+
+**ABC 影响评估**
+
+- 本批修改的是预算管理接口和预算管理页面，属于非废弃成本运营配置读写面；不改 ABC 成本算法、成本池重算、出库 ABC 明细、成本异常、收费映射、关账或废弃 `/cost-analysis`。
+- 预算数据不参与本轮已完成的库存、BOM、出库和成本透明化输入链写入；本批主要修复预算配置的真实更新副作用和页面读面。
+- 已补跑全成本和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/cost/BudgetManagement.test.tsx` 首次暴露 `BudgetManagement.tsx` 缺少 React 导入。
+  - `后端代码/server npm test -- --run tests/integration/abc-budgets.test.ts` 按预期失败：`PUT /api/v1/abc/budgets/:id` 返回 404；`GET /abc/budgets?yearMonth=2099-08` 返回了 `2099-06/2099-07/2099-08` 多个月份。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/cost/BudgetManagement.test.tsx` 通过，1 test passed。
+  - `后端代码/server npm test -- --run tests/integration/abc-budgets.test.ts` 通过，2 tests passed；命令退出码为 0，保留既有 Vite close timeout 提示。
+  - `前端代码 npm test -- --run src/pages/cost/BudgetManagement.test.tsx src/pages/cost/QualityCostAnalysis.test.tsx src/pages/cost/FeeComparison.test.tsx src/pages/cost/CostTrend.test.ts src/pages/cost/SlideCostAnalysis.test.ts src/pages/cost/ProfitabilityAnalysis.test.ts src/pages/cost/PersonnelEfficiency.render.test.tsx src/pages/cost/CostVarianceAnalysis.render.test.tsx` 通过，8 files / 17 tests passed。
+  - `后端代码/server npm test -- --run tests/integration/abc-budgets.test.ts tests/integration/full-cost.test.ts tests/integration/cost-exceptions.test.ts` 通过，3 files / 16 tests passed；命令退出码为 0，保留既有 Vite close timeout 提示和 `cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis` 无输出，确认未改废弃范围。
+- 浏览器复核:
+  - 使用用户指定 Chrome for Testing 路径启动 headless Playwright，前端 Vite 在 `127.0.0.1:8080`，拦截 `/api/v1/abc/budgets` 和顶栏 `/api/v1/alerts` 返回 `{ success: true, data }` 形状。
+  - 页面 `/abc/budgets` 复核结果：`hasPage=true`、`initialShowsBudget=true`、`sentPut=true`、`sentNoPost=true`、`consoleErrors=[]`、`badResponses=[]`。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 预算管理编辑、月份筛选和执行率口径已阶段性保护；下一批可继续转入成本差异分析的筛选、导出和异常态，或复核质量成本录入字段与后端 category/subType 契约是否一致，不在本批继续扩展。
+
+## 三百四十四、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

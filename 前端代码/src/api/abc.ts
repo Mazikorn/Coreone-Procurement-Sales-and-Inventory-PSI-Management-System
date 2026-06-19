@@ -150,6 +150,9 @@ export const abcApi = {
   createBudget: (data: any) =>
     request.post('/abc/budgets', data),
 
+  updateBudget: (id: string, data: any) =>
+    request.put(`/abc/budgets/${id}`, data),
+
   // ===== 质量成本 =====
   getQualityCosts: (params?: any) =>
     request.get('/abc/quality-costs', { params }),

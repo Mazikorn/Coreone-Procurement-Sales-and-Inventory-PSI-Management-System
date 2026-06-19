@@ -320,6 +320,22 @@ const listTable = (res: any, table: string, mapRow: (row: any) => any, query: an
   successList(res, rows.map(mapRow), page, pageSize, total)
 }
 
+const budgetPayload = (row: any) => {
+  const budgetAmount = Number(row.budget_amount) || 0
+  const actualAmount = Number(row.actual_amount) || 0
+  return {
+    id: row.id,
+    yearMonth: row.year_month,
+    category: row.category,
+    budgetAmount,
+    actualAmount,
+    executionRate: budgetAmount > 0 ? Math.round((actualAmount / budgetAmount) * 10000) / 10000 : 0,
+    status: row.status || 'active',
+    description: row.description,
+    createdAt: row.created_at,
+  }
+}
+
 const activityCenterPayload = (row: any) => ({
   id: row.id,
   code: row.code,
@@ -1970,15 +1986,25 @@ router.get('/variance-analysis', (req, res) => {
 
 router.get('/budgets', (req, res) => {
   try {
-    listTable(res, 'abc_budgets', row => ({
-      id: row.id,
-      yearMonth: row.year_month,
-      category: row.category,
-      budgetAmount: row.budget_amount || 0,
-      actualAmount: row.actual_amount || 0,
-      description: row.description,
-      createdAt: row.created_at,
-    }), req.query)
+    const { page, pageSize, offset } = pageParams(req.query)
+    const db = getDatabase()
+    const filters: string[] = []
+    const params: any[] = []
+    const yearMonth = String(req.query.yearMonth || '').trim()
+    if (yearMonth) {
+      filters.push('year_month = ?')
+      params.push(yearMonth)
+    }
+    const whereClause = filters.length ? `WHERE ${filters.join(' AND ')}` : ''
+    const total = (db.prepare(`SELECT COUNT(*) as total FROM abc_budgets ${whereClause}`).get(...params) as any)?.total || 0
+    const rows = db.prepare(`
+      SELECT *
+      FROM abc_budgets
+      ${whereClause}
+      ORDER BY created_at DESC
+      LIMIT ? OFFSET ?
+    `).all(...params, pageSize, offset) as any[]
+    successList(res, rows.map(budgetPayload), page, pageSize, total)
   } catch (err: any) { error(res, err.message) }
 })
 
@@ -1986,11 +2012,48 @@ router.post('/budgets', requireCostWrite, (req, res) => {
   try {
     const id = uuidv4()
     const { yearMonth, category, budgetAmount, actualAmount, description } = req.body
+    const budgetValue = Number(budgetAmount) || 0
+    const actualValue = Number(actualAmount) || 0
+    if (budgetValue < 0 || actualValue < 0) {
+      error(res, '预算金额和实际金额必须为非负数', 'VALIDATION_ERROR', 422)
+      return
+    }
     getDatabase().prepare(`
       INSERT INTO abc_budgets (id, year_month, category, budget_amount, actual_amount, description)
       VALUES (?, ?, ?, ?, ?, ?)
-    `).run(id, yearMonth || new Date().toISOString().slice(0, 7), category || null, Number(budgetAmount) || 0, Number(actualAmount) || 0, description || null)
+    `).run(id, yearMonth || new Date().toISOString().slice(0, 7), category || null, budgetValue, actualValue, description || null)
     success(res, { id }, 'Created', 201)
+  } catch (err: any) { error(res, err.message) }
+})
+
+router.put('/budgets/:id', requireCostWrite, (req, res) => {
+  try {
+    const db = getDatabase()
+    const existing = db.prepare('SELECT * FROM abc_budgets WHERE id = ?').get(req.params.id) as any
+    if (!existing) {
+      error(res, '预算不存在', 'NOT_FOUND', 404)
+      return
+    }
+    const budgetValue = req.body.budgetAmount !== undefined ? Number(req.body.budgetAmount) : Number(existing.budget_amount) || 0
+    const actualValue = req.body.actualAmount !== undefined ? Number(req.body.actualAmount) : Number(existing.actual_amount) || 0
+    if (budgetValue < 0 || actualValue < 0) {
+      error(res, '预算金额和实际金额必须为非负数', 'VALIDATION_ERROR', 422)
+      return
+    }
+    db.prepare(`
+      UPDATE abc_budgets
+      SET year_month = ?, category = ?, budget_amount = ?, actual_amount = ?, description = ?
+      WHERE id = ?
+    `).run(
+      req.body.yearMonth || existing.year_month,
+      req.body.category !== undefined ? req.body.category : existing.category,
+      budgetValue,
+      actualValue,
+      req.body.description !== undefined ? req.body.description : existing.description,
+      req.params.id,
+    )
+    const updated = db.prepare('SELECT * FROM abc_budgets WHERE id = ?').get(req.params.id) as any
+    success(res, budgetPayload(updated), 'Updated')
   } catch (err: any) { error(res, err.message) }
 })
 
