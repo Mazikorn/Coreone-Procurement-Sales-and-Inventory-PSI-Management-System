@@ -51,10 +51,19 @@ function rejectInvalidDateRange(req: any, res: any) {
 }
 
 const PERSONNEL_EFFICIENCY_ROLES = new Set(['all', 'technician', 'pathologist', 'warehouse_manager'])
+const COST_TREND_DIMENSIONS = new Set(['monthly', 'quarterly'])
 
 function rejectInvalidPersonnelEfficiencyRole(role: string, res: any) {
   if (!PERSONNEL_EFFICIENCY_ROLES.has(role)) {
     error(res, '人员角色筛选无效', 'INVALID_PARAMETER', 400)
+    return true
+  }
+  return false
+}
+
+function rejectInvalidCostTrendDimension(dimension: string, res: any) {
+  if (!COST_TREND_DIMENSIONS.has(dimension)) {
+    error(res, '成本趋势聚合维度无效', 'INVALID_PARAMETER', 400)
     return true
   }
   return false
@@ -222,6 +231,8 @@ router.get('/cost-trend', (req, res) => {
   try {
     if (rejectInvalidDateRange(req, res)) return
     const { startDate, endDate, dimension = 'monthly', projectType } = req.query
+    const trendDimension = String(dimension || 'monthly').trim()
+    if (rejectInvalidCostTrendDimension(trendDimension, res)) return
     const db = getDatabase()
     let where = "r.status = 'completed' AND r.is_deleted = 0"
     const params: any[] = []
@@ -232,7 +243,7 @@ router.get('/cost-trend', (req, res) => {
       params.push(projectType)
     }
 
-    if (dimension === 'quarterly') {
+    if (trendDimension === 'quarterly') {
       // 季度聚合
       const quarterExpr = `
         strftime('%Y', r.created_at) || '-Q' ||

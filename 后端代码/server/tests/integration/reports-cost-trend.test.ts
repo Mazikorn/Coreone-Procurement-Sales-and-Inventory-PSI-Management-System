@@ -128,4 +128,14 @@ describe('集成测试：非ABC成本趋势报表', () => {
       { period: '2027-Q1', cost: 140, recordCount: 1, sampleCount: 2 },
     ])
   })
+
+  it('REPORT-TREND-002: 拒绝非法聚合维度，避免伪装成月度趋势', async () => {
+    const res = await request(app)
+      .get('/api/v1/reports/cost-trend?dimension=weekly&startDate=2026-01-01&endDate=2026-12-31')
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(400)
+    expect(res.body.success).toBe(false)
+    expect(res.body.error.code).toBe('INVALID_PARAMETER')
+  })
 })
