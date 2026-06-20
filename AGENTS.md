@@ -77,6 +77,17 @@ model: opus  # 推荐模型
 5. **验收从严**: 页面/弹窗必须检查真实副作用，不能只看按钮存在或测试通过。
 6. **废弃范围**: 旧版物料成本分析 `/cost-analysis` 是 ABC 成本法之前的一版方案，已于 2026-06-17 废弃；源码仅保留在 `前端代码/deprecated/legacy-cost-analysis/` 作为历史参考，不再修复、扩展或纳入非 ABC 审计。
 
+### Playwright 强规则
+
+1. **禁止默认下载**: 在本项目中不得把 `npx playwright install`、`npx playwright install chromium`、`npx playwright install chromium --only-shell` 作为默认修复或验证步骤。
+2. **使用前必读**: 每次使用 Playwright 或做真实浏览器页面验证前，必须先阅读:
+   - `/Users/maxiaoyuan/.codex/memories/extensions/ad_hoc/notes/20260620-130305-playwright-hard-rule.md`
+   - `/Users/maxiaoyuan/.codex/memories/extensions/ad_hoc/notes/20260620-130650-playwright-recovered-backup.md`
+3. **先验本地缓存**: 先用 `find ~/Library/Caches/ms-playwright`、`test -x`、`--version` 和真实 launch 检查现有浏览器。
+4. **优先本地恢复**: 如缓存缺失，先运行稳定备份恢复脚本 `/Users/maxiaoyuan/Documents/Codex/playwright-browser-backups/pw-1.59.1-chromium-1217-cft-147.0.7727.15-mac-arm64/restore-playwright-chromium-1217.sh`，再验证可执行文件和真实 launch。
+5. **网络恢复需确认**: 只有本地缓存和本地备份都不可用，且用户明确同意时，才允许用可断点续传的镜像/CDN 分段下载恢复；恢复后必须重新建立本地稳定备份。
+6. **当前验证基线**: Playwright `1.59.1`，Chromium `1217`，Chrome for Testing `147.0.7727.15`；期望可执行文件为 `~/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing`。
+
 ### 关键文件索引
 
 | 文件 | 用途 |
