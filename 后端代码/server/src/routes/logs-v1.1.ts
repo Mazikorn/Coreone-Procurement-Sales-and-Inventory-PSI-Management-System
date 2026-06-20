@@ -274,9 +274,24 @@ function exportFilename() {
   return `logs_${date}_${time}.csv`
 }
 
+function parseLogPagination(query: any) {
+  const page = query.page === undefined || query.page === null || query.page === ''
+    ? 1
+    : Number(query.page)
+  const pageSize = query.pageSize === undefined || query.pageSize === null || query.pageSize === ''
+    ? 20
+    : Number(query.pageSize)
+  if (!Number.isInteger(page) || page < 1) {
+    return { valid: false, message: 'page 必须为正整数' }
+  }
+  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 10000) {
+    return { valid: false, message: 'pageSize 必须为 1-10000 的整数' }
+  }
+  return { valid: true, page, pageSize }
+}
+
 function getOperationLogs(req: any, res: any) {
   try {
-    const { page = 1, pageSize = 20 } = req.query
     const dateValidation = validateDateRangeInput(req.query)
     if (!dateValidation.valid) {
       error(res, dateValidation.message, 'INVALID_PARAMETER', 400)
@@ -287,17 +302,22 @@ function getOperationLogs(req: any, res: any) {
       error(res, filterValidation.message, 'INVALID_PARAMETER', 400)
       return
     }
+    const pagination = parseLogPagination(req.query)
+    if (!pagination.valid) {
+      error(res, pagination.message, 'INVALID_PARAMETER', 400)
+      return
+    }
 
     const db = getDatabase()
     const { where, params } = buildLogWhere(req.query)
 
     const count = (db.prepare(`SELECT COUNT(*) as total FROM operation_logs WHERE ${where}`).get(...params) as any)?.total || 0
-    const pageNum = Math.max(1, Number(page))
-    const safePageSize = Math.max(1, Math.min(10000, Number(pageSize)))
-    const offset = (pageNum - 1) * safePageSize
-    const list = db.prepare(`SELECT * FROM operation_logs WHERE ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`).all(...params, safePageSize, offset) as any[]
+    const pageNum = pagination.page as number
+    const pageSize = pagination.pageSize as number
+    const offset = (pageNum - 1) * pageSize
+    const list = db.prepare(`SELECT * FROM operation_logs WHERE ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`).all(...params, pageSize, offset) as any[]
 
-    successList(res, list.map(mapLogRow), pageNum, safePageSize, count)
+    successList(res, list.map(mapLogRow), pageNum, pageSize, count)
   } catch (err: any) { error(res, err.message) }
 }
 

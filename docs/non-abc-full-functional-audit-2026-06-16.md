@@ -17513,7 +17513,55 @@ git diff --check
 - 调拨批号身份和批次余量边界已阶段性保护；因当前模型没有批次-库位拆分，本批不强行要求“该批次必须位于来源库位”，该能力若未来需要应作为独立模型/迁移批次评估。
 - `tests/supplier-returns.test.ts` 当前被 Vitest 配置显式排除，本批未把它计为验证证据；供应商退货已有历史批次回归，但如后续调整配置可单独恢复执行。
 
-## 三百五十六、结论
+## 三百五十六、批次 401: 操作日志列表分页参数必须可解释
+
+**发现的问题**
+
+- 本轮继续按第二阶段库存主链路的“库存日志和报表读取面”推进，聚焦“分页参数必须是可解释正整数，不能把错误参数静默变成正常查询”不变量。
+- 操作日志列表 `/api/v1/logs` 已能校验日期范围、操作类型、模块筛选和导出筛选，但列表分页仍使用 `Math.max/Math.min/Number` 静默兜底。
+- `page=0` 会被改成第 1 页，`page=abc` 会让分页元数据不可解释，`pageSize=0` 会被改成 1，`pageSize=10001` 会被截断成 10000。
+- 这会把 URL、集成调用或手工请求中的参数错误伪装成正常日志结果，削弱库存日志、审计追踪和报表读取面的可解释性。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/logs-v1.1.ts`
+  - 新增日志列表分页解析校验，默认仍为 `page=1&pageSize=20`。
+  - 显式传入分页时必须满足 `page >= 1` 且为整数，`pageSize` 必须为 `1-10000` 的整数。
+  - 非法分页返回 `400 INVALID_PARAMETER`，不再静默兜底或截断。
+  - 合法分页继续使用原有列表、总数和响应结构，不影响日志导出、统计或清理接口。
+- `后端代码/server/tests/logs.test.ts`
+  - 新增 `LOG-012` 红绿测试，覆盖 `page=0`、非数字页码、小数页码、`pageSize=0`、非数字 pageSize 和超过上限 pageSize。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 操作日志列表的只读分页校验，不改 ABC 成本算法、成本池重算、出库 ABC 明细、库存/BOM/出库写链、成本异常生成或废弃 `/cost-analysis`。
+- 操作日志是库存、出库、盘点、报表和审计追踪的说明面；本批不写入、不重算、不回滚任何库存或成本输入，只阻断错误分页参数伪装成正常结果。
+- 已补跑库存一致性、库存列表、盘点、出库、非 ABC 报表和成本异常输入侧回归，确认库存/出库/报表/ABC 输入链未被破坏。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/logs.test.ts -t "LOG-012"` 修复前失败：`page=0&pageSize=20` 返回 200，证明错误分页会被静默改写。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/logs.test.ts -t "LOG-012"` 通过，1 test passed / 11 skipped。
+  - `后端代码/server npm test -- --run tests/logs.test.ts` 通过，1 file / 12 tests passed。
+  - `后端代码/server npm test -- --run tests/inventory-consistency.test.ts tests/integration/inventory.test.ts tests/stocktaking.test.ts tests/integration/outbound.test.ts tests/integration/reports-date-validation.test.ts tests/integration/reports-cost-by-material.test.ts tests/integration/reports-cost-by-supplier.test.ts tests/integration/reports-cost-by-project-group.test.ts tests/integration/cost-exceptions.test.ts` 通过，9 files / 94 tests passed；保留既有 Vite close timeout 提示和模拟 `outbound_abc_details` 缺失的 stderr。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis` 无输出，确认未改废弃范围。
+- 浏览器复核:
+  - 本批为后端只读 API 参数校验修复，未修改页面、弹窗或前端交互；真实语义由接口级红绿测试覆盖，因此未额外启动浏览器。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 操作日志列表的日期、类型、模块、导出筛选和分页异常语义已阶段性收口；下一批可继续按计划复核库存/报表读取面中剩余来源、日期、导出口径或回到第一阶段基础资料尚未当前复核的 P0/P1 项，不在本批继续扩展。
+
+## 三百五十七、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

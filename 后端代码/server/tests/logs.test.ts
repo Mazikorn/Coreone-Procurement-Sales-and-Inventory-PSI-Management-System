@@ -413,4 +413,25 @@ describe('操作日志 API', () => {
     expect(invalidPostExport.status).toBe(400)
     expect(invalidPostExport.body.error.code).toBe('INVALID_PARAMETER')
   })
+
+  it('LOG-012: 日志列表拒绝不可解释的分页参数', async () => {
+    const invalidCases = [
+      { page: '0', pageSize: '20' },
+      { page: 'abc', pageSize: '20' },
+      { page: '1.5', pageSize: '20' },
+      { page: '1', pageSize: '0' },
+      { page: '1', pageSize: 'abc' },
+      { page: '1', pageSize: '10001' },
+    ]
+
+    for (const query of invalidCases) {
+      const res = await request(app)
+        .get('/api/v1/logs')
+        .query(query)
+        .set('Authorization', `Bearer ${adminToken}`)
+
+      expect(res.status, JSON.stringify(query)).toBe(400)
+      expect(res.body.error.code, JSON.stringify(query)).toBe('INVALID_PARAMETER')
+    }
+  })
 })
