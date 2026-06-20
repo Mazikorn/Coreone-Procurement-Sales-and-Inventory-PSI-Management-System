@@ -55,13 +55,14 @@ describe('调拨管理', () => {
   })
 
   it('TR-001: 撤销调拨时恢复原库位并保持库存数量不变', async () => {
-    const { materialId, fromLocationId, toLocationId } = seedTransferMaterial(db, `restore-${Date.now()}`)
+    const { materialId, fromLocationId, toLocationId, batchNo } = seedTransferMaterial(db, `restore-${Date.now()}`)
 
     const createRes = await request(app)
       .post('/api/v1/transfers/inbound')
       .set('Authorization', `Bearer ${token}`)
       .send({
         materialId,
+        batchNo,
         quantity: 10,
         fromLocationId,
         toLocationId,
@@ -151,13 +152,14 @@ describe('调拨管理', () => {
 
   it('TR-003: 调拨后物料列表返回库存当前库位而不是旧默认库位', async () => {
     const suffix = `material-location-${Date.now()}`
-    const { materialId, fromLocationId, toLocationId } = seedTransferMaterial(db, suffix)
+    const { materialId, fromLocationId, toLocationId, batchNo } = seedTransferMaterial(db, suffix)
 
     const createRes = await request(app)
       .post('/api/v1/transfers/inbound')
       .set('Authorization', `Bearer ${token}`)
       .send({
         materialId,
+        batchNo,
         quantity: 10,
         fromLocationId,
         toLocationId,
@@ -179,13 +181,14 @@ describe('调拨管理', () => {
   })
 
   it('TR-004: 部分调拨拆分来源和目标库位库存且撤销后还原', async () => {
-    const { materialId, fromLocationId, toLocationId } = seedTransferMaterial(db, `partial-${Date.now()}`)
+    const { materialId, fromLocationId, toLocationId, batchNo } = seedTransferMaterial(db, `partial-${Date.now()}`)
 
     const res = await request(app)
       .post('/api/v1/transfers/inbound')
       .set('Authorization', `Bearer ${token}`)
       .send({
         materialId,
+        batchNo,
         quantity: 2,
         fromLocationId,
         toLocationId,
@@ -257,14 +260,47 @@ describe('调拨管理', () => {
     expect(afterRejected.location_id).toBe(fromLocationId)
   })
 
+  it('TR-009: 物料存在可用批次时必须选择调拨批次，避免调拨记录丢失批次事实', async () => {
+    const { materialId, fromLocationId, toLocationId } = seedTransferMaterial(db, `missing-batch-${Date.now()}`)
+
+    const res = await request(app)
+      .post('/api/v1/transfers/inbound')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId,
+        quantity: 2,
+        fromLocationId,
+        toLocationId,
+        remark: '漏选批次调拨',
+      })
+
+    expect(res.status).toBe(422)
+    expect(res.body.error.code).toBe('BATCH_REQUIRED')
+
+    const aggregate = db.prepare('SELECT stock, location_id FROM inventory WHERE material_id = ?').get(materialId) as any
+    const targetStock = db.prepare('SELECT stock FROM inventory_locations WHERE material_id = ? AND location_id = ?')
+      .get(materialId, toLocationId) as any
+    const transferCount = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM inbound_records
+      WHERE type = 'transfer' AND material_id = ? AND is_deleted = 0
+    `).get(materialId) as any
+
+    expect(Number(aggregate.stock)).toBe(10)
+    expect(aggregate.location_id).toBe(fromLocationId)
+    expect(targetStock).toBeUndefined()
+    expect(Number(transferCount.count)).toBe(0)
+  })
+
   it('TR-006: 部分调拨后报废同步扣减库位明细库存', async () => {
-    const { materialId, fromLocationId, toLocationId } = seedTransferMaterial(db, `scrap-after-partial-${Date.now()}`)
+    const { materialId, fromLocationId, toLocationId, batchNo } = seedTransferMaterial(db, `scrap-after-partial-${Date.now()}`)
 
     const transferRes = await request(app)
       .post('/api/v1/transfers/inbound')
       .set('Authorization', `Bearer ${token}`)
       .send({
         materialId,
+        batchNo,
         quantity: 2,
         fromLocationId,
         toLocationId,
@@ -303,13 +339,14 @@ describe('调拨管理', () => {
   })
 
   it('TR-007: 部分调拨后出库撤销按原扣减库位恢复明细库存', async () => {
-    const { materialId, fromLocationId, toLocationId } = seedTransferMaterial(db, `outbound-cancel-${Date.now()}`)
+    const { materialId, fromLocationId, toLocationId, batchNo } = seedTransferMaterial(db, `outbound-cancel-${Date.now()}`)
 
     const transferRes = await request(app)
       .post('/api/v1/transfers/inbound')
       .set('Authorization', `Bearer ${token}`)
       .send({
         materialId,
+        batchNo,
         quantity: 2,
         fromLocationId,
         toLocationId,
@@ -378,6 +415,7 @@ describe('调拨管理', () => {
       .set('Authorization', `Bearer ${token}`)
       .send({
         materialId: inactiveMaterialSeed.materialId,
+        batchNo: inactiveMaterialSeed.batchNo,
         quantity: 2,
         fromLocationId: inactiveMaterialSeed.fromLocationId,
         toLocationId: inactiveMaterialSeed.toLocationId,
@@ -392,6 +430,7 @@ describe('调拨管理', () => {
       .set('Authorization', `Bearer ${token}`)
       .send({
         materialId: inactiveSourceSeed.materialId,
+        batchNo: inactiveSourceSeed.batchNo,
         quantity: 2,
         fromLocationId: inactiveSourceSeed.fromLocationId,
         toLocationId: inactiveSourceSeed.toLocationId,
@@ -406,6 +445,7 @@ describe('调拨管理', () => {
       .set('Authorization', `Bearer ${token}`)
       .send({
         materialId: inactiveTargetSeed.materialId,
+        batchNo: inactiveTargetSeed.batchNo,
         quantity: 2,
         fromLocationId: inactiveTargetSeed.fromLocationId,
         toLocationId: inactiveTargetSeed.toLocationId,
@@ -426,7 +466,7 @@ describe('调拨管理', () => {
 
   it('TR-BATCH-001: 创建调拨拒绝不存在或不属于该物料的批号并保持库位库存不变', async () => {
     const suffix = `batch-identity-${Date.now()}`
-    const { materialId, fromLocationId, toLocationId } = seedTransferMaterial(db, suffix)
+    const { materialId, fromLocationId, toLocationId, batchNo } = seedTransferMaterial(db, suffix)
     const otherSeed = seedTransferMaterial(db, `foreign-batch-${Date.now()}`)
     const insufficientSeed = seedTransferMaterial(db, `insufficient-batch-${Date.now()}`)
     db.prepare('UPDATE batches SET remaining = 1 WHERE material_id = ? AND batch_no = ?')
@@ -521,7 +561,7 @@ describe('调拨管理', () => {
 
   it('TR-008: 总库存足够但来源库位库存不足时拒绝调拨并保持库位明细不变', async () => {
     const suffix = `source-insufficient-${Date.now()}`
-    const { materialId, fromLocationId, toLocationId } = seedTransferMaterial(db, suffix)
+    const { materialId, fromLocationId, toLocationId, batchNo } = seedTransferMaterial(db, suffix)
     const extraLocationId = `loc-transfer-extra-${suffix}`
     db.prepare('INSERT INTO locations (id, code, name, type, zone) VALUES (?, ?, ?, ?, ?)')
       .run(extraLocationId, `LOC-TF-X-${suffix}`, '调拨额外目标库位', 'shelf', 'C区')
@@ -531,6 +571,7 @@ describe('调拨管理', () => {
       .set('Authorization', `Bearer ${token}`)
       .send({
         materialId,
+        batchNo,
         quantity: 8,
         fromLocationId,
         toLocationId,
@@ -543,6 +584,7 @@ describe('调拨管理', () => {
       .set('Authorization', `Bearer ${token}`)
       .send({
         materialId,
+        batchNo,
         quantity: 3,
         fromLocationId,
         toLocationId: extraLocationId,

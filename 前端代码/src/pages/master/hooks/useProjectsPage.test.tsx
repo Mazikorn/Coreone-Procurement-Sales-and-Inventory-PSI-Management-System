@@ -87,6 +87,56 @@ describe('useProjectsPage', () => {
     expect(result.current.statusCheck?.warnings).toContain('停用后该检测服务不能用于新出库')
   })
 
+  it('allows technicians to manage projects because they own project and BOM configuration', async () => {
+    window.localStorage.setItem('user', JSON.stringify({ role: 'technician', username: 'zhangwei' }))
+
+    const { result } = renderHook(() => useProjectsPage())
+    await waitFor(() => expect(projectApi.getList).toHaveBeenCalled())
+
+    expect(result.current.canWrite).toBe(true)
+  })
+
+  it('uses the original readonly service code when editing even if local form state is mutated', async () => {
+    vi.mocked(projectApi.update).mockResolvedValue({} as any)
+
+    const { result } = renderHook(() => useProjectsPage())
+    await waitFor(() => expect(projectApi.getList).toHaveBeenCalled())
+
+    act(() => {
+      result.current.openEdit({
+        id: 'prj-readonly-code',
+        code: 'PRJ-LOCKED-001',
+        name: 'HE检测',
+        type: 'he',
+        cycle: '1天',
+        manager: '李四',
+        status: 'active',
+        description: '原说明',
+        bomId: '',
+      } as any)
+    })
+
+    act(() => {
+      result.current.setForm({
+        ...result.current.form,
+        code: 'PRJ-MUTATED-999',
+        name: 'HE检测-更新',
+      })
+    })
+
+    await act(async () => {
+      await result.current.handleSubmit()
+    })
+
+    expect(projectApi.update).toHaveBeenCalledWith('prj-readonly-code', expect.objectContaining({
+      code: 'PRJ-LOCKED-001',
+      name: 'HE检测-更新',
+    }))
+    expect(projectApi.update).toHaveBeenCalledWith('prj-readonly-code', expect.not.objectContaining({
+      code: 'PRJ-MUTATED-999',
+    }))
+  })
+
   it('submits the full edit payload after status impact confirmation', async () => {
     vi.mocked(projectApi.checkStatus).mockResolvedValue({
       project: { id: 'prj-confirm-status', code: 'PRJ-002', name: 'HE检测' },

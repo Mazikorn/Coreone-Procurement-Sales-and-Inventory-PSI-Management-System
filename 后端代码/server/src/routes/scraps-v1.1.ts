@@ -7,6 +7,7 @@ import { consumeInventoryLocationStock, restoreInventoryLocationStock } from '..
 
 const router = Router()
 const BATCH_RESTORE_EPSILON = 0.000001
+const SCRAP_REASON_CODES = new Set(['expired', 'damaged', 'quality_issue', 'obsolete', 'spoiled', 'other'])
 
 function generateScrapNo(): string {
   return generateNo('SC')
@@ -136,7 +137,11 @@ router.post('/batch', (req, res) => {
 
       if (!materialId) errors.push(`第 ${row} 行物料不能为空`)
       if (!Number.isFinite(quantity) || quantity <= 0) errors.push(`第 ${row} 行数量必须大于 0`)
-      if (!reason) errors.push(`第 ${row} 行报废原因不能为空`)
+      if (!reason) {
+        errors.push(`第 ${row} 行报废原因不能为空`)
+      } else if (!SCRAP_REASON_CODES.has(reason)) {
+        errors.push(`第 ${row} 行报废原因分类无效`)
+      }
       if (materialId) {
         const material = db.prepare('SELECT id, status FROM materials WHERE id = ? AND is_deleted = 0').get(materialId) as any
         if (!material) {
@@ -225,6 +230,11 @@ router.post('/', (req, res) => {
     if (!materialId || quantity === undefined || quantity === null || !Number.isFinite(scrapQuantity) || scrapQuantity <= 0 || !reason) {
       error(res, 'Missing or invalid fields', 'INVALID_PARAMETER', 400); return
     }
+    const normalizedReason = String(reason || '').trim()
+    if (!SCRAP_REASON_CODES.has(normalizedReason)) {
+      error(res, '报废原因分类无效', 'INVALID_PARAMETER', 400)
+      return
+    }
     const db = getDatabase()
     const material = db.prepare('SELECT * FROM materials WHERE id = ? AND is_deleted = 0').get(materialId) as any
     if (!material) { error(res, '物料不存在或已删除', 'NOT_FOUND', 404); return }
@@ -247,7 +257,7 @@ router.post('/', (req, res) => {
       }
       const id = uuidv4()
       db.prepare('INSERT INTO scrap_records (id, scrap_no, material_id, batch_id, quantity, reason, operator, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-        .run(id, generateScrapNo(), materialId, batchResult.batch?.id || null, scrapQuantity, reason, operator || 'system', remark || null)
+        .run(id, generateScrapNo(), materialId, batchResult.batch?.id || null, scrapQuantity, normalizedReason, operator || 'system', remark || null)
       db.prepare('UPDATE inventory SET stock = stock - ?, update_time = CURRENT_TIMESTAMP WHERE material_id = ?').run(scrapQuantity, materialId)
       consumeInventoryLocationStock(db, materialId, scrapQuantity, { relatedType: 'scrap', relatedId: id })
 

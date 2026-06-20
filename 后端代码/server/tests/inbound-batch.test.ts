@@ -271,6 +271,115 @@ describe('批量入库 API', () => {
     expect(inventory).toBeUndefined()
   })
 
+  it('INB-BATCH-003: 同一物料同一批号拒绝不同单价或供应商再次入库', async () => {
+    const suffix = `cost-source-${Date.now()}`
+    const fixture = seedBatchInboundFixture(db, suffix)
+    const otherSupplierId = `sup-in-batch-other-${suffix}`
+    db.prepare('INSERT INTO suppliers (id, code, name, status) VALUES (?, ?, ?, ?)')
+      .run(otherSupplierId, `SUP-INB-OTHER-${suffix}`, '批次来源冲突供应商', 1)
+    const batchNo = `B-INB-${suffix}-LOCKED`
+
+    const first = await request(app)
+      .post('/api/v1/inbound')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        type: 'direct',
+        materialId: fixture.materialId,
+        batchNo,
+        quantity: 10,
+        price: 21,
+        supplierId: fixture.supplierId,
+        locationId: fixture.locationId,
+        expiryDate: '2027-01-01',
+      })
+
+    expect(first.status).toBe(201)
+
+    const differentPrice = await request(app)
+      .post('/api/v1/inbound')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        type: 'direct',
+        materialId: fixture.materialId,
+        batchNo,
+        quantity: 2,
+        price: 22,
+        supplierId: fixture.supplierId,
+        locationId: fixture.locationId,
+        expiryDate: '2027-01-01',
+      })
+    expect(differentPrice.status).toBe(409)
+    expect(differentPrice.body.error.message).toContain('入库单价必须一致')
+
+    const differentSupplier = await request(app)
+      .post('/api/v1/inbound')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        type: 'direct',
+        materialId: fixture.materialId,
+        batchNo,
+        quantity: 2,
+        price: 21,
+        supplierId: otherSupplierId,
+        locationId: fixture.locationId,
+        expiryDate: '2027-01-01',
+      })
+    expect(differentSupplier.status).toBe(409)
+    expect(differentSupplier.body.error.message).toContain('供应商必须一致')
+
+    const batch = db.prepare('SELECT quantity, remaining, inbound_price, supplier_id FROM batches WHERE material_id = ? AND batch_no = ?')
+      .get(fixture.materialId, batchNo) as any
+    const inboundCount = (db.prepare('SELECT COUNT(*) as count FROM inbound_records WHERE material_id = ? AND batch_no = ?')
+      .get(fixture.materialId, batchNo) as any).count
+
+    expect(batch).toMatchObject({ quantity: 10, remaining: 10, inbound_price: 21, supplier_id: fixture.supplierId })
+    expect(inboundCount).toBe(1)
+  })
+
+  it('INB-BATCH-004: 批量导入同一物料同一批号拒绝不同单价', async () => {
+    const suffix = `batch-conflict-${Date.now()}`
+    const fixture = seedBatchInboundFixture(db, suffix)
+    const batchNo = `B-INB-${suffix}-DUP`
+
+    const res = await request(app)
+      .post('/api/v1/inbound/batch')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        records: [
+          {
+            type: 'direct',
+            materialId: fixture.materialId,
+            batchNo,
+            quantity: 2,
+            price: 21,
+            supplierId: fixture.supplierId,
+            locationId: fixture.locationId,
+            expiryDate: '2027-01-01',
+          },
+          {
+            type: 'direct',
+            materialId: fixture.materialId,
+            batchNo,
+            quantity: 3,
+            price: 22,
+            supplierId: fixture.supplierId,
+            locationId: fixture.locationId,
+            expiryDate: '2027-01-01',
+          },
+        ],
+      })
+
+    expect(res.status).toBe(400)
+    expect(res.body.error.message).toContain('入库单价必须一致')
+
+    const inboundCount = (db.prepare('SELECT COUNT(*) as count FROM inbound_records WHERE material_id = ? AND batch_no = ?')
+      .get(fixture.materialId, batchNo) as any).count
+    const batchCount = (db.prepare('SELECT COUNT(*) as count FROM batches WHERE material_id = ? AND batch_no = ?')
+      .get(fixture.materialId, batchNo) as any).count
+    expect(inboundCount).toBe(0)
+    expect(batchCount).toBe(0)
+  })
+
   it('INB-UPDATE-001: 普通入库更新拒绝非正数量和负单价，避免事后污染库存事实', async () => {
     const suffix = `update-validation-${Date.now()}`
     const fixture = seedBatchInboundFixture(db, suffix)

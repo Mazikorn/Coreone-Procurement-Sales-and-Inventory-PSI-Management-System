@@ -9,6 +9,7 @@ interface Props {
   specPart: { amount: string; unit: string }
   categories: { id: string; name: string }[]
   suppliers: { id: string; name: string }[]
+  locations: { id: string; name: string; code?: string; zone?: string }[]
   onClose: () => void
   onChange: (form: FormData) => void
   onSpecPartChange: (sp: { amount: string; unit: string }) => void
@@ -17,7 +18,7 @@ interface Props {
 }
 
 export function MaterialFormModal({
-  open, editingId, form, specPart, categories, suppliers,
+  open, editingId, form, specPart, categories, suppliers, locations,
   onClose, onChange, onSpecPartChange, onCategoryChange, onSubmit
 }: Props) {
   if (!open) return null
@@ -46,6 +47,15 @@ export function MaterialFormModal({
               <label className="block text-sm font-medium text-gray-700 mb-1.5">物料名称 <span className="text-red-500">*</span></label>
               <input value={form.name} onChange={e => onChange({ ...form, name: e.target.value })} placeholder="请输入物料名称" className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500" />
             </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">物料条码</label>
+            <input
+              value={form.barcode}
+              onChange={e => onChange({ ...form, barcode: e.target.value })}
+              placeholder="请输入或扫描物料条码"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
+            />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1.5">规格型号</label>
@@ -110,6 +120,21 @@ export function MaterialFormModal({
                 placeholder="请选择"
               />
             </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">默认库位</label>
+            <SearchableSelect
+              value={form.locationId}
+              onChange={val => onChange({ ...form, locationId: val })}
+              options={[
+                { value: '', label: '无默认库位' },
+                ...locations.map(l => ({
+                  value: l.id,
+                  label: `${l.name}${l.zone ? ` (${l.zone})` : ''}${l.code ? ` - ${l.code}` : ''}`,
+                })),
+              ]}
+              placeholder="无默认库位"
+            />
           </div>
           <div className="grid grid-cols-3 gap-4">
             <div>

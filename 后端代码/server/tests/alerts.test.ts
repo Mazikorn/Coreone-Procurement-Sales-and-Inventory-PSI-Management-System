@@ -53,6 +53,46 @@ function seedLowStockMaterial(db: any, suffix: string) {
   return { materialId }
 }
 
+function dateAfter(days: number) {
+  const date = new Date()
+  date.setDate(date.getDate() + days)
+  return date.toISOString().split('T')[0]
+}
+
+function seedExpiringBatches(db: any, suffix: string) {
+  const categoryId = `cat-alert-exp-${suffix}`
+  const materialId = `mat-alert-exp-${suffix}`
+  const locationId = `loc-alert-exp-${suffix}`
+  const firstBatchId = `batch-alert-exp-a-${suffix}`
+  const secondBatchId = `batch-alert-exp-b-${suffix}`
+  const emptyBatchId = `batch-alert-exp-empty-${suffix}`
+
+  db.prepare('INSERT INTO material_categories (id, code, name, level) VALUES (?, ?, ?, ?)')
+    .run(categoryId, `CAT-ALERT-EXP-${suffix}`, '有效期预警测试分类', 1)
+  db.prepare('INSERT INTO locations (id, code, name, type, zone) VALUES (?, ?, ?, ?, ?)')
+    .run(locationId, `LOC-ALERT-EXP-${suffix}`, '有效期预警测试库位', 'shelf', 'A区')
+  db.prepare(`
+    INSERT INTO materials (id, code, name, spec, unit, category_id, min_stock, safety_stock, location_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(materialId, `MAT-ALERT-EXP-${suffix}`, `临期预警物料-${suffix}`, '1ml', '瓶', categoryId, 0, 0, locationId)
+  db.prepare('INSERT INTO inventory (id, material_id, stock, locked_stock, location_id) VALUES (?, ?, ?, 0, ?)')
+    .run(`inv-alert-exp-${suffix}`, materialId, 20, locationId)
+
+  db.prepare(`
+    INSERT INTO batches (id, material_id, batch_no, quantity, remaining, expiry_date, inbound_id, status)
+    VALUES
+      (?, ?, ?, 10, 4, ?, ?, 1),
+      (?, ?, ?, 8, 2, ?, ?, 1),
+      (?, ?, ?, 6, 0, ?, ?, 1)
+  `).run(
+    firstBatchId, materialId, `B-EXP-A-${suffix}`, dateAfter(7), `inb-exp-a-${suffix}`,
+    secondBatchId, materialId, `B-EXP-B-${suffix}`, dateAfter(10), `inb-exp-b-${suffix}`,
+    emptyBatchId, materialId, `B-EXP-EMPTY-${suffix}`, dateAfter(5), `inb-exp-empty-${suffix}`,
+  )
+
+  return { materialId, batchNos: [`B-EXP-A-${suffix}`, `B-EXP-B-${suffix}`], emptyBatchNo: `B-EXP-EMPTY-${suffix}` }
+}
+
 describe('预警处理', () => {
   let app: any
   let db: any
@@ -318,6 +358,52 @@ describe('预警处理', () => {
       remark: '处理结论：采购跟进中\n处理意见：已创建补货任务',
     })
     expect(history.body.data.list[0].handledAt).toBeTruthy()
+  })
+
+  it('ALERT-016: 有效期扫描按批次生成预警并返回来源事实', async () => {
+    const stamp = Date.now()
+    const { materialId, batchNos, emptyBatchNo } = seedExpiringBatches(db, `expiry-${stamp}`)
+
+    const generate = await request(app)
+      .post('/api/v1/alerts/generate')
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(generate.status).toBe(200)
+    expect(generate.body.data.generatedCount).toBeGreaterThanOrEqual(2)
+
+    const pending = await request(app)
+      .get('/api/v1/alerts')
+      .query({ keyword: `临期预警物料-expiry-${stamp}`, type: 'expiry', status: 'pending', pageSize: 10 })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(pending.status).toBe(200)
+    expect(pending.body.data.list).toHaveLength(2)
+    const rows = pending.body.data.list
+    const returnedBatchNos = rows.map((row: any) => row.batchNo).sort()
+    expect(returnedBatchNos).toEqual([...batchNos].sort())
+    expect(returnedBatchNos).not.toContain(emptyBatchNo)
+    for (const row of rows) {
+      expect(row).toMatchObject({
+        type: 'expiry',
+        materialId,
+        ruleId: 'RULE-002',
+        status: 'pending',
+      })
+      expect(row.batchId).toBeTruthy()
+      expect(row.triggerCondition).toContain(row.batchNo)
+    }
+
+    const secondGenerate = await request(app)
+      .post('/api/v1/alerts/generate')
+      .set('Authorization', `Bearer ${token}`)
+    expect(secondGenerate.status).toBe(200)
+
+    const afterSecondGenerate = await request(app)
+      .get('/api/v1/alerts')
+      .query({ keyword: `临期预警物料-expiry-${stamp}`, type: 'expiry', status: 'pending', pageSize: 10 })
+      .set('Authorization', `Bearer ${token}`)
+    expect(afterSecondGenerate.status).toBe(200)
+    expect(afterSecondGenerate.body.data.list).toHaveLength(2)
   })
 
   it('ALERT-RULE-001: 预警规则拒绝非有限阈值且不更新原规则', async () => {

@@ -92,6 +92,7 @@ export default function Materials() {
         specPart={page.specPart}
         categories={page.formCategories}
         suppliers={page.formSuppliers}
+        locations={page.formLocations}
         onClose={() => page.setModalOpen(false)}
         onChange={page.setForm}
         onSpecPartChange={page.setSpecPart}
@@ -107,6 +108,7 @@ export default function Materials() {
         row={page.detailMaterial}
         getCategoryName={page.getCategoryName}
         getSupplierName={page.getSupplierName}
+        getLocationName={page.getLocationName}
         statusBadge={page.statusBadge}
         onClose={() => page.setDetailModalOpen(false)}
         onEdit={page.openEdit}

@@ -69,14 +69,31 @@ router.get('/stats', authenticateToken, requireLocationRead, (req, res) => {
 router.get('/tree', authenticateToken, requireLocationRead, (_req, res) => {
   try {
     const db = getDatabase()
-    const rows = db.prepare('SELECT id, code, name, type, parent_id as parentId, zone, shelf, position FROM locations WHERE is_deleted = 0 ORDER BY zone, name').all() as any[]
+    const rows = db.prepare(`
+      SELECT id, code, name, type, parent_id as parentId, zone, shelf, position, capacity, used, status
+      FROM locations
+      WHERE is_deleted = 0
+      ORDER BY zone, name
+    `).all() as any[]
 
-    const buildTree = (parentId: string | null): any[] => {
+    const buildTree = (parentId: string | null, depth = 1, path: string[] = []): any[] => {
       return rows
         .filter((r: any) => (r.parentId || null) === parentId)
         .map((r: any) => ({
-          id: r.id, code: r.code, name: r.name, type: r.type, zone: r.zone,
-          children: buildTree(r.id),
+          id: r.id,
+          code: r.code,
+          name: r.name,
+          type: r.type,
+          parentId: r.parentId || null,
+          zone: r.zone,
+          shelf: r.shelf,
+          position: r.position,
+          capacity: Number(r.capacity || 0),
+          used: Number(r.used || 0),
+          status: Number(r.status) === 1 ? 'active' : 'inactive',
+          depth,
+          fullPath: [...path, r.name].join(' / '),
+          children: buildTree(r.id, depth + 1, [...path, r.name]),
           isLeaf: !rows.some((child: any) => child.parentId === r.id),
         }))
     }
@@ -97,6 +114,15 @@ function sendTextError(res: any, result: TextGuardResult): result is Extract<Tex
     return true
   }
   return false
+}
+
+function normalizeCapacity(value: unknown, fallback = 999999) {
+  if (value === undefined || value === null || value === '') return { ok: true, value: fallback }
+  const capacity = Number(value)
+  if (!Number.isFinite(capacity) || capacity < 0) {
+    return { ok: false, status: 400, message: '容量限制必须为大于等于 0 的数字', code: 'INVALID_PARAMETER' }
+  }
+  return { ok: true, value: capacity }
 }
 
 function getLocationReferences(db: any, locationId: string) {
@@ -286,10 +312,12 @@ router.post('/', authenticateToken, requireLocationWrite, (req, res) => {
     const db = getDatabase()
     const parentValidation = validateLocationParent(db, parentId)
     if (!parentValidation.ok) { error(res, parentValidation.message, parentValidation.code, parentValidation.status); return }
+    const capacityValue = normalizeCapacity(capacity)
+    if (!capacityValue.ok) { error(res, capacityValue.message, capacityValue.code, capacityValue.status); return }
     const id = uuidv4()
     const finalCode = generateLocationCode(db)
     db.prepare('INSERT INTO locations (id, code, name, type, parent_id, zone, shelf, position, capacity, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)')
-      .run(id, finalCode, nameText.value, typeText.value || 'shelf', parentId || null, zoneText.value, shelfText.value, positionText.value, capacity || 999999)
+      .run(id, finalCode, nameText.value, typeText.value || 'shelf', parentId || null, zoneText.value, shelfText.value, positionText.value, capacityValue.value)
     success(res, { id, code: finalCode }, 'Created', 201)
   } catch (err: any) {
     if (err.message.includes('UNIQUE')) { error(res, 'Code exists', 'RESOURCE_CONFLICT', 409); return }
@@ -325,7 +353,10 @@ router.put('/:id', authenticateToken, requireLocationWrite, (req, res) => {
     if (data.code !== undefined) {
       const codeText = requireValidText(data.code, '库位编码', 40)
       if (sendTextError(res, codeText)) return
-      fields.push('code = ?'); params.push(codeText.value)
+      if (codeText.value !== existing.code) {
+        error(res, '库位编码由系统生成，不允许修改', 'INVALID_PARAMETER', 400)
+        return
+      }
     }
     if (data.name !== undefined) {
       const nameText = requireValidText(data.name, '库位名称')
@@ -353,7 +384,11 @@ router.put('/:id', authenticateToken, requireLocationWrite, (req, res) => {
       if (sendTextError(res, positionText)) return
       fields.push('position = ?'); params.push(positionText.value)
     }
-    if (data.capacity !== undefined) { fields.push('capacity = ?'); params.push(data.capacity) }
+    if (data.capacity !== undefined) {
+      const capacityValue = normalizeCapacity(data.capacity, existing.capacity)
+      if (!capacityValue.ok) { error(res, capacityValue.message, capacityValue.code, capacityValue.status); return }
+      fields.push('capacity = ?'); params.push(capacityValue.value)
+    }
     if (data.status !== undefined) { fields.push('status = ?'); params.push(data.status === 'active' ? 1 : 0) }
     if (fields.length > 0) { params.push(id); db.prepare(`UPDATE locations SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND is_deleted = 0`).run(...params) }
     success(res, { id }, 'Updated')

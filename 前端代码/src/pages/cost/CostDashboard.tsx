@@ -96,6 +96,8 @@ interface CostRun {
   summary?: {
     total?: number
     success?: number
+    processed?: number
+    succeeded?: number
     failed?: number
     sourceTotals?: {
       materialCost?: number
@@ -272,9 +274,18 @@ export function getClosePeriodBlockReason(
 ) {
   if (!periodStatus) return '请先开启成本期间'
   if (periodStatus === 'closed') return '成本期间已关账'
+  if (periodStatus !== 'calculated') return '请先执行重算并完成核算'
   if (openExceptionCount > 0) return `仍有 ${openExceptionCount} 条开放成本异常`
   if (pendingCostCount > 0) return `仍有 ${pendingCostCount} 单未补算或成本异常`
   return ''
+}
+
+export function getCostRunProcessedCount(summary?: CostRun['summary']) {
+  return summary?.total ?? summary?.processed ?? 0
+}
+
+export function getCostRunSucceededCount(summary?: CostRun['summary']) {
+  return summary?.success ?? summary?.succeeded ?? 0
 }
 
 export function buildDashboardComparisonParams(month: string) {
@@ -653,8 +664,8 @@ export default function CostDashboard() {
                           {runStatus.label}
                         </span>
                       </td>
-                      <td className="py-2 text-gray-600">{run.summary?.total ?? 0}</td>
-                      <td className="py-2 text-emerald-600">{run.summary?.success ?? 0}</td>
+                      <td className="py-2 text-gray-600">{getCostRunProcessedCount(run.summary)}</td>
+                      <td className="py-2 text-emerald-600">{getCostRunSucceededCount(run.summary)}</td>
                       <td className="py-2 text-red-600">{run.summary?.failed ?? 0}</td>
                       <td className="py-2 text-gray-500">{run.finishedAt || run.startedAt || '-'}</td>
                     </tr>

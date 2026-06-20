@@ -51,6 +51,25 @@ type ValidBatchInboundInput = {
   remark?: string
 }
 
+function validateBatchCostSource(
+  existing: { inbound_price?: unknown; supplier_id?: unknown } | undefined,
+  price: number,
+  supplierId?: string | null,
+) {
+  if (!existing) return { ok: true as const }
+
+  const existingPrice = Number(existing.inbound_price || 0)
+  const incomingSupplierId = String(supplierId || '').trim()
+  const existingSupplierId = String(existing.supplier_id || '').trim()
+  if (Number.isFinite(existingPrice) && Math.abs(existingPrice - price) > BATCH_DECREASE_EPSILON) {
+    return { ok: false as const, message: '同一物料同一批号的入库单价必须一致，避免批次成本失真' }
+  }
+  if (existingSupplierId !== incomingSupplierId) {
+    return { ok: false as const, message: '同一物料同一批号的供应商必须一致，避免批次来源断链' }
+  }
+  return { ok: true as const }
+}
+
 function isValidDateText(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
   const date = new Date(`${value}T00:00:00Z`)
@@ -66,6 +85,7 @@ function normalizeOptionalDate(value: unknown): string | undefined {
 function validateBatchInboundRecords(db: any, records: BatchInboundInput[]) {
   const errors: Array<{ row: number; message: string }> = []
   const validRecords: ValidBatchInboundInput[] = []
+  const pendingBatchSources = new Map<string, { inbound_price: number; supplier_id?: string }>()
 
   records.forEach((record, index) => {
     const row = index + 1
@@ -104,6 +124,21 @@ function validateBatchInboundRecords(db: any, records: BatchInboundInput[]) {
       errors.push({ row, message: rowErrors.join('；') })
       return
     }
+
+    const batchKey = `${materialId}:${batchNo}`
+    const existingBatch = db.prepare('SELECT inbound_price, supplier_id FROM batches WHERE material_id = ? AND batch_no = ?')
+      .get(materialId, batchNo) as any
+    const dbBatchValidation = validateBatchCostSource(existingBatch, price, supplierId || null)
+    if (!dbBatchValidation.ok) {
+      errors.push({ row, message: dbBatchValidation.message })
+      return
+    }
+    const pendingBatchValidation = validateBatchCostSource(pendingBatchSources.get(batchKey), price, supplierId || null)
+    if (!pendingBatchValidation.ok) {
+      errors.push({ row, message: pendingBatchValidation.message })
+      return
+    }
+    pendingBatchSources.set(batchKey, { inbound_price: price, supplier_id: supplierId || undefined })
 
     validRecords.push({
       type: typeof record.type === 'string' && record.type.trim() ? record.type.trim() : 'direct',
@@ -539,6 +574,16 @@ router.post('/', requireWriteAccess, (req, res) => {
         }
       }
       purchaseOrderNo = po.order_no
+    }
+
+    if (batchNo) {
+      const existingBatch = db.prepare('SELECT inbound_price, supplier_id FROM batches WHERE material_id = ? AND batch_no = ?')
+        .get(materialId, batchNo) as any
+      const batchValidation = validateBatchCostSource(existingBatch, inboundPrice, effectiveSupplierId)
+      if (!batchValidation.ok) {
+        error(res, batchValidation.message, 'BATCH_COST_SOURCE_CONFLICT', 409)
+        return
+      }
     }
 
     const amount = inboundPrice * inboundQuantity

@@ -100,7 +100,7 @@ app.use('/api/v1/alerts', authenticateToken, requireRole('admin', 'warehouse_man
 
 // 路由注册 - warehouse/procurement共享 (入库相关)
 app.use('/api/v1/inbound', authenticateToken, requireRole('admin', 'warehouse_manager', 'procurement'), inboundRoutes)
-app.use('/api/v1/purchase-orders', authenticateToken, requireRole('admin', 'procurement'), purchaseOrderRoutes)
+app.use('/api/v1/purchase-orders', authenticateToken, requireRole('admin', 'warehouse_manager', 'procurement'), purchaseOrderRoutes)
 app.use('/api/v1/suppliers', authenticateToken, requireRole('admin', 'warehouse_manager', 'procurement'), supplierRoutes)
 
 // 路由注册 - warehouse专属 (库存操作)
@@ -117,14 +117,14 @@ app.use('/api/v1/projects', authenticateToken, requireRole('admin', 'warehouse_m
 app.use('/api/v1/boms', authenticateToken, requireRole('admin', 'warehouse_manager', 'technician', 'pathologist'), bomRoutes)
 
 // 路由注册 - 成本对账 (admin/finance/pathologist可访问)
-app.use('/api/v1/reconciliation', authenticateToken, requireRole('admin', 'pathologist', 'finance'), reconciliationRoutes)
+app.use('/api/v1/reconciliation', authenticateToken, requireRole('admin', 'pathologist', 'finance', 'technician'), reconciliationRoutes)
 
 // 路由注册 - 设备管理 (admin/technician/pathologist可访问)
 app.use('/api/v1/equipment', authenticateToken, requireRole('admin', 'technician', 'pathologist'), equipmentRoutes)
 app.use('/api/v1/equipment-types', authenticateToken, requireRole('admin', 'technician', 'pathologist'), equipmentTypeRoutes)
 
-// 路由注册 - 标准工时 (admin/technician/pathologist可访问)
-app.use('/api/v1/labor-times', authenticateToken, requireRole('admin', 'technician', 'pathologist'), laborTimeRoutes)
+// 路由注册 - 标准工时 (finance可维护；technician/pathologist按权限只读)
+app.use('/api/v1/labor-times', authenticateToken, requireRole('admin', 'finance', 'technician', 'pathologist'), laborTimeRoutes)
 
 // 路由注册 - 间接成本中心 (admin/finance可访问)
 app.use('/api/v1/indirect-costs', authenticateToken, requireRole('admin', 'finance'), indirectCostRoutes)

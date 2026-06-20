@@ -2,10 +2,11 @@ import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
-import { requireStrictRole } from '../middleware/auth.js'
+import { requireRole } from '../middleware/auth.js'
 import { normalizeDisplayText, requireValidText, type TextGuardResult } from '../utils/text-guard.js'
 
 const router = Router()
+const requireEquipmentWrite = requireRole()
 
 // 计算设备折旧
 // 注意：直线法使用日历年度（365天/年 × 24小时/天 × 60分钟/小时 = 525,600分钟/年）
@@ -325,7 +326,7 @@ router.get('/:id', (req, res) => {
 })
 
 // 创建设备
-router.post('/', requireStrictRole('admin'), (req, res) => {
+router.post('/', requireEquipmentWrite, (req, res) => {
   try {
     const { code, name, model, manufacturer, purchasePrice, purchaseDate, depreciableLifeYears, residualValue, depreciationMethod, totalCapacity, capacityUnit, status, locationId, typeId } = req.body
     const codeText = requireValidText(code, '设备编码', 100)
@@ -354,13 +355,20 @@ router.post('/', requireStrictRole('admin'), (req, res) => {
 })
 
 // 更新设备
-router.put('/:id', requireStrictRole('admin'), (req, res) => {
+router.put('/:id', requireEquipmentWrite, (req, res) => {
   try {
     const { id } = req.params
-    const { name, model, manufacturer, purchasePrice, purchaseDate, depreciableLifeYears, residualValue, depreciationMethod, totalCapacity, capacityUnit, status, locationId, typeId } = req.body
+    const { code, name, model, manufacturer, purchasePrice, purchaseDate, depreciableLifeYears, residualValue, depreciationMethod, totalCapacity, capacityUnit, status, locationId, typeId } = req.body
     const db = getDatabase()
     const existing = db.prepare('SELECT * FROM equipment WHERE id = ?').get(id) as any
     if (!existing) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
+    if (code !== undefined) {
+      const codeText = requireValidText(code, '设备编码', 100)
+      if (sendTextError(res, codeText)) return
+      if (codeText.value !== existing.code) {
+        error(res, '设备编号创建后不允许修改', 'INVALID_PARAMETER', 400); return
+      }
+    }
     const nameText = name !== undefined
       ? requireValidText(name, '设备名称')
       : { ok: true as const, value: existing.name }
@@ -410,7 +418,7 @@ router.put('/:id', requireStrictRole('admin'), (req, res) => {
 })
 
 // 删除设备
-router.delete('/:id', requireStrictRole('admin'), (req, res) => {
+router.delete('/:id', requireEquipmentWrite, (req, res) => {
   try {
     const { id } = req.params
     const db = getDatabase()

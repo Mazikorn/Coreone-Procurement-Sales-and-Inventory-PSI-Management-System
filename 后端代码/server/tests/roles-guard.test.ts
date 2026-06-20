@@ -228,6 +228,88 @@ describe('角色引用保护', () => {
     expect(stats.body.data.assignedUsers).toBe(1)
   })
 
+  it('ROLE-SYSTEM-001: 内置岗位属于系统角色且不可编辑或删除', async () => {
+    const listed = await request(app)
+      .get('/api/v1/roles')
+      .query({ type: 'system', page: 1, pageSize: 100 })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(listed.status).toBe(200)
+    const codes = listed.body.data.list.map((item: any) => item.code)
+    expect(codes).toEqual(expect.arrayContaining([
+      'admin',
+      'warehouse_manager',
+      'technician',
+      'pathologist',
+      'procurement',
+      'finance',
+    ]))
+    expect(listed.body.data.list.every((item: any) => item.isSystem === true)).toBe(true)
+
+    const warehouseRole = listed.body.data.list.find((item: any) => item.code === 'warehouse_manager')
+    const update = await request(app)
+      .put(`/api/v1/roles/${warehouseRole.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: '被误改的仓库管理员' })
+    expect(update.status).toBe(403)
+
+    const deleteRole = await request(app)
+      .delete(`/api/v1/roles/${warehouseRole.id}`)
+      .set('Authorization', `Bearer ${token}`)
+    expect(deleteRole.status).toBe(403)
+
+    const row = db.prepare('SELECT name, is_deleted FROM roles WHERE code = ?').get('warehouse_manager') as any
+    expect(row.name).toBe('仓库管理员')
+    expect(Number(row.is_deleted)).toBe(0)
+  })
+
+  it('ROLE-VALIDATION-001: 角色权限与数据范围拒绝未知值', async () => {
+    const suffix = `validation-${Date.now()}`
+    const invalidPermission = await request(app)
+      .post('/api/v1/roles')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        code: `role_invalid_perm_${suffix}`,
+        name: '非法权限角色',
+        permissions: ['inventory:approve'],
+        status: 'active',
+      })
+    expect(invalidPermission.status).toBe(400)
+
+    const globalPermission = await request(app)
+      .post('/api/v1/roles')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        code: `role_global_perm_${suffix}`,
+        name: '全局权限角色',
+        permissions: ['*'],
+        status: 'active',
+      })
+    expect(globalPermission.status).toBe(400)
+
+    const invalidScope = await request(app)
+      .post('/api/v1/roles')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        code: `role_invalid_scope_${suffix}`,
+        name: '非法数据范围角色',
+        permissions: ['inventory:view'],
+        status: 'active',
+        dataScope: 'global',
+      })
+    expect(invalidScope.status).toBe(400)
+
+    const validRole = await createRole(app, token, suffix)
+    const invalidUpdate = await request(app)
+      .put(`/api/v1/roles/${validRole.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ permissions: ['unknown:view'] })
+    expect(invalidUpdate.status).toBe(400)
+
+    const stored = db.prepare('SELECT permissions FROM roles WHERE id = ?').get(validRole.id) as any
+    expect(JSON.parse(stored.permissions)).toEqual(['inventory:view'])
+  })
+
   it('ROLE-AUTH-002: 停用角色后该角色用户不能继续登录', async () => {
     const suffix = `inactive-auth-${Date.now()}`
     const role = await createRole(app, token, suffix)

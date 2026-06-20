@@ -2,8 +2,41 @@ import { Router } from 'express'
 import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
 import { v4 as uuidv4 } from 'uuid'
+import { logOperation } from '../utils/operation-logger.js'
 
 const router = Router()
+const SYSTEM_ROLE_CODES = ['admin', 'warehouse_manager', 'technician', 'pathologist', 'procurement', 'finance'] as const
+const SYSTEM_ROLE_CODES_SQL = SYSTEM_ROLE_CODES.map(code => `'${code}'`).join(', ')
+const VALID_PERMISSION_MODULES = new Set([
+  'dashboard',
+  'inventory',
+  'inbound',
+  'outbound',
+  'stocktaking',
+  'returns',
+  'scraps',
+  'transfers',
+  'supplier_returns',
+  'purchase_orders',
+  'projects',
+  'bom',
+  'categories',
+  'materials',
+  'suppliers',
+  'locations',
+  'equipment',
+  'labor_times',
+  'cost_analysis',
+  'alerts',
+  'users',
+  'roles',
+  'logs',
+])
+const VALID_PERMISSION_ACTIONS = new Set(['view', 'add', 'edit', 'delete'])
+
+function isSystemRoleCode(code: unknown) {
+  return typeof code === 'string' && (SYSTEM_ROLE_CODES as readonly string[]).includes(code)
+}
 
 function buildRoleWhere(query: any) {
   const { keyword, type } = query
@@ -15,10 +48,10 @@ function buildRoleWhere(query: any) {
     params.push(like, like, like)
   }
   if (type === 'system') {
-    where += " AND r.code = 'admin'"
+    where += ` AND r.code IN (${SYSTEM_ROLE_CODES_SQL})`
   }
   if (type === 'custom') {
-    where += " AND r.code != 'admin'"
+    where += ` AND r.code NOT IN (${SYSTEM_ROLE_CODES_SQL})`
   }
   return { where, params }
 }
@@ -49,6 +82,29 @@ function parsePermissions(value: unknown) {
 
 function normalizeDataScope(value: unknown) {
   return value === 'all' || value === 'dept' || value === 'self' ? value : 'dept'
+}
+
+function validateDataScope(value: unknown) {
+  return value === undefined || value === 'all' || value === 'dept' || value === 'self'
+}
+
+function validatePermissions(value: unknown) {
+  if (value === undefined) return { ok: true, permissions: undefined as string[] | undefined }
+  if (!Array.isArray(value)) return { ok: false, permissions: [] }
+
+  const normalized: string[] = []
+  for (const raw of value) {
+    if (typeof raw !== 'string') return { ok: false, permissions: [] }
+    const permission = raw.trim()
+    const parts = permission.split(':')
+    if (parts.length > 2 || !permission || permission === '*') return { ok: false, permissions: [] }
+    const [module, action] = parts
+    if (!VALID_PERMISSION_MODULES.has(module)) return { ok: false, permissions: [] }
+    if (action !== undefined && !VALID_PERMISSION_ACTIONS.has(action)) return { ok: false, permissions: [] }
+    if (!normalized.includes(permission)) normalized.push(permission)
+  }
+
+  return { ok: true, permissions: normalized }
 }
 
 router.get('/', (req, res) => {
@@ -98,6 +154,7 @@ router.get('/', (req, res) => {
     userCount: Number(r.user_count) || 0,
     permissions: parsePermissions(r.permissions),
     dataScope: normalizeDataScope(r.data_scope),
+    isSystem: isSystemRoleCode(r.code),
     associatedUsers: associatedUsersByRole.get(r.code) || [],
     createdAt: r.created_at,
     updatedAt: r.updated_at,
@@ -116,8 +173,8 @@ router.get('/stats', (req, res) => {
     const rows = database.prepare(roleListSelect(where)).all(...params) as any[]
     success(res, {
       totalRoles: rows.length,
-      systemRoles: rows.filter(row => row.code === 'admin').length,
-      customRoles: rows.filter(row => row.code !== 'admin').length,
+      systemRoles: rows.filter(row => isSystemRoleCode(row.code)).length,
+      customRoles: rows.filter(row => !isSystemRoleCode(row.code)).length,
       assignedUsers: rows.reduce((sum, row) => sum + (Number(row.user_count) || 0), 0),
     })
   } catch (err: any) {
@@ -130,11 +187,21 @@ router.post('/', (req, res) => {
     const database = getDatabase()
     const { code, name, description, permissions, status, dataScope } = req.body
     if (!code || !name) { error(res, 'Code and name required', 'INVALID_PARAMETER', 400); return }
+    if (isSystemRoleCode(code)) { error(res, 'System role code is reserved', 'FORBIDDEN', 403); return }
+    if (!validateDataScope(dataScope)) { error(res, 'Invalid data scope', 'INVALID_PARAMETER', 400); return }
+    const permissionValidation = validatePermissions(permissions)
+    if (!permissionValidation.ok) { error(res, 'Invalid permissions', 'INVALID_PARAMETER', 400); return }
     const exists = database.prepare('SELECT 1 FROM roles WHERE code = ? AND is_deleted = 0').get(code)
     if (exists) { error(res, 'Role code already exists', 'RESOURCE_CONFLICT', 409); return }
     const id = uuidv4()
     database.prepare('INSERT INTO roles (id, code, name, description, permissions, data_scope, status) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(id, code, name, description || '', JSON.stringify(permissions || []), normalizeDataScope(dataScope), status === 'active' ? 1 : 0)
+      .run(id, code, name, description || '', JSON.stringify(permissionValidation.permissions || []), normalizeDataScope(dataScope), status === 'active' ? 1 : 0)
+    logOperation(database, req, {
+      operation: 'create role',
+      description: `创建角色 ${code}`,
+      requestData: { module: 'role', id, code, name, permissions: permissionValidation.permissions || [], dataScope: normalizeDataScope(dataScope), status: status === 'active' ? 'active' : 'inactive' },
+      responseData: { id },
+    })
     success(res, { id }, 'Created')
   } catch (err: any) { error(res, err.message) }
 })
@@ -150,9 +217,18 @@ router.put('/:id', (req, res) => {
       database.exec('ROLLBACK')
       error(res, 'Role not found', 'NOT_FOUND', 404); return
     }
-    if (role.code === 'admin') {
+    if (isSystemRoleCode(role.code)) {
       database.exec('ROLLBACK')
-      error(res, 'Cannot modify system admin role', 'FORBIDDEN', 403); return
+      error(res, 'Cannot modify system role', 'FORBIDDEN', 403); return
+    }
+    if (!validateDataScope(dataScope)) {
+      database.exec('ROLLBACK')
+      error(res, 'Invalid data scope', 'INVALID_PARAMETER', 400); return
+    }
+    const permissionValidation = validatePermissions(permissions)
+    if (!permissionValidation.ok) {
+      database.exec('ROLLBACK')
+      error(res, 'Invalid permissions', 'INVALID_PARAMETER', 400); return
     }
     const assignedCount = (database.prepare('SELECT COUNT(*) as count FROM users WHERE role = ? AND is_deleted = 0').get(role.code) as any)?.count || 0
     const fields: string[] = []; const params: any[] = []
@@ -172,7 +248,7 @@ router.put('/:id', (req, res) => {
     }
     if (name !== undefined) { fields.push('name = ?'); params.push(name) }
     if (description !== undefined) { fields.push('description = ?'); params.push(description || '') }
-    if (permissions !== undefined) { fields.push('permissions = ?'); params.push(JSON.stringify(permissions || [])) }
+    if (permissions !== undefined) { fields.push('permissions = ?'); params.push(JSON.stringify(permissionValidation.permissions || [])) }
     if (dataScope !== undefined) { fields.push('data_scope = ?'); params.push(normalizeDataScope(dataScope)) }
     if (status !== undefined) { fields.push('status = ?'); params.push(status === 'active' ? 1 : 0) }
     if (fields.length > 0) {
@@ -180,6 +256,12 @@ router.put('/:id', (req, res) => {
       database.prepare(`UPDATE roles SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(...params)
     }
     database.exec('COMMIT')
+    logOperation(database, req, {
+      operation: 'update role',
+      description: `更新角色 ${role.code}`,
+      requestData: { module: 'role', id, code: role.code, fields: fields.map(field => field.split(' = ')[0]) },
+      responseData: { id },
+    })
     success(res, { id }, 'Updated')
   } catch (err: any) {
     try { getDatabase().exec('ROLLBACK') } catch {}
@@ -193,13 +275,19 @@ router.delete('/:id', (req, res) => {
     const { id } = req.params
     const existing = database.prepare('SELECT * FROM roles WHERE id = ? AND is_deleted = 0').get(id) as any
     if (!existing) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
-    if (existing.code === 'admin') { error(res, 'Cannot delete system admin role', 'FORBIDDEN', 403); return }
+    if (isSystemRoleCode(existing.code)) { error(res, 'Cannot delete system role', 'FORBIDDEN', 403); return }
     const assignedCount = (database.prepare('SELECT COUNT(*) as count FROM users WHERE role = ? AND is_deleted = 0').get(existing.code) as any)?.count || 0
     if (assignedCount > 0) {
       error(res, `角色已有 ${assignedCount} 个用户使用，不可删除`, 'CONFLICT', 409)
       return
     }
     database.prepare('UPDATE roles SET is_deleted = 1 WHERE id = ?').run(id)
+    logOperation(database, req, {
+      operation: 'delete role',
+      description: `删除角色 ${existing.code}`,
+      requestData: { module: 'role', id, code: existing.code },
+      responseData: { id },
+    })
     success(res, { id }, 'Deleted')
   } catch (err: any) { error(res, err.message) }
 })

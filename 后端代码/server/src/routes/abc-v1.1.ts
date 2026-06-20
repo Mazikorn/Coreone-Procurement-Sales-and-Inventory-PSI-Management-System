@@ -119,6 +119,59 @@ const feeMappingAuditPayload = (row: any) => ({
   exceptionCreatedAt: row.exception_created_at,
 })
 
+function assertActiveBom(db: any, bomId: string) {
+  const bom = db.prepare(`
+    SELECT id, code, name, status
+    FROM boms
+    WHERE id = ? AND is_deleted = 0
+  `).get(bomId) as any
+  if (!bom) return { ok: false as const, message: 'BOM不存在', code: 'NOT_FOUND', status: 404 }
+  const active = bom.status === 'active' || bom.status === 1 || bom.status === '1'
+  if (!active) return { ok: false as const, message: '停用BOM不能配置收费映射', code: 'INVALID_PARAMETER', status: 400 }
+  return { ok: true as const, bom }
+}
+
+function normalizeFeeMappingsInput(db: any, mappings: any[], requireNonEmpty = true) {
+  if (!Array.isArray(mappings)) {
+    return { ok: false as const, message: '收费映射格式不正确', code: 'INVALID_PARAMETER', status: 400 }
+  }
+  const normalized = []
+  const seen = new Set<string>()
+  for (const mapping of mappings) {
+    const feeStandardId = String(mapping?.feeStandardId || '').trim()
+    if (!feeStandardId) continue
+    const quantityMultiplier = Number(mapping?.quantityMultiplier)
+    if (!Number.isFinite(quantityMultiplier) || quantityMultiplier <= 0) {
+      return { ok: false as const, message: '数量系数必须大于0', code: 'INVALID_PARAMETER', status: 400 }
+    }
+    const aggregationScope = mapping?.aggregationScope === 'case' ? 'case' : mapping?.aggregationScope === 'outbound' || !mapping?.aggregationScope ? 'outbound' : ''
+    if (!aggregationScope) {
+      return { ok: false as const, message: '聚合方式不支持', code: 'INVALID_PARAMETER', status: 400 }
+    }
+    const duplicateKey = `${feeStandardId}:${aggregationScope}`
+    if (seen.has(duplicateKey)) {
+      return { ok: false as const, message: '同一收费标准和聚合方式不能重复配置', code: 'RESOURCE_CONFLICT', status: 409 }
+    }
+    const feeStandard = db.prepare('SELECT * FROM fee_standards WHERE id = ? AND status = ?')
+      .get(feeStandardId, 'active') as any
+    if (!feeStandard) {
+      return { ok: false as const, message: '收费标准不存在或已停用', code: 'INVALID_PARAMETER', status: 400 }
+    }
+    seen.add(duplicateKey)
+    normalized.push({
+      feeStandard,
+      feeStandardId,
+      quantityMultiplier,
+      aggregationScope,
+      sortOrder: Number.isFinite(Number(mapping?.sortOrder)) ? Number(mapping.sortOrder) : normalized.length,
+    })
+  }
+  if (requireNonEmpty && normalized.length === 0) {
+    return { ok: false as const, message: '至少配置一个有效收费标准', code: 'INVALID_PARAMETER', status: 400 }
+  }
+  return { ok: true as const, mappings: normalized }
+}
+
 const costRunPayload = (row: any) => ({
   id: row.id,
   yearMonth: row.year_month,
@@ -377,6 +430,66 @@ const costDriverPayload = (row: any) => ({
   createdAt: row.created_at,
 })
 
+function validateCostDriverType(db: any, code: string) {
+  const driverCode = String(code || '').trim()
+  if (!driverCode) return { ok: false as const, message: '成本动因类型不能为空' }
+  const driver = db.prepare(`
+    SELECT * FROM abc_cost_drivers
+    WHERE code = ?
+      AND (status = 'active' OR status = 1 OR status = '1' OR status IS NULL OR status = '')
+  `).get(driverCode) as any
+  if (!driver) return { ok: false as const, message: '成本动因类型不存在或已停用' }
+  return { ok: true as const, code: driverCode }
+}
+
+function validateCostPoolInput(db: any, body: any) {
+  const activityCenterId = String(body?.activityCenterId || '').trim()
+  if (!activityCenterId) {
+    return { ok: false as const, message: '作业中心不能为空', code: 'INVALID_PARAMETER', status: 400 }
+  }
+
+  const activityCenter = db.prepare(`
+    SELECT * FROM abc_activity_centers
+    WHERE id = ?
+      AND (status = 'active' OR status = 1 OR status = '1' OR status IS NULL OR status = '')
+  `).get(activityCenterId) as any
+  if (!activityCenter) {
+    return { ok: false as const, message: '作业中心不存在或已停用', code: 'INVALID_PARAMETER', status: 400 }
+  }
+
+  const yearMonth = normalizeMonth(body?.yearMonth)
+  const direct = body?.directCost === undefined || body?.directCost === null ? 0 : Number(body.directCost)
+  const indirect = body?.indirectCost === undefined || body?.indirectCost === null ? 0 : Number(body.indirectCost)
+  const total = body?.amount === undefined || body?.amount === null ? direct + indirect : Number(body.amount)
+  const driverQty = Number(body?.driverQuantity)
+
+  if (!Number.isFinite(direct) || direct < 0) {
+    return { ok: false as const, message: '直接成本不能为负数', code: 'INVALID_PARAMETER', status: 400 }
+  }
+  if (!Number.isFinite(indirect) || indirect < 0) {
+    return { ok: false as const, message: '间接成本不能为负数', code: 'INVALID_PARAMETER', status: 400 }
+  }
+  if (!Number.isFinite(total) || total < 0) {
+    return { ok: false as const, message: '成本池金额不能为负数', code: 'INVALID_PARAMETER', status: 400 }
+  }
+  if (!Number.isFinite(driverQty) || driverQty <= 0) {
+    return { ok: false as const, message: '动因数量必须大于0', code: 'INVALID_PARAMETER', status: 400 }
+  }
+
+  return {
+    ok: true as const,
+    activityCenterId,
+    yearMonth,
+    direct,
+    indirect,
+    total,
+    driverQty,
+    driverRate: total / driverQty,
+    source: body?.source || 'manual',
+    description: body?.description || null,
+  }
+}
+
 const costExceptionPayload = (row: any) => ({
   id: row.id,
   exceptionNo: row.exception_no,
@@ -484,6 +597,10 @@ router.post('/periods/:id/close', requireCostWrite, (req, res) => {
     const period = db.prepare('SELECT * FROM abc_periods WHERE id = ?').get(req.params.id) as any
     if (!period) { error(res, '成本期间不存在', 'NOT_FOUND', 404); return }
     if (period.status === 'closed') { success(res, periodPayload(period)); return }
+    if (period.status !== 'calculated') {
+      error(res, '成本期间尚未完成核算，不能关账', 'PERIOD_NOT_CALCULATED', 422, { status: period.status })
+      return
+    }
 
     const openFeeMapping = (db.prepare(`
       SELECT COUNT(*) as total
@@ -549,11 +666,14 @@ router.post('/activity-centers', requireCostWrite, (req, res) => {
   try {
     const { code, name, description, costDriverType, parentId, sortOrder } = req.body
     if (!code || !name) { error(res, '缺少必填字段', 'INVALID_PARAMETER', 400); return }
+    const db = getDatabase()
+    const driverValidation = validateCostDriverType(db, costDriverType || 'slide_count')
+    if (!driverValidation.ok) { error(res, driverValidation.message, 'INVALID_PARAMETER', 400); return }
     const id = uuidv4()
-    getDatabase().prepare(`
+    db.prepare(`
       INSERT INTO abc_activity_centers (id, code, name, description, cost_driver_type, parent_id, sort_order, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, 'active')
-    `).run(id, code, name, description || null, costDriverType || 'slide_count', parentId || null, sortOrder || 0)
+    `).run(id, code, name, description || null, driverValidation.code, parentId || null, sortOrder || 0)
     success(res, { id }, 'Created', 201)
   } catch (err: any) { error(res, err.message) }
 })
@@ -564,6 +684,9 @@ router.put('/activity-centers/:id', requireCostWrite, (req, res) => {
     const db = getDatabase()
     const existing = db.prepare('SELECT * FROM abc_activity_centers WHERE id = ?').get(req.params.id) as any
     if (!existing) { error(res, '作业中心不存在', 'NOT_FOUND', 404); return }
+    const nextCostDriverType = costDriverType || existing.cost_driver_type
+    const driverValidation = validateCostDriverType(db, nextCostDriverType)
+    if (!driverValidation.ok) { error(res, driverValidation.message, 'INVALID_PARAMETER', 400); return }
     db.prepare(`
       UPDATE abc_activity_centers
       SET name = ?, description = ?, cost_driver_type = ?, parent_id = ?, sort_order = ?, status = ?, updated_at = CURRENT_TIMESTAMP
@@ -571,7 +694,7 @@ router.put('/activity-centers/:id', requireCostWrite, (req, res) => {
     `).run(
       name || existing.name,
       description !== undefined ? description : existing.description,
-      costDriverType || existing.cost_driver_type,
+      driverValidation.code,
       parentId !== undefined ? parentId : existing.parent_id,
       sortOrder !== undefined ? sortOrder : existing.sort_order,
       status || existing.status,
@@ -583,7 +706,16 @@ router.put('/activity-centers/:id', requireCostWrite, (req, res) => {
 
 router.delete('/activity-centers/:id', requireCostWrite, (req, res) => {
   try {
-    getDatabase().prepare('DELETE FROM abc_activity_centers WHERE id = ?').run(req.params.id)
+    const db = getDatabase()
+    const existing = db.prepare('SELECT * FROM abc_activity_centers WHERE id = ?').get(req.params.id) as any
+    if (!existing) { error(res, '作业中心不存在', 'NOT_FOUND', 404); return }
+    const childCount = (db.prepare('SELECT COUNT(*) as count FROM abc_activity_centers WHERE parent_id = ?').get(req.params.id) as any)?.count || 0
+    if (Number(childCount) > 0) { error(res, '存在子作业中心，不能删除', 'RESOURCE_CONFLICT', 409); return }
+    const bomLinkCount = (db.prepare('SELECT COUNT(*) as count FROM bom_activity_links WHERE activity_center_id = ?').get(req.params.id) as any)?.count || 0
+    if (Number(bomLinkCount) > 0) { error(res, '作业中心已被BOM引用，不能删除', 'RESOURCE_CONFLICT', 409); return }
+    const poolCount = (db.prepare('SELECT COUNT(*) as count FROM abc_cost_pools WHERE activity_center_id = ?').get(req.params.id) as any)?.count || 0
+    if (Number(poolCount) > 0) { error(res, '作业中心已有成本池记录，不能删除', 'RESOURCE_CONFLICT', 409); return }
+    db.prepare('DELETE FROM abc_activity_centers WHERE id = ?').run(req.params.id)
     success(res, null, 'Deleted')
   } catch (err: any) { error(res, err.message) }
 })
@@ -633,7 +765,12 @@ router.put('/cost-drivers/:id', requireCostWrite, (req, res) => {
 
 router.delete('/cost-drivers/:id', requireCostWrite, (req, res) => {
   try {
-    getDatabase().prepare('DELETE FROM abc_cost_drivers WHERE id = ?').run(req.params.id)
+    const db = getDatabase()
+    const existing = db.prepare('SELECT * FROM abc_cost_drivers WHERE id = ?').get(req.params.id) as any
+    if (!existing) { error(res, '成本动因不存在', 'NOT_FOUND', 404); return }
+    const activityCenterCount = (db.prepare('SELECT COUNT(*) as count FROM abc_activity_centers WHERE cost_driver_type = ?').get(existing.code) as any)?.count || 0
+    if (Number(activityCenterCount) > 0) { error(res, '成本动因已被作业中心引用，不能删除', 'RESOURCE_CONFLICT', 409); return }
+    db.prepare('DELETE FROM abc_cost_drivers WHERE id = ?').run(req.params.id)
     success(res, null, 'Deleted')
   } catch (err: any) { error(res, err.message) }
 })
@@ -691,18 +828,13 @@ router.get('/cost-pools', (req, res) => {
 
 router.post('/cost-pools', requireCostWrite, (req, res) => {
   try {
-    const { activityCenterId, yearMonth, amount, directCost, indirectCost, driverQuantity, source, description } = req.body
     const db = getDatabase()
-    const targetMonth = yearMonth || new Date().toISOString().slice(0, 7)
-    const direct = Number(directCost) || 0
-    const indirect = Number(indirectCost) || 0
-    const total = amount !== undefined ? Number(amount) || 0 : direct + indirect
-    const driverQty = Number(driverQuantity) || 0
-    const driverRate = driverQty > 0 ? total / driverQty : 0
+    const input = validateCostPoolInput(db, req.body)
+    if (!input.ok) { error(res, input.message, input.code, input.status); return }
+    ensurePeriodOpen(db, input.yearMonth)
 
-    const existing = activityCenterId
-      ? db.prepare('SELECT id FROM abc_cost_pools WHERE activity_center_id = ? AND year_month = ?').get(activityCenterId, targetMonth) as any
-      : null
+    const existing = db.prepare('SELECT id FROM abc_cost_pools WHERE activity_center_id = ? AND year_month = ?')
+      .get(input.activityCenterId, input.yearMonth) as any
 
     if (existing) {
       db.prepare(`
@@ -710,7 +842,7 @@ router.post('/cost-pools', requireCostWrite, (req, res) => {
         SET direct_cost = ?, indirect_cost = ?, total_cost = ?, driver_quantity = ?,
             driver_rate = ?, amount = ?, source = ?, description = ?
         WHERE id = ?
-      `).run(direct, indirect, total, driverQty, driverRate, total, source || 'manual', description || null, existing.id)
+      `).run(input.direct, input.indirect, input.total, input.driverQty, input.driverRate, input.total, input.source, input.description, existing.id)
       success(res, { id: existing.id }, 'Updated')
       return
     }
@@ -725,19 +857,22 @@ router.post('/cost-pools', requireCostWrite, (req, res) => {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
-      activityCenterId || null,
-      targetMonth,
-      direct,
-      indirect,
-      total,
-      driverQty,
-      driverRate,
-      total,
-      source || 'manual',
-      description || null,
+      input.activityCenterId,
+      input.yearMonth,
+      input.direct,
+      input.indirect,
+      input.total,
+      input.driverQty,
+      input.driverRate,
+      input.total,
+      input.source,
+      input.description,
     )
     success(res, { id }, 'Created', 201)
-  } catch (err: any) { error(res, err.message) }
+  } catch (err: any) {
+    const code = err.message?.includes('已关账') ? 'PERIOD_CLOSED' : 'INTERNAL_ERROR'
+    error(res, err.message, code, code === 'PERIOD_CLOSED' ? 422 : 500)
+  }
 })
 
 router.post('/cost-pools/:action(sync|auto-collect|recalculate)', requireCostWrite, (req, res) => {
@@ -958,6 +1093,8 @@ router.post('/bom-fee-mappings/audit', requireCostWrite, (req, res) => {
 
 router.get('/bom-fee-mappings/:bomId', (req, res) => {
   try {
+    const bomCheck = assertActiveBom(getDatabase(), req.params.bomId)
+    if (!bomCheck.ok) { error(res, bomCheck.message, bomCheck.code, bomCheck.status); return }
     const rows = getDatabase().prepare(`
       SELECT m.*, fs.name as fee_standard_name, fs.code as fee_standard_code, fs.category,
              fs.fee_per_slide, fs.base_price, fs.tier_rules, fs.cap_amount
@@ -988,31 +1125,28 @@ router.get('/bom-fee-mappings/:bomId', (req, res) => {
 router.post('/bom-fee-mappings/:bomId/preview', (req, res) => {
   try {
     const db = getDatabase()
+    const bomCheck = assertActiveBom(db, req.params.bomId)
+    if (!bomCheck.ok) { error(res, bomCheck.message, bomCheck.code, bomCheck.status); return }
     const sampleCount = Math.max(1, Number(req.body?.sampleCount) || 1)
     const month = normalizeMonth(req.body?.yearMonth)
     const caseNo = req.body?.caseNo || null
-    const previewMappings = Array.isArray(req.body?.mappings)
-      ? req.body.mappings
-          .filter((mapping: any) => mapping?.feeStandardId)
-          .map((mapping: any) => {
-            const feeStandard = db.prepare('SELECT * FROM fee_standards WHERE id = ? AND status = ?')
-              .get(mapping.feeStandardId, 'active') as any
-            if (!feeStandard) return null
-            return {
-              fee_standard_id: feeStandard.id,
-              fee_standard_name: feeStandard.name,
-              category: feeStandard.category,
-              project_type: feeStandard.project_type,
-              fee_per_slide: feeStandard.fee_per_slide,
-              base_price: feeStandard.base_price,
-              tier_rules: feeStandard.tier_rules,
-              cap_amount: feeStandard.cap_amount,
-              quantity_multiplier: Number(mapping.quantityMultiplier) || 1,
-              aggregation_scope: mapping.aggregationScope === 'case' ? 'case' : 'outbound',
-            }
-          })
-          .filter(Boolean)
-      : undefined
+    let previewMappings
+    if (req.body && Object.prototype.hasOwnProperty.call(req.body, 'mappings')) {
+      const normalized = normalizeFeeMappingsInput(db, req.body.mappings, true)
+      if (!normalized.ok) { error(res, normalized.message, normalized.code, normalized.status); return }
+      previewMappings = normalized.mappings.map(mapping => ({
+        fee_standard_id: mapping.feeStandard.id,
+        fee_standard_name: mapping.feeStandard.name,
+        category: mapping.feeStandard.category,
+        project_type: mapping.feeStandard.project_type,
+        fee_per_slide: mapping.feeStandard.fee_per_slide,
+        base_price: mapping.feeStandard.base_price,
+        tier_rules: mapping.feeStandard.tier_rules,
+        cap_amount: mapping.feeStandard.cap_amount,
+        quantity_multiplier: mapping.quantityMultiplier,
+        aggregation_scope: mapping.aggregationScope,
+      }))
+    }
     const result = calculateSlideCostWithFee(db, {
       bomId: req.params.bomId,
       slideCount: sampleCount,
@@ -1043,6 +1177,10 @@ router.put('/bom-fee-mappings/:bomId', requireCostWrite, (req, res) => {
     const db = getDatabase()
     const mappings = Array.isArray(req.body?.mappings) ? req.body.mappings : []
     const operator = getOperator(req)
+    const bomCheck = assertActiveBom(db, req.params.bomId)
+    if (!bomCheck.ok) { error(res, bomCheck.message, bomCheck.code, bomCheck.status); return }
+    const normalized = normalizeFeeMappingsInput(db, mappings, true)
+    if (!normalized.ok) { error(res, normalized.message, normalized.code, normalized.status); return }
 
     db.exec('BEGIN IMMEDIATE')
     try {
@@ -1054,24 +1192,23 @@ router.put('/bom-fee-mappings/:bomId', requireCostWrite, (req, res) => {
         )
         VALUES (?, ?, ?, ?, ?, ?, 'active')
       `)
-      mappings.forEach((mapping: any, index: number) => {
-        if (!mapping.feeStandardId) return
+      normalized.mappings.forEach((mapping: any, index: number) => {
         stmt.run(
           uuidv4(),
           req.params.bomId,
           mapping.feeStandardId,
-          Number(mapping.quantityMultiplier) || 1,
-          mapping.aggregationScope === 'case' ? 'case' : 'outbound',
+          mapping.quantityMultiplier,
+          mapping.aggregationScope,
           mapping.sortOrder ?? index,
         )
       })
-      writeAuditLog(db, 'bom_fee_mapping', 'update', req.params.bomId, { count: mappings.length }, operator)
+      writeAuditLog(db, 'bom_fee_mapping', 'update', req.params.bomId, { count: normalized.mappings.length }, operator)
       db.exec('COMMIT')
     } catch (innerErr) {
       db.exec('ROLLBACK')
       throw innerErr
     }
-    success(res, { bomId: req.params.bomId, count: mappings.length })
+    success(res, { bomId: req.params.bomId, count: normalized.mappings.length })
   } catch (err: any) { error(res, err.message) }
 })
 
@@ -1606,14 +1743,115 @@ router.get('/profitability', (req, res) => {
   try {
     const { page, pageSize, offset } = pageParams(req.query)
     const db = getDatabase()
-    const total = (db.prepare('SELECT COUNT(*) as total FROM outbound_abc_details').get() as any)?.total || 0
+    const { startDate, endDate, month, yearMonth, projectType, dimension } = req.query
+    const startMonth = String(startDate || month || yearMonth || '').slice(0, 7)
+    const endMonth = String(endDate || month || yearMonth || startMonth || '').slice(0, 7)
+    const params: any[] = []
+    let where = `COALESCE(d.cost_status, 'costed') NOT IN ('pending_cost', 'cost_exception')`
+
+    if (startMonth) { where += ' AND d.cost_month >= ?'; params.push(startMonth) }
+    if (endMonth) { where += ' AND d.cost_month <= ?'; params.push(endMonth) }
+    if (projectType && projectType !== 'all') { where += ' AND p.type = ?'; params.push(projectType) }
+
+    if (dimension === 'project') {
+      const groupedSql = `
+        SELECT
+          COALESCE(d.project_id, d.outbound_id) as project_id,
+          COALESCE(p.name, '未关联项目') as project_name,
+          COALESCE(p.type, '') as project_type,
+          COUNT(d.id) as case_count,
+          COALESCE(SUM(d.sample_count), 0) as sample_count,
+          COALESCE(SUM(d.material_cost), 0) as material_cost,
+          COALESCE(SUM(d.activity_cost), 0) as activity_cost,
+          COALESCE(SUM(d.total_cost), 0) as total_cost,
+          COALESCE(SUM(d.fee_amount), 0) as fee_amount,
+          COALESCE(SUM(d.profit), 0) as profit,
+          MIN(d.cost_month) as cost_month
+        FROM outbound_abc_details d
+        LEFT JOIN projects p ON d.project_id = p.id
+        WHERE ${where}
+        GROUP BY COALESCE(d.project_id, d.outbound_id), COALESCE(p.name, '未关联项目'), COALESCE(p.type, '')
+      `
+      const total = (db.prepare(`SELECT COUNT(*) as total FROM (${groupedSql}) grouped_profitability`).get(...params) as any)?.total || 0
+      const rows = db.prepare(`
+        ${groupedSql}
+        ORDER BY profit DESC, total_cost DESC
+        LIMIT ? OFFSET ?
+      `).all(...params, pageSize, offset) as any[]
+      successList(res, rows.map(row => ({
+        projectId: row.project_id,
+        projectName: row.project_name,
+        projectType: row.project_type || '',
+        caseCount: row.case_count || 0,
+        sampleCount: row.sample_count || 0,
+        materialCost: row.material_cost || 0,
+        activityCost: row.activity_cost || 0,
+        totalCost: row.total_cost || 0,
+        feeAmount: row.fee_amount || 0,
+        profit: row.profit || 0,
+        profitRate: row.fee_amount > 0 ? row.profit / row.fee_amount : 0,
+        costMonth: row.cost_month,
+      })), page, pageSize, total)
+      return
+    }
+
+    if (dimension === 'bom') {
+      const groupedSql = `
+        SELECT
+          COALESCE(d.bom_id, d.project_id, d.outbound_id) as bom_id,
+          COALESCE(b.name, p.name, '未关联项目') as bom_name,
+          COALESCE(p.type, b.type, '') as project_type,
+          COUNT(d.id) as case_count,
+          COALESCE(SUM(d.sample_count), 0) as sample_count,
+          COALESCE(SUM(d.material_cost), 0) as material_cost,
+          COALESCE(SUM(d.activity_cost), 0) as activity_cost,
+          COALESCE(SUM(d.total_cost), 0) as total_cost,
+          COALESCE(SUM(d.fee_amount), 0) as fee_amount,
+          COALESCE(SUM(d.profit), 0) as profit,
+          MIN(d.cost_month) as cost_month
+        FROM outbound_abc_details d
+        LEFT JOIN projects p ON d.project_id = p.id
+        LEFT JOIN boms b ON d.bom_id = b.id
+        WHERE ${where}
+        GROUP BY COALESCE(d.bom_id, d.project_id, d.outbound_id), COALESCE(b.name, p.name, '未关联项目'), COALESCE(p.type, b.type, '')
+      `
+      const total = (db.prepare(`SELECT COUNT(*) as total FROM (${groupedSql}) grouped_profitability`).get(...params) as any)?.total || 0
+      const rows = db.prepare(`
+        ${groupedSql}
+        ORDER BY total_cost DESC
+        LIMIT ? OFFSET ?
+      `).all(...params, pageSize, offset) as any[]
+      successList(res, rows.map(row => ({
+        bomId: row.bom_id,
+        bomName: row.bom_name,
+        projectType: row.project_type || '',
+        caseCount: row.case_count || 0,
+        sampleCount: row.sample_count || 0,
+        materialCost: row.material_cost || 0,
+        activityCost: row.activity_cost || 0,
+        totalCost: row.total_cost || 0,
+        feeAmount: row.fee_amount || 0,
+        profit: row.profit || 0,
+        profitRate: row.fee_amount > 0 ? row.profit / row.fee_amount : 0,
+        costMonth: row.cost_month,
+      })), page, pageSize, total)
+      return
+    }
+
+    const total = (db.prepare(`
+      SELECT COUNT(*) as total
+      FROM outbound_abc_details d
+      LEFT JOIN projects p ON d.project_id = p.id
+      WHERE ${where}
+    `).get(...params) as any)?.total || 0
     const rows = db.prepare(`
       SELECT d.*, p.name as project_name, p.type as project_type
       FROM outbound_abc_details d
       LEFT JOIN projects p ON d.project_id = p.id
+      WHERE ${where}
       ORDER BY d.created_at DESC
       LIMIT ? OFFSET ?
-    `).all(pageSize, offset) as any[]
+    `).all(...params, pageSize, offset) as any[]
     successList(res, rows.map(row => ({
       outboundId: row.outbound_id,
       projectId: row.project_id,
@@ -1633,45 +1871,200 @@ router.get('/profitability', (req, res) => {
 
 router.get('/fee-comparison', (req, res) => {
   try {
+    const { page, pageSize, offset } = pageParams(req.query)
     const db = getDatabase()
-    const rows = db.prepare(`
-      SELECT d.*, p.name as project_name
+    const { startDate, endDate, startMonth, endMonth, month, yearMonth, projectType, profitFilter, mappingFilter } = req.query
+    const dateExpr = 'COALESCE(o.created_at, d.created_at)'
+    const params: any[] = []
+    let where = `COALESCE(d.cost_status, 'costed') NOT IN ('pending_cost', 'cost_exception')`
+
+    const startDateText = String(startDate || '').trim()
+    const endDateText = String(endDate || '').trim()
+    const startMonthText = String(startMonth || month || yearMonth || '').slice(0, 7)
+    const endMonthText = String(endMonth || month || yearMonth || '').slice(0, 7)
+
+    if (startDateText) {
+      if (/^\d{4}-\d{2}$/.test(startDateText)) {
+        where += ' AND d.cost_month >= ?'
+        params.push(startDateText)
+      } else {
+        where += ` AND date(${dateExpr}) >= date(?)`
+        params.push(startDateText)
+      }
+    } else if (startMonthText) {
+      where += ' AND d.cost_month >= ?'
+      params.push(startMonthText)
+    }
+
+    if (endDateText) {
+      if (/^\d{4}-\d{2}$/.test(endDateText)) {
+        where += ' AND d.cost_month <= ?'
+        params.push(endDateText)
+      } else {
+        where += ` AND date(${dateExpr}) <= date(?)`
+        params.push(endDateText)
+      }
+    } else if (endMonthText) {
+      where += ' AND d.cost_month <= ?'
+      params.push(endMonthText)
+    }
+
+    if (projectType && projectType !== 'all') { where += ' AND p.type = ?'; params.push(projectType) }
+    if (profitFilter === 'loss') where += ' AND COALESCE(d.profit, 0) < 0'
+    if (profitFilter === 'profitable') where += ' AND COALESCE(d.profit, 0) >= 0'
+    if (mappingFilter === 'unmapped') where += ' AND d.fee_standard_id IS NULL'
+    if (mappingFilter === 'mapped') where += ' AND d.fee_standard_id IS NOT NULL'
+
+    const baseFrom = `
       FROM outbound_abc_details d
+      LEFT JOIN outbound_records o ON d.outbound_id = o.id
       LEFT JOIN projects p ON d.project_id = p.id
-      ORDER BY d.created_at DESC
-      LIMIT 100
-    `).all() as any[]
-    success(res, rows.map(row => ({
+      LEFT JOIN fee_standards fs ON d.fee_standard_id = fs.id
+      WHERE ${where}
+    `
+    const total = (db.prepare(`SELECT COUNT(*) as total ${baseFrom}`).get(...params) as any)?.total || 0
+    const summary = db.prepare(`
+      SELECT
+        COUNT(*) as total_outbounds,
+        COALESCE(SUM(d.total_cost), 0) as total_cost,
+        COALESCE(SUM(d.fee_amount), 0) as total_fee,
+        COALESCE(SUM(d.profit), 0) as total_profit,
+        COALESCE(SUM(CASE WHEN COALESCE(d.profit, 0) < 0 THEN 1 ELSE 0 END), 0) as loss_count,
+        COALESCE(SUM(CASE WHEN d.fee_standard_id IS NULL THEN 1 ELSE 0 END), 0) as no_mapping_count
+      ${baseFrom}
+    `).get(...params) as any
+    const rows = db.prepare(`
+      SELECT
+        d.*,
+        COALESCE(o.outbound_no, d.outbound_id) as outbound_no,
+        ${dateExpr} as outbound_date,
+        p.name as project_name,
+        p.type as project_type,
+        fs.name as fee_standard_name
+      ${baseFrom}
+      ORDER BY ${dateExpr} DESC, d.created_at DESC
+      LIMIT ? OFFSET ?
+    `).all(...params, pageSize, offset) as any[]
+    successList(res, rows.map(row => ({
+      outboundId: row.outbound_id,
+      outboundNo: row.outbound_no || row.outbound_id || '',
+      date: row.outbound_date || row.created_at,
       projectName: row.project_name || '未关联项目',
+      projectType: row.project_type || '',
+      sampleCount: row.sample_count || 0,
       materialCost: row.material_cost || 0,
       activityCost: row.activity_cost || 0,
       totalCost: row.total_cost || 0,
       feeAmount: row.fee_amount || 0,
       profit: row.profit || 0,
-      profitRate: row.profit_rate || 0,
-    })))
+      profitRate: row.fee_amount > 0 ? row.profit / row.fee_amount : 0,
+      feeStandardName: row.fee_standard_name || null,
+      feeCategory: row.fee_category || null,
+      costMonth: row.cost_month,
+    })), page, pageSize, total, {
+      summary: {
+        totalOutbounds: summary.total_outbounds || 0,
+        totalCost: summary.total_cost || 0,
+        totalFee: summary.total_fee || 0,
+        totalProfit: summary.total_profit || 0,
+        lossCount: summary.loss_count || 0,
+        noMappingCount: summary.no_mapping_count || 0,
+      },
+    })
   } catch (err: any) { error(res, err.message) }
 })
 
-router.get('/slide-cost-trend', (_req, res) => {
+router.get('/slide-cost-trend', (req, res) => {
   try {
-    const rows = getDatabase().prepare(`
-      SELECT cost_month as month,
-        COALESCE(SUM(total_cost), 0) as total_cost,
-        COALESCE(SUM(activity_cost), 0) as activity_cost,
-        COALESCE(SUM(material_cost), 0) as material_cost,
-        COALESCE(SUM(sample_count), 0) as sample_count
-      FROM outbound_abc_details
-      GROUP BY cost_month
-      ORDER BY cost_month ASC
-    `).all() as any[]
+    const db = getDatabase()
+    const { projectType, dimension } = req.query
+    const months = Math.max(1, Math.min(60, Number(req.query.months) || 12))
+    const params: any[] = []
+    let where = `d.cost_month IS NOT NULL AND COALESCE(d.cost_status, 'costed') NOT IN ('pending_cost', 'cost_exception')`
+    if (projectType && projectType !== 'all') { where += ' AND p.type = ?'; params.push(projectType) }
+
+    const monthScopeSql = `
+      SELECT DISTINCT scoped.cost_month
+      FROM outbound_abc_details scoped
+      LEFT JOIN projects scoped_p ON scoped.project_id = scoped_p.id
+      WHERE scoped.cost_month IS NOT NULL
+        AND COALESCE(scoped.cost_status, 'costed') NOT IN ('pending_cost', 'cost_exception')
+        ${projectType && projectType !== 'all' ? 'AND scoped_p.type = ?' : ''}
+      ORDER BY scoped.cost_month DESC
+      LIMIT ?
+    `
+    const scopedParams = projectType && projectType !== 'all' ? [projectType, months] : [months]
+    where += ` AND d.cost_month IN (${monthScopeSql})`
+    params.push(...scopedParams)
+
+    if (dimension === 'quarterly') {
+      const quarterExpr = `
+        substr(d.cost_month, 1, 4) || '-Q' ||
+        CASE
+          WHEN CAST(substr(d.cost_month, 6, 2) AS INTEGER) BETWEEN 1 AND 3 THEN '1'
+          WHEN CAST(substr(d.cost_month, 6, 2) AS INTEGER) BETWEEN 4 AND 6 THEN '2'
+          WHEN CAST(substr(d.cost_month, 6, 2) AS INTEGER) BETWEEN 7 AND 9 THEN '3'
+          WHEN CAST(substr(d.cost_month, 6, 2) AS INTEGER) BETWEEN 10 AND 12 THEN '4'
+        END
+      `
+      const rows = db.prepare(`
+        SELECT ${quarterExpr} as period,
+          COALESCE(SUM(d.total_cost), 0) as cost,
+          COUNT(d.id) as record_count,
+          COALESCE(SUM(d.sample_count), 0) as sample_count
+        FROM outbound_abc_details d
+        LEFT JOIN projects p ON d.project_id = p.id
+        WHERE ${where}
+        GROUP BY period
+        ORDER BY period ASC
+      `).all(...params) as any[]
+      const now = new Date()
+      const currentQuarter = `Q${Math.ceil((now.getMonth() + 1) / 3)}`
+      const currentPeriod = `${now.getFullYear()}-${currentQuarter}`
+      success(res, {
+        dimension: 'quarterly',
+        trend: rows.map(row => ({
+          period: row.period,
+          cost: row.cost || 0,
+          recordCount: row.record_count || 0,
+          sampleCount: row.sample_count || 0,
+          isComplete: row.period !== currentPeriod,
+        })),
+      })
+      return
+    }
+
+    const rows = db.prepare(`
+      SELECT d.cost_month as month,
+        COALESCE(d.bom_id, d.project_id, d.outbound_id) as bom_id,
+        COALESCE(b.name, p.name, '未关联项目') as bom_name,
+        COALESCE(p.type, b.type, '') as project_type,
+        COALESCE(SUM(d.total_cost), 0) as total_cost,
+        COALESCE(SUM(d.activity_cost), 0) as activity_cost,
+        COALESCE(SUM(d.material_cost), 0) as material_cost,
+        COALESCE(SUM(d.fee_amount), 0) as fee_amount,
+        COALESCE(SUM(d.profit), 0) as profit,
+        COALESCE(SUM(d.sample_count), 0) as sample_count
+      FROM outbound_abc_details d
+      LEFT JOIN projects p ON d.project_id = p.id
+      LEFT JOIN boms b ON d.bom_id = b.id
+      WHERE ${where}
+      GROUP BY d.cost_month, COALESCE(d.bom_id, d.project_id, d.outbound_id), COALESCE(b.name, p.name, '未关联项目'), COALESCE(p.type, b.type, '')
+      ORDER BY d.cost_month ASC, total_cost DESC
+    `).all(...params) as any[]
     success(res, rows.map(row => ({
       month: row.month,
+      bomId: row.bom_id,
+      bomName: row.bom_name,
+      projectType: row.project_type || '',
       totalCost: row.total_cost || 0,
       activityCost: row.activity_cost || 0,
       materialCost: row.material_cost || 0,
+      feeAmount: row.fee_amount || 0,
+      profit: row.profit || 0,
       sampleCount: row.sample_count || 0,
       costPerSlide: row.sample_count > 0 ? row.total_cost / row.sample_count : 0,
+      marginRate: row.fee_amount > 0 ? row.profit / row.fee_amount : 0,
     })))
   } catch (err: any) { error(res, err.message) }
 })
@@ -1683,6 +2076,7 @@ router.get('/export', (req, res) => {
     const { where, params } = monthRangeClause('d', req.query)
     let filterWhere = where
     const filterParams = [...params]
+    filterWhere += ` AND COALESCE(d.cost_status, 'costed') NOT IN ('pending_cost', 'cost_exception')`
     if (req.query.projectType && req.query.projectType !== 'all') {
       filterWhere += ' AND p.type = ?'
       filterParams.push(req.query.projectType)

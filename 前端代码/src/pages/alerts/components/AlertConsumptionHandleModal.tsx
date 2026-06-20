@@ -34,7 +34,7 @@ export function AlertConsumptionHandleModal({ open, alert, form, onClose, onChan
             <div className="text-sm text-gray-600 space-y-2">
               <div><strong>物料：</strong>{alert.materialName || '-'}</div>
               <div><strong>关联项目：</strong>{alert.projectName || '-'}</div>
-              <div><strong>来源规则：</strong><span className="text-blue-600">{alert.ruleId || 'RULE-003'}</span></div>
+              <div><strong>来源规则：</strong><span className="text-blue-600">{alert.ruleId || '-'}</span></div>
               <div><strong>当前值/阈值：</strong>{alert.currentStock ?? '-'} / {alert.threshold ?? '-'}</div>
               <div><strong>触发说明：</strong>{alert.triggerCondition || alert.message || '-'}</div>
             </div>

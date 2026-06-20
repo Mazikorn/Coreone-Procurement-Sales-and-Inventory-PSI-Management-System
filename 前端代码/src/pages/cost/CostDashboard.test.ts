@@ -6,6 +6,8 @@ import {
   buildCostAlertsOverviewLink,
   getClosePeriodBlockReason,
   getComparisonDirectionMeta,
+  getCostRunProcessedCount,
+  getCostRunSucceededCount,
   getDashboardOpenExceptionCount,
 } from './CostDashboard'
 
@@ -64,8 +66,25 @@ describe('getClosePeriodBlockReason', () => {
     expect(getClosePeriodBlockReason('calculated', 0, 3)).toBe('仍有 3 单未补算或成本异常')
   })
 
+  it('期间尚未核算完成时阻止关账', () => {
+    expect(getClosePeriodBlockReason('collecting', 0, 0)).toBe('请先执行重算并完成核算')
+    expect(getClosePeriodBlockReason('open', 0, 0)).toBe('请先执行重算并完成核算')
+  })
+
   it('期间已核算且没有阻断项时允许关账', () => {
     expect(getClosePeriodBlockReason('calculated', 0, 0)).toBe('')
+  })
+})
+
+describe('cost run summary normalization', () => {
+  it('兼容后端当前 processed/succeeded 字段', () => {
+    expect(getCostRunProcessedCount({ processed: 3, succeeded: 2, failed: 1 })).toBe(3)
+    expect(getCostRunSucceededCount({ processed: 3, succeeded: 2, failed: 1 })).toBe(2)
+  })
+
+  it('兼容旧 total/success 字段', () => {
+    expect(getCostRunProcessedCount({ total: 4, success: 4, failed: 0 })).toBe(4)
+    expect(getCostRunSucceededCount({ total: 4, success: 4, failed: 0 })).toBe(4)
   })
 })
 

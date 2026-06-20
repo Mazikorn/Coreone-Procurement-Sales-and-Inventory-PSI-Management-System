@@ -117,4 +117,11 @@ describe('Reconciliation export dialog', () => {
 
     expect(screen.getByText('开始日期不能晚于结束日期')).toBeInTheDocument()
   })
+
+  it('labels projects without BOM accurately in the summary cards', () => {
+    render(<Reconciliation />)
+
+    expect(screen.getByText('未配置BOM项目')).toBeInTheDocument()
+    expect(screen.queryByText('病例缺失')).not.toBeInTheDocument()
+  })
 })

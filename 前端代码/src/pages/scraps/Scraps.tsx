@@ -15,6 +15,7 @@ const reasonOptions = [
   { value: 'expired', label: '过期报废' },
   { value: 'damaged', label: '破损报废' },
   { value: 'quality_issue', label: '质量问题' },
+  { value: 'spoiled', label: '变质报废' },
   { value: 'obsolete', label: '淘汰/停用' },
   { value: 'other', label: '其他原因' },
 ]

@@ -4,7 +4,7 @@ import { usePagination } from '@/hooks/usePagination'
 import { useUrlParams } from '@/hooks/useUrlParams'
 import type { BOM, Project, ProjectDeleteCheck, ProjectStatusCheck } from '@/types'
 import { toast } from 'sonner'
-import { getUserRole } from '@/lib/permissions'
+import { getUserPermissions, getUserRole } from '@/lib/permissions'
 
 export interface FormData {
   type: string
@@ -59,9 +59,23 @@ const defaultForm: FormData = {
 const getValidStatus = (value: string | null) =>
   value === 'active' || value === 'inactive' ? value : ''
 
+function canManageProjects(role: string | null, permissions: string[]): boolean {
+  return (
+    role === 'admin' ||
+    role === 'technician' ||
+    role === 'pathologist' ||
+    role === 'warehouse_manager' ||
+    permissions.includes('*') ||
+    permissions.includes('projects') ||
+    permissions.includes('projects:add') ||
+    permissions.includes('projects:edit') ||
+    permissions.includes('projects:delete')
+  )
+}
+
 export function useProjectsPage() {
   const { get, getNumber, setMultiple } = useUrlParams()
-  const canWrite = getUserRole() === 'admin'
+  const canWrite = canManageProjects(getUserRole(), getUserPermissions())
 
   const [keyword, setKeyword] = useState(get('keyword') || '')
   const [typeFilter, setTypeFilter] = useState(get('type') || '')
@@ -287,6 +301,9 @@ export function useProjectsPage() {
     }
 
     const payload = buildPayload()
+    if ((modalType === 'edit' || modalType === 'copy') && editingRow && modalType === 'edit') {
+      payload.code = editingRow.code
+    }
     if (modalType === 'edit' && editingRow && payload.status !== editingRow.status) {
       setPendingEditStatusPayload(payload)
       setStatusTarget({

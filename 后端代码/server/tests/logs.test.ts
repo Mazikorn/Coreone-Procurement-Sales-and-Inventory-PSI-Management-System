@@ -434,4 +434,82 @@ describe('操作日志 API', () => {
       expect(res.body.error.code, JSON.stringify(query)).toBe('INVALID_PARAMETER')
     }
   })
+
+  it('LOG-013: 登录、用户、角色和日志导出动作进入操作日志', async () => {
+    const suffix = Date.now()
+    const username = `log-user-${suffix}`
+    const roleCode = `log_role_${suffix}`
+
+    const loginAgain = await request(app)
+      .post('/api/v1/auth/login')
+      .send({ username: 'admin', password: 'admin123' })
+    expect(loginAgain.status).toBe(200)
+
+    const createUser = await request(app)
+      .post('/api/v1/users')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        username,
+        realName: '日志用户',
+        role: 'technician',
+      })
+    expect(createUser.status).toBe(201)
+
+    const createRole = await request(app)
+      .post('/api/v1/roles')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        code: roleCode,
+        name: '日志角色',
+        permissions: ['logs:view'],
+        status: 'active',
+      })
+    expect(createRole.status).toBe(200)
+
+    const exported = await request(app)
+      .post('/api/v1/logs/export')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ module: 'user', keyword: username, includeBasic: true, includeDetail: true })
+    expect(exported.status).toBe(200)
+
+    const loginLogs = await request(app)
+      .get('/api/v1/logs')
+      .query({ username: 'admin', type: 'login', module: 'system', pageSize: 100 })
+      .set('Authorization', `Bearer ${adminToken}`)
+    expect(loginLogs.status).toBe(200)
+    expect(loginLogs.body.data.list.some((row: any) => row.operationType === 'login')).toBe(true)
+
+    const userLogs = await request(app)
+      .get('/api/v1/logs')
+      .query({ module: 'user', type: 'create', keyword: username, pageSize: 100 })
+      .set('Authorization', `Bearer ${adminToken}`)
+    expect(userLogs.status).toBe(200)
+    expect(userLogs.body.data.list[0]).toMatchObject({
+      username: 'admin',
+      module: 'user',
+      operationType: 'create',
+    })
+    expect(userLogs.body.data.list[0].requestData).toMatchObject({ username, module: 'user' })
+    expect(JSON.stringify(userLogs.body.data.list[0].requestData)).not.toContain('password')
+
+    const roleLogs = await request(app)
+      .get('/api/v1/logs')
+      .query({ module: 'role', type: 'create', keyword: roleCode, pageSize: 100 })
+      .set('Authorization', `Bearer ${adminToken}`)
+    expect(roleLogs.status).toBe(200)
+    expect(roleLogs.body.data.list[0]).toMatchObject({
+      module: 'role',
+      operationType: 'create',
+    })
+
+    const exportLogs = await request(app)
+      .get('/api/v1/logs')
+      .query({ module: 'logs', type: 'export', pageSize: 100 })
+      .set('Authorization', `Bearer ${adminToken}`)
+    expect(exportLogs.status).toBe(200)
+    expect(exportLogs.body.data.list[0]).toMatchObject({
+      module: 'logs',
+      operationType: 'export',
+    })
+  })
 })

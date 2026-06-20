@@ -115,7 +115,7 @@ describe('报废管理 API', () => {
       .send({
         materialId,
         quantity: 2,
-        reason: '测试报废',
+        reason: 'damaged',
         remark: 'Vitest报废测试',
       })
 
@@ -152,7 +152,7 @@ describe('报废管理 API', () => {
     const createRes = await request(app)
       .post('/api/v1/scraps')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ materialId, quantity: 1, reason: '测试撤销报废' })
+      .send({ materialId, quantity: 1, reason: 'damaged' })
 
     expect(createRes.status).toBe(200)
 
@@ -180,31 +180,41 @@ describe('报废管理 API', () => {
     const missingMaterialRes = await request(app)
       .post('/api/v1/scraps')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ quantity: 1, reason: '缺少物料' })
+      .send({ quantity: 1, reason: 'damaged' })
     expect(missingMaterialRes.status).toBe(400)
 
     const negativeQtyRes = await request(app)
       .post('/api/v1/scraps')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ materialId, quantity: -1, reason: '数量非法' })
+      .send({ materialId, quantity: -1, reason: 'damaged' })
     expect(negativeQtyRes.status).toBe(400)
 
     const notFoundRes = await request(app)
       .post('/api/v1/scraps')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ materialId: 'non-existent-id', quantity: 1, reason: '不存在物料' })
+      .send({ materialId: 'non-existent-id', quantity: 1, reason: 'damaged' })
     expect(notFoundRes.status).toBe(404)
 
     const insufficientRes = await request(app)
       .post('/api/v1/scraps')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ materialId, quantity: 2, reason: '库存不足' })
+      .send({ materialId, quantity: 2, reason: 'damaged' })
     expect(insufficientRes.status).toBe(422)
+
+    const invalidReasonRes = await request(app)
+      .post('/api/v1/scraps')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ materialId, quantity: 1, reason: '临时手写原因' })
+    expect(invalidReasonRes.status).toBe(400)
+    expect(invalidReasonRes.body.error.message).toContain('报废原因分类无效')
 
     const deleteNotFoundRes = await request(app)
       .delete('/api/v1/scraps/non-existent-id')
       .set('Authorization', `Bearer ${adminToken}`)
     expect(deleteNotFoundRes.status).toBe(404)
+
+    const afterInvalidRequests = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+    expect(afterInvalidRequests.stock).toBe(1)
   })
 
   it('SC-005: 批量报废在一个事务内扣减库存并写入流水', async () => {
@@ -410,7 +420,7 @@ describe('报废管理 API', () => {
     const singleRes = await request(app)
       .post('/api/v1/scraps')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ materialId: single.materialId, batchId: single.batchId, quantity: 3, reason: '库位库存不足报废' })
+      .send({ materialId: single.materialId, batchId: single.batchId, quantity: 3, reason: 'damaged' })
 
     expect(singleRes.status).toBe(422)
     expect(singleRes.body.error.code).toBe('STOCK_INSUFFICIENT')
@@ -450,7 +460,7 @@ describe('报废管理 API', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
         records: [
-          { materialId: batch.materialId, batchId: batch.batchId, quantity: 3, reason: '库位库存不足批量报废' },
+          { materialId: batch.materialId, batchId: batch.batchId, quantity: 3, reason: 'damaged' },
         ],
       })
 
@@ -488,7 +498,7 @@ describe('报废管理 API', () => {
     const singleRes = await request(app)
       .post('/api/v1/scraps')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ materialId: singleMaterialId, quantity: 2, reason: '停用物料报废' })
+      .send({ materialId: singleMaterialId, quantity: 2, reason: 'damaged' })
 
     expect(singleRes.status).toBe(409)
     expect(singleRes.body.error.message).toContain('物料已停用')
@@ -498,7 +508,7 @@ describe('报废管理 API', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
         records: [
-          { materialId: batchMaterialId, quantity: 2, reason: '停用物料批量报废' },
+          { materialId: batchMaterialId, quantity: 2, reason: 'damaged' },
         ],
       })
 

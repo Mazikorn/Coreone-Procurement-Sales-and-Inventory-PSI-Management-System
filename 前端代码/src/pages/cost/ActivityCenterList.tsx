@@ -17,7 +17,12 @@ interface ActivityCenter {
   updatedAt: string
 }
 
-const COST_DRIVER_TYPES = [
+interface CostDriverOption {
+  value: string
+  label: string
+}
+
+const DEFAULT_COST_DRIVER_TYPES = [
   { value: 'block_count', label: '蜡块数' },
   { value: 'slide_count', label: '切片数' },
   { value: 'stain_count', label: '染色次数' },
@@ -29,6 +34,7 @@ const COST_DRIVER_TYPES = [
 
 export function ActivityCenterList() {
   const [activityCenters, setActivityCenters] = useState<ActivityCenter[]>([])
+  const [costDriverTypes, setCostDriverTypes] = useState<CostDriverOption[]>(DEFAULT_COST_DRIVER_TYPES)
   const [loading, setLoading] = useState(true)
   const [searchKeyword, setSearchKeyword] = useState('')
   const [showDialog, setShowDialog] = useState(false)
@@ -45,7 +51,33 @@ export function ActivityCenterList() {
 
   useEffect(() => {
     loadActivityCenters()
+    loadCostDriverTypes()
   }, [])
+
+  const loadCostDriverTypes = async () => {
+    try {
+      const response = await fetch('/api/v1/abc/cost-drivers', {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        },
+      })
+      const data = await response.json()
+      if (data.success) {
+        const list = data.data?.list || data.data?.items || data.data || []
+        const activeOptions = list
+          .filter((driver: any) => (driver.status || 'active') === 'active')
+          .map((driver: any) => ({
+            value: driver.code,
+            label: `${driver.name}${driver.unit ? `（${driver.unit}）` : ''}`,
+          }))
+        if (activeOptions.length > 0) {
+          setCostDriverTypes(activeOptions)
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load cost drivers:', error)
+    }
+  }
 
   const loadActivityCenters = async () => {
     try {
@@ -231,7 +263,7 @@ export function ActivityCenterList() {
                   <td className="px-4 py-3 text-sm font-medium text-gray-900">{center.name}</td>
                   <td className="px-4 py-3 text-sm text-gray-500">{center.description || '-'}</td>
                   <td className="px-4 py-3 text-sm text-gray-500">
-                    {COST_DRIVER_TYPES.find(t => t.value === center.costDriverType)?.label || center.costDriverType}
+                    {costDriverTypes.find(t => t.value === center.costDriverType)?.label || center.costDriverType}
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-500">{center.sortOrder}</td>
                   <td className="px-4 py-3">
@@ -314,7 +346,7 @@ export function ActivityCenterList() {
                 onChange={(e) => setFormData({ ...formData, costDriverType: e.target.value })}
                 className="w-full h-10 px-3 border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
               >
-                {COST_DRIVER_TYPES.map(type => (
+                {costDriverTypes.map(type => (
                   <option key={type.value} value={type.value}>{type.label}</option>
                 ))}
               </select>

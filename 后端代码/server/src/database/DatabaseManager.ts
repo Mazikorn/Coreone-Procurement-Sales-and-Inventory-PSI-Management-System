@@ -81,6 +81,9 @@ export function initializeDatabase(): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS suppliers (id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL, contact TEXT, phone TEXT, email TEXT, address TEXT, tax_no TEXT, bank_name TEXT, bank_account TEXT, status INTEGER NOT NULL DEFAULT 1, cooperation_count INTEGER DEFAULT 0, total_amount DECIMAL(18, 4) DEFAULT 0, rating INTEGER DEFAULT 5, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, created_by TEXT, updated_by TEXT, is_deleted INTEGER NOT NULL DEFAULT 0)
   `)
+  ensureColumn('suppliers', 'tax_no', 'TEXT')
+  ensureColumn('suppliers', 'bank_name', 'TEXT')
+  ensureColumn('suppliers', 'bank_account', 'TEXT')
   database.exec(`
     CREATE TABLE IF NOT EXISTS locations (id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL, type TEXT NOT NULL DEFAULT 'shelf', parent_id TEXT, zone TEXT NOT NULL, shelf TEXT, position TEXT, capacity INTEGER DEFAULT 999999, used INTEGER DEFAULT 0, status INTEGER NOT NULL DEFAULT 1, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, created_by TEXT, updated_by TEXT, is_deleted INTEGER NOT NULL DEFAULT 0)
   `)
@@ -217,6 +220,10 @@ export function initializeDatabase(): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS alerts (id TEXT PRIMARY KEY, type TEXT NOT NULL, level TEXT NOT NULL, material_id TEXT NOT NULL, material_name TEXT, current_stock INTEGER, threshold INTEGER, message TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', handled_by TEXT, handled_at TEXT, remark TEXT, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)
   `)
+  ensureColumn('alerts', 'batch_id', 'TEXT')
+  ensureColumn('alerts', 'batch_no', 'TEXT')
+  ensureColumn('alerts', 'rule_id', 'TEXT')
+  ensureColumn('alerts', 'trigger_condition', 'TEXT')
   database.exec(`
     CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, password TEXT NOT NULL, real_name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'operator', department TEXT, phone TEXT, email TEXT, status INTEGER NOT NULL DEFAULT 1, last_login DATETIME, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, created_by TEXT, updated_by TEXT, is_deleted INTEGER NOT NULL DEFAULT 0)
   `)
@@ -251,7 +258,7 @@ export function initializeDatabase(): void {
     )
   `)
   database.exec(`
-    CREATE TABLE IF NOT EXISTS return_records (id TEXT PRIMARY KEY, return_no TEXT NOT NULL UNIQUE, material_id TEXT NOT NULL, batch_id TEXT, quantity DECIMAL(18, 4) NOT NULL, unit_cost DECIMAL(18, 4) DEFAULT 0, total_cost DECIMAL(18, 4) DEFAULT 0, reason TEXT NOT NULL, operator TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'completed', remark TEXT, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, is_deleted INTEGER NOT NULL DEFAULT 0)
+    CREATE TABLE IF NOT EXISTS return_records (id TEXT PRIMARY KEY, return_no TEXT NOT NULL UNIQUE, outbound_item_id TEXT, material_id TEXT NOT NULL, batch_id TEXT, quantity DECIMAL(18, 4) NOT NULL, unit_cost DECIMAL(18, 4) DEFAULT 0, total_cost DECIMAL(18, 4) DEFAULT 0, reason TEXT NOT NULL, operator TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'completed', remark TEXT, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, is_deleted INTEGER NOT NULL DEFAULT 0)
   `)
   database.exec(`
     CREATE TABLE IF NOT EXISTS supplier_returns (
@@ -564,6 +571,7 @@ export function initializeDatabase(): void {
   ensureColumn('lis_cases', 'updated_at', 'DATETIME')
   ensureColumn('return_records', 'is_deleted', 'INTEGER NOT NULL DEFAULT 0')
   ensureColumn('return_records', 'batch_id', 'TEXT')
+  ensureColumn('return_records', 'outbound_item_id', 'TEXT')
   ensureColumn('return_records', 'unit_cost', 'DECIMAL(18, 4) DEFAULT 0')
   ensureColumn('return_records', 'total_cost', 'DECIMAL(18, 4) DEFAULT 0')
   ensureColumn('scrap_records', 'is_deleted', 'INTEGER NOT NULL DEFAULT 0')
@@ -939,7 +947,7 @@ export function initializeDatabase(): void {
       UPDATE roles
       SET permissions = ?, updated_at = CURRENT_TIMESTAMP
       WHERE code = 'warehouse_manager' AND is_deleted = 0
-    `).run(removePermissions(warehouseRole.permissions, ['purchase_orders']))
+    `).run(removePermissions(warehouseRole.permissions, ['purchase_orders', 'bom']))
   }
   database.prepare(`
     UPDATE roles

@@ -39,4 +39,18 @@ describe('AlertConsumptionDetailModal', () => {
     expect(screen.queryByText('+2.08σ')).not.toBeInTheDocument()
     expect(screen.queryByText('2024 Q3')).not.toBeInTheDocument()
   })
+
+  it('does not invent a source rule when backend did not provide one', () => {
+    render(
+      <AlertConsumptionDetailModal
+        open
+        alert={{ ...stagnantAlert, ruleId: undefined }}
+        onClose={vi.fn()}
+        onHandle={vi.fn()}
+        formatDate={(value) => value}
+      />
+    )
+
+    expect(screen.queryByText('RULE-003')).not.toBeInTheDocument()
+  })
 })

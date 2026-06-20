@@ -17,8 +17,9 @@ export function checkStockAlerts(db: any, materialIds: string[]): void {
       if (currentStock <= safetyStock && safetyStock > 0) {
         const exists = db.prepare('SELECT COUNT(*) as c FROM alerts WHERE material_id = ? AND type = ? AND status = "pending"').get(materialId, 'low-stock') as any
         if (exists.c === 0) {
-          db.prepare(`INSERT INTO alerts (id, type, level, material_id, material_name, current_stock, threshold, message, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP)`)
-            .run(uuidv4(), 'low-stock', 'warning', materialId, material?.name || '', currentStock, safetyStock, `库存不足：当前 ${currentStock}，安全库存 ${safetyStock}`)
+          const triggerCondition = `当前库存 ${currentStock} <= 安全库存 ${safetyStock}`
+          db.prepare(`INSERT INTO alerts (id, type, level, material_id, material_name, current_stock, threshold, message, status, rule_id, trigger_condition, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, CURRENT_TIMESTAMP)`)
+            .run(uuidv4(), 'low-stock', 'warning', materialId, material?.name || '', currentStock, safetyStock, `库存不足：当前 ${currentStock}，安全库存 ${safetyStock}`, 'RULE-001', triggerCondition)
         }
       }
 
@@ -32,16 +33,24 @@ export function checkStockAlerts(db: any, materialIds: string[]): void {
       thresholdDate.setDate(thresholdDate.getDate() + 30)
       const thresholdStr = thresholdDate.toISOString().split('T')[0]
       const expiringBatches = db.prepare(`
-        SELECT b.batch_no, b.expiry_date
+        SELECT b.id as batch_id, b.batch_no, b.expiry_date
         FROM batches b
         WHERE b.material_id = ? AND b.status = 1 AND b.remaining > 0 AND b.expiry_date <= ?
       `).all(materialId, thresholdStr) as any[]
 
       for (const batch of expiringBatches) {
-        const exists = db.prepare('SELECT COUNT(*) as c FROM alerts WHERE material_id = ? AND type = ? AND status = "pending" AND message LIKE ?').get(materialId, 'expiry', `%${batch.batch_no}%`) as any
+        const exists = db.prepare(`
+          SELECT COUNT(*) as c
+          FROM alerts
+          WHERE material_id = ?
+            AND type = 'expiry'
+            AND status = 'pending'
+            AND (batch_id = ? OR batch_no = ? OR message LIKE ?)
+        `).get(materialId, batch.batch_id, batch.batch_no, `%${batch.batch_no}%`) as any
         if (exists.c === 0) {
-          db.prepare(`INSERT INTO alerts (id, type, level, material_id, material_name, threshold, message, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP)`)
-            .run(uuidv4(), 'expiry', 'warning', materialId, material?.name || '', 30, `批次 ${batch.batch_no} 即将过期 (${batch.expiry_date})`)
+          const triggerCondition = `批次 ${batch.batch_no} 有效期 ${batch.expiry_date} <= 预警截止 ${thresholdStr}`
+          db.prepare(`INSERT INTO alerts (id, type, level, material_id, material_name, threshold, message, status, batch_id, batch_no, rule_id, trigger_condition, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, CURRENT_TIMESTAMP)`)
+            .run(uuidv4(), 'expiry', 'warning', materialId, material?.name || '', 30, `批次 ${batch.batch_no} 即将过期 (${batch.expiry_date})`, batch.batch_id, batch.batch_no, 'RULE-002', triggerCondition)
         }
       }
     }

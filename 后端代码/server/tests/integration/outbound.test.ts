@@ -360,6 +360,33 @@ describe('集成测试：出库管理', () => {
       expect(savedItems[0]).toMatchObject({ material_id: materialId, quantity: 1 })
     })
 
+    it('OUT-TYPE-002: 通用出库入口必须拒绝调拨和报废，避免绕过专用流程', async () => {
+      const payloads = [
+        { type: 'transfer', message: '调拨管理' },
+        { type: 'scrap', message: '报废管理' },
+      ]
+
+      for (const payload of payloads) {
+        const beforeStock = (db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any).stock
+        const beforeCount = (db.prepare('SELECT COUNT(*) as count FROM outbound_records').get() as any).count
+
+        const res = await request(app)
+          .post('/api/v1/outbound')
+          .set('Authorization', `Bearer ${token}`)
+          .send({
+            type: payload.type,
+            items: [{ materialId, quantity: 1 }],
+            remark: '不应通过通用出库入口处理',
+          })
+
+        expect(res.status).toBe(400)
+        expect(res.body.error.code).toBe('INVALID_PARAMETER')
+        expect(res.body.error.message).toContain(payload.message)
+        expect((db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any).stock).toBe(beforeStock)
+        expect((db.prepare('SELECT COUNT(*) as count FROM outbound_records').get() as any).count).toBe(beforeCount)
+      }
+    })
+
     it('OUT-REF-001: 普通出库拒绝停用物料和停用检测项目', async () => {
       const suffix = `guard-${Date.now()}`
       const inactiveMaterialId = await createMaterial(app, token, `OB-INACTIVE-MAT-${suffix}`, 30)
@@ -796,6 +823,42 @@ describe('集成测试：出库管理', () => {
       expect(abcDetail.project_id).toBe(projectId)
     })
 
+    it('BOM-OUT-UPDATE-001: BOM出库单不能通过普通编辑入口改写成本快照和库存事实', async () => {
+      const createRes = await request(app)
+        .post('/api/v1/outbound/bom')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          projectId,
+          sampleCount: 1,
+          remark: 'BOM编辑保护基线',
+        })
+      expect(createRes.status).toBe(201)
+
+      const outboundId = createRes.body.data.id
+      const beforeStock = (db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any).stock
+      const beforeRecord = db.prepare('SELECT type, project_id, sample_count, remark FROM outbound_records WHERE id = ?')
+        .get(outboundId) as any
+      const beforeAbcCount = (db.prepare('SELECT COUNT(*) as count FROM outbound_abc_details WHERE outbound_id = ?')
+        .get(outboundId) as any).count
+
+      const updateRes = await request(app)
+        .put(`/api/v1/outbound/${outboundId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          type: 'project',
+          items: [{ materialId, quantity: 1 }],
+          remark: '试图把BOM出库改成普通出库',
+        })
+
+      expect(updateRes.status).toBe(409)
+      expect(updateRes.body.error.code).toBe('BOM_OUTBOUND_IMMUTABLE')
+      expect((db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any).stock).toBe(beforeStock)
+      expect(db.prepare('SELECT type, project_id, sample_count, remark FROM outbound_records WHERE id = ?')
+        .get(outboundId)).toMatchObject(beforeRecord)
+      expect((db.prepare('SELECT COUNT(*) as count FROM outbound_abc_details WHERE outbound_id = ?')
+        .get(outboundId) as any).count).toBe(beforeAbcCount)
+    })
+
     it('BOM-OUT-VALIDATION-001: BOM 出库拒绝非有限样本数且不写成本明细', async () => {
       const beforeOutboundCount = (db.prepare('SELECT COUNT(*) as count FROM outbound_records').get() as any).count
       const beforeAbcCount = (db.prepare('SELECT COUNT(*) as count FROM outbound_abc_details').get() as any).count
@@ -1051,7 +1114,7 @@ describe('集成测试：出库管理', () => {
 
     it('BOM 出库后库存正确减少', async () => {
       const inv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
-      expect(inv.stock).toBe(85) // 100 - 10 - 3 - 2
+      expect(inv.stock).toBe(84) // 100 - 10 - 3 - 1 - 2
     })
   })
 
@@ -1072,7 +1135,14 @@ describe('集成测试：出库管理', () => {
       const writeBom = await request(app)
         .post('/api/v1/boms')
         .set('Authorization', `Bearer ${whToken}`)
-        .send({ code: 'WH-BOM-FORBIDDEN', name: '仓管不可写BOM', type: 'ihc', materials: [] })
+        .send({
+          code: `WH-BOM-FORBIDDEN-${Date.now()}`,
+          name: '仓管不可写BOM',
+          type: 'ihc',
+          materials: [
+            { materialId: (db.prepare('SELECT id FROM materials LIMIT 1').get() as any).id, usagePerSample: 1, unit: '支', price: 1 },
+          ],
+        })
       expect(writeBom.status).toBe(403)
     })
 

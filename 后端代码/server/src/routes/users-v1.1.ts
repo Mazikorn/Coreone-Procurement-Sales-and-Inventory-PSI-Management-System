@@ -4,11 +4,31 @@ import { v4 as uuidv4 } from 'uuid'
 import { randomBytes } from 'crypto'
 import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
+import { logOperation } from '../utils/operation-logger.js'
 
 const router = Router()
 
 function generateTemporaryPassword() {
   return `Core@${randomBytes(8).toString('base64url')}`
+}
+
+function normalizeRequiredText(value: unknown) {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function normalizeOptionalText(value: unknown) {
+  if (value === undefined || value === null) return null
+  const normalized = String(value).trim()
+  return normalized || null
+}
+
+function validateStatus(value: unknown) {
+  return value === undefined || value === 'active' || value === 'inactive'
+}
+
+function validateProvidedPassword(value: unknown) {
+  if (value === undefined || value === null || value === '') return true
+  return typeof value === 'string' && value.trim().length >= 8
 }
 
 function isAssignableRole(db: any, role: string) {
@@ -124,16 +144,27 @@ router.get('/stats', (req, res) => {
 
 router.post('/', (req, res) => {
   try {
-    const { username, password, realName, role, department, phone, email, status } = req.body
+    const { password, status } = req.body
+    const username = normalizeRequiredText(req.body.username)
+    const realName = normalizeRequiredText(req.body.realName)
+    const role = normalizeRequiredText(req.body.role)
     if (!username || !realName) { error(res, 'Username and realName required', 'INVALID_PARAMETER', 400); return }
     const db = getDatabase()
     if (!role) { error(res, 'Role required', 'INVALID_PARAMETER', 400); return }
+    if (!validateStatus(status)) { error(res, 'Invalid status', 'INVALID_PARAMETER', 400); return }
+    if (!validateProvidedPassword(password)) { error(res, 'Password must be at least 8 characters', 'INVALID_PARAMETER', 400); return }
     if (!isAssignableRole(db, role)) { error(res, 'Invalid role', 'INVALID_PARAMETER', 400); return }
     const id = uuidv4()
     const initialPassword = password || generateTemporaryPassword()
     const hashedPassword = bcrypt.hashSync(initialPassword, 12)
     db.prepare('INSERT INTO users (id, username, password, real_name, role, department, phone, email, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(id, username, hashedPassword, realName, role, department || null, phone || null, email || null, status === 'inactive' ? 0 : 1)
+      .run(id, username, hashedPassword, realName, role, normalizeOptionalText(req.body.department), normalizeOptionalText(req.body.phone), normalizeOptionalText(req.body.email), status === 'inactive' ? 0 : 1)
+    logOperation(db, req, {
+      operation: 'create user',
+      description: `创建用户 ${username}`,
+      requestData: { module: 'user', id, username, realName, role, status: status === 'inactive' ? 'inactive' : 'active' },
+      responseData: { id },
+    })
     success(res, { id, initialPassword }, 'Created', 201)
   } catch (err: any) {
     if (err.message.includes('UNIQUE')) { error(res, 'Username exists', 'RESOURCE_CONFLICT', 409); return }
@@ -148,9 +179,16 @@ router.post('/:id/reset-password', (req, res) => {
     const db = getDatabase()
     const existing = db.prepare('SELECT * FROM users WHERE id = ? AND is_deleted = 0').get(id) as any
     if (!existing) { error(res, 'Not found', 'NOT_FOUND', 404); return }
+    if (!validateProvidedPassword(password)) { error(res, 'Password must be at least 8 characters', 'INVALID_PARAMETER', 400); return }
     const newPassword = password || generateTemporaryPassword()
     db.prepare('UPDATE users SET password = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND is_deleted = 0')
       .run(bcrypt.hashSync(newPassword, 12), id)
+    logOperation(db, req, {
+      operation: 'update user password',
+      description: `重置用户 ${existing.username} 密码`,
+      requestData: { module: 'user', id, username: existing.username },
+      responseData: { id },
+    })
     success(res, { id, temporaryPassword: newPassword }, 'Password reset')
   } catch (err: any) { error(res, err.message) }
 })
@@ -177,6 +215,12 @@ router.put('/batch/status', (req, res) => {
         WHERE is_deleted = 0 AND id IN (${ids.map(() => '?').join(',')})
       `).run(status === 'active' ? 1 : 0, ...ids)
       db.exec('COMMIT')
+      logOperation(db, req, {
+        operation: 'update user status',
+        description: `批量${status === 'active' ? '启用' : '停用'}用户 ${ids.length} 个`,
+        requestData: { module: 'user', ids, status },
+        responseData: { updatedCount: ids.length },
+      })
     } catch (e) {
       db.exec('ROLLBACK')
       throw e
@@ -206,6 +250,12 @@ router.delete('/batch', (req, res) => {
         WHERE is_deleted = 0 AND id IN (${ids.map(() => '?').join(',')})
       `).run(...ids)
       db.exec('COMMIT')
+      logOperation(db, req, {
+        operation: 'delete user',
+        description: `批量删除用户 ${ids.length} 个`,
+        requestData: { module: 'user', ids },
+        responseData: { deletedCount: ids.length },
+      })
     } catch (e) {
       db.exec('ROLLBACK')
       throw e
@@ -222,22 +272,43 @@ router.put('/:id', (req, res) => {
     const db = getDatabase()
     const existing = db.prepare('SELECT * FROM users WHERE id = ? AND is_deleted = 0').get(id) as any
     if (!existing) { error(res, 'Not found', 'NOT_FOUND', 404); return }
+    if (!validateStatus(data.status)) {
+      error(res, 'Invalid status', 'INVALID_PARAMETER', 400); return
+    }
+    if (!validateProvidedPassword(data.password)) {
+      error(res, 'Password must be at least 8 characters', 'INVALID_PARAMETER', 400); return
+    }
     // 禁止停用 admin 账户
     if ((existing.username === 'admin' || existing.id === 'USER-001') && data.status !== undefined && data.status !== 'active') {
       error(res, 'Cannot disable admin account', 'BUSINESS_CONFLICT', 409); return
     }
-    if (data.role !== undefined && !isAssignableRole(db, data.role)) {
+    const normalizedRole = data.role !== undefined ? normalizeRequiredText(data.role) : undefined
+    if (normalizedRole !== undefined && (!normalizedRole || !isAssignableRole(db, normalizedRole))) {
       error(res, 'Invalid role', 'INVALID_PARAMETER', 400); return
     }
     const fields: string[] = []; const params: any[] = []
-    if (data.realName !== undefined) { fields.push('real_name = ?'); params.push(data.realName) }
-    if (data.role !== undefined) { fields.push('role = ?'); params.push(data.role) }
-    if (data.department !== undefined) { fields.push('department = ?'); params.push(data.department) }
-    if (data.phone !== undefined) { fields.push('phone = ?'); params.push(data.phone) }
-    if (data.email !== undefined) { fields.push('email = ?'); params.push(data.email) }
+    if (data.realName !== undefined) {
+      const realName = normalizeRequiredText(data.realName)
+      if (!realName) { error(res, 'realName required', 'INVALID_PARAMETER', 400); return }
+      fields.push('real_name = ?'); params.push(realName)
+    }
+    if (normalizedRole !== undefined) { fields.push('role = ?'); params.push(normalizedRole) }
+    if (data.department !== undefined) { fields.push('department = ?'); params.push(normalizeOptionalText(data.department)) }
+    if (data.phone !== undefined) { fields.push('phone = ?'); params.push(normalizeOptionalText(data.phone)) }
+    if (data.email !== undefined) { fields.push('email = ?'); params.push(normalizeOptionalText(data.email)) }
     if (data.status !== undefined) { fields.push('status = ?'); params.push(data.status === 'active' ? 1 : 0) }
     if (data.password) { fields.push('password = ?'); params.push(bcrypt.hashSync(data.password, 12)) }
     if (fields.length > 0) { params.push(id); db.prepare(`UPDATE users SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND is_deleted = 0`).run(...params) }
+    const auditFields = fields.map(field => {
+      const fieldName = field.split(' = ')[0]
+      return fieldName === 'password' ? 'credential_changed' : fieldName
+    })
+    logOperation(db, req, {
+      operation: 'update user',
+      description: `更新用户 ${existing.username}`,
+      requestData: { module: 'user', id, fields: auditFields },
+      responseData: { id },
+    })
     success(res, { id }, 'Updated')
   } catch (err: any) { error(res, err.message) }
 })
@@ -253,6 +324,12 @@ router.delete('/:id', (req, res) => {
       error(res, 'Cannot delete admin account', 'BUSINESS_CONFLICT', 409); return
     }
     db.prepare('UPDATE users SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(id)
+    logOperation(db, req, {
+      operation: 'delete user',
+      description: `删除用户 ${existing.username}`,
+      requestData: { module: 'user', id, username: existing.username },
+      responseData: { id },
+    })
     success(res, null, 'Deleted')
   } catch (err: any) { error(res, err.message) }
 })

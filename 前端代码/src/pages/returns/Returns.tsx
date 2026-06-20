@@ -2,14 +2,13 @@ import { useCallback, useEffect, useState } from 'react'
 import { Plus, RotateCcw, Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { returnApi } from '@/api/inventory'
-import { materialApi } from '@/api/master'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { Modal } from '@/components/ui/Modal'
 import { Pagination } from '@/components/ui/Pagination'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import { usePagination } from '@/hooks/usePagination'
 import { formatDate } from '@/lib/utils'
-import type { Batch, Material, ReturnRecord } from '@/types'
+import type { ReturnRecord, ReturnSource } from '@/types'
 
 const reasonOptions = [
   { value: 'wrong_material', label: '错领退库' },
@@ -20,47 +19,32 @@ const reasonOptions = [
 ]
 
 export default function Returns() {
-  const [materials, setMaterials] = useState<Material[]>([])
+  const [returnSources, setReturnSources] = useState<ReturnSource[]>([])
   const [keywordInput, setKeywordInput] = useState('')
   const [keyword, setKeyword] = useState('')
   const [modalOpen, setModalOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [cancelTarget, setCancelTarget] = useState<ReturnRecord | null>(null)
-  const [batches, setBatches] = useState<Batch[]>([])
   const [form, setForm] = useState({
-    materialId: '',
-    batchId: '',
+    outboundItemId: '',
     quantity: 1,
     reason: '',
     remark: '',
   })
 
-  const loadMaterials = useCallback(async () => {
+  const loadReturnSources = useCallback(async () => {
     try {
-      const res = await materialApi.getList({ page: 1, pageSize: 999, status: 'active' })
-      setMaterials(res?.list || [])
+      const res = await returnApi.getSources({ page: 1, pageSize: 999 })
+      setReturnSources(res?.list || [])
     } catch (e) {
       console.error(e)
+      setReturnSources([])
     }
   }, [])
 
   useEffect(() => {
-    loadMaterials()
-  }, [loadMaterials])
-
-  const loadBatches = useCallback(async (materialId: string) => {
-    if (!materialId) {
-      setBatches([])
-      return
-    }
-    try {
-      const detail = await materialApi.getDetail(materialId)
-      setBatches((detail?.batches || []).filter(batch => Number(batch.remaining || 0) > 0 && (batch.status as string) === 'normal'))
-    } catch (e) {
-      console.error(e)
-      setBatches([])
-    }
-  }, [])
+    loadReturnSources()
+  }, [loadReturnSources])
 
   const {
     data,
@@ -81,20 +65,17 @@ export default function Returns() {
     deps: [keyword],
   })
 
-  const selectedMaterial = materials.find(m => m.id === form.materialId)
-  const selectedBatch = batches.find(batch => batch.id === form.batchId)
-  const maxQuantity = selectedBatch ? Number(selectedBatch.remaining || 0) : Number(selectedMaterial?.stock || 0)
+  const selectedSource = returnSources.find(source => source.outboundItemId === form.outboundItemId)
+  const maxQuantity = Number(selectedSource?.returnableQuantity || 0)
 
   const openCreate = () => {
-    loadMaterials()
-    setBatches([])
-    setForm({ materialId: '', batchId: '', quantity: 1, reason: '', remark: '' })
+    loadReturnSources()
+    setForm({ outboundItemId: '', quantity: 1, reason: '', remark: '' })
     setModalOpen(true)
   }
 
-  const handleMaterialChange = (value: string) => {
-    setForm({ ...form, materialId: value, batchId: '', quantity: 1 })
-    loadBatches(value)
+  const handleSourceChange = (value: string) => {
+    setForm({ ...form, outboundItemId: value, quantity: 1 })
   }
 
   const handleSearch = () => {
@@ -109,20 +90,16 @@ export default function Returns() {
   }
 
   const handleCreate = async () => {
-    if (!form.materialId || form.quantity <= 0 || !form.reason) {
-      toast.error('请填写物料、数量和退库原因')
+    if (!form.outboundItemId || form.quantity <= 0 || !form.reason) {
+      toast.error('请选择来源出库明细、填写数量和退库原因')
       return
     }
-    if (selectedMaterial && form.quantity > Number(selectedMaterial.stock || 0)) {
-      toast.error(`退库数量不能超过当前库存 ${selectedMaterial.stock} ${selectedMaterial.unit}`)
+    if (!selectedSource) {
+      toast.error('来源出库明细不可用，请刷新后重试')
       return
     }
-    if (batches.length > 0 && !form.batchId) {
-      toast.error('请选择退库批次')
-      return
-    }
-    if (maxQuantity > 0 && form.quantity > maxQuantity) {
-      toast.error(`退库数量不能超过批次剩余 ${maxQuantity} ${selectedMaterial?.unit || ''}`)
+    if (form.quantity > maxQuantity) {
+      toast.error(`退库数量不能超过可退数量 ${maxQuantity} ${selectedSource.unit || ''}`)
       return
     }
 
@@ -131,10 +108,9 @@ export default function Returns() {
       await returnApi.create(form)
       toast.success('退库登记成功')
       setModalOpen(false)
-      setBatches([])
-      setForm({ materialId: '', batchId: '', quantity: 1, reason: '', remark: '' })
+      setForm({ outboundItemId: '', quantity: 1, reason: '', remark: '' })
       refresh()
-      loadMaterials()
+      loadReturnSources()
     } catch (e: any) {
       toast.error(e?.response?.data?.error?.message || e?.message || '退库登记失败')
     } finally {
@@ -149,7 +125,7 @@ export default function Returns() {
       toast.success('退库记录已撤销')
       setCancelTarget(null)
       refresh()
-      loadMaterials()
+      loadReturnSources()
     } catch (e: any) {
       toast.error(e?.response?.data?.error?.message || e?.message || '撤销失败')
     }
@@ -162,7 +138,7 @@ export default function Returns() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-[28px] font-semibold text-gray-900">退库管理</h1>
-          <p className="mt-1 text-sm text-gray-500">登记物料退库并自动扣减库存，撤销后库存回滚</p>
+          <p className="mt-1 text-sm text-gray-500">登记已出库物料退回并自动恢复库存，撤销后反向扣回</p>
         </div>
         <button
           onClick={openCreate}
@@ -198,6 +174,7 @@ export default function Returns() {
             <thead className="border-b border-gray-200 bg-gray-50">
               <tr>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">退库单号</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">来源出库</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">物料</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">批次</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-gray-500">数量</th>
@@ -210,13 +187,14 @@ export default function Returns() {
             </thead>
             <tbody className="divide-y divide-gray-100">
               {loading ? (
-                <tr><td colSpan={9} className="px-4 py-12 text-center text-gray-400">加载中...</td></tr>
+                <tr><td colSpan={10} className="px-4 py-12 text-center text-gray-400">加载中...</td></tr>
               ) : data.length === 0 ? (
-                <tr><td colSpan={9} className="px-4 py-12 text-center text-gray-400">暂无退库记录</td></tr>
+                <tr><td colSpan={10} className="px-4 py-12 text-center text-gray-400">暂无退库记录</td></tr>
               ) : (
                 data.map(row => (
                   <tr key={row.id} className="transition-colors hover:bg-gray-50">
                     <td className="px-4 py-3 font-mono text-gray-700">{row.returnNo}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-gray-600">{row.outboundNo || '-'}</td>
                     <td className="px-4 py-3 font-medium text-gray-900">{row.materialName || row.materialId}</td>
                     <td className="px-4 py-3 font-mono text-xs text-gray-600">{row.batchNo || '-'}</td>
                     <td className="px-4 py-3 text-right text-gray-900">{row.quantity} {row.unit}</td>
@@ -250,35 +228,26 @@ export default function Returns() {
         <Modal onClose={() => setModalOpen(false)} title="退库登记" size="lg">
           <div className="space-y-4">
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">物料 <span className="text-red-500">*</span></label>
+              <label className="mb-1 block text-sm font-medium text-gray-700">来源出库明细 <span className="text-red-500">*</span></label>
               <SearchableSelect
-                testId="return-material-select"
-                value={form.materialId}
-                onChange={handleMaterialChange}
-                options={materials.map(material => ({
-                  value: material.id,
-                  label: `${material.name} (${material.code}) - 库存 ${material.stock} ${material.unit}`,
-                  disabled: Number(material.stock || 0) <= 0,
+                testId="return-source-select"
+                value={form.outboundItemId}
+                onChange={handleSourceChange}
+                options={returnSources.map(source => ({
+                  value: source.outboundItemId,
+                  label: `${source.outboundNo} | ${source.materialName || source.materialId} | ${source.batchNo || '无批次'} | 可退 ${source.returnableQuantity} ${source.unit || ''}`,
+                  disabled: Number(source.returnableQuantity || 0) <= 0,
                 }))}
-                placeholder="请选择物料"
+                placeholder="请选择已出库且仍可退的明细"
               />
             </div>
 
-            {selectedMaterial && (
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">退库批次 <span className="text-red-500">*</span></label>
-                <SearchableSelect
-                  testId="return-batch-select"
-                  value={form.batchId}
-                  onChange={value => setForm({ ...form, batchId: value, quantity: 1 })}
-                  options={batches.map(batch => ({
-                    value: batch.id,
-                    label: `${batch.batchNo} (余${batch.remaining}${selectedMaterial.unit} @¥${Number(batch.inboundPrice || 0).toFixed(2)})`,
-                    disabled: Number(batch.remaining || 0) <= 0,
-                  }))}
-                  placeholder={batches.length > 0 ? '请选择批次' : '当前物料暂无可用批次'}
-                  disabled={batches.length === 0}
-                />
+            {selectedSource && (
+              <div className="rounded-md border border-blue-100 bg-blue-50 px-3 py-2 text-sm text-blue-800">
+                <div>物料: {selectedSource.materialName || selectedSource.materialId}</div>
+                <div>批次: {selectedSource.batchNo || '-'}</div>
+                <div>可退数量: {selectedSource.returnableQuantity} {selectedSource.unit || ''}</div>
+                <div>原出库单价: ¥{Number(selectedSource.unitCost || 0).toFixed(2)}</div>
               </div>
             )}
 
@@ -294,12 +263,8 @@ export default function Returns() {
                 onChange={event => setForm({ ...form, quantity: Number(event.target.value) })}
                 className="h-10 w-full rounded-md border border-gray-300 px-3 text-sm focus:border-blue-500 focus:outline-none focus:ring-[3px] focus:ring-blue-500/10"
               />
-              {selectedMaterial && (
-                <p className="mt-1 text-xs text-gray-400">
-                  {selectedBatch
-                    ? `批次剩余：${selectedBatch.remaining} ${selectedMaterial.unit}`
-                    : `当前库存：${selectedMaterial.stock} ${selectedMaterial.unit}`}
-                </p>
+              {selectedSource && (
+                <p className="mt-1 text-xs text-gray-400">可退数量：{selectedSource.returnableQuantity} {selectedSource.unit || ''}</p>
               )}
             </div>
 
@@ -338,7 +303,7 @@ export default function Returns() {
       <ConfirmDialog
         open={!!cancelTarget}
         title="撤销退库记录"
-        description={`确定要撤销退库记录 ${cancelTarget?.returnNo} 吗？撤销后库存将自动回滚。`}
+        description={`确定要撤销退库记录 ${cancelTarget?.returnNo} 吗？撤销后将扣回本次退库恢复的库存。`}
         confirmText="确认撤销"
         confirmVariant="danger"
         onConfirm={handleCancel}

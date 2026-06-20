@@ -664,12 +664,27 @@ describe('物料删除与批量状态保护', () => {
       })
     expect(second.status).toBe(201)
 
-    const duplicateCodeUpdate = await request(app)
+    const duplicateCodeCreate = await request(app)
+      .post('/api/v1/materials')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        code: `MAT-UNIQUE-${suffix}-A`,
+        barcode: `BAR-UNIQUE-${suffix}-C`,
+        name: `重复编码物料-${suffix}`,
+        unit: '瓶',
+        categoryId: refs.categoryId,
+        supplierId: refs.supplierId,
+        locationId: refs.locationId,
+      })
+    expect(duplicateCodeCreate.status).toBe(409)
+    expect(duplicateCodeCreate.body.error.message).toContain('编码')
+
+    const codeUpdate = await request(app)
       .put(`/api/v1/materials/${second.body.data.id}`)
       .set('Authorization', `Bearer ${token}`)
       .send({ code: `MAT-UNIQUE-${suffix}-A` })
-    expect(duplicateCodeUpdate.status).toBe(409)
-    expect(duplicateCodeUpdate.body.error.message).toContain('编码')
+    expect(codeUpdate.status).toBe(400)
+    expect(codeUpdate.body.error.message).toContain('不允许修改')
 
     const duplicateBarcodeUpdate = await request(app)
       .put(`/api/v1/materials/${second.body.data.id}`)
@@ -684,6 +699,22 @@ describe('物料删除与批量状态保护', () => {
       code: `MAT-UNIQUE-${suffix}-B`,
       barcode: `BAR-UNIQUE-${suffix}-B`,
     })
+  })
+
+  it('MAT-CODE-001: 物料编码是库存和成本审计身份，更新接口不可改写', async () => {
+    const suffix = `code-${Date.now()}`
+    const refs = seedRefs(db, suffix)
+    const materialId = await createMaterial(app, token, refs, suffix)
+    const before = db.prepare('SELECT code FROM materials WHERE id = ?').get(materialId) as any
+
+    const res = await request(app)
+      .put(`/api/v1/materials/${materialId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ code: `MAT-MANUAL-${suffix}` })
+
+    expect(res.status).toBe(400)
+    const after = db.prepare('SELECT code FROM materials WHERE id = ?').get(materialId) as any
+    expect(after.code).toBe(before.code)
   })
 
   it('MAT-VALIDATION-001: 创建物料时拒绝非有限数值且不写入主数据和库存行', async () => {

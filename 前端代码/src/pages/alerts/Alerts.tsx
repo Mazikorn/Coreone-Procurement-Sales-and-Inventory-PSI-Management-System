@@ -18,7 +18,7 @@ export default function Alerts() {
             预警中心
           </h1>
           <p className="mt-1 text-sm text-gray-500">
-            查看和处理所有库存预警信息
+            查看和处理库存、批次有效期与消耗异常预警
           </p>
         </div>
         <div className="flex items-center gap-3">

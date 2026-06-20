@@ -45,7 +45,7 @@ export default function Reconciliation() {
     { label: 'LIS病例总数', value: page.summary?.totalCases || 0 },
     { label: '系统出库关联数', value: page.summary?.linkedOutbounds || 0 },
     { label: '未关联出库', value: page.summary?.unlinkedOutbounds || 0 },
-    { label: '病例缺失', value: page.summary?.projectsWithoutBom || 0 },
+    { label: '未配置BOM项目', value: page.summary?.projectsWithoutBom || 0 },
   ]
 
   return (

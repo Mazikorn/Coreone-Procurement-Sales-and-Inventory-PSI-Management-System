@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { applySelectedMaterialToPurchaseForm, type PurchaseOrderForm } from './PurchaseOrders'
+import {
+  applySelectedMaterialToPurchaseForm,
+  canReceivePurchaseOrders,
+  canWritePurchaseOrders,
+  type PurchaseOrderForm,
+} from './PurchaseOrders'
 import type { Material } from '@/types'
 
 const baseForm: PurchaseOrderForm = {
@@ -41,5 +46,17 @@ describe('applySelectedMaterialToPurchaseForm', () => {
 
   it('keeps the existing form when no material is found', () => {
     expect(applySelectedMaterialToPurchaseForm(baseForm, undefined)).toBe(baseForm)
+  })
+})
+
+describe('purchase order role capabilities', () => {
+  it('allows warehouse managers to receive but not create or cancel purchase orders', () => {
+    expect(canReceivePurchaseOrders('warehouse_manager')).toBe(true)
+    expect(canWritePurchaseOrders('warehouse_manager')).toBe(false)
+  })
+
+  it('allows procurement users to create, cancel, and receive purchase orders', () => {
+    expect(canReceivePurchaseOrders('procurement')).toBe(true)
+    expect(canWritePurchaseOrders('procurement')).toBe(true)
   })
 })

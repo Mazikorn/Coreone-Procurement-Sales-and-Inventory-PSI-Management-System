@@ -56,6 +56,7 @@ export const MODULES = [
   { value: 'cost', label: '成本管理' },
   { value: 'user', label: '用户管理' },
   { value: 'role', label: '角色权限' },
+  { value: 'logs', label: '操作日志' },
   { value: 'system', label: '系统设置' },
 ]
 

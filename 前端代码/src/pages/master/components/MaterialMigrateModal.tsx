@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { X, ArrowRightLeft } from 'lucide-react'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { Category, Material } from '@/types'
@@ -22,9 +22,17 @@ export function MaterialMigrateModal({
 }: Props) {
   const [targetCategoryId, setTargetCategoryId] = useState('')
 
+  useEffect(() => {
+    if (open) setTargetCategoryId('')
+  }, [open, material?.id])
+
   if (!open || !material) return null
 
-  const availableTargets = categories.filter(c => c.id !== material.categoryId)
+  const availableTargets = categories.filter(c =>
+    c.id !== material.categoryId &&
+    c.status !== 'inactive' &&
+    !(c.children && c.children.length > 0)
+  )
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
@@ -67,7 +75,7 @@ export function MaterialMigrateModal({
               placeholder="请选择目标分类"
             />
             <p className="text-xs text-gray-400 mt-1.5">
-              迁移后，该物料将归属于目标分类。
+              迁移后，该物料将归属于目标末级分类。
             </p>
           </div>
         </div>

@@ -7,7 +7,7 @@ import { consumeInventoryLocationStock, restoreInventoryLocationStock } from '..
 
 const router = Router()
 const BATCH_RESTORE_EPSILON = 0.000001
-const DIRECT_OUTBOUND_TYPES = new Set(['project', 'transfer', 'scrap'])
+const DIRECT_OUTBOUND_TYPES = new Set(['project'])
 const OUTBOUND_LIST_TYPES = new Set(['project', 'transfer', 'scrap', 'bom'])
 const OUTBOUND_LIST_STATUSES = new Set(['completed', 'pending', 'cancelled'])
 
@@ -93,6 +93,12 @@ function validateOutboundItems(items: any) {
 
 function validateDirectOutboundType(type: unknown) {
   const normalizedType = String(type || '').trim()
+  if (normalizedType === 'transfer') {
+    return { ok: false, message: '调拨出库请通过调拨管理入口处理' }
+  }
+  if (normalizedType === 'scrap') {
+    return { ok: false, message: '报废出库请通过报废管理入口处理' }
+  }
   if (!DIRECT_OUTBOUND_TYPES.has(normalizedType)) {
     return { ok: false, message: '出库类型无效' }
   }
@@ -1030,6 +1036,14 @@ router.put('/:id', requireWriteAccess, (req, res) => {
     const db = getDatabase()
     const record = db.prepare('SELECT * FROM outbound_records WHERE id = ? AND is_deleted = 0').get(id) as any
     if (!record) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
+    if (record.type === 'bom') {
+      error(res, 'BOM出库单涉及成本快照和病例收费聚合，不能直接编辑，请删除后重新出库', 'BOM_OUTBOUND_IMMUTABLE', 409)
+      return
+    }
+    if (record.type === 'transfer' || record.type === 'scrap') {
+      error(res, '调拨/报废出库请通过对应专用入口处理，不能在通用出库入口编辑', 'DEDICATED_OUTBOUND_FLOW_REQUIRED', 409)
+      return
+    }
 
     const refValidation = validateDirectOutboundReferences(db, {
       projectId: projectId !== undefined ? projectId : undefined,

@@ -781,7 +781,7 @@ describeWithSeed('病理科真实工作流测试', () => {
         .send({
           materialId,
           quantity: 5,
-          reason: '破损',
+          reason: 'damaged',
           operator: '测试员',
         })
       expect(scrapRes.status).toBe(200)
@@ -794,7 +794,7 @@ describeWithSeed('病理科真实工作流测试', () => {
       const scrapRecord = db.prepare('SELECT * FROM scrap_records WHERE material_id = ?').get(materialId) as any
       expect(scrapRecord).toBeDefined()
       expect(scrapRecord.quantity).toBe(5)
-      expect(scrapRecord.reason).toBe('破损')
+      expect(scrapRecord.reason).toBe('damaged')
     })
   })
 

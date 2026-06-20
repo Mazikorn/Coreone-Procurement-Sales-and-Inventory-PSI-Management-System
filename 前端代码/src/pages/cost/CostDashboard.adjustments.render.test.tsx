@@ -181,4 +181,35 @@ describe('CostDashboard adjustment refresh', () => {
       expect(screen.getByText(/\/ 1$/)).toBeInTheDocument()
     })
   })
+
+  it('renders backend cost run processed and succeeded counts', async () => {
+    vi.mocked(abcApi.getDashboard).mockResolvedValue(dashboardResponse)
+    vi.mocked(abcApi.getPeriods).mockResolvedValue(periodResponse)
+    vi.mocked(abcApi.getCostRuns).mockResolvedValue({
+      list: [{
+        id: 'run-1',
+        yearMonth: '2026-06',
+        runType: 'recalculate',
+        status: 'completed',
+        summary: { processed: 3, succeeded: 2, failed: 1 },
+        startedAt: '2026-06-20 10:00:00',
+        finishedAt: '2026-06-20 10:05:00',
+      }],
+    })
+    vi.mocked(abcApi.getAdjustments).mockResolvedValue(emptyListResponse)
+    vi.mocked(reportsApi.getCostMonthlyComparison).mockResolvedValue(null)
+
+    render(
+      <MemoryRouter>
+        <CostDashboard />
+      </MemoryRouter>
+    )
+
+    const row = (await screen.findByText('重算')).closest('tr')
+    expect(row).not.toBeNull()
+    expect(row!).toHaveTextContent('成功')
+    expect(row!).toHaveTextContent('3')
+    expect(row!).toHaveTextContent('2')
+    expect(row!).toHaveTextContent('1')
+  })
 })

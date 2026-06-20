@@ -576,6 +576,18 @@ router.get('/stats', (req, res) => {
         ), CASE WHEN i.location_id = ? THEN i.stock ELSE 0 END)`
       : 'i.stock'
     const stockParams = locationId ? [locationId, locationId] : []
+    const activeLocationCountExpr = `COALESCE((
+      SELECT COUNT(*)
+      FROM inventory_locations ilc
+      WHERE ilc.material_id = i.material_id AND ilc.stock > 0
+    ), CASE WHEN i.location_id IS NOT NULL AND i.stock > 0 THEN 1 ELSE 0 END)`
+    const rowStockExpr = locationId
+      ? `CASE
+          WHEN ${activeLocationCountExpr} <= 1 THEN COALESCE(b.remaining, ${stockExpr})
+          ELSE ${stockExpr}
+        END`
+      : 'COALESCE(b.remaining, i.stock)'
+    const rowStockParams = locationId ? [...stockParams, ...stockParams] : []
 
     const batchStats = db.prepare(`
       SELECT
@@ -607,14 +619,15 @@ router.get('/stats', (req, res) => {
         END) as out_of_stock
       FROM (
         SELECT
-          ${stockExpr} as stock,
+          ${rowStockExpr} as stock,
           m.min_stock,
-          ${getBatchSubQuery('expiry_date')} as expiry
+          b.expiry_date as expiry
         FROM inventory i
         JOIN materials m ON i.material_id = m.id
+        LEFT JOIN batches b ON b.material_id = i.material_id AND b.status = 1 AND b.remaining > 0
         WHERE ${where}
       ) t
-    `).get(...stockParams, ...params) as any
+    `).get(...rowStockParams, ...params) as any
 
     const totalMaterials = (db.prepare(`
       SELECT COUNT(*) as c
@@ -624,36 +637,17 @@ router.get('/stats', (req, res) => {
     `).get(...params) as any)?.c || 0
 
     const totalStockValue = (db.prepare(`
-      SELECT SUM(
-        CASE
-          WHEN COALESCE(active_batch_quantity, 0) > 0
-          THEN scoped_stock * (COALESCE(active_batch_value, 0) / active_batch_quantity)
-          ELSE scoped_stock * COALESCE(price, 0)
-        END
-      ) as v
+      SELECT SUM(stock * unit_price) as v
       FROM (
         SELECT
-          ${stockExpr} as scoped_stock,
-          m.price,
-          (
-            SELECT SUM(b.remaining)
-            FROM batches b
-            WHERE b.material_id = i.material_id
-              AND b.status = 1
-              AND b.remaining > 0
-          ) as active_batch_quantity,
-          (
-            SELECT SUM(b.remaining * COALESCE(b.inbound_price, 0))
-            FROM batches b
-            WHERE b.material_id = i.material_id
-              AND b.status = 1
-              AND b.remaining > 0
-          ) as active_batch_value
+          ${rowStockExpr} as stock,
+          COALESCE(b.inbound_price, m.price, 0) as unit_price
         FROM inventory i
         JOIN materials m ON i.material_id = m.id
+        LEFT JOIN batches b ON b.material_id = i.material_id AND b.status = 1 AND b.remaining > 0
         WHERE ${where}
       ) t
-    `).get(...stockParams, ...params) as any)?.v || 0
+    `).get(...rowStockParams, ...params) as any)?.v || 0
 
     const catDist = db.prepare(`
       SELECT m.category_id, COALESCE(c.name, '未分类') as category_name, COUNT(DISTINCT i.material_id) as count

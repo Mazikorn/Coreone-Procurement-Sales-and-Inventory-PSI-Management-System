@@ -1,3 +1,4 @@
+import React from 'react'
 import { X } from 'lucide-react'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { LaborTimeForm } from '../hooks/useLaborTimePage'
@@ -46,8 +47,13 @@ export function LaborTimeFormModal({ open, type, form, onClose, onChange, onSubm
               <label className="block text-sm font-medium text-gray-700 mb-1">步骤编号 *</label>
               <input
                 value={form.stepCode}
-                onChange={(e) => onChange({ ...form, stepCode: e.target.value })}
-                className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
+                onChange={(e) => {
+                  if (type === 'create') onChange({ ...form, stepCode: e.target.value })
+                }}
+                readOnly={type === 'edit'}
+                className={`w-full h-10 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500 ${
+                  type === 'edit' ? 'bg-gray-50 text-gray-400' : ''
+                }`}
               />
             </div>
             <div>
@@ -67,6 +73,7 @@ export function LaborTimeFormModal({ open, type, form, onClose, onChange, onSubm
                 value={form.projectType}
                 onChange={(value) => onChange({ ...form, projectType: value || 'all' })}
                 options={PROJECT_TYPE_OPTIONS.filter(item => item.value !== '')}
+                disabled={type === 'edit'}
               />
             </div>
             <div>

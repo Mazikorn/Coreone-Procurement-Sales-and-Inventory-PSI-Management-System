@@ -79,7 +79,7 @@ describe('useInboundPage', () => {
     })
   })
 
-  it('should not fetch purchase orders or locations for warehouse inbound users', async () => {
+  it('should fetch purchase orders and locations for warehouse inbound users', async () => {
     localStorage.setItem('user', JSON.stringify({
       id: 'USER-WHM',
       username: 'wangkq',
@@ -91,7 +91,7 @@ describe('useInboundPage', () => {
 
     await waitFor(() => expect(inboundApi.getStats).toHaveBeenCalled())
 
-    expect(purchaseOrderApi.getList).not.toHaveBeenCalled()
+    expect(purchaseOrderApi.getList).toHaveBeenCalledWith({ status: 'pending,partial', page: 1, pageSize: 999 })
     expect(locationApi.getList).toHaveBeenCalled()
   })
 

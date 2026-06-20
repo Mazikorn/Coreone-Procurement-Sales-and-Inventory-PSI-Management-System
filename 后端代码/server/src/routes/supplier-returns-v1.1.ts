@@ -61,7 +61,9 @@ function validateSupplierReturnReferences(db: any, payload: {
   const purchaseOrderId = normalizeOptionalId(payload.purchaseOrderId)
   const inboundRecordId = normalizeOptionalId(payload.inboundRecordId)
   let purchaseOrder: any = null
+  let inboundRecord: any = null
   let sourceSupplierId: string | null = null
+  let sourceBatchNo: string | null = null
 
   if (purchaseOrderId) {
     purchaseOrder = db.prepare(`
@@ -82,30 +84,46 @@ function validateSupplierReturnReferences(db: any, payload: {
   }
 
   if (inboundRecordId) {
-    const inbound = db.prepare(`
-      SELECT id, material_id, supplier_id, purchase_order_id, status
+    inboundRecord = db.prepare(`
+      SELECT id, material_id, batch_no, supplier_id, purchase_order_id, status
       FROM inbound_records
       WHERE id = ? AND is_deleted = 0
     `).get(inboundRecordId) as any
-    if (!inbound) {
+    if (!inboundRecord) {
       return { ok: false, status: 404, code: 'NOT_FOUND', message: '关联入库记录不存在' }
     }
-    if (inbound.status !== 'completed') {
+    if (inboundRecord.status !== 'completed') {
       return { ok: false, status: 409, code: 'CONFLICT', message: '仅已完成入库记录可关联供应商退货' }
     }
-    if (inbound.material_id !== payload.materialId || (supplierId && inbound.supplier_id && inbound.supplier_id !== supplierId)) {
+    if (inboundRecord.material_id !== payload.materialId || (supplierId && inboundRecord.supplier_id && inboundRecord.supplier_id !== supplierId)) {
       return { ok: false, status: 409, code: 'SUPPLIER_RETURN_REFERENCE_MISMATCH', message: '关联入库记录与退货物料或供应商不一致' }
     }
-    if (sourceSupplierId && inbound.supplier_id && inbound.supplier_id !== sourceSupplierId) {
+    if (sourceSupplierId && inboundRecord.supplier_id && inboundRecord.supplier_id !== sourceSupplierId) {
       return { ok: false, status: 409, code: 'SUPPLIER_RETURN_REFERENCE_MISMATCH', message: '关联入库记录与采购订单供应商不一致' }
     }
-    if (purchaseOrder && inbound.purchase_order_id && inbound.purchase_order_id !== purchaseOrder.id) {
+    if (purchaseOrder && inboundRecord.purchase_order_id && inboundRecord.purchase_order_id !== purchaseOrder.id) {
       return { ok: false, status: 409, code: 'SUPPLIER_RETURN_REFERENCE_MISMATCH', message: '关联入库记录与采购订单不一致' }
     }
-    sourceSupplierId = sourceSupplierId || inbound.supplier_id || null
+    sourceSupplierId = sourceSupplierId || inboundRecord.supplier_id || null
+    sourceBatchNo = inboundRecord.batch_no || null
   }
 
-  return { ok: true, supplierId: supplierId || sourceSupplierId || null }
+  return { ok: true, supplierId: supplierId || sourceSupplierId || null, batchNo: sourceBatchNo }
+}
+
+function validateSupplierReturnBatchSource(batch: any, effectiveSupplierId: string | null, sourceBatchNo?: string | null) {
+  if (!batch) return { ok: true }
+  const batchSupplierId = String(batch.supplier_id || '').trim()
+  if (!batchSupplierId) {
+    return { ok: false, status: 409, code: 'BATCH_SOURCE_MISSING', message: '退货批次缺少供应商来源，不能创建供应商退货' }
+  }
+  if (effectiveSupplierId && batchSupplierId !== effectiveSupplierId) {
+    return { ok: false, status: 409, code: 'BATCH_SOURCE_MISMATCH', message: '退货批次与供应商不一致' }
+  }
+  if (sourceBatchNo && batch.batch_no !== sourceBatchNo) {
+    return { ok: false, status: 409, code: 'BATCH_SOURCE_MISMATCH', message: '退货批次与关联入库记录不一致' }
+  }
+  return { ok: true }
 }
 
 function handleSupplierReturnStockError(res: any, err: any): boolean {
@@ -298,6 +316,10 @@ router.post('/', (req, res) => {
       return
     }
     const effectiveSupplierId = refValidation.supplierId
+    if (!effectiveSupplierId) {
+      error(res, '供应商退货必须关联供应商或可识别供应商的来源单据', 'SUPPLIER_REQUIRED', 400)
+      return
+    }
     if (effectiveSupplierId) {
       const supplier = db.prepare('SELECT id, status FROM suppliers WHERE id = ? AND is_deleted = 0').get(effectiveSupplierId) as any
       if (!supplier) { error(res, '供应商不存在或已删除', 'NOT_FOUND', 404); return }
@@ -316,7 +338,7 @@ router.post('/', (req, res) => {
       let batch: any = null
       if (batchId) {
         batch = db.prepare(`
-          SELECT id, batch_no, remaining, status
+          SELECT id, batch_no, remaining, status, supplier_id, inbound_id
           FROM batches
           WHERE id = ? AND material_id = ?
         `).get(batchId, materialId) as any
@@ -330,17 +352,23 @@ router.post('/', (req, res) => {
           error(res, '批次库存不足', 'BATCH_STOCK_INSUFFICIENT', 422)
           return
         }
+        const batchSourceValidation = validateSupplierReturnBatchSource(batch, effectiveSupplierId, refValidation.batchNo)
+        if (!batchSourceValidation.ok) {
+          db.exec('ROLLBACK')
+          error(res, batchSourceValidation.message, batchSourceValidation.code, batchSourceValidation.status)
+          return
+        }
       } else {
         batch = db.prepare(`
-          SELECT id, batch_no, remaining, status
+          SELECT id, batch_no, remaining, status, supplier_id, inbound_id
           FROM batches
-          WHERE material_id = ? AND status = 1 AND remaining >= ?
+          WHERE material_id = ? AND status = 1 AND remaining >= ? AND supplier_id = ?
           ORDER BY
             CASE WHEN expiry_date IS NULL OR expiry_date = '' THEN 1 ELSE 0 END,
             expiry_date ASC,
             created_at ASC
           LIMIT 1
-        `).get(materialId, qty) as any
+        `).get(materialId, qty, effectiveSupplierId) as any
         const hasActiveBatch = (db.prepare(`
           SELECT COUNT(*) as count
           FROM batches
@@ -349,6 +377,12 @@ router.post('/', (req, res) => {
         if (!batch && hasActiveBatch > 0) {
           db.exec('ROLLBACK')
           error(res, '请选择库存充足的退货批次', 'BATCH_REQUIRED', 422)
+          return
+        }
+        const batchSourceValidation = validateSupplierReturnBatchSource(batch, effectiveSupplierId, refValidation.batchNo)
+        if (!batchSourceValidation.ok) {
+          db.exec('ROLLBACK')
+          error(res, batchSourceValidation.message, batchSourceValidation.code, batchSourceValidation.status)
           return
         }
       }

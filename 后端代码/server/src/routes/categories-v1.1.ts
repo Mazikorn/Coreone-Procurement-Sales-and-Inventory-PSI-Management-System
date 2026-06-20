@@ -14,7 +14,16 @@ router.get('/tree', (_req, res) => {
   try {
     const db = getDatabase()
     const rows = db.prepare(`
-      SELECT id, code, name, parent_id as parentId, level, sort_order as sortOrder
+      SELECT
+        id,
+        code,
+        name,
+        parent_id as parentId,
+        level,
+        sort_order as sortOrder,
+        status,
+        created_at as createdAt,
+        updated_at as updatedAt
       FROM material_categories
       WHERE is_deleted = 0
       ORDER BY level, sort_order, created_at
@@ -41,11 +50,15 @@ router.get('/tree', (_req, res) => {
           id: r.id,
           code: r.code,
           name: r.name,
+          parentId: r.parentId || null,
           level: r.level,
           sortOrder: r.sortOrder,
+          status: r.status === 1 ? 'active' : 'inactive',
           children,
           isLeaf: children.length === 0,
           count: countMap.get(r.id) || 0,
+          createdAt: r.createdAt,
+          updatedAt: r.updatedAt,
         }
       })
     }

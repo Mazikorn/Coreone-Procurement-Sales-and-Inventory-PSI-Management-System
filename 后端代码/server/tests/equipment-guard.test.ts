@@ -17,6 +17,14 @@ async function loginAdmin(app: any): Promise<string> {
   return res.body.data.token
 }
 
+async function loginTechnician(app: any): Promise<string> {
+  const res = await request(app)
+    .post('/api/v1/auth/login')
+    .send({ username: 'zhangwei', password: 'CoreOne2026!' })
+  expect(res.status).toBe(200)
+  return res.body.data.token
+}
+
 function seedBom(db: any, suffix: string) {
   const bomId = `bom-eq-guard-${suffix}`
   db.prepare('INSERT INTO boms (id, code, name, version, type, status) VALUES (?, ?, ?, ?, ?, 1)')
@@ -51,10 +59,80 @@ describe('设备删除保护', () => {
   let app: any
   let db: any
   let token: string
+  let technicianToken: string
 
   beforeAll(async () => {
     ;({ app, db } = await getApp())
     token = await loginAdmin(app)
+    technicianToken = await loginTechnician(app)
+  })
+
+  it('EQ-TYPE-AUTH-001: 技术员拥有设备模块权限时可维护设备类型', async () => {
+    const suffix = `type-auth-${Date.now()}`
+
+    const created = await request(app)
+      .post('/api/v1/equipment-types')
+      .set('Authorization', `Bearer ${technicianToken}`)
+      .send({
+        code: `EQT-AUTH-${suffix}`,
+        name: `技术员设备类型-${suffix}`,
+        defaultPurchasePrice: 100000,
+        defaultValue: 10000,
+        defaultDepreciableLifeYears: 5,
+        defaultDepreciationMethod: 'straight_line',
+      })
+
+    expect(created.status).toBe(201)
+    const typeId = created.body.data.id
+
+    const updated = await request(app)
+      .put(`/api/v1/equipment-types/${typeId}`)
+      .set('Authorization', `Bearer ${technicianToken}`)
+      .send({
+        code: `EQT-AUTH-${suffix}`,
+        name: `技术员设备类型-${suffix}-停用`,
+        status: 'inactive',
+        defaultPurchasePrice: 100000,
+        defaultValue: 10000,
+        defaultDepreciableLifeYears: 5,
+        defaultDepreciationMethod: 'straight_line',
+      })
+
+    expect(updated.status).toBe(200)
+    const row = db.prepare('SELECT name, status FROM equipment_types WHERE id = ?').get(typeId) as any
+    expect(row).toMatchObject({ name: `技术员设备类型-${suffix}-停用`, status: 0 })
+
+    const deleted = await request(app)
+      .delete(`/api/v1/equipment-types/${typeId}`)
+      .set('Authorization', `Bearer ${technicianToken}`)
+
+    expect(deleted.status).toBe(200)
+    const afterDelete = db.prepare('SELECT id FROM equipment_types WHERE id = ?').get(typeId) as any
+    expect(afterDelete).toBeUndefined()
+  })
+
+  it('EQ-TYPE-CODE-001: 编辑设备类型时不允许修改类型编码', async () => {
+    const suffix = `type-code-${Date.now()}`
+    const typeId = seedEquipmentType(db, suffix)
+    const original = db.prepare('SELECT code FROM equipment_types WHERE id = ?').get(typeId) as any
+
+    const res = await request(app)
+      .put(`/api/v1/equipment-types/${typeId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        code: `EQT-CHANGED-${suffix}`,
+        name: '不应改编码设备类型',
+        defaultPurchasePrice: 100000,
+        defaultValue: 10000,
+        defaultDepreciableLifeYears: 5,
+        defaultDepreciationMethod: 'straight_line',
+      })
+
+    expect(res.status).toBe(400)
+    expect(res.body.error?.message).toContain('设备类型编码创建后不允许修改')
+    const after = db.prepare('SELECT code, name FROM equipment_types WHERE id = ?').get(typeId) as any
+    expect(after.code).toBe(original.code)
+    expect(after.name).toBe('设备类型保护测试')
   })
 
   it('EQ-GUARD-001: 被BOM设备模板引用的设备不可删除', async () => {

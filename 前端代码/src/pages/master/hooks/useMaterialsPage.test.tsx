@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { categoryApi, materialApi, supplierApi } from '@/api/master'
+import { categoryApi, locationApi, materialApi, supplierApi } from '@/api/master'
 import { useMaterialsPage } from './useMaterialsPage'
 
 vi.mock('@/api/master')
@@ -31,7 +31,12 @@ describe('useMaterialsPage', () => {
       list: [],
       pagination: { total: 0 },
     } as any)
+    vi.mocked(categoryApi.getTree).mockResolvedValue([] as any)
     vi.mocked(supplierApi.getList).mockResolvedValue({
+      list: [],
+      pagination: { total: 0 },
+    } as any)
+    vi.mocked(locationApi.getList).mockResolvedValue({
       list: [],
       pagination: { total: 0 },
     } as any)
@@ -228,6 +233,72 @@ describe('useMaterialsPage', () => {
     expect(materialApi.update).toHaveBeenCalledWith('mat-edit', expect.objectContaining({
       name: '更新名称',
       remark: '更新备注',
+    }))
+  })
+
+  it('submits barcode and default location so inbound scanning can reuse material facts', async () => {
+    vi.mocked(categoryApi.getTree).mockResolvedValue([
+      {
+        id: 'cat-leaf',
+        code: 'CAT-LEAF',
+        name: '试剂耗材',
+        level: 1,
+        status: 'active',
+        children: [],
+      },
+    ] as any)
+    vi.mocked(supplierApi.getList).mockImplementation(async (params: any = {}) => ({
+      list: params.status === 'active'
+        ? [{ id: 'sup-active', code: 'SUP-001', name: '启用供应商', status: 'active' }]
+        : [{ id: 'sup-active', code: 'SUP-001', name: '启用供应商', status: 'active' }],
+      pagination: { total: 1 },
+    } as any))
+    vi.mocked(locationApi.getList).mockImplementation(async (params: any = {}) => ({
+      list: params.status === 'active'
+        ? [{ id: 'loc-active', code: 'LOC-001', name: '冷藏库位', zone: 'A区', status: 'active' }]
+        : [{ id: 'loc-active', code: 'LOC-001', name: '冷藏库位', zone: 'A区', status: 'active' }],
+      pagination: { total: 1 },
+    } as any))
+    vi.mocked(materialApi.getNextCode).mockResolvedValue({ code: 'MAT-AUTO-001' } as any)
+    vi.mocked(materialApi.create).mockResolvedValue({} as any)
+
+    const { result } = renderHook(() => useMaterialsPage())
+    await waitFor(() => expect(result.current.formCategories).toHaveLength(1))
+    await waitFor(() => expect(result.current.formLocations).toHaveLength(1))
+
+    act(() => {
+      result.current.openCreate()
+    })
+    await waitFor(() => expect(result.current.modalOpen).toBe(true))
+
+    act(() => {
+      result.current.setForm({
+        ...result.current.form,
+        name: 'HER2 检测试剂',
+        unit: '盒',
+        barcode: 'BAR-HER2-001',
+        categoryId: 'cat-leaf',
+        supplierId: 'sup-active',
+        locationId: 'loc-active',
+      })
+    })
+
+    await act(async () => {
+      await result.current.handleSubmit()
+    })
+
+    expect(locationApi.getList).toHaveBeenCalledWith(expect.objectContaining({
+      page: 1,
+      pageSize: 999,
+      status: 'active',
+    }))
+    expect(materialApi.create).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'HER2 检测试剂',
+      unit: '盒',
+      barcode: 'BAR-HER2-001',
+      categoryId: 'cat-leaf',
+      supplierId: 'sup-active',
+      locationId: 'loc-active',
     }))
   })
 

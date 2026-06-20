@@ -17,6 +17,14 @@ async function loginAdmin(app: any): Promise<string> {
   return res.body.data.token
 }
 
+async function loginTechnician(app: any): Promise<string> {
+  const res = await request(app)
+    .post('/api/v1/auth/login')
+    .send({ username: 'zhangwei', password: 'CoreOne2026!' })
+  expect(res.status).toBe(200)
+  return res.body.data.token
+}
+
 async function createMaterial(app: any, token: string, suffix: string) {
   const res = await request(app)
     .post('/api/v1/materials')
@@ -153,6 +161,49 @@ describe('BOM 批量操作', () => {
       INSERT OR IGNORE INTO material_categories (id, code, name, level)
       VALUES (?, ?, ?, ?)
     `).run('cat-bom-batch', 'CBOM', 'BOM测试分类', 1)
+  })
+
+  it('BOM-AUTH-001: 技术员拥有BOM模块权限时可创建BOM', async () => {
+    const technicianToken = await loginTechnician(app)
+    const suffix = `tech-auth-${Date.now()}`
+    const materialId = await createMaterial(app, token, suffix)
+
+    const res = await request(app)
+      .post('/api/v1/boms')
+      .set('Authorization', `Bearer ${technicianToken}`)
+      .send({
+        code: `BOM-AUTH-${suffix}`,
+        name: `技术员BOM-${suffix}`,
+        type: 'ihc',
+        materials: [{ materialId, usagePerSample: 1, unit: '瓶' }],
+      })
+
+    expect(res.status).toBe(201)
+    const bom = db.prepare('SELECT code, name FROM boms WHERE id = ?').get(res.body.data.id) as any
+    expect(bom).toMatchObject({
+      code: `BOM-AUTH-${suffix}`,
+      name: `技术员BOM-${suffix}`,
+    })
+  })
+
+  it('BOM-CODE-001: 编辑BOM时不允许修改BOM编号', async () => {
+    const suffix = `code-immutable-${Date.now()}`
+    const bomId = await createBom(app, token, suffix)
+    const original = db.prepare('SELECT code FROM boms WHERE id = ?').get(bomId) as any
+
+    const res = await request(app)
+      .put(`/api/v1/boms/${bomId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        code: `BOM-CODE-CHANGED-${suffix}`,
+        name: `试图改编号BOM-${suffix}`,
+      })
+
+    expect(res.status).toBe(400)
+    expect(res.body.error?.message).toContain('BOM编号创建后不允许修改')
+    const after = db.prepare('SELECT code, name FROM boms WHERE id = ?').get(bomId) as any
+    expect(after.code).toBe(original.code)
+    expect(after.name).toBe(`批量BOM-${suffix}`)
   })
 
   it('BOM-BATCH-001: 被检测项目引用的BOM不可删除', async () => {

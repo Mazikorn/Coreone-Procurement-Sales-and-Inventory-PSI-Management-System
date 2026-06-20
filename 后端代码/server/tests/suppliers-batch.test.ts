@@ -44,6 +44,21 @@ function bindSupplierToMaterial(db: any, supplierId: string, suffix: string) {
   `).run(materialId, `MAT-SUP-BATCH-${suffix}`, '供应商批量测试物料', '1ml', '瓶', categoryId, supplierId, locationId)
 }
 
+function seedStandaloneMaterial(db: any, suffix: string) {
+  const categoryId = `cat-sup-ref-${suffix}`
+  const locationId = `loc-sup-ref-${suffix}`
+  const materialId = `mat-sup-ref-${suffix}`
+  db.prepare('INSERT INTO material_categories (id, code, name, level) VALUES (?, ?, ?, ?)')
+    .run(categoryId, `CAT-SUP-REF-${suffix}`, '供应商引用测试分类', 1)
+  db.prepare('INSERT INTO locations (id, code, name, type, zone) VALUES (?, ?, ?, ?, ?)')
+    .run(locationId, `LOC-SUP-REF-${suffix}`, '供应商引用测试库位', 'shelf', 'A区')
+  db.prepare(`
+    INSERT INTO materials (id, code, name, spec, unit, category_id, location_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(materialId, `MAT-SUP-REF-${suffix}`, '供应商引用测试物料', '1ml', '瓶', categoryId, locationId)
+  return { materialId, locationId }
+}
+
 describe('供应商批量操作', () => {
   let app: any
   let db: any
@@ -66,6 +81,57 @@ describe('供应商批量操作', () => {
     expect(res.status).toBe(409)
     const supplier = db.prepare('SELECT is_deleted FROM suppliers WHERE id = ?').get(supplierId) as any
     expect(Number(supplier.is_deleted)).toBe(0)
+  })
+
+  it('SUP-DELETE-001: 被采购、入库、批次或退货引用的供应商不可删除', async () => {
+    const suffix = `biz-ref-${Date.now()}`
+    const refs = ['purchase-order', 'inbound', 'batch', 'supplier-return'] as const
+
+    for (const ref of refs) {
+      const supplierId = await createSupplier(app, token, `${suffix}-${ref}`)
+      const { materialId, locationId } = seedStandaloneMaterial(db, `${suffix}-${ref}`)
+      if (ref === 'purchase-order') {
+        db.prepare(`
+          INSERT INTO purchase_orders (
+            id, order_no, material_id, material_name, supplier_id,
+            ordered_qty, received_qty, unit, unit_price, total_amount,
+            expected_date, status
+          )
+          VALUES (?, ?, ?, ?, ?, 10, 0, '瓶', 12, 120, '2027-12-31', 'pending')
+        `).run(`po-sup-ref-${suffix}`, `PO-SUP-REF-${suffix}`, materialId, '供应商引用测试物料', supplierId)
+      }
+      if (ref === 'inbound') {
+        db.prepare(`
+          INSERT INTO inbound_records (
+            id, inbound_no, type, material_id, batch_no, quantity, unit, price, amount,
+            supplier_id, location_id, operator, status
+          )
+          VALUES (?, ?, 'purchase', ?, ?, 5, '瓶', 12, 60, ?, ?, 'tester', 'completed')
+        `).run(`in-sup-ref-${suffix}`, `IN-SUP-REF-${suffix}`, materialId, `BATCH-${suffix}`, supplierId, locationId)
+      }
+      if (ref === 'batch') {
+        db.prepare(`
+          INSERT INTO batches (id, material_id, batch_no, quantity, remaining, inbound_id, supplier_id)
+          VALUES (?, ?, ?, 5, 5, ?, ?)
+        `).run(`batch-sup-ref-${suffix}`, materialId, `BATCH-SUP-REF-${suffix}`, `inbound-${suffix}`, supplierId)
+      }
+      if (ref === 'supplier-return') {
+        db.prepare(`
+          INSERT INTO supplier_returns (
+            id, return_no, material_id, quantity, supplier_id, reason, operator, status
+          )
+          VALUES (?, ?, ?, 1, ?, 'quality_issue', 'tester', 'pending')
+        `).run(`sr-sup-ref-${suffix}`, `SR-SUP-REF-${suffix}`, materialId, supplierId)
+      }
+
+      const res = await request(app)
+        .delete(`/api/v1/suppliers/${supplierId}`)
+        .set('Authorization', `Bearer ${token}`)
+
+      expect(res.status).toBe(409)
+      const supplier = db.prepare('SELECT is_deleted FROM suppliers WHERE id = ?').get(supplierId) as any
+      expect(Number(supplier.is_deleted)).toBe(0)
+    }
   })
 
   it('SUP-BATCH-002: 批量删除遇到引用时整批拒绝，不部分删除', async () => {
@@ -251,6 +317,77 @@ describe('供应商批量操作', () => {
       active: 1,
       inactive: 1,
     })
+  })
+
+  it('SUP-FINANCE-001: 税号和银行信息必须随供应商主数据保存、回看和更新', async () => {
+    const suffix = `finance-${Date.now()}`
+    const created = await request(app)
+      .post('/api/v1/suppliers')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        name: `财务字段供应商-${suffix}`,
+        contact: '财务联系人',
+        phone: '13800138000',
+        email: `finance-${suffix}@example.com`,
+        address: '财务地址',
+        taxNo: `TAX-${suffix}`,
+        bankName: '测试银行',
+        bankAccount: `ACC-${suffix}`,
+      })
+
+    expect(created.status).toBe(201)
+    const row = db.prepare('SELECT tax_no, bank_name, bank_account FROM suppliers WHERE id = ?')
+      .get(created.body.data.id) as any
+    expect(row).toMatchObject({
+      tax_no: `TAX-${suffix}`,
+      bank_name: '测试银行',
+      bank_account: `ACC-${suffix}`,
+    })
+
+    const list = await request(app)
+      .get('/api/v1/suppliers')
+      .query({ keyword: suffix, page: 1, pageSize: 20 })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(list.status).toBe(200)
+    expect(list.body.data.list[0]).toMatchObject({
+      taxNo: `TAX-${suffix}`,
+      bankName: '测试银行',
+      bankAccount: `ACC-${suffix}`,
+    })
+
+    const updated = await request(app)
+      .put(`/api/v1/suppliers/${created.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        taxNo: `TAX-UPDATED-${suffix}`,
+        bankName: '更新银行',
+        bankAccount: `ACC-UPDATED-${suffix}`,
+      })
+
+    expect(updated.status).toBe(200)
+    const updatedRow = db.prepare('SELECT tax_no, bank_name, bank_account FROM suppliers WHERE id = ?')
+      .get(created.body.data.id) as any
+    expect(updatedRow).toMatchObject({
+      tax_no: `TAX-UPDATED-${suffix}`,
+      bank_name: '更新银行',
+      bank_account: `ACC-UPDATED-${suffix}`,
+    })
+  })
+
+  it('SUP-CODE-001: 供应商编码是采购和成本审计身份，更新接口不可改写', async () => {
+    const suffix = `code-${Date.now()}`
+    const supplierId = await createSupplier(app, token, suffix)
+    const before = db.prepare('SELECT code FROM suppliers WHERE id = ?').get(supplierId) as any
+
+    const res = await request(app)
+      .put(`/api/v1/suppliers/${supplierId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ code: `SUP-MANUAL-${suffix}` })
+
+    expect(res.status).toBe(400)
+    const after = db.prepare('SELECT code FROM suppliers WHERE id = ?').get(supplierId) as any
+    expect(after.code).toBe(before.code)
   })
 
   it('SUP-LIST-001: 引用数据请求不会被截断到前100条', async () => {

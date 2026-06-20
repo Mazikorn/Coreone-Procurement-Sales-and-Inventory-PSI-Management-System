@@ -254,6 +254,99 @@ describe('库位删除保护', () => {
     expect(child.parent_id).toBe(parentId)
   })
 
+  it('LOC-TREE-001: 库位树必须返回关系、状态和容量字段用于页面关系判断', async () => {
+    const suffix = `tree-${Date.now()}`
+    const parentId = await createLocation(app, token, `${suffix}-parent`)
+    const childRes = await request(app)
+      .post('/api/v1/locations')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        name: `树子库位-${suffix}`,
+        zone: 'A区',
+        shelf: '01架',
+        capacity: 0,
+        type: 'shelf',
+        parentId,
+      })
+    expect(childRes.status).toBe(201)
+
+    const tree = await request(app)
+      .get('/api/v1/locations/tree')
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(tree.status).toBe(200)
+    const findNode = (nodes: any[], id: string): any | null => {
+      for (const node of nodes) {
+        if (node.id === id) return node
+        const found = findNode(node.children || [], id)
+        if (found) return found
+      }
+      return null
+    }
+    const child = findNode(tree.body.data, childRes.body.data.id)
+    expect(child).toMatchObject({
+      id: childRes.body.data.id,
+      parentId,
+      status: 'active',
+      capacity: 0,
+      used: 0,
+      depth: 2,
+      fullPath: expect.stringContaining(`树子库位-${suffix}`),
+    })
+  })
+
+  it('LOC-CAPACITY-001: 容量必须按用户输入保存且拒绝负数', async () => {
+    const suffix = `capacity-${Date.now()}`
+    const zeroCapacity = await request(app)
+      .post('/api/v1/locations')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        name: `零容量库位-${suffix}`,
+        zone: 'A区',
+        type: 'shelf',
+        capacity: 0,
+      })
+    expect(zeroCapacity.status).toBe(201)
+    const zeroRow = db.prepare('SELECT capacity FROM locations WHERE id = ?')
+      .get(zeroCapacity.body.data.id) as any
+    expect(Number(zeroRow.capacity)).toBe(0)
+
+    const negativeCreate = await request(app)
+      .post('/api/v1/locations')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        name: `负容量库位-${suffix}`,
+        zone: 'A区',
+        type: 'shelf',
+        capacity: -1,
+      })
+    expect(negativeCreate.status).toBe(400)
+
+    const negativeUpdate = await request(app)
+      .put(`/api/v1/locations/${zeroCapacity.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ capacity: -5 })
+    expect(negativeUpdate.status).toBe(400)
+    const unchanged = db.prepare('SELECT capacity FROM locations WHERE id = ?')
+      .get(zeroCapacity.body.data.id) as any
+    expect(Number(unchanged.capacity)).toBe(0)
+  })
+
+  it('LOC-CODE-001: 库位编码是审计身份，更新接口不可改写', async () => {
+    const suffix = `code-${Date.now()}`
+    const locationId = await createLocation(app, token, suffix)
+    const before = db.prepare('SELECT code FROM locations WHERE id = ?').get(locationId) as any
+
+    const res = await request(app)
+      .put(`/api/v1/locations/${locationId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ code: `LOC-MANUAL-${suffix}` })
+
+    expect(res.status).toBe(400)
+    const after = db.prepare('SELECT code FROM locations WHERE id = ?').get(locationId) as any
+    expect(after.code).toBe(before.code)
+  })
+
   it('LOC-STATS-001: 库位关键字筛选和统计使用后端全量口径', async () => {
     const suffix = `stats-${Date.now()}`
     const rows = [

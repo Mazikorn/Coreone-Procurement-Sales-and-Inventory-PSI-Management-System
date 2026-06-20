@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { laborTimeApi } from '@/api/master'
 import { usePagination } from '@/hooks/usePagination'
-import { getUserRole } from '@/lib/permissions'
+import { getUserPermissions, getUserRole } from '@/lib/permissions'
 import type { StandardLaborTime } from '@/types'
 
 export interface LaborTimeForm {
@@ -39,8 +39,19 @@ export const PROJECT_TYPE_OPTIONS = [
   { value: 'cyto', label: '细胞病理' },
 ]
 
+function canManageLaborTimeRecords() {
+  const role = getUserRole()
+  if (['admin', 'finance'].includes(role || '')) {
+    return true
+  }
+  const permissions = getUserPermissions()
+  return permissions.includes('*')
+    || permissions.includes('labor_times')
+    || permissions.some(permission => ['labor_times:add', 'labor_times:edit', 'labor_times:delete'].includes(permission))
+}
+
 export function useLaborTimePage() {
-  const canManageLaborTimes = getUserRole() === 'admin'
+  const canManageLaborTimes = canManageLaborTimeRecords()
   const [searchInput, setSearchInput] = useState('')
   const [keyword, setKeyword] = useState('')
   const [filterProjectType, setFilterProjectType] = useState('')
@@ -158,7 +169,12 @@ export function useLaborTimePage() {
     }
     try {
       if (modalType === 'edit' && editingId) {
-        await laborTimeApi.update(editingId, form)
+        const current = data.find(item => item.id === editingId)
+        await laborTimeApi.update(editingId, {
+          ...form,
+          stepCode: current?.stepCode || form.stepCode,
+          projectType: current?.projectType || form.projectType,
+        })
         toast.success('工时定义已更新')
       } else {
         await laborTimeApi.create(form)

@@ -116,13 +116,29 @@ function buildAlertWhere(query: any) {
   if (type) { where += ' AND type = ?'; params.push(normalizeAlertTypeFilter(type)) }
   if (level) { where += ' AND level = ?'; params.push(normalizeAlertLevelFilter(level)) }
   if (keyword) {
-    where += ' AND (material_name LIKE ? OR message LIKE ? OR id LIKE ?)'
+    where += ' AND (material_name LIKE ? OR message LIKE ? OR id LIKE ? OR batch_no LIKE ? OR rule_id LIKE ?)'
     const like = `%${keyword}%`
-    params.push(like, like, like)
+    params.push(like, like, like, like, like)
   }
   if (startDate) { where += ' AND created_at >= ?'; params.push(startDate) }
   if (endDate) { where += ' AND created_at <= ?'; params.push(endDate + ' 23:59:59') }
   return { where, params }
+}
+
+function mapAlertRow(r: any) {
+  return {
+    id: r.id, type: r.type, level: r.level, materialId: r.material_id,
+    materialName: r.material_name, currentStock: r.current_stock,
+    threshold: r.threshold, message: r.message, status: r.status,
+    batchId: r.batch_id,
+    batchNo: r.batch_no,
+    ruleId: r.rule_id,
+    triggerCondition: r.trigger_condition,
+    createdAt: r.created_at,
+    handledBy: r.handled_by,
+    handledAt: r.handled_at,
+    remark: r.remark,
+  }
 }
 
 router.get('/rules', (_req, res) => {
@@ -188,15 +204,7 @@ router.get('/', (req, res) => {
     const offset = (Number(page) - 1) * Number(pageSize)
     const list = db.prepare(`SELECT * FROM alerts WHERE ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`).all(...params, Number(pageSize), offset) as any[]
 
-    successList(res, list.map((r: any) => ({
-      id: r.id, type: r.type, level: r.level, materialId: r.material_id,
-      materialName: r.material_name, currentStock: r.current_stock,
-      threshold: r.threshold, message: r.message, status: r.status,
-      createdAt: r.created_at,
-      handledBy: r.handled_by,
-      handledAt: r.handled_at,
-      remark: r.remark,
-    })), Number(page), Number(pageSize), count)
+    successList(res, list.map(mapAlertRow), Number(page), Number(pageSize), count)
   } catch (err: any) { error(res, err.message) }
 })
 
@@ -330,8 +338,9 @@ router.post('/generate', (req, res) => {
       for (const item of lowItems) {
         const exists = db.prepare("SELECT COUNT(*) as c FROM alerts WHERE material_id = ? AND type = ? AND status = 'pending'").get(item.id, 'low-stock') as any
         if (exists.c === 0) {
-          db.prepare("INSERT INTO alerts (id, type, level, material_id, material_name, current_stock, threshold, message, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')")
-            .run(uuidv4(), 'low-stock', 'warning', item.id, item.name, item.stock, item.safety_stock, `Low stock: current ${item.stock}, safety ${item.safety_stock}`)
+          const triggerCondition = `当前库存 ${item.stock} <= 安全库存 ${item.safety_stock}`
+          db.prepare("INSERT INTO alerts (id, type, level, material_id, material_name, current_stock, threshold, message, status, rule_id, trigger_condition) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)")
+            .run(uuidv4(), 'low-stock', 'warning', item.id, item.name, item.stock, item.safety_stock, `Low stock: current ${item.stock}, safety ${item.safety_stock}`, lowStockRule.id, triggerCondition)
           count++
         }
       }
@@ -348,14 +357,22 @@ router.post('/generate', (req, res) => {
         SELECT b.id as batch_id, m.id, m.name, b.batch_no, b.expiry_date
         FROM batches b
         JOIN materials m ON b.material_id = m.id AND m.is_deleted = 0
-        WHERE b.status = 1 AND b.expiry_date <= ?
+        WHERE b.status = 1 AND b.remaining > 0 AND b.expiry_date <= ?
       `).all(thresholdStr) as any[]
 
       for (const item of expItems) {
-        const exists = db.prepare("SELECT COUNT(*) as c FROM alerts WHERE material_id = ? AND type = ? AND status = 'pending'").get(item.id, 'expiry') as any
+        const exists = db.prepare(`
+          SELECT COUNT(*) as c
+          FROM alerts
+          WHERE material_id = ?
+            AND type = 'expiry'
+            AND status = 'pending'
+            AND (batch_id = ? OR batch_no = ?)
+        `).get(item.id, item.batch_id, item.batch_no) as any
         if (exists.c === 0) {
-          db.prepare("INSERT INTO alerts (id, type, level, material_id, material_name, threshold, message, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')")
-            .run(uuidv4(), 'expiry', 'danger', item.id, item.name, expiryRule.threshold_days, `Batch ${item.batch_no} expires at ${item.expiry_date}`)
+          const triggerCondition = `批次 ${item.batch_no} 有效期 ${item.expiry_date} <= 预警截止 ${thresholdStr}`
+          db.prepare("INSERT INTO alerts (id, type, level, material_id, material_name, threshold, message, status, batch_id, batch_no, rule_id, trigger_condition) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)")
+            .run(uuidv4(), 'expiry', 'danger', item.id, item.name, expiryRule.threshold_days, `Batch ${item.batch_no} expires at ${item.expiry_date}`, item.batch_id, item.batch_no, expiryRule.id, triggerCondition)
           count++
         }
       }

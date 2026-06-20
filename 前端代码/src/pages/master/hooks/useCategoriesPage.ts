@@ -26,6 +26,18 @@ export function countStats(nodes: Category[]) {
   return { total, totalMaterials, level3 }
 }
 
+function flattenCategories(nodes: Category[]): Category[] {
+  const result: Category[] = []
+  const walk = (items: Category[]) => {
+    items.forEach(item => {
+      result.push(item)
+      if (item.children) walk(item.children)
+    })
+  }
+  walk(nodes)
+  return result
+}
+
 export function useCategoriesPage() {
   const [tree, setTree] = useState<Category[]>([])
   const [loading, setLoading] = useState(false)
@@ -82,8 +94,7 @@ export function useCategoriesPage() {
       const firstLevelIds = new Set<string>()
       t.forEach((n: Category) => firstLevelIds.add(n.id))
       setExpandedIds(firstLevelIds)
-      const listRes: any = await categoryApi.getList({ page: 1, pageSize: 999 })
-      setFlatList(listRes?.list || [])
+      setFlatList(flattenCategories(t))
     } catch (e) { console.error(e) } finally { setLoading(false) }
   }, [])
 

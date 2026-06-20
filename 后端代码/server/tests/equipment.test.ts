@@ -194,20 +194,34 @@ describe('设备使用', () => {
     expect(res.body.data.summary.totalEquipment).toBeGreaterThanOrEqual(unclassified.equipmentCount)
   })
 
-  it('EQ-AUTH-001: 技术员可登记设备使用但不能维护设备资产主档', async () => {
+  it('EQ-AUTH-001: 技术员拥有设备模块权限时可维护设备资产主档并登记使用', async () => {
     const suffix = Date.now()
     const createByTechnician = await request(app)
       .post('/api/v1/equipment')
       .set('Authorization', `Bearer ${technicianToken}`)
       .send({
         code: `EQ-TECH-${suffix}`,
-        name: '技术员越权创建设备',
+        name: '技术员创建设备',
         purchasePrice: 100000,
         residualValue: 10000,
         depreciableLifeYears: 5,
         depreciationMethod: 'straight_line',
       })
-    expect(createByTechnician.status).toBe(403)
+    expect(createByTechnician.status).toBe(201)
+    const technicianEquipmentId = createByTechnician.body.data.id
+
+    const updateByTechnician = await request(app)
+      .put(`/api/v1/equipment/${technicianEquipmentId}`)
+      .set('Authorization', `Bearer ${technicianToken}`)
+      .send({ code: `EQ-TECH-${suffix}`, name: '技术员更新设备', purchasePrice: 120000, residualValue: 10000 })
+    expect(updateByTechnician.status).toBe(200)
+
+    const deleteByTechnician = await request(app)
+      .delete(`/api/v1/equipment/${technicianEquipmentId}`)
+      .set('Authorization', `Bearer ${technicianToken}`)
+    expect(deleteByTechnician.status).toBe(200)
+    const deleted = db.prepare('SELECT id FROM equipment WHERE id = ?').get(technicianEquipmentId) as any
+    expect(deleted).toBeUndefined()
 
     const equipmentId = seedEquipment(db, `auth-${suffix}`)
 
@@ -217,19 +231,28 @@ describe('设备使用', () => {
       .send({ usageMinutes: 30, usageCount: 1, usageDate: '2026-06-17' })
     expect(usageByTechnician.status).toBe(201)
 
-    const updateByTechnician = await request(app)
+    const usage = db.prepare('SELECT operator FROM equipment_usage WHERE equipment_id = ?').get(equipmentId) as any
+    expect(usage.operator).toBe('zhangwei')
+  })
+
+  it('EQ-CODE-001: 编辑设备时不允许修改设备编号', async () => {
+    const suffix = Date.now()
+    const equipmentId = seedEquipment(db, `code-${suffix}`)
+    const original = db.prepare('SELECT code FROM equipment WHERE id = ?').get(equipmentId) as any
+
+    const res = await request(app)
       .put(`/api/v1/equipment/${equipmentId}`)
-      .set('Authorization', `Bearer ${technicianToken}`)
-      .send({ purchasePrice: 1, residualValue: 0 })
-    expect(updateByTechnician.status).toBe(403)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        code: `EQ-CHANGED-${suffix}`,
+        name: '不应改编号设备',
+      })
 
-    const deleteByTechnician = await request(app)
-      .delete(`/api/v1/equipment/${equipmentId}`)
-      .set('Authorization', `Bearer ${technicianToken}`)
-    expect(deleteByTechnician.status).toBe(403)
-
-    const equipment = db.prepare('SELECT purchase_price FROM equipment WHERE id = ?').get(equipmentId) as any
-    expect(equipment.purchase_price).toBe(100000)
+    expect(res.status).toBe(400)
+    expect(res.body.error?.message).toContain('设备编号创建后不允许修改')
+    const after = db.prepare('SELECT code, name FROM equipment WHERE id = ?').get(equipmentId) as any
+    expect(after.code).toBe(original.code)
+    expect(after.name).toBe('设备使用审计测试设备')
   })
 
   it('EQ-TEXT-001: 创建设备时拦截危险文本并保存清理后的展示文本', async () => {

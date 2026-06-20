@@ -427,8 +427,8 @@ function importLisItems(items: any[]) {
     }
 
     const stmt = db.prepare(`
-      INSERT INTO lis_cases (id, case_no, project_id, project_name, operator, operate_time, import_batch)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO lis_cases (id, case_no, project_id, project_name, operator, operate_time, status, import_batch)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(case_no) DO UPDATE SET
         project_id = CASE
           WHEN excluded.project_id IS NOT NULL AND excluded.project_id != '' THEN excluded.project_id
@@ -441,6 +441,11 @@ function importLisItems(items: any[]) {
         END,
         operator = excluded.operator,
         operate_time = excluded.operate_time,
+        status = CASE
+          WHEN excluded.project_id IS NOT NULL AND excluded.project_id != '' AND lis_cases.status = 'unmatched' THEN 'normal'
+          WHEN excluded.project_id IS NULL OR excluded.project_id = '' THEN lis_cases.status
+          ELSE lis_cases.status
+        END,
         updated_at = CURRENT_TIMESTAMP
     `)
 
@@ -484,6 +489,7 @@ function importLisItems(items: any[]) {
         project?.name || projectName,
         operator,
         operateTime,
+        project ? 'normal' : 'unmatched',
         importBatch
       )
       successCount++
@@ -1139,10 +1145,16 @@ router.put('/cases/:id', (req, res) => {
     const existing = db.prepare('SELECT * FROM lis_cases WHERE id = ?').get(id)
     if (!existing) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
     let nextProjectName = projectName
+    let normalizedStatus = hasStatus ? nextStatus : undefined
     if (projectId) {
-      const project = db.prepare('SELECT id, name FROM projects WHERE id = ? AND is_deleted = 0 AND status = 1').get(projectId) as any
+      const project = db.prepare('SELECT id, name, bom_id FROM projects WHERE id = ? AND is_deleted = 0 AND status = 1').get(projectId) as any
       if (!project) { error(res, '项目不存在或已停用', 'INVALID_PARAMETER', 400); return }
       nextProjectName = projectName || project.name
+      if (!hasStatus) {
+        normalizedStatus = project.bom_id ? 'modified' : 'unmatched'
+      } else if (nextStatus === 'unmatched' && project.bom_id) {
+        normalizedStatus = 'modified'
+      }
     }
 
     db.prepare(`
@@ -1152,7 +1164,7 @@ router.put('/cases/:id', (req, res) => {
         status = COALESCE(?, status),
         updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(projectId, nextProjectName, hasStatus ? nextStatus : undefined, id)
+    `).run(projectId, nextProjectName, normalizedStatus, id)
 
     success(res, null, '病例信息已更新')
   } catch (e: any) {

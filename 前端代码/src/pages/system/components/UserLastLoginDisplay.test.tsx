@@ -1,5 +1,5 @@
 import React from 'react'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import type { User } from '@/types'
 import type { RoleItem } from '../hooks/useUsersPage'
@@ -63,6 +63,61 @@ describe('user last login display', () => {
 
     expect(screen.getByText(/2026\/06\/17/)).toBeInTheDocument()
     expect(screen.queryByText('-', { selector: 'td' })).not.toBeInTheDocument()
+  })
+
+  it('does not expose destructive admin account actions in the users table', () => {
+    const adminUser: User = {
+      ...user,
+      id: 'USER-001',
+      username: 'admin',
+      realName: '管理员',
+      role: 'admin',
+      permissions: ['*'],
+    }
+
+    render(
+      <UsersTable
+        data={[adminUser, user]}
+        loading={false}
+        total={2}
+        page={1}
+        pageSize={20}
+        keyword=""
+        roleFilter=""
+        statusFilter=""
+        selectedRoleId=""
+        selectedIds={new Set()}
+        roles={roles}
+        onKeywordChange={vi.fn()}
+        onRoleFilterChange={vi.fn()}
+        onStatusFilterChange={vi.fn()}
+        onSelectedRoleIdChange={vi.fn()}
+        onToggleSelectAll={vi.fn()}
+        onToggleSelect={vi.fn()}
+        onClearSelection={vi.fn()}
+        onBatchToggleStatus={vi.fn()}
+        onBatchDelete={vi.fn()}
+        onSearch={vi.fn()}
+        onReset={vi.fn()}
+        onPageChange={vi.fn()}
+        onPageSizeChange={vi.fn()}
+        onOpenDetail={vi.fn()}
+        onOpenEdit={vi.fn()}
+        onToggleStatus={vi.fn()}
+        onResetPassword={vi.fn()}
+        onDelete={vi.fn()}
+      />
+    )
+
+    const adminRow = screen.getAllByText('admin')[0].closest('tr')!
+    expect(within(adminRow).getByRole('checkbox')).toBeDisabled()
+    expect(within(adminRow).queryByText('停用')).not.toBeInTheDocument()
+    expect(within(adminRow).queryByText('删除')).not.toBeInTheDocument()
+
+    const normalRow = screen.getByText('last-login-user').closest('tr')!
+    expect(within(normalRow).getByRole('checkbox')).not.toBeDisabled()
+    expect(within(normalRow).getByText('停用')).toBeInTheDocument()
+    expect(within(normalRow).getByText('删除')).toBeInTheDocument()
   })
 
   it('renders last login in the user detail modal', () => {

@@ -1,3 +1,4 @@
+import React from 'react'
 import { X } from 'lucide-react'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { EquipmentTypeForm } from '../hooks/useEquipmentTypePage'
@@ -48,8 +49,13 @@ export default function EquipmentTypeFormModal({
               <label className="block text-sm font-medium text-gray-700 mb-1">类型编码 *</label>
               <input
                 value={form.code}
-                onChange={(e) => onChange({ ...form, code: e.target.value })}
-                className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
+                onChange={(e) => {
+                  if (type === 'create') onChange({ ...form, code: e.target.value })
+                }}
+                readOnly={type === 'edit'}
+                className={`w-full h-10 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500 ${
+                  type === 'edit' ? 'bg-gray-50 text-gray-400' : ''
+                }`}
               />
             </div>
             <div>
@@ -58,6 +64,20 @@ export default function EquipmentTypeFormModal({
                 value={form.name}
                 onChange={(e) => onChange({ ...form, name: e.target.value })}
                 className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">状态</label>
+              <SearchableSelect
+                value={form.status}
+                onChange={(value) => onChange({ ...form, status: value as 'active' | 'inactive' })}
+                options={[
+                  { value: 'active', label: '启用' },
+                  { value: 'inactive', label: '禁用' },
+                ]}
               />
             </div>
           </div>

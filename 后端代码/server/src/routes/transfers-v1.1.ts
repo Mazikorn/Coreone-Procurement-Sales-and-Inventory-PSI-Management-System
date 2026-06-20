@@ -69,6 +69,15 @@ router.post('/inbound', (req, res) => {
     if (!material) { error(res, '物料不存在或已删除', 'NOT_FOUND', 404); return }
     if (Number(material.status) !== 1) { error(res, '物料已停用，不能创建调拨记录', 'CONFLICT', 409); return }
     const normalizedBatchNo = String(batchNo || '').trim()
+    const activeBatchCount = (db.prepare(`
+      SELECT COUNT(*) as count
+      FROM batches
+      WHERE material_id = ? AND status = 1 AND remaining > 0
+    `).get(materialId) as any)?.count || 0
+    if (!normalizedBatchNo && activeBatchCount > 0) {
+      error(res, '请选择调拨批次', 'BATCH_REQUIRED', 422)
+      return
+    }
     if (normalizedBatchNo) {
       const batch = db.prepare(`
         SELECT id, status, remaining

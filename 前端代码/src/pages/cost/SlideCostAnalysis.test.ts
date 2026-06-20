@@ -128,6 +128,12 @@ describe('SlideCostAnalysis', () => {
     render(React.createElement(SlideCostAnalysis))
 
     await waitFor(() => expect(screen.getByText('HE检测')).toBeInTheDocument())
+    expect(abcApi.getProfitability).toHaveBeenCalledWith({
+      dimension: 'bom',
+      startDate: new Date().toISOString().slice(0, 7),
+      endDate: new Date().toISOString().slice(0, 7),
+      pageSize: 1000,
+    })
 
     const row = screen.getByText('HE检测').closest('tr')
     expect(row).not.toBeNull()

@@ -212,6 +212,15 @@ router.put('/:id', (req, res) => {
       ? requireValidText(stepCode, '步骤编号', 100)
       : { ok: true as const, value: existing.step_code }
     if (sendTextError(res, stepCodeText)) return
+    if (stepCodeText.value !== existing.step_code) {
+      error(res, '步骤编号创建后不允许修改', 'INVALID_PARAMETER', 400)
+      return
+    }
+    const normalizedProjectType = projectType !== undefined ? normalizeProjectType(projectType) : existing.project_type
+    if (normalizedProjectType !== existing.project_type) {
+      error(res, '项目类型创建后不允许修改', 'INVALID_PARAMETER', 400)
+      return
+    }
     const stepNameText = stepName !== undefined
       ? requireValidText(stepName, '步骤名称')
       : { ok: true as const, value: existing.step_name }

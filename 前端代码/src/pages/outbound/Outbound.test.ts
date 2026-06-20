@@ -144,6 +144,7 @@ describe('Outbound page material candidates', () => {
 
     expect(await screen.findByText('OB-BOM-001')).toBeInTheDocument()
     expect(screen.getByText('BOM出库')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '编辑' })).not.toBeInTheDocument()
 
     const rowCheckbox = screen.getAllByRole('checkbox')[1]
     fireEvent.click(rowCheckbox)
@@ -156,6 +157,19 @@ describe('Outbound page material candidates', () => {
         类型: 'BOM出库',
       }),
     ])
+  })
+
+  it('does not offer transfer or scrap creation from the generic outbound form', async () => {
+    render(React.createElement(MemoryRouter, null, React.createElement(Outbound)))
+
+    fireEvent.click(await screen.findByRole('button', { name: '出库登记' }))
+
+    await waitFor(() => expect(screen.getByTestId('outbound-type-select')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('outbound-type-select').firstElementChild as Element)
+
+    await waitFor(() => expect(screen.getByTestId('option-project')).toBeInTheDocument())
+    expect(screen.queryByTestId('option-transfer')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('option-scrap')).not.toBeInTheDocument()
   })
 })
 

@@ -31,6 +31,7 @@ describe('RoleDetailModal', () => {
   it('renders associated users instead of a fixed empty state', () => {
     render(<RoleDetailModal open role={role} onClose={vi.fn()} />)
 
+    expect(screen.getByText('系统角色')).toBeInTheDocument()
     expect(screen.getByText('关联用户')).toBeInTheDocument()
     expect(screen.getByText('王克强')).toBeInTheDocument()
     expect(screen.getByText('wangkq · 病理科')).toBeInTheDocument()

@@ -1,5 +1,5 @@
 import request from './request'
-import type { PaginationData, InventoryItem, InventoryStats, InventoryConsistencyCheck, InboundRecord, InboundFormData, OutboundRecord, OutboundFormData, PageParams, SupplierReturnRecord, SupplierReturnFormData, ReturnRecord } from '@/types'
+import type { PaginationData, InventoryItem, InventoryStats, InventoryConsistencyCheck, InboundRecord, InboundFormData, OutboundRecord, OutboundFormData, PageParams, SupplierReturnRecord, SupplierReturnFormData, ReturnRecord, ReturnSource } from '@/types'
 
 export const inventoryApi = {
   getList: (params?: PageParams & { status?: string; categoryId?: string; locationId?: string; keyword?: string; materialId?: string }) =>
@@ -105,7 +105,9 @@ export const scrapApi = {
 export const returnApi = {
   getList: (params?: PageParams & { keyword?: string }) =>
     request.get<PaginationData<ReturnRecord>>('/returns', { params }),
-  create: (data: { materialId: string; batchId?: string; quantity: number; reason: string; remark?: string }) =>
+  getSources: (params?: PageParams & { keyword?: string; materialId?: string }) =>
+    request.get<PaginationData<ReturnSource>>('/returns/sources', { params }),
+  create: (data: { outboundItemId: string; quantity: number; reason: string; remark?: string }) =>
     request.post<{ id: string }>('/returns', data),
   delete: (id: string) =>
     request.delete(`/returns/${id}`),

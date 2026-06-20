@@ -73,4 +73,60 @@ describe('useDashboardPage', () => {
     expect(outboundApi.getStats).not.toHaveBeenCalled()
     expect(outboundApi.getList).not.toHaveBeenCalled()
   })
+
+  it('uses pending alert records instead of inventory warning totals for dashboard alert count', async () => {
+    setRole('warehouse_manager')
+    vi.mocked(inventoryApi.getStats).mockResolvedValue({
+      totalMaterials: 10,
+      lowStockCount: 7,
+      expiringCount: 2,
+      expiredCount: 1,
+    } as any)
+    vi.mocked(alertsApi.getList).mockResolvedValue({
+      list: [
+        { id: 'alert-1', type: 'low-stock', level: 'warning', materialName: 'A', message: 'A库存不足' },
+        { id: 'alert-2', type: 'expiry', level: 'urgent', materialName: 'B', message: 'B即将过期' },
+      ],
+    } as any)
+
+    const { result } = renderHook(() => useDashboardPage())
+
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    expect(result.current.alertCount).toBe(2)
+  })
+
+  it('orders recent inbound and outbound activities by their real timestamps', async () => {
+    setRole('warehouse_manager')
+    vi.mocked(inboundApi.getList).mockResolvedValue({
+      list: [
+        {
+          id: 'old-inbound',
+          materialName: '旧入库物料',
+          quantity: 1,
+          unit: '支',
+          operator: '仓管',
+          createdAt: '2026-06-20T08:00:00.000Z',
+        },
+      ],
+    } as any)
+    vi.mocked(outboundApi.getList).mockResolvedValue({
+      list: [
+        {
+          id: 'new-outbound',
+          outboundNo: 'OUT-NEW',
+          projectName: '新出库项目',
+          operator: '仓管',
+          createdAt: '2026-06-20T09:00:00.000Z',
+        },
+      ],
+    } as any)
+
+    const { result } = renderHook(() => useDashboardPage())
+
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    expect(result.current.activities[0].id).toBe('out-new-outbound')
+    expect(result.current.activities[1].id).toBe('in-old-inbound')
+  })
 })

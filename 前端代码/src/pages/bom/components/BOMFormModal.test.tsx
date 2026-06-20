@@ -86,4 +86,16 @@ describe('BOMFormModal service options', () => {
 
     expect(screen.getByDisplayValue('v1.3')).toHaveAttribute('readonly')
   })
+
+  it('keeps backend-controlled BOM code read-only while editing a BOM', () => {
+    renderModal({ ...baseForm, code: 'BOM-LOCKED' }, [])
+
+    expect(screen.getByDisplayValue('BOM-LOCKED')).toHaveAttribute('readonly')
+  })
+
+  it('shows supportable samples as a read-only calculated value', () => {
+    renderModal({ ...baseForm, supportableSamples: 12 }, [])
+
+    expect(screen.getByDisplayValue('12')).toHaveAttribute('readonly')
+  })
 })

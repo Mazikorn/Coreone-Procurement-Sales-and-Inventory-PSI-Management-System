@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { validateSupplierReturnForm, type SupplierReturnFormState } from './SupplierReturns'
+import { canAccessPurchaseOrders, validateSupplierReturnForm, type SupplierReturnFormState } from './SupplierReturns'
 import type { Batch, Material } from '@/types'
 
 const baseForm: SupplierReturnFormState = {
   materialId: 'mat-1',
   quantity: 1,
   batchId: 'batch-1',
-  supplierId: '',
+  supplierId: 'supplier-1',
   purchaseOrderId: '',
   inboundRecordId: '',
   reason: 'quality_issue',
@@ -42,12 +42,17 @@ const batches = [
     expiryDate: '2027-01-01',
     inboundId: 'inbound-1',
     inboundPrice: 12,
+    supplierId: 'supplier-1',
     status: 'normal',
     createdAt: '2026-06-17',
   },
 ] satisfies Batch[]
 
 describe('validateSupplierReturnForm', () => {
+  it('requires a supplier so supplier cost and refund facts are attributable', () => {
+    expect(validateSupplierReturnForm({ ...baseForm, supplierId: '' }, material, batches)).toBe('请选择退货供应商')
+  })
+
   it('requires a selected batch when the material has available batches', () => {
     expect(validateSupplierReturnForm({ ...baseForm, batchId: '' }, material, batches)).toBe('请选择退货批次')
   })
@@ -56,7 +61,17 @@ describe('validateSupplierReturnForm', () => {
     expect(validateSupplierReturnForm({ ...baseForm, quantity: 4 }, material, batches)).toBe('退货数量不能超过所选批次剩余量')
   })
 
+  it('blocks batches that do not belong to the selected supplier', () => {
+    expect(validateSupplierReturnForm({ ...baseForm, supplierId: 'supplier-2' }, material, batches)).toBe('退货批次与供应商不一致')
+  })
+
   it('accepts a valid material, batch, quantity and reason combination', () => {
     expect(validateSupplierReturnForm(baseForm, material, batches)).toBeNull()
+  })
+})
+
+describe('canAccessPurchaseOrders', () => {
+  it('allows warehouse managers to load purchase order sources for supplier returns', () => {
+    expect(canAccessPurchaseOrders('warehouse_manager')).toBe(true)
   })
 })

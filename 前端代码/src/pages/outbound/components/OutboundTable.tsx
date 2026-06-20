@@ -139,6 +139,8 @@ export default function OutboundTable({
                 const firstItem = row.items?.[0]
                 const cfg = statusConfig[row.status] || statusConfig.completed
                 const costCfg = costStatusConfig[row.costStatus || 'pending_cost'] || costStatusConfig.pending_cost
+                const canEdit = row.type === 'project'
+                const canDeleteFromOutbound = row.type === 'project' || row.type === 'bom'
                 return (
                   <tr
                     key={row.id}
@@ -243,18 +245,22 @@ export default function OutboundTable({
                         </button>
                         {row.status === 'completed' && (
                           <>
-                            <button
-                              onClick={() => onOpenEdit(row)}
-                              className="px-2 py-1 text-xs text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors duration-150"
-                            >
-                              编辑
-                            </button>
-                            <button
-                              onClick={() => onOpenDelete(row)}
-                              className="px-2 py-1 text-xs text-gray-600 hover:text-red-600 hover:bg-red-50 rounded transition-colors duration-150"
-                            >
-                              删除
-                            </button>
+                            {canEdit && (
+                              <button
+                                onClick={() => onOpenEdit(row)}
+                                className="px-2 py-1 text-xs text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors duration-150"
+                              >
+                                编辑
+                              </button>
+                            )}
+                            {canDeleteFromOutbound && (
+                              <button
+                                onClick={() => onOpenDelete(row)}
+                                className="px-2 py-1 text-xs text-gray-600 hover:text-red-600 hover:bg-red-50 rounded transition-colors duration-150"
+                              >
+                                删除
+                              </button>
+                            )}
                           </>
                         )}
                         {row.status === 'pending' && (

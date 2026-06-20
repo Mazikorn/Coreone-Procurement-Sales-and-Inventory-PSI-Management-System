@@ -291,6 +291,103 @@ describe('供应商退货', () => {
     expect(Number(records.count)).toBe(0)
   })
 
+  it('SR-013: 创建供应商退货必须能归属到供应商，避免成本退款漏扣', async () => {
+    const { materialId } = seedSupplierReturnMaterialWithBatch(db, `missing-supplier-${Date.now()}`)
+
+    const res = await request(app)
+      .post('/api/v1/supplier-returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId,
+        quantity: 1,
+        reason: '缺少供应商的退货',
+      })
+
+    expect(res.status).toBe(400)
+    expect(res.body.error.code).toBe('SUPPLIER_REQUIRED')
+
+    const inv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+    const records = db.prepare('SELECT COUNT(*) as count FROM supplier_returns WHERE material_id = ?')
+      .get(materialId) as any
+    const logs = db.prepare('SELECT COUNT(*) as count FROM stock_logs WHERE material_id = ? AND related_type = ?')
+      .get(materialId, 'supplier_return') as any
+
+    expect(Number(inv.stock)).toBe(10)
+    expect(Number(records.count)).toBe(0)
+    expect(Number(logs.count)).toBe(0)
+  })
+
+  it('SR-014: 所选批次必须属于退货供应商，避免扣错供应商批次', async () => {
+    const returnSeed = seedSupplierReturnMaterialWithBatch(db, `batch-source-return-${Date.now()}`)
+    const otherSeed = seedSupplierReturnMaterial(db, `batch-source-other-${Date.now()}`)
+
+    const res = await request(app)
+      .post('/api/v1/supplier-returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId: returnSeed.materialId,
+        supplierId: otherSeed.supplierId,
+        batchId: returnSeed.batchId,
+        quantity: 1,
+        reason: '供应商与批次来源不一致',
+      })
+
+    expect(res.status).toBe(409)
+    expect(res.body.error.code).toBe('BATCH_SOURCE_MISMATCH')
+
+    const inv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(returnSeed.materialId) as any
+    const batch = db.prepare('SELECT remaining FROM batches WHERE id = ?').get(returnSeed.batchId) as any
+    const records = db.prepare('SELECT COUNT(*) as count FROM supplier_returns WHERE material_id = ?')
+      .get(returnSeed.materialId) as any
+
+    expect(Number(inv.stock)).toBe(10)
+    expect(Number(batch.remaining)).toBe(10)
+    expect(Number(records.count)).toBe(0)
+  })
+
+  it('SR-015: 关联入库记录时所选批次必须与入库批号一致', async () => {
+    const seed = seedSupplierReturnMaterialWithBatch(db, `batch-inbound-return-${Date.now()}`)
+    const inboundRecordId = `inbound-sr-mismatch-${Date.now()}`
+
+    db.prepare(`
+      INSERT INTO inbound_records (
+        id, inbound_no, type, material_id, batch_no, quantity, unit, price,
+        amount, supplier_id, location_id, operator, status
+      ) VALUES (?, ?, 'purchase', ?, ?, 2, '瓶', 12, 24, ?, ?, 'admin', 'completed')
+    `).run(
+      inboundRecordId,
+      `IN-SR-MISMATCH-${Date.now()}`,
+      seed.materialId,
+      'OTHER-BATCH-NO',
+      seed.supplierId,
+      seed.locationId,
+    )
+
+    const res = await request(app)
+      .post('/api/v1/supplier-returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId: seed.materialId,
+        supplierId: seed.supplierId,
+        batchId: seed.batchId,
+        inboundRecordId,
+        quantity: 1,
+        reason: '入库来源与批次不一致',
+      })
+
+    expect(res.status).toBe(409)
+    expect(res.body.error.code).toBe('BATCH_SOURCE_MISMATCH')
+
+    const inv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(seed.materialId) as any
+    const batch = db.prepare('SELECT remaining FROM batches WHERE id = ?').get(seed.batchId) as any
+    const records = db.prepare('SELECT COUNT(*) as count FROM supplier_returns WHERE material_id = ?')
+      .get(seed.materialId) as any
+
+    expect(Number(inv.stock)).toBe(10)
+    expect(Number(batch.remaining)).toBe(10)
+    expect(Number(records.count)).toBe(0)
+  })
+
   it('SR-VALIDATION-001: 供应商退货拒绝非有限数量且不扣库存和批次', async () => {
     const { materialId, supplierId, batchId } = seedSupplierReturnMaterialWithBatch(db, `finite-number-${Date.now()}`)
     const invalidPayloads = [

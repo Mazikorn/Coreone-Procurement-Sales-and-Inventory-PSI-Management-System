@@ -46,7 +46,7 @@ export function AlertDetailModal({ open, alert, onClose, onHandle, formatDate }:
             </div>
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="text-xs text-gray-500 mb-1">来源规则</div>
-              <div className="text-sm font-medium text-blue-600">{alert.ruleId || 'RULE-001'}</div>
+              <div className="text-sm font-medium text-blue-600">{alert.ruleId || '-'}</div>
             </div>
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="text-xs text-gray-500 mb-1">预警时间</div>
@@ -56,7 +56,7 @@ export function AlertDetailModal({ open, alert, onClose, onHandle, formatDate }:
           <div className="bg-gray-50 rounded-lg p-4">
             <div className="text-sm font-medium text-gray-700 mb-2">触发条件</div>
             <div className="text-sm text-gray-600">
-              {alert.triggerCondition || alert.message || '当前库存低于预警阈值'}
+              {alert.triggerCondition || alert.message || '-'}
             </div>
           </div>
           {alert.status !== 'pending' && (

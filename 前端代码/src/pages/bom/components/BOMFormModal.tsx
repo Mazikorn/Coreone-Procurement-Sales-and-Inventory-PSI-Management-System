@@ -70,9 +70,14 @@ export function BOMFormModal({
               </label>
               <input
                 value={form.code}
-                onChange={(e) => onChange({ ...form, code: e.target.value })}
+                onChange={(e) => {
+                  if (type === 'create') onChange({ ...form, code: e.target.value })
+                }}
                 placeholder="请输入BOM编号"
-                className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm text-gray-700 placeholder:text-gray-400 focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500 transition-colors"
+                readOnly={type === 'edit'}
+                className={`w-full h-10 px-3 border border-gray-300 rounded-md text-sm placeholder:text-gray-400 focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500 transition-colors ${
+                  type === 'edit' ? 'bg-gray-50 text-gray-400' : 'text-gray-700'
+                }`}
               />
             </div>
           </div>
@@ -153,10 +158,8 @@ export function BOMFormModal({
             <input
               type="number"
               value={form.supportableSamples}
-              onChange={(e) =>
-                onChange({ ...form, supportableSamples: Number(e.target.value) })
-              }
-              className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm text-gray-700 focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500 transition-colors"
+              readOnly
+              className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm bg-gray-50 text-gray-400 focus:outline-none transition-colors"
             />
           </div>
           <div>

@@ -4,7 +4,7 @@ import { usePagination } from '@/hooks/usePagination'
 import type { BOM, BOMDeleteCheck, BOMGeneralConsumable, BOMGeneralReagent, BOMQualityControl, BOMStatusCheck, Material, Project } from '@/types'
 import { toast } from 'sonner'
 import { downloadTextFile } from '@/lib/utils'
-import { getUserRole } from '@/lib/permissions'
+import { getUserPermissions, getUserRole } from '@/lib/permissions'
 import { getBOMEffectiveScopeLabel, getBOMTypeLabel } from '../constants'
 
 export interface BOMForm {
@@ -194,7 +194,6 @@ function buildPayload(form: BOMForm): any {
     type: form.type,
     serviceId: form.serviceId.trim() || null,
     description: form.description.trim() || undefined,
-    supportableSamples: form.supportableSamples || undefined,
     feeStandardId: form.feeStandardId || undefined,
     feeCategory: form.feeCategory || undefined,
     materials: form.materials
@@ -226,8 +225,19 @@ function buildPayload(form: BOMForm): any {
   }
 }
 
+function canManageBom() {
+  const role = getUserRole()
+  if (['admin', 'warehouse_manager', 'technician', 'pathologist'].includes(role || '')) {
+    return true
+  }
+  const permissions = getUserPermissions()
+  return permissions.includes('*')
+    || permissions.includes('bom')
+    || permissions.some(permission => ['bom:add', 'bom:edit', 'bom:delete'].includes(permission))
+}
+
 export function useBOMPage() {
-  const canWrite = getUserRole() === 'admin'
+  const canWrite = canManageBom()
   const [searchInput, setSearchInput] = useState('')
   const [keyword, setKeyword] = useState('')
   const [filterType, setFilterType] = useState('')
@@ -440,6 +450,9 @@ export function useBOMPage() {
     try {
       const payload = buildPayload(form)
       if (modalType === 'edit' && editingId) {
+        if (selectedBom) {
+          payload.code = selectedBom.code
+        }
         const previousPayload = selectedBom ? buildPayload(toForm(selectedBom)) : null
         const contentChanged = JSON.stringify(payload) !== JSON.stringify(previousPayload)
         const statusChanged = form.status !== selectedBom?.status

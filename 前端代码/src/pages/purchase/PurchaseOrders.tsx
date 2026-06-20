@@ -10,6 +10,7 @@ import { purchaseOrderApi } from '@/api/inventory'
 import { materialApi, supplierApi } from '@/api/master'
 import type { PurchaseOrder, Material, Supplier } from '@/types'
 import { formatCurrency } from '@/lib/utils'
+import { getUserRole } from '@/lib/permissions'
 import { toast } from 'sonner'
 
 const statusConfig: Record<string, { label: string; bg: string; text: string }> = {
@@ -39,8 +40,19 @@ export function applySelectedMaterialToPurchaseForm(form: PurchaseOrderForm, mat
   }
 }
 
+export function canWritePurchaseOrders(role: string | null): boolean {
+  return role === 'admin' || role === 'procurement'
+}
+
+export function canReceivePurchaseOrders(role: string | null): boolean {
+  return role === 'admin' || role === 'procurement' || role === 'warehouse_manager'
+}
+
 export default function PurchaseOrders() {
   const navigate = useNavigate()
+  const role = getUserRole()
+  const canWrite = canWritePurchaseOrders(role)
+  const canReceive = canReceivePurchaseOrders(role)
   const [materials, setMaterials] = useState<Material[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [searchText, setSearchText] = useState('')
@@ -104,8 +116,12 @@ export default function PurchaseOrders() {
   })
 
   const handleCreate = async () => {
-    if (!form.materialId || form.orderedQty <= 0) {
-      toast.error('请选择物料并填写采购数量')
+    if (!canWrite) {
+      toast.error('当前角色不能创建采购订单')
+      return
+    }
+    if (!form.materialId || !form.supplierId || form.orderedQty <= 0) {
+      toast.error('请选择物料、供应商并填写采购数量')
       return
     }
     const mat = materials.find(m => m.id === form.materialId)
@@ -156,6 +172,11 @@ export default function PurchaseOrders() {
 
   const handleCancel = async () => {
     if (!orderToCancel) return
+    if (!canWrite) {
+      toast.error('当前角色不能取消采购订单')
+      closeCancelConfirm()
+      return
+    }
     try {
       await purchaseOrderApi.cancel(orderToCancel.id)
       toast.success('订单已取消')
@@ -173,13 +194,15 @@ export default function PurchaseOrders() {
           <h1 className="text-[28px] font-semibold text-gray-900">采购订单</h1>
           <p className="text-sm text-gray-500 mt-1">管理物料采购订单及收货进度</p>
         </div>
-        <button
-          onClick={() => { fetchRefs(); setModalOpen(true) }}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 text-sm font-medium transition-all duration-150"
-        >
-          <Plus className="w-4 h-4" />
-          新建采购订单
-        </button>
+        {canWrite && (
+          <button
+            onClick={() => { fetchRefs(); setModalOpen(true) }}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 text-sm font-medium transition-all duration-150"
+          >
+            <Plus className="w-4 h-4" />
+            新建采购订单
+          </button>
+        )}
       </div>
 
       <div className="bg-white rounded-lg border border-gray-200 shadow-[0_1px_3px_rgba(0,0,0,0.1)] overflow-hidden">
@@ -246,7 +269,7 @@ export default function PurchaseOrders() {
                     <tr key={row.id} className="hover:bg-gray-50 transition-colors duration-150">
                       <td className="px-4 py-3 font-mono text-gray-600">{row.orderNo}</td>
                       <td className="px-4 py-3 font-medium text-gray-900">{row.materialName}</td>
-                      <td className="px-4 py-3 text-gray-600">{supplier?.name || '-'}</td>
+                      <td className="px-4 py-3 text-gray-600">{row.supplierName || supplier?.name || '-'}</td>
                       <td className="px-4 py-3 text-right">{row.orderedQty} {row.unit}</td>
                       <td className="px-4 py-3 text-right">{row.receivedQty} {row.unit}</td>
                       <td className="px-4 py-3 text-right">{formatCurrency(row.unitPrice)}</td>
@@ -264,7 +287,7 @@ export default function PurchaseOrders() {
                           >
                             详情
                           </button>
-                          {(row.status === 'pending' || row.status === 'partial') && (
+                          {canReceive && (row.status === 'pending' || row.status === 'partial') && (
                             <button
                               onClick={() => { setSelectedOrder(row); setReceiveQty(row.remainingQty); setReceiveModalOpen(true) }}
                               className="px-2 py-1 text-xs text-blue-600 hover:bg-blue-50 rounded transition-colors duration-150"
@@ -272,7 +295,7 @@ export default function PurchaseOrders() {
                               收货
                             </button>
                           )}
-                          {row.status === 'pending' && (
+                          {canWrite && row.status === 'pending' && (
                             <button
                               onClick={() => openCancelConfirm(row)}
                               className="px-2 py-1 text-xs text-red-600 hover:bg-red-50 rounded transition-colors duration-150"
@@ -314,7 +337,7 @@ export default function PurchaseOrders() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">供应商</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">供应商 <span className="text-red-500">*</span></label>
                 <SearchableSelect
                   value={form.supplierId}
                   onChange={val => setForm({ ...form, supplierId: val })}
@@ -398,7 +421,7 @@ export default function PurchaseOrders() {
             </div>
             <div className="flex justify-between items-center">
               <span className="text-sm text-gray-500">供应商</span>
-              <span className="text-sm font-medium">{suppliers.find(s => s.id === selectedOrder.supplierId)?.name || '-'}</span>
+              <span className="text-sm font-medium">{selectedOrder.supplierName || suppliers.find(s => s.id === selectedOrder.supplierId)?.name || '-'}</span>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="bg-gray-50 rounded-md p-3">

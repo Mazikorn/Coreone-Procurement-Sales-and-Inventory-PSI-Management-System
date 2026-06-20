@@ -1,7 +1,7 @@
 import React from 'react'
 import { X, Shield } from 'lucide-react'
 import type { Role } from '@/types'
-import { PERMISSION_MODULES } from '../hooks/useRolesPage'
+import { PERMISSION_MODULES, isSystemRole } from '../hooks/useRolesPage'
 
 interface Props {
   open: boolean
@@ -10,7 +10,7 @@ interface Props {
 }
 
 function getRoleBadge(role: Role) {
-  if (role.code === 'admin') {
+  if (isSystemRole(role)) {
     return <span className="text-xs px-2 py-0.5 rounded-full bg-blue-50 text-blue-500 font-medium">系统角色</span>
   }
   return <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 font-medium">自定义</span>

@@ -181,6 +181,7 @@ router.get('/:id', (req, res) => {
 
     success(res, {
       id: row.id, code: row.code, barcode: row.barcode, name: row.name, spec: row.spec, unit: row.unit,
+      specQty: row.spec_qty, specUnit: row.spec_unit,
       price: row.price, stock: row.stock, minStock: row.min_stock, maxStock: row.max_stock,
       safetyStock: row.safety_stock, locationId: row.current_location_id, locationName: row.current_location_name,
       categoryId: row.category_id, categoryPath: row.category_name, supplierId: row.supplier_id,
@@ -241,6 +242,10 @@ function validateMaterialReferences(db: any, refs: { categoryId?: unknown; suppl
     if (!category) return { ok: false, status: 404, message: '物料分类不存在', code: 'NOT_FOUND' }
     if (Number(category.status) !== 1) {
       return { ok: false, status: 409, message: '停用物料分类不能用于物料', code: 'CONFLICT' }
+    }
+    const childCount = (db.prepare('SELECT COUNT(*) as count FROM material_categories WHERE parent_id = ? AND is_deleted = 0').get(categoryId) as any)?.count || 0
+    if (childCount > 0) {
+      return { ok: false, status: 409, message: '物料只能绑定末级分类', code: 'CONFLICT' }
     }
   }
 
@@ -648,9 +653,16 @@ router.put('/:id', requireMaterialWrite, (req, res) => {
       error(res, refValidation.message, refValidation.code, refValidation.status)
       return
     }
+    if (data.code !== undefined) {
+      const codeText = requireValidText(data.code, '物料编码', 60)
+      if (sendTextError(res, codeText)) return
+      if (codeText.value !== existing.code) {
+        error(res, '物料编码由系统生成，不允许修改', 'INVALID_PARAMETER', 400)
+        return
+      }
+    }
     const identityValidation = validateMaterialIdentityUnique(db, {
       id,
-      code: data.code !== undefined ? data.code : undefined,
       barcode: data.barcode !== undefined ? data.barcode : undefined,
     })
     if (!identityValidation.ok) {
@@ -672,11 +684,6 @@ router.put('/:id', requireMaterialWrite, (req, res) => {
     const fields: string[] = []
     const params: any[] = []
 
-    if (data.code !== undefined) {
-      const codeText = requireValidText(data.code, '物料编码', 60)
-      if (sendTextError(res, codeText)) return
-      fields.push('code = ?'); params.push(codeText.value)
-    }
     if (data.barcode !== undefined) {
       const barcodeText = normalizeDisplayText(data.barcode, '物料条码', { maxLength: 80 })
       if (sendTextError(res, barcodeText)) return

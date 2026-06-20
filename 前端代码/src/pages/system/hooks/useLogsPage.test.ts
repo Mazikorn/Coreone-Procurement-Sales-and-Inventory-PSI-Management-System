@@ -79,6 +79,7 @@ describe('useLogsPage', () => {
       expect.objectContaining({ value: 'scraps', label: '报废管理' }),
       expect.objectContaining({ value: 'purchase_orders', label: '采购订单' }),
       expect.objectContaining({ value: 'equipment', label: '设备管理' }),
+      expect.objectContaining({ value: 'logs', label: '操作日志' }),
     ]))
   })
 

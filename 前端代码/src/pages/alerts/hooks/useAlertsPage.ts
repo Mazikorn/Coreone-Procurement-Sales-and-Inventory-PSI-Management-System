@@ -6,9 +6,6 @@ import type { Alert } from '@/types'
 import { toast } from 'sonner'
 
 export interface AlertItem extends Alert {
-  batchNo?: string
-  ruleId?: string
-  triggerCondition?: string
   projectName?: string
 }
 

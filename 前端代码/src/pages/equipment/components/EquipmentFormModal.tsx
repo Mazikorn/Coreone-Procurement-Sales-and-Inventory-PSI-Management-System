@@ -1,3 +1,4 @@
+import React from 'react'
 import { X } from 'lucide-react'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { EquipmentForm } from '../hooks/useEquipmentPage'
@@ -37,9 +38,14 @@ export function EquipmentFormModal({ open, type, form, typeOptions = [], onClose
               </label>
               <input
                 value={form.code}
-                onChange={(e) => onChange({ ...form, code: e.target.value })}
+                onChange={(e) => {
+                  if (type === 'create') onChange({ ...form, code: e.target.value })
+                }}
                 placeholder="请输入设备编号"
-                className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm text-gray-700 placeholder:text-gray-400 focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500 transition-colors"
+                readOnly={type === 'edit'}
+                className={`w-full h-10 px-3 border border-gray-300 rounded-md text-sm placeholder:text-gray-400 focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500 transition-colors ${
+                  type === 'edit' ? 'bg-gray-50 text-gray-400' : 'text-gray-700'
+                }`}
               />
             </div>
             <div>

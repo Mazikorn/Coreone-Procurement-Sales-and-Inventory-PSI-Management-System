@@ -193,7 +193,7 @@ describe('用户创建与密码重置', () => {
       .send({
         code: roleCode,
         name: '用户权限展示角色',
-        permissions: ['inventory:view', 'inbound:create'],
+        permissions: ['inventory:view', 'inbound:add'],
         status: 'active',
       })
     expect(role.status).toBe(200)
@@ -218,7 +218,7 @@ describe('用户创建与密码重置', () => {
     expect(listed.body.data.list[0]).toMatchObject({
       username,
       role: roleCode,
-      permissions: ['inventory:view', 'inbound:create'],
+      permissions: ['inventory:view', 'inbound:add'],
     })
   })
 
@@ -385,6 +385,135 @@ describe('用户创建与密码重置', () => {
       id: create.body.data.id,
       username,
       status: 'active',
+    })
+  })
+
+  it('USER-INPUT-001: 创建用户会修剪身份字段并拒绝非法状态或弱密码', async () => {
+    const suffix = Date.now()
+    const username = `user-trim-${suffix}`
+    const create = await request(app)
+      .post('/api/v1/users')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        username: `  ${username}  `,
+        password: 'Trim@123456',
+        realName: '  修剪用户  ',
+        role: ' technician ',
+        department: ' 病理科 ',
+        phone: ' 13800000000 ',
+        email: ' trim@example.com ',
+        status: 'active',
+      })
+    expect(create.status).toBe(201)
+
+    const listed = await request(app)
+      .get('/api/v1/users')
+      .query({ keyword: username })
+      .set('Authorization', `Bearer ${token}`)
+    expect(listed.status).toBe(200)
+    expect(listed.body.data.list[0]).toMatchObject({
+      username,
+      realName: '修剪用户',
+      role: 'technician',
+      department: '病理科',
+      phone: '13800000000',
+      email: 'trim@example.com',
+    })
+
+    const login = await request(app)
+      .post('/api/v1/auth/login')
+      .send({ username, password: 'Trim@123456' })
+    expect(login.status).toBe(200)
+
+    const invalidStatus = await request(app)
+      .post('/api/v1/users')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        username: `user-invalid-status-${suffix}`,
+        realName: '非法状态用户',
+        role: 'technician',
+        status: 'disabled',
+      })
+    expect(invalidStatus.status).toBe(400)
+
+    const weakPassword = await request(app)
+      .post('/api/v1/users')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        username: `user-weak-password-${suffix}`,
+        realName: '弱密码用户',
+        role: 'technician',
+        password: '123',
+      })
+    expect(weakPassword.status).toBe(400)
+
+    const blankName = await request(app)
+      .post('/api/v1/users')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        username: `user-blank-name-${suffix}`,
+        realName: '   ',
+        role: 'technician',
+      })
+    expect(blankName.status).toBe(400)
+  })
+
+  it('USER-INPUT-002: 编辑与重置密码拒绝非法字段且不改写原密码', async () => {
+    const suffix = Date.now()
+    const username = `user-update-validate-${suffix}`
+    const create = await request(app)
+      .post('/api/v1/users')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        username,
+        password: 'Update@123456',
+        realName: '编辑校验用户',
+        role: 'technician',
+      })
+    expect(create.status).toBe(201)
+
+    const blankName = await request(app)
+      .put(`/api/v1/users/${create.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ realName: '   ' })
+    expect(blankName.status).toBe(400)
+
+    const invalidStatus = await request(app)
+      .put(`/api/v1/users/${create.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ status: 'disabled' })
+    expect(invalidStatus.status).toBe(400)
+
+    const weakReset = await request(app)
+      .post(`/api/v1/users/${create.body.data.id}/reset-password`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ password: '123' })
+    expect(weakReset.status).toBe(400)
+
+    const oldLogin = await request(app)
+      .post('/api/v1/auth/login')
+      .send({ username, password: 'Update@123456' })
+    expect(oldLogin.status).toBe(200)
+
+    const update = await request(app)
+      .put(`/api/v1/users/${create.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        realName: '  编辑后用户  ',
+        role: ' finance ',
+        department: ' 财务科 ',
+      })
+    expect(update.status).toBe(200)
+
+    const listed = await request(app)
+      .get('/api/v1/users')
+      .query({ keyword: username })
+      .set('Authorization', `Bearer ${token}`)
+    expect(listed.status).toBe(200)
+    expect(listed.body.data.list[0]).toMatchObject({
+      realName: '编辑后用户',
+      role: 'finance',
+      department: '财务科',
     })
   })
 })

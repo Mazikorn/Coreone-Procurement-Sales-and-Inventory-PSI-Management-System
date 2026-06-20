@@ -111,6 +111,43 @@ describe('useBOMPage', () => {
     vi.mocked(projectApi.getList).mockResolvedValue({ list: [], pagination: { total: 0 } } as any)
   })
 
+  it('allows technician users with BOM module access to manage BOMs', () => {
+    localStorage.setItem('user', JSON.stringify({ role: 'technician' }))
+
+    const { result } = renderHook(() => useBOMPage())
+
+    expect(result.current.canWrite).toBe(true)
+  })
+
+  it('keeps backend-controlled code and supportable samples out of edit updates', async () => {
+    vi.mocked(bomApi.update).mockResolvedValue({ id: 'bom-1' } as any)
+    const { result } = renderHook(() => useBOMPage())
+
+    await act(async () => {
+      await result.current.openEdit(activeBom as any)
+    })
+    await waitFor(() => expect(result.current.modalType).toBe('edit'))
+
+    act(() => {
+      result.current.setForm({
+        ...result.current.form,
+        code: 'BOM-CHANGED-BY-UI',
+        name: '改名后的BOM',
+        supportableSamples: 999,
+      })
+    })
+
+    await act(async () => {
+      await result.current.handleSubmit()
+    })
+
+    expect(bomApi.update).toHaveBeenCalledWith('bom-1', expect.objectContaining({
+      code: 'BOM-001',
+      name: '改名后的BOM',
+    }))
+    expect(vi.mocked(bomApi.update).mock.calls[0][1]).not.toHaveProperty('supportableSamples')
+  })
+
   it('checks edit status impacts before saving content changes', async () => {
     vi.mocked(bomApi.checkStatus).mockResolvedValue({
       bom: { id: 'bom-1', code: 'BOM-001', name: '原BOM' },

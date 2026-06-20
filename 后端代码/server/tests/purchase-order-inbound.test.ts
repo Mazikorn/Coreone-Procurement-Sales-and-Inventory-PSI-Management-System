@@ -57,13 +57,24 @@ describe('采购订单入库联动', () => {
     token = await loginAdmin(app)
   })
 
-  it('PO-PERM-001: 仓库主管不能直接管理采购订单', async () => {
+  it('PO-PERM-001: 仓库主管可读取采购订单但不能创建', async () => {
     const warehouseToken = await loginWarehouseManager(app)
-    const res = await request(app)
+    const listRes = await request(app)
       .get('/api/v1/purchase-orders')
       .set('Authorization', `Bearer ${warehouseToken}`)
 
-    expect(res.status).toBe(403)
+    expect(listRes.status).toBe(200)
+
+    const createRes = await request(app)
+      .post('/api/v1/purchase-orders')
+      .set('Authorization', `Bearer ${warehouseToken}`)
+      .send({
+        materialId: 'mat-not-used',
+        orderedQty: 1,
+        unitPrice: 1,
+      })
+
+    expect(createRes.status).toBe(403)
   })
 
   it('PO-REF-001: 创建采购订单拒绝停用物料和停用供应商', async () => {
@@ -154,6 +165,47 @@ describe('采购订单入库联动', () => {
     expect(order.unit).toBe('瓶')
     expect(order.unit_price).toBe(8)
     expect(order.total_amount).toBe(24)
+  })
+
+  it('PO-REF-002: 创建采购订单必须选择供应商并在列表返回供应商名称', async () => {
+    const suffix = `supplier-required-${Date.now()}`
+    const fixture = seedPurchaseFixture(db, suffix)
+
+    const missingSupplier = await request(app)
+      .post('/api/v1/purchase-orders')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId: fixture.materialId,
+        orderedQty: 3,
+        unitPrice: 8,
+      })
+
+    expect(missingSupplier.status).toBe(400)
+    expect(missingSupplier.body.error.message).toContain('供应商')
+
+    const poRes = await request(app)
+      .post('/api/v1/purchase-orders')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId: fixture.materialId,
+        supplierId: fixture.supplierId,
+        orderedQty: 3,
+        unitPrice: 8,
+      })
+
+    expect(poRes.status).toBe(200)
+
+    const listRes = await request(app)
+      .get('/api/v1/purchase-orders')
+      .query({ keyword: poRes.body.data.orderNo })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(listRes.status).toBe(200)
+    expect(listRes.body.data.list[0]).toMatchObject({
+      orderNo: poRes.body.data.orderNo,
+      supplierId: fixture.supplierId,
+      supplierName: '采购入库供应商',
+    })
   })
 
   it('PO-VALIDATION-001: 创建采购订单拒绝非有限数量和单价，避免订单金额污染', async () => {
@@ -371,6 +423,7 @@ describe('采购订单入库联动', () => {
       orderedQty: 10,
       receivedQty: 0,
       remainingQty: 10,
+      supplierName: '采购入库供应商',
       unitPrice: 12,
       totalAmount: 120,
     })

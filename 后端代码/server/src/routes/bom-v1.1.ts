@@ -2,14 +2,14 @@ import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
-import { authenticateToken, requireStrictRole } from '../middleware/auth.js'
+import { authenticateToken, requireRole } from '../middleware/auth.js'
 import { calculateLaborCost, calculateEquipmentCost, calculateQCCost, calculateIndirectCost, calculateSlideCostWithFee } from '../utils/cost-calculator.js'
 import { runCostRecalculation } from '../utils/cost-runs.js'
 import { calculateBomSupportableSamples } from '../utils/bom-support.js'
 import { normalizeDisplayText, requireValidText, type TextGuardResult } from '../utils/text-guard.js'
 
 const router = Router()
-const requireBomWrite = requireStrictRole('admin')
+const requireBomWrite = requireRole()
 const VALID_BOM_TYPES = new Set(['he', 'ihc', 'ss', 'mp', 'cyto', 'project'])
 
 function parseJsonOrNull(value: string | null | undefined) {
@@ -1213,6 +1213,9 @@ router.put('/:id', authenticateToken, requireBomWrite, (req, res) => {
 
     const existing = db.prepare('SELECT * FROM boms WHERE id = ? AND is_deleted = 0').get(id) as any
     if (!existing) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
+    if (normalizedPayload.code !== undefined && normalizedPayload.code !== existing.code) {
+      error(res, 'BOM编号创建后不允许修改', 'INVALID_PARAMETER', 400); return
+    }
     const validation = validateBomPayload(db, { type: existing.type, ...normalizedPayload }, { requireCoreMaterials: Array.isArray(materials), bomId: id })
     if (!validation.ok) { error(res, validation.message, validation.code, validation.status); return }
     const nextServiceId = serviceId === undefined ? existing.service_id : (String(serviceId || '').trim() || null)

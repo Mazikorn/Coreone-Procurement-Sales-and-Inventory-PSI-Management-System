@@ -2,14 +2,14 @@ import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
-import { requireStrictRole } from '../middleware/auth.js'
+import { requireRole } from '../middleware/auth.js'
 import { calculateBomSupportableSamples } from '../utils/bom-support.js'
 import { normalizeDisplayText, requireValidText, type TextGuardResult } from '../utils/text-guard.js'
 
 const router = Router()
 
-// 项目写入权限：仅 admin 可操作
-const requireProjectWrite = requireStrictRole('admin')
+// 项目写入权限：按 projects 模块权限放行，默认技术员/病理医生可维护检测服务。
+const requireProjectWrite = requireRole()
 const PROJECT_TYPES = new Set(['he', 'ihc', 'ss', 'mp', 'cyto'])
 
 function normalizeIds(ids: unknown): string[] {
@@ -413,6 +413,10 @@ router.put('/:id', requireProjectWrite, (req, res) => {
       if (sendTextError(res, codeText)) return
       normalizedCode = codeText.value
     }
+    if (normalizedCode !== null && normalizedCode !== (existing as any).code) {
+      error(res, '检测服务编号创建后不允许修改', 'INVALID_PARAMETER', 400)
+      return
+    }
     const nameText = data.name !== undefined ? requireValidText(data.name, '项目名称') : null
     let normalizedName: string | null = null
     if (nameText) {
@@ -471,16 +475,6 @@ router.put('/:id', requireProjectWrite, (req, res) => {
         if (history.outboundCount > 0) reasons.push(`已有出库记录 ${history.outboundCount} 条`)
         if (history.lisCaseCount > 0) reasons.push(`已有LIS检测记录 ${history.lisCaseCount} 条`)
         error(res, `检测项目已有历史业务，不可直接更换服务类型：${reasons.join('；')}`, 'PROJECT_TYPE_CHANGE_BLOCKED', 409)
-        return
-      }
-    }
-    if (normalizedCode !== null && normalizedCode !== (existing as any).code) {
-      const history = getProjectHistoryCounts(db, id)
-      if (history.outboundCount > 0 || history.lisCaseCount > 0) {
-        const reasons: string[] = []
-        if (history.outboundCount > 0) reasons.push(`已有出库记录 ${history.outboundCount} 条`)
-        if (history.lisCaseCount > 0) reasons.push(`已有LIS检测记录 ${history.lisCaseCount} 条`)
-        error(res, `检测项目已有历史业务，不可直接更换服务编号：${reasons.join('；')}`, 'PROJECT_CODE_CHANGE_BLOCKED', 409)
         return
       }
     }

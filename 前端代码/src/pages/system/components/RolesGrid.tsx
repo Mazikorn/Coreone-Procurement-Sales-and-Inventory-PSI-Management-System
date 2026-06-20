@@ -1,6 +1,7 @@
+import React from 'react'
 import { Users, Database } from 'lucide-react'
 import type { Role } from '@/types'
-import { PERMISSION_MODULES } from '../hooks/useRolesPage'
+import { PERMISSION_MODULES, isSystemRole } from '../hooks/useRolesPage'
 
 interface Props {
   data: Role[]
@@ -12,7 +13,7 @@ interface Props {
 }
 
 function getRoleBadge(role: Role) {
-  if (role.code === 'admin') {
+  if (isSystemRole(role)) {
     return <span className="text-xs px-2 py-0.5 rounded-full bg-blue-50 text-blue-500 font-medium">系统角色</span>
   }
   return <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 font-medium">自定义</span>
@@ -70,7 +71,7 @@ export function RolesGrid({ data, loading, onDetail, onEdit, onDelete, getDataSc
           </div>
           <div className="flex items-center gap-2 pt-3 border-t border-gray-200">
             <button onClick={() => onDetail(row)} className="h-8 px-3 text-xs text-gray-700 hover:bg-gray-100 rounded-md transition-colors">查看详情</button>
-            {row.code !== 'admin' && (
+            {!isSystemRole(row) && (
               <>
                 <button onClick={() => onEdit(row)} className="h-8 px-3 text-xs text-gray-700 hover:bg-gray-100 rounded-md transition-colors">编辑</button>
                 <button onClick={() => onDelete(row)} className="h-8 px-3 text-xs text-red-500 hover:bg-red-50 rounded-md transition-colors">删除</button>

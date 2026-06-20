@@ -1,3 +1,4 @@
+import React from 'react'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { LisCase, ProjectReconcile } from '../hooks/useReconciliationPage'
 
@@ -39,7 +40,13 @@ export function EditCaseModal({
             <label className="block text-sm font-medium text-gray-700 mb-1">检测项目</label>
             <SearchableSelect
               value={editCaseProjectId}
-              onChange={val => setEditCaseProjectId(val)}
+              onChange={val => {
+                setEditCaseProjectId(val)
+                const project = projects.find(p => p.id === val)
+                if (val && project?.hasBom && editCaseStatus === 'unmatched') {
+                  setEditCaseStatus('modified')
+                }
+              }}
               options={[
                 { value: '', label: '请选择' },
                 ...projects.map(p => ({ value: p.id, label: p.name })),

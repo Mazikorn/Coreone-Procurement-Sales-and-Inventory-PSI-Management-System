@@ -2,13 +2,14 @@ import { useState, useCallback, useEffect } from 'react'
 import { toast } from 'sonner'
 import { equipmentApi } from '@/api/master'
 import { usePagination } from '@/hooks/usePagination'
-import { getUserRole } from '@/lib/permissions'
+import { getUserPermissions, getUserRole } from '@/lib/permissions'
 import type { EquipmentType } from '@/types'
 
 export interface EquipmentTypeForm {
   code: string
   name: string
   description: string
+  status: 'active' | 'inactive'
   defaultPurchasePrice: number
   defaultDepreciableLifeYears: number
   defaultValue: number
@@ -21,6 +22,7 @@ const defaultForm: EquipmentTypeForm = {
   code: '',
   name: '',
   description: '',
+  status: 'active',
   defaultPurchasePrice: 0,
   defaultDepreciableLifeYears: 5,
   defaultValue: 0,
@@ -29,8 +31,19 @@ const defaultForm: EquipmentTypeForm = {
   defaultCapacityUnit: 'minutes',
 }
 
+function canManageEquipmentTypeRecords() {
+  const role = getUserRole()
+  if (['admin', 'technician', 'pathologist'].includes(role || '')) {
+    return true
+  }
+  const permissions = getUserPermissions()
+  return permissions.includes('*')
+    || permissions.includes('equipment')
+    || permissions.some(permission => ['equipment:add', 'equipment:edit', 'equipment:delete'].includes(permission))
+}
+
 export function useEquipmentTypePage() {
-  const canManageEquipmentTypes = getUserRole() === 'admin'
+  const canManageEquipmentTypes = canManageEquipmentTypeRecords()
   const [searchInput, setSearchInput] = useState('')
   const [keyword, setKeyword] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('')
@@ -99,6 +112,7 @@ export function useEquipmentTypePage() {
       code: row.code,
       name: row.name,
       description: row.description || '',
+      status: row.status || 'active',
       defaultPurchasePrice: row.defaultPurchasePrice || 0,
       defaultDepreciableLifeYears: row.defaultDepreciableLifeYears || 5,
       defaultValue: row.defaultValue || 0,
@@ -151,7 +165,11 @@ export function useEquipmentTypePage() {
         await equipmentApi.createType(form)
         toast.success('设备类型创建成功')
       } else if (editingId) {
-        await equipmentApi.updateType(editingId, form)
+        const current = data.find(item => item.id === editingId)
+        await equipmentApi.updateType(editingId, {
+          ...form,
+          code: current?.code || form.code,
+        })
         toast.success('设备类型更新成功')
       }
       closeModal()

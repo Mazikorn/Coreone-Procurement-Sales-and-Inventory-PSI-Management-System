@@ -2,10 +2,11 @@ import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
-import { authenticateToken, requireRole, requireStrictRole } from '../middleware/auth.js'
+import { authenticateToken, requireRole } from '../middleware/auth.js'
 import { normalizeDisplayText, requireValidText, type TextGuardResult } from '../utils/text-guard.js'
 
 const router = Router()
+const requireEquipmentTypeWrite = requireRole()
 
 type DepreciationMethodParse =
   | { ok: true; value: string }
@@ -191,7 +192,7 @@ router.get('/:id', (req, res) => {
 })
 
 // 创建设备类型
-router.post('/', authenticateToken, requireStrictRole('admin'), (req, res) => {
+router.post('/', authenticateToken, requireEquipmentTypeWrite, (req, res) => {
   try {
     const { code, name, description, defaultPurchasePrice, defaultDepreciableLifeYears, defaultValue, defaultDepreciationMethod, defaultTotalCapacity, defaultCapacityUnit } = req.body
     const codeText = requireValidText(code, '设备类型编码', 100)
@@ -235,13 +236,20 @@ router.post('/', authenticateToken, requireStrictRole('admin'), (req, res) => {
 })
 
 // 更新设备类型
-router.put('/:id', authenticateToken, requireStrictRole('admin'), (req, res) => {
+router.put('/:id', authenticateToken, requireEquipmentTypeWrite, (req, res) => {
   try {
     const { id } = req.params
-    const { name, description, defaultPurchasePrice, defaultDepreciableLifeYears, defaultValue, defaultDepreciationMethod, defaultTotalCapacity, defaultCapacityUnit, status } = req.body
+    const { code, name, description, defaultPurchasePrice, defaultDepreciableLifeYears, defaultValue, defaultDepreciationMethod, defaultTotalCapacity, defaultCapacityUnit, status } = req.body
     const db = getDatabase()
     const existing = db.prepare('SELECT * FROM equipment_types WHERE id = ?').get(id) as any
     if (!existing) { error(res, '设备类型不存在', 'NOT_FOUND', 404); return }
+    if (code !== undefined) {
+      const codeText = requireValidText(code, '设备类型编码', 100)
+      if (sendTextError(res, codeText)) return
+      if (codeText.value !== existing.code) {
+        error(res, '设备类型编码创建后不允许修改', 'INVALID_PARAMETER', 400); return
+      }
+    }
     const nameText = name !== undefined
       ? requireValidText(name, '设备类型名称')
       : { ok: true as const, value: existing.name }
@@ -284,7 +292,7 @@ router.put('/:id', authenticateToken, requireStrictRole('admin'), (req, res) => 
 })
 
 // 删除设备类型
-router.delete('/:id', authenticateToken, requireStrictRole('admin'), (req, res) => {
+router.delete('/:id', authenticateToken, requireEquipmentTypeWrite, (req, res) => {
   try {
     const { id } = req.params
     const db = getDatabase()

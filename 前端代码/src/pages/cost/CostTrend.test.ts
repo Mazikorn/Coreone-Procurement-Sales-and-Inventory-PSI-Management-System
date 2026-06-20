@@ -143,4 +143,27 @@ describe('CostTrend', () => {
     expect(content).toContain('2026-06')
     expect(content).not.toContain('project_type\nhe')
   })
+
+  it('loads quarterly trend from the ABC trusted snapshot endpoint', async () => {
+    vi.mocked(abcApi.getSlideCostTrend)
+      .mockResolvedValueOnce({ trend: [] } as any)
+      .mockResolvedValueOnce({
+        trend: [
+          { period: '2026-Q2', cost: 300, recordCount: 2, sampleCount: 5, isComplete: true },
+        ],
+      } as any)
+
+    render(React.createElement(CostTrend))
+
+    await waitFor(() => expect(abcApi.getSlideCostTrend).toHaveBeenCalledWith({ months: 12 }))
+
+    fireEvent.click(screen.getByRole('button', { name: '季度' }))
+
+    await waitFor(() => expect(abcApi.getSlideCostTrend).toHaveBeenLastCalledWith({
+      dimension: 'quarterly',
+      months: 12,
+    }))
+    expect(reportsApi.getCostTrend).not.toHaveBeenCalled()
+    expect(await screen.findByText('2026-Q2')).toBeInTheDocument()
+  })
 })

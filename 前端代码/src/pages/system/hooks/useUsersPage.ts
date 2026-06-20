@@ -5,6 +5,7 @@ import type { User } from '@/types'
 import { toast } from 'sonner'
 import { usePagination } from '@/hooks/usePagination'
 import { useUrlParams } from '@/hooks/useUrlParams'
+import { isSystemRole } from './useRolesPage'
 
 export interface FormData {
   username: string
@@ -32,6 +33,10 @@ export function getTemporaryPasswordOrThrow(res: { temporaryPassword?: string } 
     throw new Error('接口未返回临时密码')
   }
   return res.temporaryPassword
+}
+
+export function isProtectedAdminUser(user: Pick<User, 'id' | 'username' | 'role'>) {
+  return user.id === 'USER-001' || user.username === 'admin' || user.role === 'admin'
 }
 
 export function useUsersPage() {
@@ -84,6 +89,15 @@ export function useUsersPage() {
     })
   }, [page, pageSize, keyword, roleFilter, statusFilter, selectedRoleId, setMultiple])
 
+  useEffect(() => {
+    setSelectedIds(prev => {
+      if (prev.size === 0) return prev
+      const visibleSelectableIds = new Set(data.filter(row => !isProtectedAdminUser(row)).map(row => row.id))
+      const next = new Set([...prev].filter(id => visibleSelectableIds.has(id)))
+      return next.size === prev.size ? prev : next
+    })
+  }, [data])
+
   const [modalType, setModalType] = useState<'create' | 'edit' | 'detail' | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [detailUser, setDetailUser] = useState<User | null>(null)
@@ -120,7 +134,7 @@ export function useUsersPage() {
       setRoles(list.map((r: any) => ({
         id: r.id, name: r.name, code: r.code, userCount: r.userCount || 0,
         description: r.description || '', permissions: r.permissions || [],
-        isSystem: r.code === 'admin'
+        isSystem: isSystemRole(r)
       })))
     } catch (e) { console.error(e) }
   }
@@ -168,16 +182,29 @@ export function useUsersPage() {
   }
 
   const handleSubmit = async () => {
-    if (!form.username.trim() || !form.realName.trim() || !form.role.trim()) {
+    const normalizedForm = {
+      ...form,
+      username: form.username.trim(),
+      realName: form.realName.trim(),
+      role: form.role.trim(),
+      department: form.department.trim(),
+      phone: form.phone.trim(),
+      email: form.email.trim(),
+    }
+    if (!normalizedForm.username || !normalizedForm.realName || !normalizedForm.role) {
       toast.error('请填写必填字段')
+      return
+    }
+    if (normalizedForm.password && normalizedForm.password.trim().length < 8) {
+      toast.error('初始密码至少 8 位')
       return
     }
     try {
       if (editingId) {
-        await usersApi.update(editingId, form)
+        await usersApi.update(editingId, normalizedForm)
         toast.success('保存成功')
       } else {
-        const res = await usersApi.create(form)
+        const res = await usersApi.create(normalizedForm)
         if (res?.initialPassword) {
           toast.success(`创建成功，初始密码：${res.initialPassword}`)
         } else {
@@ -208,6 +235,10 @@ export function useUsersPage() {
   }
 
   const handleToggleStatus = async (row: User) => {
+    if (isProtectedAdminUser(row)) {
+      toast.error('管理员账户不可停用')
+      return
+    }
     const newStatus = row.status === 'active' ? 'inactive' : 'active'
     try {
       await usersApi.update(row.id, { status: newStatus })
@@ -217,14 +248,18 @@ export function useUsersPage() {
   }
 
   const toggleSelectAll = () => {
-    if (selectedIds.size === data.length && data.length > 0) {
+    const selectableIds = data.filter(row => !isProtectedAdminUser(row)).map(row => row.id)
+    const allSelected = selectableIds.length > 0 && selectableIds.every(id => selectedIds.has(id))
+    if (allSelected) {
       setSelectedIds(new Set())
     } else {
-      setSelectedIds(new Set(data.map(row => row.id)))
+      setSelectedIds(new Set(selectableIds))
     }
   }
 
   const toggleSelect = (id: string) => {
+    const row = data.find(item => item.id === id)
+    if (row && isProtectedAdminUser(row)) return
     setSelectedIds(prev => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
@@ -292,8 +327,10 @@ export function useUsersPage() {
 
   return {
     data, loading, page, pageSize, total, setPage, setPageSize, refresh,
-    keyword, setKeyword, roleFilter, setRoleFilter, statusFilter, setStatusFilter,
-    selectedRoleId, setSelectedRoleId,
+    keyword, setKeyword: (value: string) => { setKeyword(value); setPage(1) },
+    roleFilter, setRoleFilter: (value: string) => { setRoleFilter(value); setPage(1) },
+    statusFilter, setStatusFilter: (value: string) => { setStatusFilter(value); setPage(1) },
+    selectedRoleId, setSelectedRoleId: (value: string) => { setSelectedRoleId(value); setPage(1) },
     modalType, setModalType,
     editingId, setEditingId,
     detailUser, setDetailUser,

@@ -14,7 +14,7 @@ export interface OutboundItemForm {
 }
 
 export interface FormData {
-  type: 'project' | 'transfer' | 'scrap'
+  type: 'project'
   projectId: string
   items: OutboundItemForm[]
   remark: string
@@ -197,8 +197,6 @@ export default function OutboundFormModal({
                 onChange={val => setFormField('type', val as FormData['type'])}
                 options={[
                   { value: 'project', label: '项目出库' },
-                  { value: 'transfer', label: '调拨出库' },
-                  { value: 'scrap', label: '报废出库' },
                 ]}
                 placeholder="请选择"
                 testId="outbound-type-select"

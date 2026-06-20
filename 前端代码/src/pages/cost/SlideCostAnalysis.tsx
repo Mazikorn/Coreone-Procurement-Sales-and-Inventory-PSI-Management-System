@@ -127,7 +127,7 @@ export default function SlideCostAnalysis() {
   const loadData = async () => {
     try {
       setLoading(true)
-      const params: Record<string, string> = { dimension: 'bom', startDate: month, endDate: month }
+      const params: Record<string, string | number> = { dimension: 'bom', startDate: month, endDate: month, pageSize: 1000 }
       if (projectType !== 'all') params.projectType = projectType
       const res = await abcApi.getProfitability(params)
       const rows = Array.isArray(res) ? res : res?.list || res?.items || []

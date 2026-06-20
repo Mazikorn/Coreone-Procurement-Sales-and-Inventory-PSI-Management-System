@@ -229,6 +229,10 @@ export default function Outbound() {
   }
 
   const openEdit = (record: OutboundRecord) => {
+    if (record.type !== 'project') {
+      toast.error('BOM、调拨和报废出库请通过对应入口处理，不能在出库记录中直接编辑')
+      return
+    }
     setEditRecordId(record.id)
     setForm(mapOutboundRecordToForm(record, materials[0]?.id || ''))
     fetchRefs()

@@ -2,8 +2,10 @@ import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
+import { requireRole } from '../middleware/auth.js'
 
 const router = Router()
+const requirePurchaseOrderWrite = requireRole('admin', 'procurement')
 
 function generateOrderNo(): string {
   const date = new Date()
@@ -22,6 +24,7 @@ function mapPurchaseOrder(row: any) {
     materialId: row.material_id,
     materialName: row.material_name,
     supplierId: row.supplier_id,
+    supplierName: row.supplier_name || null,
     orderedQty,
     receivedQty,
     remainingQty: orderedQty - receivedQty,
@@ -82,21 +85,33 @@ router.get('/', (req, res) => {
     const safePage = Math.max(1, Number(page) || 1)
     const safePageSize = Math.max(1, Math.min(1000, Number(pageSize) || 20))
     const db = getDatabase()
-    let where = 'is_deleted = 0'
+    let where = 'po.is_deleted = 0'
     const params: any[] = []
     if (status) {
       const statuses = String(status).split(',').filter(Boolean)
       if (statuses.length === 1) {
-        where += ' AND status = ?'; params.push(statuses[0])
+        where += ' AND po.status = ?'; params.push(statuses[0])
       } else if (statuses.length > 1) {
-        where += ' AND status IN (' + statuses.map(() => '?').join(',') + ')'
+        where += ' AND po.status IN (' + statuses.map(() => '?').join(',') + ')'
         params.push(...statuses)
       }
     }
-    if (supplierId) { where += ' AND supplier_id = ?'; params.push(supplierId) }
-    if (keyword) { where += ' AND (order_no LIKE ? OR material_name LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`) }
-    const total = (db.prepare(`SELECT COUNT(*) as count FROM purchase_orders WHERE ${where}`).get(...params) as any).count
-    let sql = `SELECT * FROM purchase_orders WHERE ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`
+    if (supplierId) { where += ' AND po.supplier_id = ?'; params.push(supplierId) }
+    if (keyword) { where += ' AND (po.order_no LIKE ? OR po.material_name LIKE ? OR s.name LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`) }
+    const total = (db.prepare(`
+      SELECT COUNT(*) as count
+      FROM purchase_orders po
+      LEFT JOIN suppliers s ON po.supplier_id = s.id AND s.is_deleted = 0
+      WHERE ${where}
+    `).get(...params) as any).count
+    let sql = `
+      SELECT po.*, s.name as supplier_name
+      FROM purchase_orders po
+      LEFT JOIN suppliers s ON po.supplier_id = s.id AND s.is_deleted = 0
+      WHERE ${where}
+      ORDER BY po.created_at DESC
+      LIMIT ? OFFSET ?
+    `
     const offset = (safePage - 1) * safePageSize
     params.push(safePageSize, offset)
     const list = db.prepare(sql).all(...params) as any[]
@@ -108,21 +123,26 @@ router.get('/', (req, res) => {
 router.get('/:id', (req, res) => {
   try {
     const db = getDatabase()
-    const order = db.prepare('SELECT * FROM purchase_orders WHERE id = ? AND is_deleted = 0').get(req.params.id) as any
+    const order = db.prepare(`
+      SELECT po.*, s.name as supplier_name
+      FROM purchase_orders po
+      LEFT JOIN suppliers s ON po.supplier_id = s.id AND s.is_deleted = 0
+      WHERE po.id = ? AND po.is_deleted = 0
+    `).get(req.params.id) as any
     if (!order) { error(res, '订单不存在', 'NOT_FOUND', 404); return }
     success(res, mapPurchaseOrder(order))
   } catch (err: any) { error(res, err.message) }
 })
 
 // 创建采购订单
-router.post('/', (req, res) => {
+router.post('/', requirePurchaseOrderWrite, (req, res) => {
   try {
     const { materialId, supplierId, orderedQty, unitPrice, expectedDate, remark } = req.body
     const normalizedMaterialId = normalizeOptionalId(materialId)
     const normalizedSupplierId = normalizeOptionalId(supplierId)
     const normalizedOrderedQty = Number(orderedQty)
-    if (!normalizedMaterialId || orderedQty === undefined || orderedQty === null || !Number.isFinite(normalizedOrderedQty) || normalizedOrderedQty <= 0) {
-      error(res, '物料和采购数量必填', 'INVALID_PARAMETER', 400); return
+    if (!normalizedMaterialId || !normalizedSupplierId || orderedQty === undefined || orderedQty === null || !Number.isFinite(normalizedOrderedQty) || normalizedOrderedQty <= 0) {
+      error(res, '物料、供应商和采购数量必填', 'INVALID_PARAMETER', 400); return
     }
     const db = getDatabase()
     const materialResult = readActiveMaterial(db, normalizedMaterialId)
@@ -164,7 +184,7 @@ router.post('/', (req, res) => {
 })
 
 // 采购收货必须通过入库接口完成，避免订单状态和库存批次脱节。
-router.put('/:id/receive', (req, res) => {
+router.put('/:id/receive', requirePurchaseOrderWrite, (req, res) => {
   try {
     const db = getDatabase()
     const order = db.prepare('SELECT * FROM purchase_orders WHERE id = ? AND is_deleted = 0').get(req.params.id) as any
@@ -174,7 +194,7 @@ router.put('/:id/receive', (req, res) => {
 })
 
 // 取消采购订单
-router.put('/:id/cancel', (req, res) => {
+router.put('/:id/cancel', requirePurchaseOrderWrite, (req, res) => {
   try {
     const db = getDatabase()
     const order = db.prepare('SELECT * FROM purchase_orders WHERE id = ? AND is_deleted = 0').get(req.params.id) as any

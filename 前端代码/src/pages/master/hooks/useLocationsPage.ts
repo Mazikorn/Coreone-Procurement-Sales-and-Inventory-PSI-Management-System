@@ -8,9 +8,13 @@ export interface TreeNode {
   code: string
   name: string
   type: string
+  parentId?: string | null
   zone: string
   shelf?: string
   position?: string
+  capacity?: number
+  used?: number
+  status?: 'active' | 'inactive'
   depth: number
   fullPath: string
   children?: TreeNode[]
@@ -81,6 +85,7 @@ export type ModalType = 'create' | 'edit' | 'levelConfig' | null
 
 export function useLocationsPage() {
   const [data, setData] = useState<Location[]>([])
+  const [allLocations, setAllLocations] = useState<Location[]>([])
   const [treeData, setTreeData] = useState<TreeNode[]>([])
   const [loading, setLoading] = useState(false)
   const [keyword, setKeyword] = useState('')
@@ -97,9 +102,9 @@ export function useLocationsPage() {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const flatLocations = useMemo(() => {
     const map = new Map<string, Location>()
-    data.forEach(d => map.set(d.id, d))
+    allLocations.forEach(d => map.set(d.id, d))
     return map
-  }, [data])
+  }, [allLocations])
   const [modalType, setModalType] = useState<ModalType>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Location | null>(null)
@@ -126,12 +131,22 @@ export function useLocationsPage() {
   const fetchData = useCallback(async () => {
     setLoading(true)
     try {
-      const [listRes, treeRes, statsRes] = await Promise.all([
-        locationApi.getList({ page: 1, pageSize: 1000, keyword: keyword || undefined, status: statusFilter !== 'all' ? statusFilter : undefined }),
+      const listParams = {
+        page: 1,
+        pageSize: 1000,
+        keyword: keyword || undefined,
+        status: statusFilter !== 'all' ? statusFilter : undefined,
+      }
+      const needsUnfilteredList = Boolean(keyword || statusFilter !== 'all')
+      const [listRes, allListRes, treeRes, statsRes] = await Promise.all([
+        locationApi.getList(listParams),
+        needsUnfilteredList ? locationApi.getList({ page: 1, pageSize: 1000 }) : Promise.resolve(null),
         locationApi.getTree(),
         locationApi.getStats({ keyword: keyword || undefined, status: statusFilter !== 'all' ? statusFilter : undefined }),
       ])
-      setData((listRes as any).list || [])
+      const nextData = (listRes as any).list || []
+      setData(nextData)
+      setAllLocations(needsUnfilteredList ? ((allListRes as any)?.list || []) : nextData)
       setTreeData((treeRes as any) || [])
       setStats({
         total: Number((statsRes as any)?.total || 0),
@@ -241,8 +256,13 @@ export function useLocationsPage() {
       toast.error('请填写必填字段')
       return
     }
+    if (!Number.isFinite(Number(form.capacity)) || Number(form.capacity) < 0) {
+      toast.error('容量限制必须为大于等于 0 的数字')
+      return
+    }
     const payload = {
       ...form,
+      capacity: Number(form.capacity),
       zone: form.levelData[0] || '',
       shelf: form.levelData[1] || '',
       position: form.levelData[2] || '',
@@ -260,7 +280,7 @@ export function useLocationsPage() {
       }
       await fetchData()
     } catch (e) {
-      toast.error('保存失败')
+      toast.error((e as any)?.response?.data?.error?.message || '保存失败')
     }
   }
 
@@ -359,6 +379,7 @@ export function useLocationsPage() {
 
   return {
     data,
+    allLocations,
     treeData,
     loading,
     keyword,

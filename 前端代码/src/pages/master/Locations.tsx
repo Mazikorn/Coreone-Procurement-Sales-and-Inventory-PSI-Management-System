@@ -137,7 +137,7 @@ export default function Locations() {
         type={page.modalType === 'edit' ? 'edit' : 'create'}
         form={page.form}
         editingId={page.editingId}
-        data={page.data}
+        data={page.allLocations}
         flatLocations={page.flatLocations}
         levelConfigs={page.levelConfigs}
         onClose={() => page.setModalType(null)}

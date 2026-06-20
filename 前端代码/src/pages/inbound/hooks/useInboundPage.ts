@@ -38,7 +38,7 @@ function getTypeLabel(type: string): string {
 }
 
 function canAccessPurchaseOrders(role: string | null): boolean {
-  return role === 'admin' || role === 'procurement'
+  return role === 'admin' || role === 'procurement' || role === 'warehouse_manager'
 }
 
 function canAccessLocations(role: string | null): boolean {

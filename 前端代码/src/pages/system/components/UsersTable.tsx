@@ -4,7 +4,7 @@ import type { User } from '@/types'
 import { Pagination } from '@/components/ui/Pagination'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import { formatDateTime } from '@/lib/utils'
-import type { RoleItem } from '../hooks/useUsersPage'
+import { isProtectedAdminUser, type RoleItem } from '../hooks/useUsersPage'
 
 interface Props {
   data: User[]
@@ -47,6 +47,9 @@ export function UsersTable({
   onPageChange, onPageSizeChange,
   onOpenDetail, onOpenEdit, onToggleStatus, onResetPassword, onDelete,
 }: Props) {
+  const selectableIds = data.filter(row => !isProtectedAdminUser(row)).map(row => row.id)
+  const allSelectableSelected = selectableIds.length > 0 && selectableIds.every(id => selectedIds.has(id))
+
   return (
     <div className="grid grid-cols-[300px_1fr] gap-5">
       {/* Role List */}
@@ -93,7 +96,8 @@ export function UsersTable({
           <div className="flex items-center gap-2 text-sm text-blue-800">
             <input
               type="checkbox"
-              checked={data.length > 0 && selectedIds.size === data.length}
+              checked={allSelectableSelected}
+              disabled={selectableIds.length === 0}
               onChange={onToggleSelectAll}
               className="w-4 h-4 rounded border-gray-300 text-blue-600"
             />
@@ -166,7 +170,8 @@ export function UsersTable({
                 <th className="px-4 py-3 text-left">
                   <input
                     type="checkbox"
-                    checked={data.length > 0 && selectedIds.size === data.length}
+                    checked={allSelectableSelected}
+                    disabled={selectableIds.length === 0}
                     onChange={onToggleSelectAll}
                     className="rounded border-gray-300 text-blue-500 focus:ring-blue-500"
                   />
@@ -181,12 +186,15 @@ export function UsersTable({
                 <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-400">加载中...</td></tr>
               ) : data.length === 0 ? (
                 <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-400">暂无数据</td></tr>
-              ) : data.map(row => (
+              ) : data.map(row => {
+                const protectedAdmin = isProtectedAdminUser(row)
+                return (
                 <tr key={row.id} className={`hover:bg-gray-50 transition-colors ${selectedIds.has(row.id) ? 'bg-blue-50/50' : ''}`}>
                   <td className="px-4 py-3.5">
                     <input
                       type="checkbox"
                       checked={selectedIds.has(row.id)}
+                      disabled={protectedAdmin}
                       onChange={() => onToggleSelect(row.id)}
                       className="rounded border-gray-300 text-blue-500 focus:ring-blue-500"
                     />
@@ -205,15 +213,19 @@ export function UsersTable({
                     <div className="flex items-center gap-1">
                       <button onClick={() => onOpenDetail(row)} className="h-8 px-3 text-[13px] text-gray-700 hover:bg-gray-100 rounded-md transition-colors">详情</button>
                       <button onClick={() => onOpenEdit(row)} className="h-8 px-3 text-[13px] text-gray-700 hover:bg-gray-100 rounded-md transition-colors">编辑</button>
-                      <button onClick={() => onToggleStatus(row)} className="h-8 px-3 text-[13px] text-gray-700 hover:bg-gray-100 rounded-md transition-colors">
-                        {row.status === 'active' ? '停用' : '启用'}
-                      </button>
+                      {!protectedAdmin && (
+                        <button onClick={() => onToggleStatus(row)} className="h-8 px-3 text-[13px] text-gray-700 hover:bg-gray-100 rounded-md transition-colors">
+                          {row.status === 'active' ? '停用' : '启用'}
+                        </button>
+                      )}
                       <button onClick={() => onResetPassword(row.id)} className="h-8 px-3 text-[13px] text-gray-700 hover:bg-gray-100 rounded-md transition-colors">重置密码</button>
-                      <button onClick={() => onDelete(row.id)} className="h-8 px-3 text-[13px] text-red-500 hover:bg-red-50 rounded-md transition-colors">删除</button>
+                      {!protectedAdmin && (
+                        <button onClick={() => onDelete(row.id)} className="h-8 px-3 text-[13px] text-red-500 hover:bg-red-50 rounded-md transition-colors">删除</button>
+                      )}
                     </div>
                   </td>
                 </tr>
-              ))}
+              )})}
             </tbody>
           </table>
         </div>

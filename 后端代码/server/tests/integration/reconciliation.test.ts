@@ -17,6 +17,14 @@ async function loginAdmin(app: any): Promise<string> {
   return res.body.data.token
 }
 
+async function loginUser(app: any, username: string): Promise<string> {
+  const res = await request(app)
+    .post('/api/v1/auth/login')
+    .send({ username, password: 'CoreOne2026!' })
+  expect(res.status).toBe(200)
+  return res.body.data.token
+}
+
 describe('成本对账异常闭环', () => {
   let app: any
   let db: any
@@ -25,6 +33,17 @@ describe('成本对账异常闭环', () => {
   beforeAll(async () => {
     ({ app, db } = await getApp())
     token = await loginAdmin(app)
+  })
+
+  it('技术员作为入口主要用户必须能访问消耗对账接口', async () => {
+    const technicianToken = await loginUser(app, 'jishuyuan1')
+
+    const res = await request(app)
+      .get('/api/v1/reconciliation/summary')
+      .set('Authorization', `Bearer ${technicianToken}`)
+
+    expect(res.status).toBe(200)
+    expect(res.body.success).toBe(true)
   })
 
   it('项目物料对账差异审计写入成本异常，并在差异恢复后自动关闭', async () => {
@@ -147,6 +166,12 @@ describe('成本对账异常闭环', () => {
     const imported = db.prepare('SELECT id, project_id, project_name FROM lis_cases WHERE case_no = ?').get(caseNo) as any
     expect(imported.project_id).toBe(sourceProjectId)
     expect(imported.project_name).toBe('导入匹配项目')
+
+    const unmatchedImport = db.prepare('SELECT project_id, project_name, status FROM lis_cases WHERE case_no = ?')
+      .get(`CASE-IMPORT-UNMATCHED-${suffix}`) as any
+    expect(unmatchedImport.project_id).toBe('')
+    expect(unmatchedImport.project_name).toBe('不存在项目')
+    expect(unmatchedImport.status).toBe('unmatched')
 
     const updateRes = await request(app)
       .put(`/api/v1/reconciliation/cases/${imported.id}`)
@@ -306,9 +331,10 @@ describe('成本对账异常闭环', () => {
       expect.objectContaining({ row: 1, caseNo: explicitCaseNo, message: expect.stringContaining('指定检测项目不存在') }),
     ])
     expect(db.prepare('SELECT COUNT(*) as count FROM lis_cases WHERE case_no = ?').get(explicitCaseNo).count).toBe(0)
-    const unmatched = db.prepare('SELECT project_id, project_name FROM lis_cases WHERE case_no = ?').get(nameOnlyCaseNo) as any
+    const unmatched = db.prepare('SELECT project_id, project_name, status FROM lis_cases WHERE case_no = ?').get(nameOnlyCaseNo) as any
     expect(unmatched.project_id).toBe('')
     expect(unmatched.project_name).toBe('停用候选项目')
+    expect(unmatched.status).toBe('unmatched')
 
     const editRes = await request(app)
       .put(`/api/v1/reconciliation/cases/${editableCaseId}`)
@@ -349,6 +375,50 @@ describe('成本对账异常闭环', () => {
     expect(item.unit).toBe('支')
     const afterLogCount = (db.prepare('SELECT COUNT(*) as count FROM reconciliation_logs').get() as any).count
     expect(afterLogCount).toBe(beforeLogCount)
+  })
+
+  it('未匹配病例绑定到已配置 BOM 的项目后必须自动转为已修改状态', async () => {
+    const suffix = Date.now()
+    const materialId = `mat-recon-link-${suffix}`
+    const bomId = `bom-recon-link-${suffix}`
+    const projectId = `proj-recon-link-${suffix}`
+    const caseId = `case-recon-link-${suffix}`
+
+    db.prepare('INSERT INTO material_categories (id, code, name, level) VALUES (?, ?, ?, ?)')
+      .run(`cat-recon-link-${suffix}`, `RCL${suffix}`, '对账绑定试剂', 1)
+    db.prepare(`
+      INSERT INTO materials (id, code, name, spec, unit, category_id, price, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+    `).run(materialId, `M-RECON-LINK-${suffix}`, '对账绑定物料', '1ml', '支', `cat-recon-link-${suffix}`, 10)
+    db.prepare(`
+      INSERT INTO boms (id, code, name, version, type, status)
+      VALUES (?, ?, ?, 'v1.0', 'ihc', 1)
+    `).run(bomId, `BOM-RECON-LINK-${suffix}`, '对账绑定BOM')
+    db.prepare(`
+      INSERT INTO bom_items (id, bom_id, material_id, usage_per_sample, unit)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(`bi-recon-link-${suffix}`, bomId, materialId, 1, '支')
+    db.prepare(`
+      INSERT INTO projects (id, code, name, type, bom_id, status)
+      VALUES (?, ?, ?, 'ihc', ?, 1)
+    `).run(projectId, `P-RECON-LINK-${suffix}`, '对账绑定项目', bomId)
+    db.prepare(`
+      INSERT INTO lis_cases (id, case_no, project_id, project_name, operator, operate_time, status, import_batch)
+      VALUES (?, ?, '', ?, 'lis', '2026-06-23 09:00:00', 'unmatched', ?)
+    `).run(caseId, `CASE-RECON-LINK-${suffix}`, '未知项目', `batch-link-${suffix}`)
+
+    const res = await request(app)
+      .put(`/api/v1/reconciliation/cases/${caseId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ projectId })
+
+    expect(res.status).toBe(200)
+    const updated = db.prepare('SELECT project_id, project_name, status FROM lis_cases WHERE id = ?').get(caseId) as any
+    expect(updated).toMatchObject({
+      project_id: projectId,
+      project_name: '对账绑定项目',
+      status: 'modified',
+    })
   })
 
   it('LIS 导入跳过缺少关键字段的病例，整批无效时拒绝写入', async () => {

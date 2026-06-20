@@ -190,35 +190,39 @@ export function useDashboardPage() {
 
   // 合并最近活动
   const activities: ActivityItem[] = useMemo(() => {
-    const list: ActivityItem[] = []
+    const list: Array<ActivityItem & { sortAt: number }> = []
     recentInbound.slice(0, 3).forEach((item: any) => {
+      const createdAt = item.createdAt || item.created_at
       list.push({
         id: `in-${item.id}`,
         type: 'inbound',
         title: `入库：${item.materialName || item.material_name || '未知物料'}`,
         desc: `数量 ${item.quantity}${item.unit || ''} · ${item.operator || '系统'}`,
-        time: formatTime(item.createdAt || item.created_at),
+        time: formatTime(createdAt),
+        sortAt: getTimestamp(createdAt),
       })
     })
     recentOutbound.slice(0, 3).forEach((item: any) => {
+      const createdAt = item.createdAt || item.created_at
       list.push({
         id: `out-${item.id}`,
         type: 'outbound',
         title: `出库：${item.outboundNo || item.outbound_no || '出库单'}`,
         desc: `${item.projectName || item.project_name || '项目消耗'} · ${item.operator || '系统'}`,
-        time: formatTime(item.createdAt || item.created_at),
+        time: formatTime(createdAt),
+        sortAt: getTimestamp(createdAt),
       })
     })
-    return list.sort((a, b) => b.time.localeCompare(a.time)).slice(0, 6)
+    return list
+      .sort((a, b) => b.sortAt - a.sortAt)
+      .slice(0, 6)
+      .map(({ sortAt: _sortAt, ...item }) => item)
   }, [recentInbound, recentOutbound])
 
-  // 计算 alertCount
+  // 待处理事项必须以预警中心待处理记录为准；库存统计只用于库存摘要。
   const alertCount = useMemo(() => {
-    if (inventoryStats) {
-      return (inventoryStats.lowStockCount || 0) + (inventoryStats.expiringCount || 0) + (inventoryStats.expiredCount || 0)
-    }
     return pendingAlerts.length
-  }, [inventoryStats, pendingAlerts])
+  }, [pendingAlerts])
 
   return {
     loading,
@@ -250,6 +254,12 @@ function formatTime(iso: string): string {
   if (hours < 24) return `${hours}小时前`
   if (days < 7) return `${days}天前`
   return `${d.getMonth() + 1}月${d.getDate()}日`
+}
+
+function getTimestamp(iso: string): number {
+  if (!iso) return 0
+  const time = new Date(iso).getTime()
+  return Number.isFinite(time) ? time : 0
 }
 
 /** 安全格式化数字（H-2: 防止 NaN/Infinity） */

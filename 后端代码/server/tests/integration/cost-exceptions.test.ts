@@ -329,6 +329,11 @@ describe('成本异常台账', () => {
 
     expect(startRes.status).toBe(200)
     expect(startRes.body.data.status).toBe('collecting')
+    db.prepare(`
+      UPDATE abc_periods
+      SET status = 'calculated', calculated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(periodRes.body.data.id)
 
     const exceptionId = `ex-${Date.now()}`
     db.prepare(`
@@ -523,6 +528,19 @@ describe('成本异常台账', () => {
       .send({ yearMonth, remark: '关账后调整测试期间' })
 
     expect(periodRes.status).toBe(201)
+
+    const blockedBeforeCalculated = await request(app)
+      .post(`/api/v1/abc/periods/${periodRes.body.data.id}/close`)
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(blockedBeforeCalculated.status).toBe(422)
+    expect(blockedBeforeCalculated.body.error.code).toBe('PERIOD_NOT_CALCULATED')
+
+    db.prepare(`
+      UPDATE abc_periods
+      SET status = 'calculated', calculated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(periodRes.body.data.id)
 
     const closeRes = await request(app)
       .post(`/api/v1/abc/periods/${periodRes.body.data.id}/close`)
@@ -886,6 +904,89 @@ describe('成本异常台账', () => {
     expect(resolved.resolved_by).toBe('admin')
   })
 
+  it('收费映射保存和预览会拒绝无效收费标准、非法数量系数和不存在BOM', async () => {
+    const suffix = unique('mapguard')
+    const base = seedBase(db, suffix)
+    const materialId = seedMaterialWithStock(db, `${suffix}-core`, base, 20, 10)
+    const { bomId } = seedBomProject(db, suffix, materialId)
+    const activeFeeId = `fee-active-${suffix}`
+    const inactiveFeeId = `fee-inactive-${suffix}`
+
+    db.prepare(`
+      INSERT INTO fee_standards (id, code, name, category, project_type, fee_per_slide, status)
+      VALUES (?, ?, '启用收费标准', 'test', 'ihc', 120, 'active')
+    `).run(activeFeeId, `FEE-A-${suffix}`)
+    db.prepare(`
+      INSERT INTO fee_standards (id, code, name, category, project_type, fee_per_slide, status)
+      VALUES (?, ?, '停用收费标准', 'test', 'ihc', 120, 'inactive')
+    `).run(inactiveFeeId, `FEE-I-${suffix}`)
+
+    const missingBom = await request(app)
+      .put('/api/v1/abc/bom-fee-mappings/not-a-bom')
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({ mappings: [{ feeStandardId: activeFeeId, quantityMultiplier: 1, aggregationScope: 'outbound' }] })
+    expect(missingBom.status).toBe(404)
+
+    const inactiveFee = await request(app)
+      .put(`/api/v1/abc/bom-fee-mappings/${bomId}`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({ mappings: [{ feeStandardId: inactiveFeeId, quantityMultiplier: 1, aggregationScope: 'outbound' }] })
+    expect(inactiveFee.status).toBe(400)
+    expect(inactiveFee.body.error.message).toBe('收费标准不存在或已停用')
+
+    const invalidQuantity = await request(app)
+      .put(`/api/v1/abc/bom-fee-mappings/${bomId}`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({ mappings: [{ feeStandardId: activeFeeId, quantityMultiplier: 0, aggregationScope: 'outbound' }] })
+    expect(invalidQuantity.status).toBe(400)
+    expect(invalidQuantity.body.error.message).toBe('数量系数必须大于0')
+
+    const invalidPreview = await request(app)
+      .post(`/api/v1/abc/bom-fee-mappings/${bomId}/preview`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({ mappings: [{ feeStandardId: inactiveFeeId, quantityMultiplier: 1, aggregationScope: 'outbound' }] })
+    expect(invalidPreview.status).toBe(400)
+
+    const persistedCount = (db.prepare('SELECT COUNT(*) as count FROM bom_fee_mappings WHERE bom_id = ?')
+      .get(bomId) as any)?.count || 0
+    expect(Number(persistedCount)).toBe(0)
+  })
+
+  it('停用收费标准后映射审计和成本预览不再把旧映射当作有效收费', async () => {
+    const suffix = unique('mapinactive')
+    const base = seedBase(db, suffix)
+    const materialId = seedMaterialWithStock(db, `${suffix}-core`, base, 20, 10)
+    const { bomId } = seedBomProject(db, suffix, materialId)
+    const feeStandardId = `fee-${suffix}`
+
+    db.prepare(`
+      INSERT INTO fee_standards (id, code, name, category, project_type, fee_per_slide, status)
+      VALUES (?, ?, '可停用收费标准', 'test', 'ihc', 90, 'active')
+    `).run(feeStandardId, `FEE-${suffix}`)
+
+    const mapping = await request(app)
+      .put(`/api/v1/abc/bom-fee-mappings/${bomId}`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({ mappings: [{ feeStandardId, quantityMultiplier: 1, aggregationScope: 'outbound' }] })
+    expect(mapping.status).toBe(200)
+
+    db.prepare('UPDATE fee_standards SET status = ? WHERE id = ?').run('inactive', feeStandardId)
+
+    const missingList = await request(app)
+      .get(`/api/v1/abc/bom-fee-mappings/audit?keyword=${encodeURIComponent(`BOM-${suffix}`)}&status=missing`)
+      .set('Authorization', `Bearer ${financeToken}`)
+    expect(missingList.status).toBe(200)
+    expect(missingList.body.data.list.some((item: any) => item.bomId === bomId && item.status === 'missing')).toBe(true)
+
+    const preview = await request(app)
+      .post(`/api/v1/abc/bom-fee-mappings/${bomId}/preview`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({ sampleCount: 2 })
+    expect(preview.status).toBe(200)
+    expect(preview.body.data.feeAmount).toBe(0)
+    expect(preview.body.data.feeBreakdown).toHaveLength(0)
+  })
+
   it('成本池重算会生成成本任务并更新成本快照', async () => {
     const suffix = unique('run')
     const yearMonth = '2099-07'
@@ -1076,6 +1177,397 @@ describe('成本异常台账', () => {
       feeAmount: 200,
       profit: 80,
       sampleCount: 2,
+    })
+  })
+
+  it('切片成本按BOM聚合且只统计已核算快照', async () => {
+    const suffix = unique('slide-profit')
+    const yearMonth = '2099-09'
+    const heProjectId = `proj-slide-he-${suffix}`
+    const ihcProjectId = `proj-slide-ihc-${suffix}`
+    const heBomId = `bom-slide-he-${suffix}`
+    const ihcBomId = `bom-slide-ihc-${suffix}`
+
+    db.prepare(`
+      INSERT INTO projects (id, code, name, type, status)
+      VALUES (?, ?, ?, 'he', 'active'), (?, ?, ?, 'ihc', 'active')
+    `).run(
+      heProjectId, `PROJ-SLIDE-HE-${suffix}`, 'HE切片成本项目',
+      ihcProjectId, `PROJ-SLIDE-IHC-${suffix}`, 'IHC切片成本项目',
+    )
+    db.prepare(`
+      INSERT INTO boms (id, code, name, type, version, status, is_deleted)
+      VALUES (?, ?, ?, 'he', '1.0', 'active', 0), (?, ?, ?, 'ihc', '1.0', 'active', 0)
+    `).run(
+      heBomId, `BOM-SLIDE-HE-${suffix}`, 'HE切片成本BOM',
+      ihcBomId, `BOM-SLIDE-IHC-${suffix}`, 'IHC切片成本BOM',
+    )
+    db.prepare(`
+      INSERT INTO outbound_abc_details (
+        id, outbound_id, bom_id, project_id, sample_count,
+        material_cost, activity_cost, total_cost, fee_amount, profit,
+        cost_month, cost_status
+      )
+      VALUES
+        (?, ?, ?, ?, 2, 70, 50, 120, 200, 80, ?, 'costed'),
+        (?, ?, ?, ?, 3, 130, 50, 180, 300, 120, ?, 'recalculated'),
+        (?, ?, ?, ?, 9, 900, 90, 990, 0, -990, ?, 'cost_exception'),
+        (?, ?, ?, ?, 4, 400, 40, 440, 500, 60, '2099-08', 'costed'),
+        (?, ?, ?, ?, 5, 500, 50, 550, 800, 250, ?, 'costed')
+    `).run(
+      `slide-detail-he-a-${suffix}`, `slide-out-he-a-${suffix}`, heBomId, heProjectId, yearMonth,
+      `slide-detail-he-b-${suffix}`, `slide-out-he-b-${suffix}`, heBomId, heProjectId, yearMonth,
+      `slide-detail-he-ex-${suffix}`, `slide-out-he-ex-${suffix}`, heBomId, heProjectId, yearMonth,
+      `slide-detail-he-old-${suffix}`, `slide-out-he-old-${suffix}`, heBomId, heProjectId,
+      `slide-detail-ihc-${suffix}`, `slide-out-ihc-${suffix}`, ihcBomId, ihcProjectId, yearMonth,
+    )
+
+    const bomProfitability = await request(app)
+      .get('/api/v1/abc/profitability')
+      .query({ dimension: 'bom', startDate: yearMonth, endDate: yearMonth, projectType: 'he', pageSize: 10 })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(bomProfitability.status).toBe(200)
+    expect(bomProfitability.body.data.pagination.total).toBe(1)
+    expect(bomProfitability.body.data.list).toHaveLength(1)
+    expect(bomProfitability.body.data.list[0]).toMatchObject({
+      bomId: heBomId,
+      bomName: 'HE切片成本BOM',
+      projectType: 'he',
+      caseCount: 2,
+      sampleCount: 5,
+      materialCost: 200,
+      activityCost: 100,
+      totalCost: 300,
+      feeAmount: 500,
+      profit: 200,
+    })
+    expect(bomProfitability.body.data.list[0].profitRate).toBe(0.4)
+
+    const rawProfitability = await request(app)
+      .get('/api/v1/abc/profitability')
+      .query({ startDate: yearMonth, endDate: yearMonth, projectType: 'he', pageSize: 10 })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(rawProfitability.status).toBe(200)
+    const rawIds = rawProfitability.body.data.list.map((row: any) => row.outboundId)
+    expect(rawIds).toContain(`slide-out-he-a-${suffix}`)
+    expect(rawIds).toContain(`slide-out-he-b-${suffix}`)
+    expect(rawIds).not.toContain(`slide-out-he-ex-${suffix}`)
+    expect(rawIds).not.toContain(`slide-out-he-old-${suffix}`)
+    expect(rawIds).not.toContain(`slide-out-ihc-${suffix}`)
+  })
+
+  it('盈利分析按项目聚合全量已核算快照且导出口径一致', async () => {
+    const suffix = unique('project-profit')
+    const yearMonth = '2099-10'
+    const heProjectId = `proj-profit-he-${suffix}`
+    const ihcProjectId = `proj-profit-ihc-${suffix}`
+
+    db.prepare(`
+      INSERT INTO projects (id, code, name, type, status)
+      VALUES (?, ?, ?, 'he', 'active'), (?, ?, ?, 'ihc', 'active')
+    `).run(
+      heProjectId, `PROJ-PROFIT-HE-${suffix}`, 'HE盈利分析项目',
+      ihcProjectId, `PROJ-PROFIT-IHC-${suffix}`, 'IHC盈利分析项目',
+    )
+
+    const insertDetail = db.prepare(`
+      INSERT INTO outbound_abc_details (
+        id, outbound_id, project_id, sample_count,
+        material_cost, activity_cost, total_cost, fee_amount, profit,
+        cost_month, cost_status
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+
+    for (let index = 0; index < 25; index += 1) {
+      insertDetail.run(
+        `profit-detail-he-${index}-${suffix}`,
+        `profit-out-he-${index}-${suffix}`,
+        heProjectId,
+        1,
+        10,
+        5,
+        15,
+        30,
+        15,
+        yearMonth,
+        'costed',
+      )
+    }
+    insertDetail.run(
+      `profit-detail-ex-${suffix}`,
+      `profit-out-ex-${suffix}`,
+      heProjectId,
+      99,
+      999,
+      999,
+      1998,
+      0,
+      -1998,
+      yearMonth,
+      'cost_exception',
+    )
+    insertDetail.run(
+      `profit-detail-old-${suffix}`,
+      `profit-out-old-${suffix}`,
+      heProjectId,
+      9,
+      90,
+      45,
+      135,
+      270,
+      135,
+      '2099-09',
+      'costed',
+    )
+    insertDetail.run(
+      `profit-detail-ihc-${suffix}`,
+      `profit-out-ihc-${suffix}`,
+      ihcProjectId,
+      7,
+      70,
+      35,
+      105,
+      210,
+      105,
+      yearMonth,
+      'costed',
+    )
+
+    const projectProfitability = await request(app)
+      .get('/api/v1/abc/profitability')
+      .query({ dimension: 'project', startDate: yearMonth, endDate: yearMonth, projectType: 'he', pageSize: 10 })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(projectProfitability.status).toBe(200)
+    expect(projectProfitability.body.data.pagination.total).toBe(1)
+    expect(projectProfitability.body.data.list).toHaveLength(1)
+    expect(projectProfitability.body.data.list[0]).toMatchObject({
+      projectId: heProjectId,
+      projectName: 'HE盈利分析项目',
+      projectType: 'he',
+      caseCount: 25,
+      sampleCount: 25,
+      materialCost: 250,
+      activityCost: 125,
+      totalCost: 375,
+      feeAmount: 750,
+      profit: 375,
+    })
+    expect(projectProfitability.body.data.list[0].profitRate).toBe(0.5)
+
+    const exported = await request(app)
+      .get('/api/v1/abc/export')
+      .query({ month: yearMonth, projectType: 'he' })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(exported.status).toBe(200)
+    expect(exported.body.data.summary).toMatchObject({
+      totalRecords: 25,
+      sampleCount: 25,
+      materialCost: 250,
+      activityCost: 125,
+      totalCost: 375,
+      feeAmount: 750,
+      profit: 375,
+    })
+    expect(exported.body.data.content).not.toContain('cost_exception')
+    expect(exported.body.data.content).not.toContain('-1998')
+    expect(exported.body.data.rows).toHaveLength(25)
+  })
+
+  it('收费对照按日期、项目类型、盈亏和映射状态筛选可信快照', async () => {
+    const suffix = unique('fee-compare')
+    const heProjectId = `proj-fee-he-${suffix}`
+    const ihcProjectId = `proj-fee-ihc-${suffix}`
+    const feeStandardId = `fee-compare-${suffix}`
+
+    db.prepare(`
+      INSERT INTO projects (id, code, name, type, status)
+      VALUES (?, ?, ?, 'he', 'active'), (?, ?, ?, 'ihc', 'active')
+    `).run(
+      heProjectId, `PROJ-FEE-HE-${suffix}`, 'HE收费对照项目',
+      ihcProjectId, `PROJ-FEE-IHC-${suffix}`, 'IHC收费对照项目',
+    )
+    db.prepare(`
+      INSERT INTO fee_standards (id, code, name, category, project_type, fee_per_slide, status)
+      VALUES (?, ?, 'HE收费标准', 'HE', 'he', 60, 'active')
+    `).run(feeStandardId, `FEE-COMPARE-${suffix}`)
+
+    const insertOutbound = db.prepare(`
+      INSERT INTO outbound_records (id, outbound_no, type, total_cost, sample_count, operator, status, created_at, updated_at, cost_status)
+      VALUES (?, ?, 'bom', ?, ?, 'tester', 'completed', ?, ?, ?)
+    `)
+    const insertDetail = db.prepare(`
+      INSERT INTO outbound_abc_details (
+        id, outbound_id, project_id, sample_count,
+        material_cost, activity_cost, total_cost, fee_standard_id, fee_category,
+        fee_amount, profit, profit_rate, cost_month, cost_status, created_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    const addRecord = (
+      key: string,
+      outboundNo: string,
+      projectId: string,
+      date: string,
+      totalCost: number,
+      feeAmount: number,
+      profit: number,
+      costStatus: string,
+      feeId: string | null = feeStandardId,
+    ) => {
+      const outboundId = `out-${key}-${suffix}`
+      insertOutbound.run(outboundId, outboundNo, totalCost, 1, `${date} 09:00:00`, `${date} 09:00:00`, costStatus)
+      insertDetail.run(
+        `detail-${key}-${suffix}`,
+        outboundId,
+        projectId,
+        1,
+        totalCost - 5,
+        5,
+        totalCost,
+        feeId,
+        feeId ? 'HE' : null,
+        feeAmount,
+        profit,
+        feeAmount > 0 ? profit / feeAmount : 0,
+        date.slice(0, 7),
+        costStatus,
+        `${date} 09:00:00`,
+      )
+    }
+
+    addRecord('profit', `OUT-FEE-PROFIT-${suffix}`, heProjectId, '2099-11-05', 60, 120, 60, 'costed')
+    addRecord('loss-unmapped', `OUT-FEE-LOSS-${suffix}`, heProjectId, '2099-11-06', 80, 0, -80, 'costed', null)
+    addRecord('exception', `OUT-FEE-EX-${suffix}`, heProjectId, '2099-11-07', 999, 0, -999, 'cost_exception', null)
+    addRecord('pending', `OUT-FEE-PENDING-${suffix}`, heProjectId, '2099-11-08', 888, 0, -888, 'pending_cost', null)
+    addRecord('old', `OUT-FEE-OLD-${suffix}`, heProjectId, '2099-10-30', 70, 140, 70, 'costed')
+    addRecord('ihc', `OUT-FEE-IHC-${suffix}`, ihcProjectId, '2099-11-05', 50, 100, 50, 'costed')
+
+    const allHe = await request(app)
+      .get('/api/v1/abc/fee-comparison')
+      .query({ startDate: '2099-11-01', endDate: '2099-11-30', projectType: 'he', pageSize: 10 })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(allHe.status).toBe(200)
+    expect(allHe.body.data.pagination.total).toBe(2)
+    expect(allHe.body.data.summary).toMatchObject({
+      totalOutbounds: 2,
+      totalCost: 140,
+      totalFee: 120,
+      totalProfit: -20,
+      lossCount: 1,
+      noMappingCount: 1,
+    })
+    const outboundNos = allHe.body.data.list.map((row: any) => row.outboundNo)
+    expect(outboundNos).toContain(`OUT-FEE-PROFIT-${suffix}`)
+    expect(outboundNos).toContain(`OUT-FEE-LOSS-${suffix}`)
+    expect(outboundNos).not.toContain(`OUT-FEE-EX-${suffix}`)
+    expect(allHe.body.data.list[0]).toHaveProperty('date')
+    expect(allHe.body.data.list[0]).toHaveProperty('projectType', 'he')
+
+    const unmappedLoss = await request(app)
+      .get('/api/v1/abc/fee-comparison')
+      .query({ startDate: '2099-11-01', endDate: '2099-11-30', projectType: 'he', profitFilter: 'loss', mappingFilter: 'unmapped', pageSize: 10 })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(unmappedLoss.status).toBe(200)
+    expect(unmappedLoss.body.data.pagination.total).toBe(1)
+    expect(unmappedLoss.body.data.list[0]).toMatchObject({
+      outboundNo: `OUT-FEE-LOSS-${suffix}`,
+      projectName: 'HE收费对照项目',
+      projectType: 'he',
+      feeStandardName: null,
+      totalCost: 80,
+      feeAmount: 0,
+      profit: -80,
+    })
+  })
+
+  it('成本趋势按BOM/月度和季度统计可信ABC快照', async () => {
+    const suffix = unique('trend')
+    const heProjectId = `proj-trend-cyto-${suffix}`
+    const ihcProjectId = `proj-trend-ihc-${suffix}`
+    const heBomId = `bom-trend-he-${suffix}`
+    const ihcBomId = `bom-trend-ihc-${suffix}`
+
+    db.prepare(`
+      INSERT INTO projects (id, code, name, type, status)
+      VALUES (?, ?, ?, 'cyto', 'active'), (?, ?, ?, 'ihc', 'active')
+    `).run(
+      heProjectId, `PROJ-TREND-CYTO-${suffix}`, '细胞趋势项目',
+      ihcProjectId, `PROJ-TREND-IHC-${suffix}`, 'IHC趋势项目',
+    )
+    db.prepare(`
+      INSERT INTO boms (id, code, name, type, version, status, is_deleted)
+      VALUES (?, ?, ?, 'cyto', '1.0', 'active', 0), (?, ?, ?, 'ihc', '1.0', 'active', 0)
+    `).run(
+      heBomId, `BOM-TREND-CYTO-${suffix}`, '细胞趋势BOM',
+      ihcBomId, `BOM-TREND-IHC-${suffix}`, 'IHC趋势BOM',
+    )
+    db.prepare(`
+      INSERT INTO outbound_abc_details (
+        id, outbound_id, bom_id, project_id, sample_count,
+        material_cost, activity_cost, total_cost, fee_amount, profit,
+        cost_month, cost_status
+      )
+      VALUES
+        (?, ?, ?, ?, 2, 70, 50, 120, 200, 80, '2099-01', 'costed'),
+        (?, ?, ?, ?, 3, 130, 50, 180, 300, 120, '2099-02', 'recalculated'),
+        (?, ?, ?, ?, 9, 900, 90, 990, 0, -990, '2099-02', 'cost_exception'),
+        (?, ?, ?, ?, 5, 500, 50, 550, 800, 250, '2099-02', 'costed'),
+        (?, ?, ?, ?, 1, 20, 10, 30, 60, 30, '2098-12', 'costed')
+    `).run(
+      `trend-detail-he-jan-${suffix}`, `trend-out-he-jan-${suffix}`, heBomId, heProjectId,
+      `trend-detail-he-feb-${suffix}`, `trend-out-he-feb-${suffix}`, heBomId, heProjectId,
+      `trend-detail-he-ex-${suffix}`, `trend-out-he-ex-${suffix}`, heBomId, heProjectId,
+      `trend-detail-ihc-${suffix}`, `trend-out-ihc-${suffix}`, ihcBomId, ihcProjectId,
+      `trend-detail-he-old-${suffix}`, `trend-out-he-old-${suffix}`, heBomId, heProjectId,
+    )
+
+    const monthly = await request(app)
+      .get('/api/v1/abc/slide-cost-trend')
+      .query({ months: 2, projectType: 'cyto' })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(monthly.status).toBe(200)
+    expect(monthly.body.data).toHaveLength(2)
+    expect(monthly.body.data.map((row: any) => row.month)).toEqual(['2099-01', '2099-02'])
+    expect(monthly.body.data[0]).toMatchObject({
+      bomId: heBomId,
+      bomName: '细胞趋势BOM',
+      projectType: 'cyto',
+      sampleCount: 2,
+      totalCost: 120,
+      feeAmount: 200,
+      profit: 80,
+      marginRate: 0.4,
+    })
+    expect(monthly.body.data[1]).toMatchObject({
+      sampleCount: 3,
+      totalCost: 180,
+      feeAmount: 300,
+      profit: 120,
+      costPerSlide: 60,
+      marginRate: 0.4,
+    })
+
+    const quarterly = await request(app)
+      .get('/api/v1/abc/slide-cost-trend')
+      .query({ dimension: 'quarterly', months: 2, projectType: 'cyto' })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(quarterly.status).toBe(200)
+    expect(quarterly.body.data.dimension).toBe('quarterly')
+    expect(quarterly.body.data.trend).toHaveLength(1)
+    expect(quarterly.body.data.trend[0]).toMatchObject({
+      period: '2099-Q1',
+      cost: 300,
+      recordCount: 2,
+      sampleCount: 5,
     })
   })
 })

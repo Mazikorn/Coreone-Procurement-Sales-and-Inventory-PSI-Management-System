@@ -162,25 +162,60 @@ describe('集成测试：出库流程与成本核算', () => {
     expect(projectCost?.totalCost).toBe(2800)
     expect(projectCost?.sampleCount).toBe(25) // SUM(sample_count)，即实际样本数
 
-    // ========== 场景C + D：修改出库单 → 验证成本重算；删除 → 验证库存恢复 ==========
+    // ========== 场景C：BOM出库不可编辑；普通项目出库可编辑并重算 ==========
 
-    // 修改出库数量：从25改为15
-    const updateRes = await request(app)
+    const immutableUpdateRes = await request(app)
       .put(`/api/v1/outbound/${outboundId}`)
       .set('Authorization', `Bearer ${token}`)
       .send({
+        type: 'project',
         items: [{ materialId, quantity: 15 }],
-        remark: '修改数量',
+        remark: '试图编辑BOM出库',
       })
-    expect(updateRes.status).toBe(200)
+    expect(immutableUpdateRes.status).toBe(409)
+    expect(immutableUpdateRes.body.error.code).toBe('BOM_OUTBOUND_IMMUTABLE')
 
-    // 回退后重新分配：A=10, B=20。取15个 → A取10, B取5。成本=10*100+5*120=1600
-    expect(updateRes.body.data.totalCost).toBe(1600)
+    const directOutboundRes = await request(app)
+      .post('/api/v1/outbound')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        type: 'project',
+        items: [{ materialId, quantity: 3 }],
+        remark: '普通项目出库编辑基线',
+      })
+    expect(directOutboundRes.status).toBe(201)
+    const directOutboundId = directOutboundRes.body.data.id
+
+    const directUpdateRes = await request(app)
+      .put(`/api/v1/outbound/${directOutboundId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        items: [{ materialId, quantity: 2 }],
+        remark: '普通项目出库修改数量',
+      })
+    expect(directUpdateRes.status).toBe(200)
+
+    expect(directUpdateRes.body.data.totalCost).toBe(2 * 120)
 
     // 验证批次库存
+    const batchAfterDirectUpdate = db.prepare('SELECT * FROM batches WHERE material_id = ? ORDER BY expiry_date').all(materialId) as any[]
+    expect(batchAfterDirectUpdate[0].remaining).toBe(0)
+    expect(batchAfterDirectUpdate[1].remaining).toBe(3)
+
+    const deleteDirectRes = await request(app)
+      .delete(`/api/v1/outbound/${directOutboundId}`)
+      .set('Authorization', `Bearer ${token}`)
+    expect(deleteDirectRes.status).toBe(200)
+
+    const batchAfterDirectDelete = db.prepare('SELECT * FROM batches WHERE material_id = ? ORDER BY expiry_date').all(materialId) as any[]
+    expect(batchAfterDirectDelete[0].remaining).toBe(0)
+    expect(batchAfterDirectDelete[1].remaining).toBe(5)
+
+    // ========== 场景D：删除BOM出库 → 验证库存和成本恢复 ==========
+
     const batchAfterUpdate = db.prepare('SELECT * FROM batches WHERE material_id = ? ORDER BY expiry_date').all(materialId) as any[]
     expect(batchAfterUpdate[0].remaining).toBe(0)
-    expect(batchAfterUpdate[1].remaining).toBe(15)
+    expect(batchAfterUpdate[1].remaining).toBe(5)
 
     // 删除出库单
     const deleteRes = await request(app)

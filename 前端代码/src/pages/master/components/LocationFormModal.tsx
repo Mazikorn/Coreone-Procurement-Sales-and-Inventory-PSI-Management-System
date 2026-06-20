@@ -1,3 +1,4 @@
+import React from 'react'
 import { X } from 'lucide-react'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { Location } from '@/types'
@@ -33,6 +34,28 @@ export function LocationFormModal({
 
   const labels = levelConfigs[form.type] || []
   const cols = labels.length >= 5 ? 3 : labels.length >= 3 ? 2 : 1
+  const childMap = new Map<string, string[]>()
+  data.forEach(loc => {
+    if (!loc.parentId) return
+    const children = childMap.get(loc.parentId) || []
+    children.push(loc.id)
+    childMap.set(loc.parentId, children)
+  })
+  const descendantIds = new Set<string>()
+  const collectDescendants = (id: string) => {
+    ;(childMap.get(id) || []).forEach(childId => {
+      descendantIds.add(childId)
+      collectDescendants(childId)
+    })
+  }
+  if (editingId) collectDescendants(editingId)
+  const parentOptions = data
+    .filter(loc => loc.status === 'active')
+    .filter(loc => !editingId || (loc.id !== editingId && !descendantIds.has(loc.id)))
+    .map(loc => ({
+      value: loc.id,
+      label: `${getTypeIcon(loc.type)} ${loc.name} (${loc.zone})`,
+    }))
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
@@ -114,10 +137,7 @@ export function LocationFormModal({
               }}
               options={[
                 { value: '', label: '无（作为顶级库位）' },
-                ...data.map(loc => ({
-                  value: loc.id,
-                  label: `${getTypeIcon(loc.type)} ${loc.name} (${loc.zone})`,
-                })),
+                ...parentOptions,
               ]}
               placeholder="无（作为顶级库位）"
             />

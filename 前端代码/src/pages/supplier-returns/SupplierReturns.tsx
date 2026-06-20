@@ -64,6 +64,9 @@ export function validateSupplierReturnForm(
   if (!form.materialId || form.quantity <= 0 || !form.reason) {
     return '请填写物料、退货数量和退货原因'
   }
+  if (!form.supplierId) {
+    return '请选择退货供应商'
+  }
   if (!selectedMaterial) {
     return '请选择有效物料'
   }
@@ -84,12 +87,18 @@ export function validateSupplierReturnForm(
   if (form.quantity > selectedBatch.remaining) {
     return '退货数量不能超过所选批次剩余量'
   }
+  if (!selectedBatch.supplierId) {
+    return '所选批次缺少供应商来源，不能创建退货'
+  }
+  if (selectedBatch.supplierId !== form.supplierId) {
+    return '退货批次与供应商不一致'
+  }
 
   return null
 }
 
-function canAccessPurchaseOrders(role: string | null): boolean {
-  return role === 'admin' || role === 'procurement'
+export function canAccessPurchaseOrders(role: string | null): boolean {
+  return role === 'admin' || role === 'procurement' || role === 'warehouse_manager'
 }
 
 export default function SupplierReturns() {
@@ -299,6 +308,7 @@ export default function SupplierReturns() {
 
   const selectedMaterial = materials.find((m) => m.id === form.materialId)
   const selectedBatch = materialBatches.find((b) => b.id === form.batchId)
+  const supplierScopedBatches = materialBatches.filter((batch) => !form.supplierId || batch.supplierId === form.supplierId)
 
   return (
     <div className="space-y-6">
@@ -485,7 +495,7 @@ export default function SupplierReturns() {
                 <SearchableSelect
                   testId="supplier-return-material-select"
                   value={form.materialId}
-                  onChange={(val) => setForm({ ...form, materialId: val, batchId: '', quantity: 1 })}
+                    onChange={(val) => setForm({ ...form, materialId: val, batchId: '', quantity: 1 })}
                   options={materials.map((m) => ({
                     value: m.id,
                     label: `${m.name} (${m.code}) - 库存 ${m.stock} ${m.unit}`,
@@ -525,7 +535,7 @@ export default function SupplierReturns() {
                     onChange={(val) => setForm({ ...form, batchId: val })}
                     options={[
                       { value: '', label: '请选择批次' },
-                      ...materialBatches.map((b) => ({
+                      ...supplierScopedBatches.map((b) => ({
                         value: b.id,
                         label: `${b.batchNo} (余${b.remaining}${selectedMaterial?.unit || ''} @${formatCurrency(b.inboundPrice)})`,
                       })),
@@ -541,16 +551,21 @@ export default function SupplierReturns() {
                   {form.materialId && materialBatches.length === 0 && (
                     <p className="text-xs text-red-400 mt-1">该物料无可用批次</p>
                   )}
+                  {form.materialId && form.supplierId && materialBatches.length > 0 && supplierScopedBatches.length === 0 && (
+                    <p className="text-xs text-red-400 mt-1">该供应商下无可退批次</p>
+                  )}
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">供应商</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                    供应商 <span className="text-red-500">*</span>
+                  </label>
                   <SearchableSelect
                     testId="supplier-return-supplier-select"
                     value={form.supplierId}
-                    onChange={(val) => setForm({ ...form, supplierId: val })}
+                    onChange={(val) => setForm({ ...form, supplierId: val, batchId: '', purchaseOrderId: '', inboundRecordId: '' })}
                     options={suppliers.map((s) => ({
                       value: s.id,
                       label: s.name,
@@ -587,6 +602,7 @@ export default function SupplierReturns() {
                       { value: '', label: '请选择' },
                       ...inboundRecords
                         .filter((ir) => !form.materialId || ir.materialId === form.materialId)
+                        .filter((ir) => !form.supplierId || ir.supplierId === form.supplierId)
                         .map((ir) => ({
                           value: ir.id,
                           label: `${ir.inboundNo} (${ir.materialName} × ${ir.quantity}${ir.unit})`,

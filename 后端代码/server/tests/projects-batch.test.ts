@@ -17,6 +17,14 @@ async function loginAdmin(app: any): Promise<string> {
   return res.body.data.token
 }
 
+async function loginTechnician(app: any): Promise<string> {
+  const res = await request(app)
+    .post('/api/v1/auth/login')
+    .send({ username: 'zhangwei', password: 'CoreOne2026!' })
+  expect(res.status).toBe(200)
+  return res.body.data.token
+}
+
 async function createProject(app: any, token: string, suffix: string, extra: Record<string, unknown> = {}) {
   const res = await request(app)
     .post('/api/v1/projects')
@@ -46,10 +54,12 @@ describe('检测项目批量操作', () => {
   let app: any
   let db: any
   let token: string
+  let technicianToken: string
 
   beforeAll(async () => {
     ;({ app, db } = await getApp())
     token = await loginAdmin(app)
+    technicianToken = await loginTechnician(app)
   })
 
   it('PRJ-BATCH-001: 批量状态遇到不存在项目时整批拒绝，不部分更新', async () => {
@@ -84,6 +94,29 @@ describe('检测项目批量操作', () => {
     const rows = db.prepare('SELECT id, status FROM projects WHERE id IN (?, ?)')
       .all(firstId, secondId) as any[]
     expect(rows.every(row => Number(row.status) === 0)).toBe(true)
+  })
+
+  it('PRJ-AUTH-001: 技术员拥有检测项目配置权限，可创建检测项目', async () => {
+    const suffix = `tech-create-${Date.now()}`
+
+    const res = await request(app)
+      .post('/api/v1/projects')
+      .set('Authorization', `Bearer ${technicianToken}`)
+      .send({
+        code: `PRJ-TECH-${suffix}`,
+        name: `技术员维护项目-${suffix}`,
+        type: 'ihc',
+        manager: '张伟',
+      })
+
+    expect(res.status).toBe(201)
+    const row = db.prepare('SELECT code, name, type FROM projects WHERE id = ?')
+      .get(res.body.data.id) as any
+    expect(row).toMatchObject({
+      code: `PRJ-TECH-${suffix}`,
+      name: `技术员维护项目-${suffix}`,
+      type: 'ihc',
+    })
   })
 
   it('PRJ-BATCH-003: 批量启用遇到绑定停用BOM的项目时整批拒绝', async () => {
@@ -558,7 +591,7 @@ describe('检测项目批量操作', () => {
     expect(row.type).toBe('he')
   })
 
-  it('PRJ-CODE-001: 检测项目已有出库或LIS记录后禁止直接更换服务编号', async () => {
+  it('PRJ-CODE-001: 检测服务编号创建后不允许通过更新接口改写', async () => {
     const suffix = `code-change-history-${Date.now()}`
     const outboundId = `out-prj-code-history-${suffix}`
     const caseId = `case-prj-code-history-${suffix}`
@@ -579,8 +612,8 @@ describe('检测项目批量操作', () => {
         type: 'he',
       })
 
-    expect(res.status).toBe(409)
-    expect(res.body.error?.code || res.body.code).toBe('PROJECT_CODE_CHANGE_BLOCKED')
+    expect(res.status).toBe(400)
+    expect(res.body.error.message).toContain('不允许修改')
     const row = db.prepare('SELECT code FROM projects WHERE id = ?').get(projectId) as any
     expect(row.code).toBe(originalCode)
   })

@@ -36,6 +36,7 @@ describe('AlertDetailModal', () => {
     expect(screen.getByText('admin')).toBeInTheDocument()
     expect(screen.getByText('2026-06-16T10:30:00Z')).toBeInTheDocument()
     expect(screen.getByText(/处理结论：采购跟进中/)).toBeInTheDocument()
+    expect(screen.queryByText('RULE-001')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '处理预警' })).not.toBeInTheDocument()
   })
 })

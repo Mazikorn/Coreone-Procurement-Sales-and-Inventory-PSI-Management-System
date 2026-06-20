@@ -599,6 +599,10 @@ export interface Alert {
   level: 'warning' | 'danger' | 'info'
   materialId: string
   materialName: string
+  batchId?: string | null
+  batchNo?: string | null
+  ruleId?: string | null
+  triggerCondition?: string | null
   currentStock?: number
   threshold?: number
   message: string
@@ -699,6 +703,7 @@ export interface Role {
   permissions: string[]
   status: 'active' | 'inactive'
   dataScope?: 'all' | 'dept' | 'self'
+  isSystem?: boolean
   userCount?: number
   associatedUsers?: Array<{
     id: string
@@ -771,6 +776,8 @@ export interface SupplierReturnFormData {
 export interface ReturnRecord {
   id: string
   returnNo: string
+  outboundItemId?: string
+  outboundNo?: string
   materialId: string
   materialName?: string
   batchId?: string
@@ -784,6 +791,22 @@ export interface ReturnRecord {
   status: string
   remark?: string
   createdAt: string
+}
+
+export interface ReturnSource {
+  outboundItemId: string
+  outboundId: string
+  outboundNo: string
+  materialId: string
+  materialName?: string
+  unit?: string
+  batchId?: string
+  batchNo?: string
+  outboundQuantity: number
+  returnedQuantity: number
+  returnableQuantity: number
+  unitCost: number
+  totalCost: number
 }
 
 // ===== 报废 =====

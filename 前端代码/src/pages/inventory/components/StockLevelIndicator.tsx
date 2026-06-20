@@ -1,3 +1,5 @@
+import React from 'react'
+
 interface StockLevelIndicatorProps {
   stock: number
   minStock: number

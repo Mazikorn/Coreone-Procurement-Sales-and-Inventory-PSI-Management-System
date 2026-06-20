@@ -40,7 +40,8 @@ router.get('/', authenticateToken, requireSupplierRead, (req, res) => {
 
     successList(res, list.map((r: any) => ({
       id: r.id, code: r.code, name: r.name, contact: r.contact, phone: r.phone,
-      email: r.email, address: r.address, status: r.status === 1 ? 'active' : 'inactive',
+      email: r.email, address: r.address, taxNo: r.tax_no, bankName: r.bank_name, bankAccount: r.bank_account,
+      status: r.status === 1 ? 'active' : 'inactive',
       cooperationCount: r.cooperation_count, totalAmount: r.total_amount, rating: r.rating,
       createdAt: r.created_at, updatedAt: r.updated_at,
     })), Number(page), Number(pageSize), count)
@@ -169,7 +170,7 @@ function validateSupplierStatusChange(db: any, supplierId: string, status: 'acti
 
 router.post('/', authenticateToken, requireSupplierWrite, (req, res) => {
   try {
-    const { name, contact, phone, email, address } = req.body
+    const { name, contact, phone, email, address, taxNo, bankName, bankAccount } = req.body
     const nameText = requireValidText(name, '供应商名称')
     if (sendTextError(res, nameText)) return
     const contactText = normalizeDisplayText(contact, '联系人')
@@ -180,11 +181,32 @@ router.post('/', authenticateToken, requireSupplierWrite, (req, res) => {
     if (sendTextError(res, emailText)) return
     const addressText = normalizeDisplayText(address, '地址', { maxLength: 240 })
     if (sendTextError(res, addressText)) return
+    const taxNoText = normalizeDisplayText(taxNo, '纳税人识别号', { maxLength: 80 })
+    if (sendTextError(res, taxNoText)) return
+    const bankNameText = normalizeDisplayText(bankName, '开户银行', { maxLength: 120 })
+    if (sendTextError(res, bankNameText)) return
+    const bankAccountText = normalizeDisplayText(bankAccount, '银行账号', { maxLength: 80 })
+    if (sendTextError(res, bankAccountText)) return
     const db = getDatabase()
     const id = uuidv4()
     const finalCode = generateSupplierCode(db)
-    db.prepare('INSERT INTO suppliers (id, code, name, contact, phone, email, address, status) VALUES (?, ?, ?, ?, ?, ?, ?, 1)')
-      .run(id, finalCode, nameText.value, contactText.value, phoneText.value, emailText.value, addressText.value)
+    db.prepare(`
+      INSERT INTO suppliers (
+        id, code, name, contact, phone, email, address, tax_no, bank_name, bank_account, status
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+    `).run(
+      id,
+      finalCode,
+      nameText.value,
+      contactText.value,
+      phoneText.value,
+      emailText.value,
+      addressText.value,
+      taxNoText.value,
+      bankNameText.value,
+      bankAccountText.value,
+    )
     success(res, { id, code: finalCode }, 'Created', 201)
   } catch (err: any) {
     if (err.message?.includes('UNIQUE constraint failed')) { error(res, 'Code exists', 'RESOURCE_CONFLICT', 409); return }
@@ -281,7 +303,10 @@ router.put('/:id', authenticateToken, requireSupplierWrite, (req, res) => {
     if (data.code !== undefined) {
       const codeText = requireValidText(data.code, '供应商编码', 40)
       if (sendTextError(res, codeText)) return
-      fields.push('code = ?'); params.push(codeText.value)
+      if (codeText.value !== (existing as any).code) {
+        error(res, '供应商编码由系统生成，不允许修改', 'INVALID_PARAMETER', 400)
+        return
+      }
     }
     if (data.name !== undefined) {
       const nameText = requireValidText(data.name, '供应商名称')
@@ -307,6 +332,21 @@ router.put('/:id', authenticateToken, requireSupplierWrite, (req, res) => {
       const addressText = normalizeDisplayText(data.address, '地址', { maxLength: 240 })
       if (sendTextError(res, addressText)) return
       fields.push('address = ?'); params.push(addressText.value)
+    }
+    if (data.taxNo !== undefined) {
+      const taxNoText = normalizeDisplayText(data.taxNo, '纳税人识别号', { maxLength: 80 })
+      if (sendTextError(res, taxNoText)) return
+      fields.push('tax_no = ?'); params.push(taxNoText.value)
+    }
+    if (data.bankName !== undefined) {
+      const bankNameText = normalizeDisplayText(data.bankName, '开户银行', { maxLength: 120 })
+      if (sendTextError(res, bankNameText)) return
+      fields.push('bank_name = ?'); params.push(bankNameText.value)
+    }
+    if (data.bankAccount !== undefined) {
+      const bankAccountText = normalizeDisplayText(data.bankAccount, '银行账号', { maxLength: 80 })
+      if (sendTextError(res, bankAccountText)) return
+      fields.push('bank_account = ?'); params.push(bankAccountText.value)
     }
     if (data.status !== undefined) { fields.push('status = ?'); params.push(data.status === 'active' ? 1 : 0) }
     if (fields.length > 0) { params.push(id); db.prepare(`UPDATE suppliers SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND is_deleted = 0`).run(...params) }

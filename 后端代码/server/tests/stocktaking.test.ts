@@ -151,6 +151,34 @@ describe('库存盘点 API', () => {
     expect(secondConfirm.status).toBe(400)
   })
 
+  it('ST-014: 确认盘点差异必须使用受控原因，非法原因不能产生库存副作用', async () => {
+    const suffix = `invalid-reason-${Date.now()}`
+    const { materialId, recordId, batchId } = seedStocktakingFixtureWithBatch(db, suffix, 10)
+
+    const res = await request(app)
+      .post(`/api/v1/stocktaking/${recordId}/confirm`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ reason: '临时手写原因', remark: '不应通过' })
+
+    expect(res.status).toBe(400)
+    expect(res.body.error.code).toBe('INVALID_PARAMETER')
+    expect(res.body.error.message).toContain('原因无效')
+
+    const record = db.prepare('SELECT status FROM stocktaking_records WHERE id = ?').get(recordId) as any
+    const inventory = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+    const batch = db.prepare('SELECT remaining FROM batches WHERE id = ?').get(batchId) as any
+    const adjustments = db.prepare('SELECT COUNT(*) as count FROM stocktaking_batch_adjustments WHERE stocktaking_id = ?')
+      .get(recordId) as any
+    const logs = db.prepare("SELECT COUNT(*) as count FROM stock_logs WHERE related_id = ? AND related_type = 'stocktaking'")
+      .get(recordId) as any
+
+    expect(record.status).toBe('completed')
+    expect(inventory.stock).toBe(10)
+    expect(batch.remaining).toBe(10)
+    expect(adjustments.count).toBe(0)
+    expect(logs.count).toBe(0)
+  })
+
   it('ST-003: 盘点统计接口按筛选条件返回全量口径', async () => {
     const stamp = Date.now()
     const diff = seedStocktakingFixture(db, `stats-diff-${stamp}`, 10)

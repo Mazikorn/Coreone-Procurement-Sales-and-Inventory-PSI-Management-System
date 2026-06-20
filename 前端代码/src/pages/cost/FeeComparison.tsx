@@ -146,8 +146,11 @@ export default function FeeComparison() {
   }, [loadData])
 
   const handleSearch = () => {
+    if (page === 1) {
+      loadData()
+      return
+    }
     setPage(1)
-    loadData()
   }
 
   const handleExport = async () => {

@@ -6,7 +6,6 @@ import {
   Tooltip, Legend, ResponsiveContainer,
 } from 'recharts'
 import { abcApi } from '@/api/abc'
-import { reportsApi } from '@/api/reports'
 import { downloadTextFile, formatCurrency } from '@/lib/utils'
 
 interface TrendItem {
@@ -155,10 +154,12 @@ export default function CostTrend() {
 
   const loadQuarterlyData = async () => {
     try {
-      const res = await reportsApi.getCostTrend({
+      const params: Record<string, string | number> = {
         dimension: 'quarterly',
-        projectType: projectType !== 'all' ? projectType : undefined,
-      })
+        months,
+      }
+      if (projectType !== 'all') params.projectType = projectType
+      const res = await abcApi.getSlideCostTrend(params)
       setQuarterlyData(res?.trend || [])
     } catch {
       toast.error('加载季度数据失败')

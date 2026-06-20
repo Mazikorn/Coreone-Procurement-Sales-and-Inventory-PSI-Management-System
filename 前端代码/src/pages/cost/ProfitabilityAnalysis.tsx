@@ -82,9 +82,11 @@ export function ProfitabilityAnalysis() {
     try {
       setLoading(true)
       const res = await abcApi.getProfitability({
+        dimension: 'project',
         startDate: month,
         endDate: month,
         projectType: projectType !== 'all' ? projectType : undefined,
+        pageSize: 1000,
       })
       const rows = Array.isArray(res) ? res : res?.list || res?.items || []
       setData(aggregateProfitabilityRows(rows, month, projectType))

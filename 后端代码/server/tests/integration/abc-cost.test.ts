@@ -115,6 +115,43 @@ describe('ABC 作业成本法', () => {
       expect(res.status).toBe(200)
       expect(res.body.success).toBe(true)
     })
+
+    it('作业中心必须引用启用成本动因，且已有成本池引用时不能删除', async () => {
+      const suffix = Date.now()
+      const invalidDriver = await request(app)
+        .post('/api/v1/abc/activity-centers')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          code: `BAD_DRIVER_${suffix}`,
+          name: '非法动因作业中心',
+          costDriverType: `unknown_driver_${suffix}`,
+        })
+
+      expect(invalidDriver.status).toBe(400)
+      expect(invalidDriver.body.error.message).toBe('成本动因类型不存在或已停用')
+
+      const createRes = await request(app)
+        .post('/api/v1/abc/activity-centers')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          code: `POOL_GUARD_${suffix}`,
+          name: '成本池引用保护作业中心',
+          costDriverType: 'slide_count',
+        })
+      expect(createRes.status).toBe(201)
+      const guardedId = createRes.body.data.id
+      db.prepare(`
+        INSERT INTO abc_cost_pools (id, activity_center_id, year_month, direct_cost, total_cost, driver_quantity, driver_rate)
+        VALUES (?, ?, '2099-01', 100, 100, 10, 10)
+      `).run(`pool-${suffix}`, guardedId)
+
+      const deleteGuarded = await request(app)
+        .delete(`/api/v1/abc/activity-centers/${guardedId}`)
+        .set('Authorization', `Bearer ${token}`)
+
+      expect(deleteGuarded.status).toBe(409)
+      expect(deleteGuarded.body.error.message).toBe('作业中心已有成本池记录，不能删除')
+    })
   })
 
   describe('成本动因管理', () => {
@@ -144,6 +181,40 @@ describe('ABC 作业成本法', () => {
       expect(res.body.success).toBe(true)
       const items = getItems(res)
       expect(items.length).toBeGreaterThan(0)
+    })
+
+    it('成本动因被作业中心引用时不能删除', async () => {
+      const suffix = Date.now()
+      const driverCode = `guard_driver_${suffix}`
+      const driverRes = await request(app)
+        .post('/api/v1/abc/cost-drivers')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          code: driverCode,
+          name: '引用保护动因',
+          unit: '次',
+          calculationMethod: 'linear',
+        })
+
+      expect(driverRes.status).toBe(201)
+      const driverId = driverRes.body.data.id
+
+      const centerRes = await request(app)
+        .post('/api/v1/abc/activity-centers')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          code: `DRIVER_GUARD_${suffix}`,
+          name: '引用动因作业中心',
+          costDriverType: driverCode,
+        })
+      expect(centerRes.status).toBe(201)
+
+      const deleteDriver = await request(app)
+        .delete(`/api/v1/abc/cost-drivers/${driverId}`)
+        .set('Authorization', `Bearer ${token}`)
+
+      expect(deleteDriver.status).toBe(409)
+      expect(deleteDriver.body.error.message).toBe('成本动因已被作业中心引用，不能删除')
     })
   })
 
@@ -184,6 +255,97 @@ describe('ABC 作业成本法', () => {
 
       expect(res.status).toBe(200)
       expect(res.body.success).toBe(true)
+    })
+
+    it('拒绝会污染期间费率的成本池输入', async () => {
+      const suffix = Date.now()
+      const centerRes = await request(app)
+        .post('/api/v1/abc/activity-centers')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          code: `POOL_INPUT_${suffix}`,
+          name: '成本池输入校验作业中心',
+          costDriverType: 'slide_count',
+        })
+      expect(centerRes.status).toBe(201)
+      const centerId = centerRes.body.data.id
+
+      const negativeCost = await request(app)
+        .post('/api/v1/abc/cost-pools')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          activityCenterId: centerId,
+          yearMonth: '2099-02',
+          directCost: -1,
+          indirectCost: 0,
+          driverQuantity: 10,
+        })
+      expect(negativeCost.status).toBe(400)
+      expect(negativeCost.body.error.message).toBe('直接成本不能为负数')
+
+      const zeroDriver = await request(app)
+        .post('/api/v1/abc/cost-pools')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          activityCenterId: centerId,
+          yearMonth: '2099-02',
+          directCost: 100,
+          indirectCost: 0,
+          driverQuantity: 0,
+        })
+      expect(zeroDriver.status).toBe(400)
+      expect(zeroDriver.body.error.message).toBe('动因数量必须大于0')
+
+      await request(app)
+        .put(`/api/v1/abc/activity-centers/${centerId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ status: 'inactive' })
+
+      const inactiveCenter = await request(app)
+        .post('/api/v1/abc/cost-pools')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          activityCenterId: centerId,
+          yearMonth: '2099-02',
+          directCost: 100,
+          indirectCost: 0,
+          driverQuantity: 10,
+        })
+      expect(inactiveCenter.status).toBe(400)
+      expect(inactiveCenter.body.error.message).toBe('作业中心不存在或已停用')
+    })
+
+    it('已关账期间不能新增或更新成本池', async () => {
+      const suffix = Date.now()
+      const yearMonth = '2099-03'
+      const centerRes = await request(app)
+        .post('/api/v1/abc/activity-centers')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          code: `POOL_CLOSED_${suffix}`,
+          name: '成本池关账保护作业中心',
+          costDriverType: 'slide_count',
+        })
+      expect(centerRes.status).toBe(201)
+      const centerId = centerRes.body.data.id
+      db.prepare(`
+        INSERT OR REPLACE INTO abc_periods (id, year_month, status, closed_at, closed_by)
+        VALUES (?, ?, 'closed', CURRENT_TIMESTAMP, 'test')
+      `).run(`period-pool-closed-${suffix}`, yearMonth)
+
+      const res = await request(app)
+        .post('/api/v1/abc/cost-pools')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          activityCenterId: centerId,
+          yearMonth,
+          directCost: 100,
+          indirectCost: 50,
+          driverQuantity: 10,
+        })
+
+      expect(res.status).toBe(422)
+      expect(res.body.error.code).toBe('PERIOD_CLOSED')
     })
   })
 

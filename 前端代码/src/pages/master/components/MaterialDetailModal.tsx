@@ -1,4 +1,5 @@
 import { X } from 'lucide-react'
+import type { ReactNode } from 'react'
 import type { Material } from '@/types'
 
 interface Props {
@@ -6,12 +7,13 @@ interface Props {
   row: Material | null
   getCategoryName: (id?: string) => string
   getSupplierName: (id?: string) => string
-  statusBadge: (status: string) => React.ReactNode
+  getLocationName: (id?: string) => string
+  statusBadge: (status: string) => ReactNode
   onClose: () => void
   onEdit: (row: Material) => void
 }
 
-export function MaterialDetailModal({ open, row, getCategoryName, getSupplierName, statusBadge, onClose, onEdit }: Props) {
+export function MaterialDetailModal({ open, row, getCategoryName, getSupplierName, getLocationName, statusBadge, onClose, onEdit }: Props) {
   if (!open || !row) return null
 
   return (
@@ -30,6 +32,7 @@ export function MaterialDetailModal({ open, row, getCategoryName, getSupplierNam
             <h4 className="text-sm font-semibold text-gray-900 mb-3">基本信息</h4>
             <div className="grid grid-cols-2 gap-4 bg-gray-50 rounded-lg p-4">
               <Info label="物料编码" value={row.code} mono />
+              <Info label="物料条码" value={row.barcode || '-'} mono />
               <Info label="物料名称" value={row.name} />
               <Info label="物料分类" value={getCategoryName(row.categoryId)} />
               <Info label="规格型号" value={row.spec || '-'} />
@@ -39,6 +42,7 @@ export function MaterialDetailModal({ open, row, getCategoryName, getSupplierNam
                 <div className="text-sm font-medium text-blue-600">{formatPrice(row.price)}</div>
               </div>
               <Info label="供应商" value={getSupplierName(row.supplierId)} />
+              <Info label="默认库位" value={row.locationName || getLocationName(row.locationId)} />
               <div>
                 <div className="text-xs text-gray-500 mb-1">状态</div>
                 <div>{statusBadge(row.status)}</div>

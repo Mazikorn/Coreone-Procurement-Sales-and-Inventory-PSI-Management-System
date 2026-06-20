@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
+import { logOperation } from '../utils/operation-logger.js'
 
 const router = Router()
 
@@ -36,6 +37,7 @@ const MODULE_PATTERNS: Record<string, string[]> = {
   indirect_costs: ['indirect-costs', 'indirect_cost', '间接成本'],
   user: ['users', '/users', 'user', '用户'],
   role: ['roles', '/roles', 'role', '角色'],
+  logs: ['logs', '/logs', 'operation_logs', '操作日志'],
   cost: ['abc', '/abc', 'cost', '成本'],
   system: ['system', '系统'],
 }
@@ -65,6 +67,7 @@ const MODULE_MATCH_ORDER = [
   'labor',
   'user',
   'role',
+  'logs',
   'bom',
   'cost',
   'system',
@@ -366,6 +369,12 @@ function exportLogs(req: any, res: any, source: any) {
     const { where, params } = buildLogWhere(source)
     const rows = db.prepare(`SELECT * FROM operation_logs WHERE ${where} ORDER BY created_at DESC LIMIT 10000`).all(...params) as any[]
     const content = `\ufeff${toCsv(rows.map(mapLogRow), getExportOptions(source))}`
+    logOperation(db, req, {
+      operation: 'export logs',
+      description: '导出操作日志',
+      requestData: { module: 'logs', filters: source, rowCount: rows.length },
+      responseData: { rowCount: rows.length },
+    })
     res.setHeader('Content-Type', 'text/csv;charset=utf-8')
     res.setHeader('Content-Disposition', `attachment; filename="${exportFilename()}"`)
     res.send(content)
@@ -398,6 +407,12 @@ router.delete('/', (req: any, res) => {
     try {
       const result = db.prepare(`DELETE FROM operation_logs WHERE ${LOG_CREATED_AT_EXPR} < ?`).run(`${beforeDate} 00:00:00`)
       db.exec('COMMIT')
+      logOperation(db, req, {
+        operation: 'delete logs',
+        description: `清理 ${beforeDate} 之前的操作日志`,
+        requestData: { module: 'logs', beforeDate },
+        responseData: { deletedCount: Number(result.changes || 0), beforeDate },
+      })
       success(res, { deletedCount: Number(result.changes || 0), beforeDate }, 'Logs cleaned')
     } catch (e) {
       db.exec('ROLLBACK')

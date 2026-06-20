@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { usePagination } from '@/hooks/usePagination'
 import { equipmentApi } from '@/api/master'
-import { getUserRole } from '@/lib/permissions'
+import { getUserPermissions, getUserRole } from '@/lib/permissions'
 import type { Equipment, EquipmentType } from '@/types'
 import { toast } from 'sonner'
 
@@ -22,8 +22,19 @@ export interface EquipmentForm {
   typeId: string
 }
 
+function canManageEquipment() {
+  const role = getUserRole()
+  if (['admin', 'technician', 'pathologist'].includes(role || '')) {
+    return true
+  }
+  const permissions = getUserPermissions()
+  return permissions.includes('*')
+    || permissions.includes('equipment')
+    || permissions.some(permission => ['equipment:add', 'equipment:edit', 'equipment:delete'].includes(permission))
+}
+
 export function useEquipmentPage() {
-  const canManageEquipmentAssets = getUserRole() === 'admin'
+  const canManageEquipmentAssets = canManageEquipment()
   const [keyword, setKeyword] = useState('')
   const [searchInput, setSearchInput] = useState('')
   const [filterStatus, setFilterStatus] = useState('')
@@ -200,6 +211,8 @@ export function useEquipmentPage() {
     try {
       const payload = { ...form }
       if (editingId) {
+        const current = data.find(item => item.id === editingId)
+        if (current) payload.code = current.code
         await equipmentApi.update(editingId, payload)
         toast.success('设备更新成功')
       } else {

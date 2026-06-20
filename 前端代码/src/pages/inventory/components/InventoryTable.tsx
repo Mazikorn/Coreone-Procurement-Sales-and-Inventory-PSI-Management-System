@@ -1,4 +1,4 @@
-import { Fragment } from 'react'
+import React, { Fragment } from 'react'
 import { Search, ArrowUpDown, ArrowUp, ArrowDown, X, Trash2, Upload, ChevronRight } from 'lucide-react'
 import { Pagination } from '@/components/ui/Pagination'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
@@ -80,6 +80,10 @@ function getStatusInfo(item: InventoryRow) {
   return { label: '正常', badgeClass: 'bg-green-50 text-green-600' }
 }
 
+function getInventoryGroupKey(item: InventoryRow) {
+  return item.materialId || item.code || item.id || item.name
+}
+
 export function InventoryTable({
   data,
   loading,
@@ -137,8 +141,9 @@ export function InventoryTable({
 
   const groupedData: Record<string, InventoryRow[]> = {}
   sortedData.forEach(item => {
-    if (!groupedData[item.name]) groupedData[item.name] = []
-    groupedData[item.name].push(item)
+    const groupKey = getInventoryGroupKey(item)
+    if (!groupedData[groupKey]) groupedData[groupKey] = []
+    groupedData[groupKey].push(item)
   })
 
   return (
@@ -344,8 +349,8 @@ export function InventoryTable({
                   </td>
                 </tr>
               ) : (
-                Object.entries(groupedData).map(([groupName, batches]) => {
-                  const isExpanded = expandedGroups.has(groupName)
+                Object.entries(groupedData).map(([groupKey, batches]) => {
+                  const isExpanded = expandedGroups.has(groupKey)
                   const first = batches[0]
                   const totalStock = batches.reduce((sum, b) => sum + (b.stock || 0), 0)
                   const minStock = first?.minStock || 0
@@ -357,10 +362,10 @@ export function InventoryTable({
                     })
                   }
                   return (
-                    <Fragment key={groupName}>
+                    <Fragment key={groupKey}>
                       <tr
                         className="hover:bg-gray-50 transition-colors duration-150 cursor-pointer bg-gray-50/50"
-                        onClick={() => onToggleGroup(groupName)}
+                        onClick={() => onToggleGroup(groupKey)}
                       >
                         <td className="px-4 py-3">
                           <input
@@ -381,7 +386,9 @@ export function InventoryTable({
                                 className="font-semibold text-gray-900 hover:text-blue-600 cursor-pointer transition-colors"
                                 onClick={(e) => { e.stopPropagation(); navigate(`/materials?keyword=${encodeURIComponent(first?.name || '')}`) }}
                               >{first?.name}</div>
-                              <div className="text-xs text-gray-500 mt-0.5">{first?.spec || ''}</div>
+                              <div className="text-xs text-gray-500 mt-0.5">
+                                {[first?.code, first?.spec].filter(Boolean).join(' · ')}
+                              </div>
                             </div>
                           </div>
                         </td>

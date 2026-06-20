@@ -7,6 +7,7 @@ import { consumeInventoryLocationStock, ensureInventoryLocationRows, restoreInve
 
 const router = Router()
 const STOCKTAKING_STATUSES = new Set(['completed', 'confirmed'])
+const STOCKTAKING_REASON_CODES = new Set(['normal', 'record', 'physical', 'other'])
 
 function generateStocktakingNo(): string {
   return generateNo('ST')
@@ -273,12 +274,17 @@ router.post('/:id/confirm', (req, res) => {
   try {
     const { id } = req.params
     const { reason, remark } = req.body || {}
+    const normalizedReason = typeof reason === 'string' ? reason.trim() : ''
     const operator = (req as any).user?.username || 'system'
     const db = getDatabase()
     const record = db.prepare('SELECT * FROM stocktaking_records WHERE id = ? AND is_deleted = 0').get(id) as any
     if (!record) { error(res, '记录不存在或已删除', 'NOT_FOUND', 404); return }
     if (record.status === 'confirmed') { error(res, '盘点已确认', 'BUSINESS_RULE', 400); return }
-    if (record.difference !== 0 && !reason) { error(res, '请选择差异原因', 'INVALID_PARAMETER', 400); return }
+    if (record.difference !== 0 && !normalizedReason) { error(res, '请选择差异原因', 'INVALID_PARAMETER', 400); return }
+    if (record.difference !== 0 && !STOCKTAKING_REASON_CODES.has(normalizedReason)) {
+      error(res, '盘点差异原因无效', 'INVALID_PARAMETER', 400)
+      return
+    }
 
     db.exec('BEGIN IMMEDIATE')
     try {
@@ -329,7 +335,7 @@ router.post('/:id/confirm', (req, res) => {
         // 记录库存日志
         const logId = uuidv4()
         const logRemark = [
-          reason ? `差异原因:${reason}` : '盘点差异确认',
+          normalizedReason ? `差异原因:${normalizedReason}` : '盘点差异确认',
           remark ? `处理说明:${remark}` : null,
         ].filter(Boolean).join('；')
         db.prepare('INSERT INTO stock_logs (id, type, material_id, quantity, before_stock, after_stock, related_id, related_type, operator, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')

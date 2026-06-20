@@ -129,6 +129,41 @@ describe('物料分类层级守卫', () => {
     expect(res.body.error.message).toContain('层级')
   })
 
+  it('CAT-TREE-001: 分类树节点返回父级关系，编辑子分类时不会误移到一级', async () => {
+    const suffix = `${Date.now()}7`
+    const { rootId, childId } = seedCategoryTree(db, suffix)
+
+    const res = await request(app)
+      .get('/api/v1/categories/tree')
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(200)
+    const root = res.body.data.find((item: any) => item.id === rootId)
+    const child = root.children.find((item: any) => item.id === childId)
+    expect(root.parentId).toBeNull()
+    expect(child.parentId).toBe(rootId)
+  })
+
+  it('CAT-MATERIAL-001: 物料不能迁移到仍有子分类的汇总分类', async () => {
+    const suffix = `${Date.now()}8`
+    const { rootId, grandchildId } = seedCategoryTree(db, suffix)
+    const materialId = `cat-guard-material-move-${suffix}`
+    db.prepare(`
+      INSERT INTO materials (id, code, name, unit, category_id)
+      VALUES (?, ?, ?, '瓶', ?)
+    `).run(materialId, `CAT-GUARD-MOVE-${suffix}`, '分类迁移保护物料', grandchildId)
+
+    const res = await request(app)
+      .put(`/api/v1/materials/${materialId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ categoryId: rootId })
+
+    expect(res.status).toBe(409)
+    expect(res.body.error.message).toContain('末级分类')
+    const unchanged = db.prepare('SELECT category_id FROM materials WHERE id = ?').get(materialId) as any
+    expect(unchanged.category_id).toBe(grandchildId)
+  })
+
   it('CAT-TEXT-001: 创建和更新分类时拦截危险文本并保存清理后的展示文本', async () => {
     const suffix = `text-${Date.now()}`
 

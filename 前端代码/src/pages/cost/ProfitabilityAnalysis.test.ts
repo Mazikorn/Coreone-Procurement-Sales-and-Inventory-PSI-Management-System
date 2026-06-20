@@ -107,9 +107,11 @@ describe('ProfitabilityAnalysis', () => {
     })
 
     await waitFor(() => expect(abcApi.getProfitability).toHaveBeenLastCalledWith({
+      dimension: 'project',
       startDate: '2026-05',
       endDate: '2026-05',
       projectType: undefined,
+      pageSize: 1000,
     }))
 
     fireEvent.click(screen.getByRole('button', { name: /导出报表/ }))

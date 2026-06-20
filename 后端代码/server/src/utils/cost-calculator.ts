@@ -85,7 +85,7 @@ function getFeeMappings(db: any, bom: any): any[] {
     SELECT m.*, fs.name as fee_standard_name, fs.category, fs.project_type,
            fs.fee_per_slide, fs.base_price, fs.tier_rules, fs.cap_amount
     FROM bom_fee_mappings m
-    LEFT JOIN fee_standards fs ON m.fee_standard_id = fs.id
+    JOIN fee_standards fs ON m.fee_standard_id = fs.id AND fs.status = 'active'
     WHERE m.bom_id = ? AND (m.status = 'active' OR m.status = 1 OR m.status = '1')
     ORDER BY m.sort_order ASC, m.created_at ASC
   `).all(bom.id) as any[]
@@ -93,7 +93,7 @@ function getFeeMappings(db: any, bom: any): any[] {
   if (rows.length) return rows
   if (!bom.fee_standard_id) return []
 
-  const legacy = db.prepare('SELECT * FROM fee_standards WHERE id = ?').get(bom.fee_standard_id) as any
+  const legacy = db.prepare('SELECT * FROM fee_standards WHERE id = ? AND status = ?').get(bom.fee_standard_id, 'active') as any
   return legacy ? [{
     id: `legacy-${bom.fee_standard_id}`,
     fee_standard_id: legacy.id,

@@ -35,8 +35,24 @@ describe('AlertConsumptionHandleModal', () => {
     expect(screen.getByText('DAB显色液')).toBeInTheDocument()
     expect(screen.getByText('90天内消耗低于阈值，请复核是否呆滞')).toBeInTheDocument()
     expect(screen.getByLabelText('建议调整预警阈值')).toBeInTheDocument()
+    expect(screen.getByText('RULE-003')).toBeInTheDocument()
     expect(screen.queryByText('85瓶')).not.toBeInTheDocument()
     expect(screen.queryByText('+2.08σ')).not.toBeInTheDocument()
     expect(screen.queryByText('样本量增长')).not.toBeInTheDocument()
+  })
+
+  it('does not invent a source rule while handling a stagnant alert', () => {
+    render(
+      <AlertConsumptionHandleModal
+        open
+        alert={{ ...stagnantAlert, ruleId: undefined }}
+        form={{ opinion: '', result: 'normal' }}
+        onClose={vi.fn()}
+        onChange={vi.fn()}
+        onConfirm={vi.fn()}
+      />
+    )
+
+    expect(screen.queryByText('RULE-003')).not.toBeInTheDocument()
   })
 })

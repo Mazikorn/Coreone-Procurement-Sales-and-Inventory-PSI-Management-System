@@ -7,7 +7,7 @@ import { Modal } from '@/components/ui/Modal'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { inventoryApi, transferApi } from '@/api/inventory'
 import { materialApi, locationApi } from '@/api/master'
-import type { TransferRecord, Material, Location } from '@/types'
+import type { TransferRecord, Material, Location, Batch } from '@/types'
 import { formatDate } from '@/lib/utils'
 import { toast } from 'sonner'
 
@@ -23,7 +23,8 @@ export interface TransferFormState {
 export function validateTransferForm(
   form: TransferFormState,
   selectedMaterial: Material | undefined,
-  sourceLocationStock: number | null
+  sourceLocationStock: number | null,
+  availableBatches: Batch[] = []
 ): string | null {
   if (!form.materialId || form.quantity <= 0 || !form.fromLocationId || !form.toLocationId) {
     return '请填写物料、数量、来源库位和目标库位'
@@ -33,6 +34,18 @@ export function validateTransferForm(
   }
   if (!selectedMaterial) {
     return '请选择有效物料'
+  }
+  if (availableBatches.length > 0 && !form.batchNo) {
+    return '请选择调拨批次'
+  }
+  if (form.batchNo && availableBatches.length > 0) {
+    const selectedBatch = availableBatches.find(batch => batch.batchNo === form.batchNo)
+    if (!selectedBatch) {
+      return '请选择有效调拨批次'
+    }
+    if (form.quantity > selectedBatch.remaining) {
+      return `调拨数量不能超过所选批次剩余量 ${selectedBatch.remaining} ${selectedMaterial.unit}`
+    }
   }
 
   const stockLimit = sourceLocationStock ?? selectedMaterial.stock
@@ -55,6 +68,7 @@ export default function Transfers() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [sourceLocationStock, setSourceLocationStock] = useState<number | null>(null)
   const [sourceStockLoading, setSourceStockLoading] = useState(false)
+  const [materialBatches, setMaterialBatches] = useState<Batch[]>([])
   const [form, setForm] = useState<TransferFormState>({
     materialId: '',
     batchNo: '',
@@ -108,11 +122,37 @@ export default function Transfers() {
     setForm(prev => ({
       ...prev,
       materialId,
+      batchNo: '',
       quantity: 1,
       fromLocationId: nextFromLocationId,
       toLocationId: prev.toLocationId === nextFromLocationId ? '' : prev.toLocationId,
     }))
   }
+
+  useEffect(() => {
+    let cancelled = false
+
+    const fetchBatches = async () => {
+      if (!form.materialId) {
+        setMaterialBatches([])
+        return
+      }
+      try {
+        const res: any = await materialApi.getDetail(form.materialId)
+        if (cancelled) return
+        const batches = (res?.batches || []).filter((batch: Batch) => batch.remaining > 0 && batch.status === 'normal')
+        setMaterialBatches(batches)
+        if (batches.length === 1) {
+          setForm(prev => ({ ...prev, batchNo: batches[0].batchNo }))
+        }
+      } catch (e) {
+        if (!cancelled) setMaterialBatches([])
+      }
+    }
+
+    fetchBatches()
+    return () => { cancelled = true }
+  }, [form.materialId])
 
   const handleFromLocationChange = (fromLocationId: string) => {
     setForm(prev => ({
@@ -158,7 +198,7 @@ export default function Transfers() {
   }, [form.materialId, form.fromLocationId])
 
   const handleCreate = async () => {
-    const validationError = validateTransferForm(form, selectedMaterial, sourceLocationStock)
+    const validationError = validateTransferForm(form, selectedMaterial, sourceLocationStock, materialBatches)
     if (validationError) {
       toast.error(validationError)
       return
@@ -169,6 +209,7 @@ export default function Transfers() {
       toast.success('调拨入库登记成功')
       setModalOpen(false)
       setForm({ materialId: '', batchNo: '', quantity: 1, fromLocationId: '', toLocationId: '', remark: '' })
+      setMaterialBatches([])
       refresh()
     } catch (e) {
       toast.error((e as any)?.response?.data?.message || '调拨登记失败')
@@ -314,14 +355,25 @@ export default function Transfers() {
                 )}
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">批号</label>
-                <input
-                  data-testid="transfer-batch-no-input"
-                  type="text"
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  调拨批次 {materialBatches.length > 0 && <span className="text-red-500">*</span>}
+                </label>
+                <SearchableSelect
+                  testId="transfer-batch-no-select"
                   value={form.batchNo}
-                  onChange={e => setForm({ ...form, batchNo: e.target.value })}
-                  className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  onChange={val => setForm({ ...form, batchNo: val })}
+                  options={[
+                    { value: '', label: '请选择批次' },
+                    ...materialBatches.map(batch => ({
+                      value: batch.batchNo,
+                      label: `${batch.batchNo} (余${batch.remaining}${selectedMaterial?.unit || ''})`,
+                    })),
+                  ]}
+                  placeholder="请选择批次"
                 />
+                {form.materialId && materialBatches.length === 0 && (
+                  <p className="text-xs text-red-400 mt-1">该物料无可用批次，可保存无批次调拨</p>
+                )}
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">

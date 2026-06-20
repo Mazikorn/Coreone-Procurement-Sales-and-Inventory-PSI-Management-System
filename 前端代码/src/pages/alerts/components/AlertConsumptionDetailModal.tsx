@@ -27,7 +27,7 @@ export function AlertConsumptionDetailModal({ open, alert, onClose, onHandle, fo
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Info label="物料名称" value={alert.materialName || '-'} />
             <Info label="关联项目" value={alert.projectName || '-'} />
-            <Info label="来源规则" value={alert.ruleId || 'RULE-003'} accent />
+            <Info label="来源规则" value={alert.ruleId || '-'} accent />
             <Info label="预警等级" value={alert.level === 'danger' ? '高风险' : alert.level === 'warning' ? '预警' : '提示'} danger={alert.level === 'danger'} />
             <Info label="当前值" value={String(alert.currentStock ?? '-')} />
             <Info label="预警阈值" value={String(alert.threshold ?? '-')} danger />

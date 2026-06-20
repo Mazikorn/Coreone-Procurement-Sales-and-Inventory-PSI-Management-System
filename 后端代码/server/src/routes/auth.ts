@@ -7,6 +7,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../database/DatabaseManager.js'
 import { success, error } from '../utils/response.js'
 import { JWT_SECRET, getRolePermissions } from '../middleware/auth.js'
+import { logOperation } from '../utils/operation-logger.js'
 
 const router = Router()
 const JWT_EXPIRES = '8h'
@@ -91,6 +92,13 @@ router.post('/login', loginLimiter, loginValidation, (req, res) => {
 
     db.prepare('UPDATE users SET last_login = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
       .run(user.id)
+    logOperation(db, req, {
+      actor: { userId: user.id, username: user.username },
+      operation: 'login',
+      description: `用户 ${user.username} 登录`,
+      requestData: { module: 'system', username: user.username },
+      responseData: { userId: user.id, role: user.role },
+    })
 
     const token = jwt.sign(
       { userId: user.id, username: user.username, role: user.role },

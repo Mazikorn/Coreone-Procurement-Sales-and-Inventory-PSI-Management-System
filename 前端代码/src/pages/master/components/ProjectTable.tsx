@@ -1,14 +1,15 @@
+import React from 'react'
 import { Search, Loader2, FolderOpen } from 'lucide-react'
 import { Pagination } from '@/components/ui/Pagination'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { Project } from '@/types'
 
 const typeMap: Record<string, string> = {
-  he: '病理技术',
-  ihc: '病理技术',
-  ss: '病理技术',
+  he: '病理技术-HE制片',
+  ihc: '病理技术-免疫组化',
+  ss: '病理技术-特殊染色',
   mp: '分子诊断',
-  cyto: '病理诊断',
+  cyto: '病理诊断-细胞学检测',
 }
 
 const typeBadgeClass: Record<string, string> = {

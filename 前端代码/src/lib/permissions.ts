@@ -66,7 +66,7 @@ export const ROLE_MENU_MAP: Record<string, string[]> = {
   warehouse_manager: [
     '/', '/alerts',
     '/inventory', '/inbound', '/outbound', '/returns', '/supplier-returns', '/transfers', '/scraps', '/stocktaking',
-    '/suppliers', '/locations', '/materials', '/categories',
+    '/purchase-orders', '/suppliers', '/locations', '/materials', '/categories',
   ],
   technician: [
     '/', '/alerts',
@@ -80,7 +80,7 @@ export const ROLE_MENU_MAP: Record<string, string[]> = {
   ],
   finance: [
     '/', '/alerts',
-    '/reconciliation', '/categories', '/logs',
+    '/reconciliation', '/categories', '/labor-times', '/logs',
     '/abc/dashboard', '/abc/slide-cost', '/abc/profitability', '/abc/fee-comparison', '/abc/fee-mappings', '/abc/trend',
     '/abc/activity-centers',
     // ABC 高级页面

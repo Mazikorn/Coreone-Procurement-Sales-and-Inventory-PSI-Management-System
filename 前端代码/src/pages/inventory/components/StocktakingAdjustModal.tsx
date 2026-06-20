@@ -1,7 +1,15 @@
-import { useEffect, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { X, CheckCircle, AlertTriangle, Loader2 } from 'lucide-react'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { StocktakingRecord } from '../hooks/useStocktakingPage'
+
+export const STOCKTAKING_REASON_OPTIONS = [
+  { value: '', label: '选择原因' },
+  { value: 'normal', label: '正常损耗' },
+  { value: 'record', label: '账务问题' },
+  { value: 'physical', label: '实物问题' },
+  { value: 'other', label: '其他' },
+]
 
 interface Props {
   open: boolean
@@ -59,15 +67,10 @@ export function StocktakingAdjustModal({ open, row, onClose, onConfirm, submitti
                 <SearchableSelect
                   value={reason}
                   onChange={setReason}
-                  options={[
-                    { value: '', label: '选择原因' },
-                    { value: 'normal', label: '正常损耗' },
-                    { value: 'record', label: '账务问题' },
-                    { value: 'physical', label: '实物问题' },
-                    { value: 'other', label: '其他' },
-                  ]}
+                  options={STOCKTAKING_REASON_OPTIONS}
                   placeholder="选择原因"
                   className="w-32"
+                  testId="stocktaking-reason-select"
                 />
               </div>
             </div>

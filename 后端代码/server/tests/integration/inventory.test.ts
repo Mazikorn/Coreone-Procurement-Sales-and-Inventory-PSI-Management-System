@@ -253,6 +253,55 @@ describe('集成测试：库存管理', () => {
       expect(res.body.data.totalStockValue).toBe(80)
     })
 
+    it('INV-STATS-001: 库存统计必须按列表批次行口径计算', async () => {
+      const suffix = Date.now()
+      const categoryId = `cat-inv-batch-stats-${suffix}`
+      const materialId = `mat-inv-batch-stats-${suffix}`
+      const soon = new Date(Date.now() + 10 * 86400000).toISOString().slice(0, 10)
+
+      db.prepare('INSERT INTO material_categories (id, code, name, level) VALUES (?, ?, ?, ?)')
+        .run(categoryId, `C-INV-BS-${suffix}`, '批次统计分类', 1)
+      db.prepare(`
+        INSERT INTO materials (id, code, name, spec, unit, category_id, price, min_stock, location_id)
+        VALUES (?, ?, ?, '1ml', '瓶', ?, 12, 2, 'loc-inv')
+      `).run(materialId, `INV-BS-${suffix}`, '批次统计物料', categoryId)
+      db.prepare(`
+        INSERT INTO inventory (id, material_id, stock, locked_stock, location_id)
+        VALUES (?, ?, 12, 0, 'loc-inv')
+      `).run(`inv-batch-stats-${suffix}`, materialId)
+      db.prepare(`
+        INSERT INTO batches (id, material_id, batch_no, quantity, remaining, inbound_id, inbound_price, expiry_date, status)
+        VALUES (?, ?, ?, 5, 5, ?, 10, '2030-12-31', 1)
+      `).run(`batch-stats-normal-${suffix}`, materialId, `B-BS-N-${suffix}`, `inbound-stats-normal-${suffix}`)
+      db.prepare(`
+        INSERT INTO batches (id, material_id, batch_no, quantity, remaining, inbound_id, inbound_price, expiry_date, status)
+        VALUES (?, ?, ?, 7, 7, ?, 20, ?, 1)
+      `).run(`batch-stats-expiring-${suffix}`, materialId, `B-BS-E-${suffix}`, `inbound-stats-expiring-${suffix}`, soon)
+
+      const listRes = await request(app)
+        .get('/api/v1/inventory')
+        .query({ categoryId, page: 1, pageSize: 20 })
+        .set('Authorization', `Bearer ${token}`)
+
+      expect(listRes.status).toBe(200)
+      expect(listRes.body.data.list).toHaveLength(2)
+
+      const statsRes = await request(app)
+        .get('/api/v1/inventory/stats')
+        .query({ categoryId })
+        .set('Authorization', `Bearer ${token}`)
+
+      expect(statsRes.status).toBe(200)
+      expect(statsRes.body.data.totalMaterials).toBe(1)
+      expect(statsRes.body.data.totalStockCount).toBe(2)
+      expect(statsRes.body.data.totalQuantity).toBe(12)
+      expect(statsRes.body.data.normalCount).toBe(1)
+      expect(statsRes.body.data.expiringCount).toBe(1)
+      expect(statsRes.body.data.lowStockCount).toBe(0)
+      expect(statsRes.body.data.expiredCount).toBe(0)
+      expect(statsRes.body.data.totalStockValue).toBe(190)
+    })
+
     it('按关键词搜索库存', async () => {
       const res = await request(app)
         .get('/api/v1/inventory?page=1&pageSize=20&keyword=INV-L1')

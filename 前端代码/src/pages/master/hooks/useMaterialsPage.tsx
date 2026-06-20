@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { materialApi, categoryApi, supplierApi } from '@/api/master'
-import type { Material, MaterialDeleteCheck, MaterialStatusCheck, Category, Supplier } from '@/types'
+import { materialApi, categoryApi, supplierApi, locationApi } from '@/api/master'
+import type { Material, MaterialDeleteCheck, MaterialStatusCheck, Category, Supplier, Location } from '@/types'
 import { toast } from 'sonner'
 import { usePagination } from '@/hooks/usePagination'
 import { useUrlParams } from '@/hooks/useUrlParams'
@@ -8,11 +8,13 @@ import { getUserRole } from '@/lib/permissions'
 
 export interface FormData {
   code: string
+  barcode: string
   name: string
   spec: string
   unit: string
   categoryId: string
   supplierId: string
+  locationId: string
   price: number
   minStock: number
   maxStock: number
@@ -42,6 +44,21 @@ function canAccessSuppliers(role: string | null): boolean {
 
 function canManageMaterials(role: string | null): boolean {
   return role === 'admin' || role === 'warehouse_manager'
+}
+
+function flattenLeafCategories(nodes: Category[]): Category[] {
+  const result: Category[] = []
+  const walk = (items: Category[]) => {
+    items.forEach(item => {
+      const children = item.children || []
+      if (children.length === 0 && item.status !== 'inactive') {
+        result.push(item)
+      }
+      if (children.length > 0) walk(children)
+    })
+  }
+  walk(nodes)
+  return result
 }
 
 interface MaterialStats {
@@ -135,8 +152,10 @@ export function useMaterialsPage() {
 
   const [categories, setCategories] = useState<Category[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
+  const [locations, setLocations] = useState<Location[]>([])
   const [formCategories, setFormCategories] = useState<Category[]>([])
   const [formSuppliers, setFormSuppliers] = useState<Supplier[]>([])
+  const [formLocations, setFormLocations] = useState<Location[]>([])
 
   const [modalOpen, setModalOpen] = useState(false)
   const [detailModalOpen, setDetailModalOpen] = useState(false)
@@ -180,7 +199,7 @@ export function useMaterialsPage() {
   const [submittingBatch, setSubmittingBatch] = useState(false)
 
   const [form, setForm] = useState<FormData>({
-    code: '', name: '', spec: '', unit: '个', categoryId: '', supplierId: '',
+    code: '', barcode: '', name: '', spec: '', unit: '个', categoryId: '', supplierId: '', locationId: '',
     price: 0, minStock: 0, maxStock: 999999, safetyStock: 0, status: 'active', remark: ''
   })
 
@@ -189,20 +208,24 @@ export function useMaterialsPage() {
 
   const fetchRefs = async () => {
     const role = getUserRole()
-    const [catRes, activeCatRes, supRes, activeSupRes]: any = await Promise.all([
+    const [catRes, catTreeRes, supRes, activeSupRes, locRes, activeLocRes]: any = await Promise.all([
       categoryApi.getList({ page: 1, pageSize: 999 }).catch(() => null),
-      categoryApi.getList({ page: 1, pageSize: 999, status: 'active' }).catch(() => null),
+      categoryApi.getTree().catch(() => null),
       canAccessSuppliers(role)
         ? supplierApi.getList({ page: 1, pageSize: 999 }).catch(() => null)
         : Promise.resolve(null),
       canAccessSuppliers(role)
         ? supplierApi.getList({ page: 1, pageSize: 999, status: 'active' }).catch(() => null)
         : Promise.resolve(null),
+      locationApi.getList({ page: 1, pageSize: 999 }).catch(() => null),
+      locationApi.getList({ page: 1, pageSize: 999, status: 'active' }).catch(() => null),
     ])
     setCategories(catRes?.list || [])
-    setFormCategories(activeCatRes?.list || [])
+    setFormCategories(flattenLeafCategories(catTreeRes || []))
     setSuppliers(supRes?.list || [])
     setFormSuppliers(activeSupRes?.list || [])
+    setLocations(locRes?.list || [])
+    setFormLocations(activeLocRes?.list || [])
   }
 
   useEffect(() => { fetchRefs() }, [])
@@ -257,7 +280,7 @@ export function useMaterialsPage() {
     setEditingId(null)
     setSpecPart({ amount: '', unit: '' })
     const defaultCat = formCategories[0]?.id || ''
-    setForm({ code: '', name: '', spec: '', unit: '个', categoryId: defaultCat, supplierId: '', price: 0, minStock: 0, maxStock: 999999, safetyStock: 0, status: 'active', remark: '' })
+    setForm({ code: '', barcode: '', name: '', spec: '', unit: '个', categoryId: defaultCat, supplierId: '', locationId: '', price: 0, minStock: 0, maxStock: 999999, safetyStock: 0, status: 'active', remark: '' })
     setModalOpen(true)
     if (defaultCat) autoFillCode(defaultCat)
   }
@@ -270,8 +293,8 @@ export function useMaterialsPage() {
     setEditingId(row.id)
     setSpecPart(parseSpec(row.spec))
     setForm({
-      code: row.code, name: row.name, spec: row.spec || '', unit: row.unit,
-      categoryId: row.categoryId || '', supplierId: row.supplierId || '',
+      code: row.code, barcode: row.barcode || '', name: row.name, spec: row.spec || '', unit: row.unit,
+      categoryId: row.categoryId || '', supplierId: row.supplierId || '', locationId: row.locationId || '',
       price: row.price || 0, minStock: row.minStock || 0, maxStock: row.maxStock || 999999,
       safetyStock: row.safetyStock || 0, status: row.status, remark: row.remark || ''
     })
@@ -531,6 +554,11 @@ export function useMaterialsPage() {
     return suppliers.find(s => s.id === id)?.name || id
   }
 
+  const getLocationName = (id?: string) => {
+    if (!id) return '-'
+    return locations.find(l => l.id === id)?.name || id
+  }
+
   const statusBadge = (status: string) => (
     <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
       status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'
@@ -574,7 +602,7 @@ export function useMaterialsPage() {
     canWrite,
     keyword, setKeyword, categoryId, setCategoryId, supplierId, setSupplierId,
     quickFilter, setQuickFilter,
-    categories, suppliers, formCategories, formSuppliers,
+    categories, suppliers, locations, formCategories, formSuppliers, formLocations,
     modalOpen, setModalOpen,
     detailModalOpen, setDetailModalOpen,
     editingId, setEditingId,
@@ -595,7 +623,7 @@ export function useMaterialsPage() {
     handleSubmit, handleDelete, handleToggleStatus,
     toggleSelectAll, toggleSelect, clearSelection,
     batchDelete, batchToggleStatus,
-    getCategoryName, getSupplierName, statusBadge,
+    getCategoryName, getSupplierName, getLocationName, statusBadge,
     autoFillCode,
   }
 }
