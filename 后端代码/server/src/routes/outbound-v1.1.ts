@@ -97,6 +97,29 @@ function validateDirectOutboundType(type: unknown) {
   return { ok: true, type: normalizedType }
 }
 
+function isValidDateOnly(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const date = new Date(`${value}T00:00:00Z`)
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value
+}
+
+function parseOutboundDateRange(query: any) {
+  const startDate = query.startDate === undefined ? '' : String(query.startDate).trim()
+  const endDate = query.endDate === undefined ? '' : String(query.endDate).trim()
+
+  if (startDate && !isValidDateOnly(startDate)) {
+    return { error: '日期格式必须为 YYYY-MM-DD' }
+  }
+  if (endDate && !isValidDateOnly(endDate)) {
+    return { error: '日期格式必须为 YYYY-MM-DD' }
+  }
+  if (startDate && endDate && startDate > endDate) {
+    return { error: '开始日期不能晚于结束日期' }
+  }
+
+  return { startDate, endDate }
+}
+
 function normalizeOptionalSampleCount(value: unknown) {
   if (value === undefined || value === null || value === '') return { ok: true, sampleCount: 1 }
   const sampleCount = Number(value)
@@ -140,6 +163,13 @@ router.get('/', (req, res) => {
     let { page = 1, pageSize = 20, projectId, status, keyword, materialId, type, startDate, endDate } = req.query
     page = Math.max(1, Number(page) || 1)
     pageSize = Math.max(1, Math.min(100, Number(pageSize) || 20))
+    const dateRange = parseOutboundDateRange(req.query)
+    if (dateRange.error) {
+      error(res, dateRange.error, 'INVALID_PARAMETER', 400)
+      return
+    }
+    startDate = dateRange.startDate
+    endDate = dateRange.endDate
     const db = getDatabase()
     let where = 'r.is_deleted = 0'
     const params: any[] = []

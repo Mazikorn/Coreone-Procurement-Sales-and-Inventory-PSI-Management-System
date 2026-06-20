@@ -107,6 +107,25 @@ describe('集成测试：出库管理', () => {
         expect(item.id).toBeDefined()
       }
     })
+
+    it('OUT-DATE-001: 出库列表拒绝不可解释的日期筛选', async () => {
+      const invalidQueries = [
+        { startDate: '2026-02-30', endDate: '2026-03-01' },
+        { startDate: '2026-06-01', endDate: 'not-a-date' },
+        { startDate: '2026-06-30', endDate: '2026-06-01' },
+      ]
+
+      for (const query of invalidQueries) {
+        const res = await request(app)
+          .get('/api/v1/outbound')
+          .query(query)
+          .set('Authorization', `Bearer ${token}`)
+
+        expect(res.status, JSON.stringify(query)).toBe(400)
+        expect(res.body.success, JSON.stringify(query)).toBe(false)
+        expect(res.body.error.code, JSON.stringify(query)).toBe('INVALID_PARAMETER')
+      }
+    })
   })
 
   describe('出库统计', () => {
