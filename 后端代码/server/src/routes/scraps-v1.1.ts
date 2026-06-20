@@ -62,11 +62,32 @@ function handleScrapStockError(res: any, err: any): boolean {
   return true
 }
 
+function parseScrapPagination(query: any) {
+  const rawPage = query.page === undefined ? '1' : String(query.page).trim()
+  const rawPageSize = query.pageSize === undefined ? '20' : String(query.pageSize).trim()
+  const page = Number(rawPage)
+  const pageSize = Number(rawPageSize)
+
+  if (!Number.isInteger(page) || page < 1) {
+    return { error: '页码必须为正整数' }
+  }
+  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 1000) {
+    return { error: '每页数量必须为 1-1000 的整数' }
+  }
+
+  return { page, pageSize }
+}
+
 router.get('/', (req, res) => {
   try {
-    const { page = 1, pageSize = 20 } = req.query
-    const normalizedPage = Math.max(1, Number(page) || 1)
-    const normalizedPageSize = Math.min(Math.max(1, Number(pageSize) || 20), 1000)
+    const pagination = parseScrapPagination(req.query)
+    if (pagination.error) {
+      error(res, pagination.error, 'INVALID_PARAMETER', 400)
+      return
+    }
+
+    const normalizedPage = pagination.page
+    const normalizedPageSize = pagination.pageSize
     const db = getDatabase()
     const count = (db.prepare('SELECT COUNT(*) as total FROM scrap_records WHERE is_deleted = 0').get() as any)?.total || 0
     const offset = (normalizedPage - 1) * normalizedPageSize

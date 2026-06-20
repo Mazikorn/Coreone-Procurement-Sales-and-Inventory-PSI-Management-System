@@ -84,6 +84,28 @@ describe('报废管理 API', () => {
     expect(noTokenRes.status).toBe(401)
   })
 
+  it('SC-PAGE-001: 报废列表拒绝不可解释的分页参数', async () => {
+    const invalidQueries = [
+      { page: '0', pageSize: '20' },
+      { page: 'abc', pageSize: '20' },
+      { page: '1.5', pageSize: '20' },
+      { page: '1', pageSize: '0' },
+      { page: '1', pageSize: 'abc' },
+      { page: '1', pageSize: '1001' },
+    ]
+
+    for (const query of invalidQueries) {
+      const res = await request(app)
+        .get('/api/v1/scraps')
+        .query(query)
+        .set('Authorization', `Bearer ${adminToken}`)
+
+      expect(res.status, JSON.stringify(query)).toBe(400)
+      expect(res.body.success, JSON.stringify(query)).toBe(false)
+      expect(res.body.error.code, JSON.stringify(query)).toBe('INVALID_PARAMETER')
+    }
+  })
+
   it('SC-002: 创建报废会扣减库存并记录登录用户为操作人', async () => {
     const materialId = seedScrapMaterial(db, `create-${Date.now()}`, 10)
 
