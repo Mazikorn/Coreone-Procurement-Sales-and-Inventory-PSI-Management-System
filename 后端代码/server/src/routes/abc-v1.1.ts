@@ -162,6 +162,12 @@ const pendingAdjustmentCount = (db: any, yearMonth: string) => Number((db.prepar
   WHERE year_month = ? AND status = 'pending'
 `).get(yearMonth) as any)?.total) || 0
 
+const ensureAdjustmentReviewerDifferent = (res: any, row: any, operator: string) => {
+  if (row.submitted_by !== operator) return true
+  error(res, '不能审核自己提交的调整单', 'SELF_REVIEW_FORBIDDEN', 403)
+  return false
+}
+
 const countableAbcCostClause = `
   COALESCE(cost_status, 'costed') NOT IN ('pending_cost', 'cost_exception')
 `
@@ -1553,6 +1559,7 @@ router.post('/adjustments/:id/approve', requireCostWrite, (req, res) => {
     const row = db.prepare('SELECT * FROM abc_cost_adjustments WHERE id = ?').get(req.params.id) as any
     if (!row) { error(res, '调整单不存在', 'NOT_FOUND', 404); return }
     if (row.status !== 'pending') { error(res, '只有待审核调整单可以审核通过', 'INVALID_STATUS', 422); return }
+    if (!ensureAdjustmentReviewerDifferent(res, row, operator)) return
 
     db.prepare(`
       UPDATE abc_cost_adjustments
@@ -1577,6 +1584,7 @@ router.post('/adjustments/:id/reject', requireCostWrite, (req, res) => {
     const row = db.prepare('SELECT * FROM abc_cost_adjustments WHERE id = ?').get(req.params.id) as any
     if (!row) { error(res, '调整单不存在', 'NOT_FOUND', 404); return }
     if (row.status !== 'pending') { error(res, '只有待审核调整单可以驳回', 'INVALID_STATUS', 422); return }
+    if (!ensureAdjustmentReviewerDifferent(res, row, operator)) return
 
     db.prepare(`
       UPDATE abc_cost_adjustments

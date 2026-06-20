@@ -34,6 +34,15 @@ async function loginPathologist(app: any): Promise<string> {
   return res.body.data.token
 }
 
+async function loginFinance(app: any): Promise<string> {
+  const res = await request(app)
+    .post('/api/v1/auth/login')
+    .send({ username: 'sunli', password: 'CoreOne2026!' })
+
+  expect(res.status).toBe(200)
+  return res.body.data.token
+}
+
 function seedBase(db: any, suffix: string) {
   const categoryId = `cat-${suffix}`
   const supplierId = `sup-${suffix}`
@@ -111,11 +120,13 @@ describe('成本异常台账', () => {
   let app: any
   let db: any
   let token: string
+  let financeToken: string
   let initializeDatabase: () => void
 
   beforeAll(async () => {
     ({ app, db, initializeDatabase } = await getApp())
     token = await loginAdmin(app)
+    financeToken = await loginFinance(app)
   })
 
   afterAll(() => {
@@ -527,14 +538,23 @@ describe('成本异常台账', () => {
     expect(listRes.status).toBe(200)
     expect(listRes.body.data.list).toHaveLength(1)
 
-    const approveRes = await request(app)
+    const selfApproveRes = await request(app)
       .post(`/api/v1/abc/adjustments/${adjustmentRes.body.data.id}/approve`)
       .set('Authorization', `Bearer ${token}`)
       .send({ remark: '测试审核通过' })
 
+    expect(selfApproveRes.status).toBe(403)
+    expect(selfApproveRes.body.error.code).toBe('SELF_REVIEW_FORBIDDEN')
+
+    const approveRes = await request(app)
+      .post(`/api/v1/abc/adjustments/${adjustmentRes.body.data.id}/approve`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({ remark: '财务复核通过' })
+
     expect(approveRes.status).toBe(200)
     expect(approveRes.body.data.status).toBe('approved')
-    expect(approveRes.body.data.reviewedBy).toBe('admin')
+    expect(approveRes.body.data.submittedBy).toBe('admin')
+    expect(approveRes.body.data.reviewedBy).toBe('sunli')
 
     const dashboardRes = await request(app)
       .get(`/api/v1/abc/dashboard?month=${yearMonth}`)

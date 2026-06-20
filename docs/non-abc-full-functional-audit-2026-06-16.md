@@ -17134,7 +17134,57 @@ git diff --check
 
 - 成本异常处理接口已阶段性保护已处理历史结论；下一批可继续按计划复核非废弃成本运营页中的审计追踪、关账后调整、异常规则等剩余 P0/P1 真实副作用，不在本批继续扩展。
 
-## 三百四十九、结论
+## 三百四十九、批次 394: 关账后调整单必须禁止提交人自审
+
+**发现的问题**
+
+- 本轮继续复核非废弃成本运营页中的关账后调整单，聚焦“关账后财务调整必须有独立复核人”不变量。
+- 当前成本看板使用的 `/api/v1/abc/adjustments` 链路允许创建人立刻调用 `/approve` 审核自己提交的调整单。
+- 旧季度成本调整 `/api/v1/cost-adjustments` 已有“不能审核自己提交的调整”规则，但当前关账后调整单未执行同等风控。
+- 这会让单人完成关账后成本调增/冲减并影响看板、导出和财务结果，削弱审计追溯和复核分离。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/abc-v1.1.ts`
+  - 新增 `ensureAdjustmentReviewerDifferent` 守卫。
+  - `/api/v1/abc/adjustments/:id/approve` 和 `/reject` 在待审核状态校验后，继续校验 `submitted_by` 与当前操作人不同。
+  - 自审返回 `403 SELF_REVIEW_FORBIDDEN`，不更新调整单状态、审核人、审核时间或审核备注。
+- `后端代码/server/tests/integration/cost-exceptions.test.ts`
+  - 为关账后调整单集成流增加 finance 用户登录。
+  - 新增红绿断言：admin 创建调整单后 admin 自审必须 403；finance 审核通过后，看板和导出继续反映已审核调整。
+  - 同步断言 `submittedBy=admin`、`reviewedBy=sunli`，确保提交人与审核人分离进入响应和历史记录。
+
+**ABC 影响评估**
+
+- 本批修改关账后调整单审批边界，不改 ABC 成本算法、成本池重算、出库 ABC 明细、库存/BOM/出库写链、成本异常生成或废弃 `/cost-analysis`。
+- 已审核调整单会进入成本看板汇总、导出 summary 和财务结果修正；新增守卫只阻断自审，不影响不同财务角色对 pending 调整单的正常审核。
+- 已补跑成本异常、全成本、成本看板和异常中心回归，确认关账后调整、成本异常处理、出库 ABC 快照、报表输入和前端看板工具函数未被破坏。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/integration/cost-exceptions.test.ts` 首次按预期失败：admin 创建关账后调整单后调用 `/approve` 返回 200，而新增测试期望 403。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/integration/cost-exceptions.test.ts` 通过，1 file / 11 tests passed；保留既有 Vite close timeout 提示和模拟 `outbound_abc_details` 缺失的 stderr。
+  - `后端代码/server npm test -- --run tests/integration/cost-exceptions.test.ts tests/integration/full-cost.test.ts` 通过，2 files / 14 tests passed；保留既有 Vite close timeout 提示和模拟缺表 stderr。
+  - `前端代码 npm test -- --run src/pages/cost/CostDashboard.test.ts src/pages/cost/CostAlerts.render.test.tsx src/pages/cost/CostAlerts.test.ts` 通过，3 files / 18 tests passed。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis` 无输出，确认未改废弃范围。
+- 浏览器复核:
+  - 本批为后端审批风控，不修改页面、弹窗、路由或样式；真实副作用证据以 Supertest 集成测试直接调用创建、自审、财务审核、看板和导出接口为准。
+  - 前端成本看板工具函数和异常中心页面级回归已通过，确认当前页面相关基础行为未受影响。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 关账后调整单审批分离已阶段性保护；下一批可继续按计划复核非废弃成本运营页中的审计追踪、调整单页面状态刷新、异常规则等剩余 P0/P1 真实副作用，不在本批继续扩展。
+
+## 三百五十、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 
