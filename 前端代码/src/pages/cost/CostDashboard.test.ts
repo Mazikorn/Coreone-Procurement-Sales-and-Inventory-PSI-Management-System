@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  applyReviewedAdjustmentToSummary,
   buildDashboardComparisonParams,
   buildCostAlertsOverviewLink,
   getClosePeriodBlockReason,
@@ -64,5 +65,53 @@ describe('getClosePeriodBlockReason', () => {
 
   it('期间已核算且没有阻断项时允许关账', () => {
     expect(getClosePeriodBlockReason('calculated', 0, 0)).toBe('')
+  })
+})
+
+describe('applyReviewedAdjustmentToSummary', () => {
+  const summary = {
+    totalCost: 100,
+    totalFee: 200,
+    totalProfit: 100,
+    profitRate: 0.5,
+    caseCount: 1,
+    sampleCount: 1,
+    materialCost: 60,
+    activityCost: 40,
+    adjustmentAmount: 10,
+    pendingAdjustmentCount: 2,
+    adjustedTotalCost: 110,
+    adjustedTotalProfit: 90,
+    adjustedProfitRate: 0.45,
+    costChange: 0,
+    feeChange: 0,
+    profitChange: 0,
+  }
+
+  it('调整单通过后减少待审核数并计入调整金额', () => {
+    expect(applyReviewedAdjustmentToSummary(
+      summary,
+      { id: 'adj-1', adjustmentNo: 'ADJ-1', yearMonth: '2026-06', adjustmentType: 'manual', amount: 20, reason: '补差', status: 'pending' },
+      { id: 'adj-1', adjustmentNo: 'ADJ-1', yearMonth: '2026-06', adjustmentType: 'manual', amount: 20, reason: '补差', status: 'approved' },
+    )).toMatchObject({
+      adjustmentAmount: 30,
+      pendingAdjustmentCount: 1,
+      adjustedTotalCost: 130,
+      adjustedTotalProfit: 70,
+      adjustedProfitRate: 0.35,
+    })
+  })
+
+  it('调整单驳回后只减少待审核数，不计入调整金额', () => {
+    expect(applyReviewedAdjustmentToSummary(
+      summary,
+      { id: 'adj-2', adjustmentNo: 'ADJ-2', yearMonth: '2026-06', adjustmentType: 'manual', amount: 20, reason: '补差', status: 'pending' },
+      { id: 'adj-2', adjustmentNo: 'ADJ-2', yearMonth: '2026-06', adjustmentType: 'manual', amount: 20, reason: '补差', status: 'rejected' },
+    )).toMatchObject({
+      adjustmentAmount: 10,
+      pendingAdjustmentCount: 1,
+      adjustedTotalCost: 110,
+      adjustedTotalProfit: 90,
+    })
   })
 })

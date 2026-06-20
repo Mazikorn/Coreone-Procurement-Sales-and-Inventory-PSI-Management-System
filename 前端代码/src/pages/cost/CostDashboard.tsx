@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import {
   Download,
   TrendingUp,
@@ -182,6 +182,34 @@ const ADJUSTMENT_STATUS: Record<string, { label: string; className: string }> = 
 }
 
 const listPayload = <T,>(data: any): T[] => data?.list || data?.items || data || []
+
+const mergeReviewedAdjustment = (items: CostAdjustment[], updated: CostAdjustment) =>
+  items.map(item => item.id === updated.id ? { ...item, ...updated } : item)
+
+export const applyReviewedAdjustmentToSummary = (
+  current: DashboardSummary | null,
+  previous: CostAdjustment | undefined,
+  updated: CostAdjustment,
+) => {
+  if (!current || !previous || previous.status !== 'pending') return current
+  const pendingAdjustmentCount = Math.max(0, (current.pendingAdjustmentCount ?? 0) - 1)
+  if (updated.status !== 'approved') {
+    return { ...current, pendingAdjustmentCount }
+  }
+  const adjustmentAmount = (current.adjustmentAmount ?? 0) + updated.amount
+  const adjustedTotalCost = current.adjustedTotalCost === undefined ? undefined : current.adjustedTotalCost + updated.amount
+  const adjustedTotalProfit = current.adjustedTotalProfit === undefined ? undefined : current.adjustedTotalProfit - updated.amount
+  const adjustedProfitRate = adjustedTotalProfit !== undefined && current.totalFee > 0 ? adjustedTotalProfit / current.totalFee : current.adjustedProfitRate
+
+  return {
+    ...current,
+    adjustmentAmount,
+    pendingAdjustmentCount,
+    adjustedTotalCost,
+    adjustedTotalProfit,
+    adjustedProfitRate,
+  }
+}
 
 export function getComparisonDirectionMeta(direction?: ComparisonDirection) {
   if (direction === 'up') {
@@ -394,13 +422,17 @@ export default function CostDashboard() {
   const handleReviewAdjustment = async (id: string, action: 'approve' | 'reject') => {
     try {
       setWorkbenchLoading(true)
+      let reviewedAdjustment: CostAdjustment
       if (action === 'approve') {
-        await abcApi.approveAdjustment(id, { remark: '成本看板审核' })
+        reviewedAdjustment = await abcApi.approveAdjustment(id, { remark: '成本看板审核' })
         toast.success('调整单已通过')
       } else {
-        await abcApi.rejectAdjustment(id, { remark: '成本看板驳回' })
+        reviewedAdjustment = await abcApi.rejectAdjustment(id, { remark: '成本看板驳回' })
         toast.success('调整单已驳回')
       }
+      const previousAdjustment = adjustments.find(item => item.id === reviewedAdjustment.id)
+      setAdjustments(prev => mergeReviewedAdjustment(prev, reviewedAdjustment))
+      setSummary(prev => applyReviewedAdjustmentToSummary(prev, previousAdjustment, reviewedAdjustment))
       await loadDashboard()
     } catch {
       // 统一错误提示已在请求拦截器处理
