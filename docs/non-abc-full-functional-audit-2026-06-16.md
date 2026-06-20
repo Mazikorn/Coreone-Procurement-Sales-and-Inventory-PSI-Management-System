@@ -17082,7 +17082,59 @@ git diff --check
 
 - 成本异常中心刷新失败清空旧数据已阶段性保护；下一批可继续复核成本异常中心的处理/忽略/重试真实副作用，或按计划进入非废弃告警、审计追踪、季度调整等剩余成本运营页面，不在本批继续扩展。
 
-## 三百四十八、结论
+## 三百四十八、批次 393: 成本异常处理接口必须保护已处理历史结论
+
+**发现的问题**
+
+- 本轮继续复核成本异常中心的处理/忽略/重试真实副作用，聚焦“前端禁用按钮不能替代后端业务边界”不变量。
+- 页面层面对非 `open` 异常已禁用解决、忽略、重试按钮，但后端 `POST /api/v1/abc/exceptions/:id/resolve`、`/ignore`、`/retry` 只校验异常存在和参数。
+- 绕过页面直接调用 API 时，已解决异常可以被改成已忽略，已忽略异常可以被改成已解决。
+- 已处理且有关联出库的异常仍可触发重试，可能增加 `retry_count` 并进入成本重算流程。
+- 这会改写异常处理历史，破坏异常台账的可追溯性，也会让关账前的异常处理结论不稳定。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/abc-v1.1.ts`
+  - 新增 `ensureCostExceptionOpen` 守卫。
+  - 解决、忽略、重试三个接口在读取异常后统一校验 `status === 'open'`。
+  - 对已解决/已忽略异常返回 `409 COST_EXCEPTION_ALREADY_HANDLED`，不更新状态、不改 `resolved_by/resolved_at/details`、不增加 `retry_count`、不触发成本重算。
+- `后端代码/server/tests/integration/cost-exceptions.test.ts`
+  - 在成本异常处理和关账集成流中新增 API 绕过红绿断言。
+  - 覆盖已解决异常不能再忽略、已忽略异常不能再解决、已解决且有关联出库的异常不能再重试。
+  - 断言冲突后原状态、处理人和重试次数保持不变。
+
+**ABC 影响评估**
+
+- 本批修改成本异常处理接口的状态守卫，不改 ABC 成本算法、成本池计算、出库 ABC 明细生成、BOM/库存/出库写链或废弃 `/cost-analysis`。
+- 重试入口属于 ABC 上游异常处理链路；新增守卫只阻断已处理异常重复进入重算，不影响仍为 `open` 的异常按原流程重试。
+- 已补跑成本异常和全成本回归，确认开放异常处理、收费映射异常、成本池重算、出库 ABC 快照、关账阻断与历史报表输入仍通过。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/integration/cost-exceptions.test.ts` 首次按预期失败：已解决异常调用 `/ignore` 返回 200，而新增测试期望 409。
+  - 该失败导致本测试内无月份开放异常未继续处理，后续关账断言出现级联 422；这是红灯中断带来的连带现象，不作为独立功能结论。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/integration/cost-exceptions.test.ts` 通过，1 file / 11 tests passed；保留既有 Vite close timeout 提示和模拟 `outbound_abc_details` 缺失的 stderr。
+  - `前端代码 npm test -- --run src/pages/cost/CostAlerts.render.test.tsx src/pages/cost/CostAlerts.test.ts` 通过，2 files / 8 tests passed。
+  - `后端代码/server npm test -- --run tests/integration/cost-exceptions.test.ts tests/integration/full-cost.test.ts` 通过，2 files / 14 tests passed；保留既有 Vite close timeout 提示和模拟缺表 stderr。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis` 无输出，确认未改废弃范围。
+- 浏览器复核:
+  - 本批为后端 API 绕过保护，没有修改页面、弹窗、路由或样式；真实副作用证据以 Supertest 集成测试直接调用后端接口为准。
+  - 成本异常中心页面级回归已确认页面仍可渲染并保持刷新失败清空旧数据行为；非 `open` 行按钮禁用逻辑未改动。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 成本异常处理接口已阶段性保护已处理历史结论；下一批可继续按计划复核非废弃成本运营页中的审计追踪、关账后调整、异常规则等剩余 P0/P1 真实副作用，不在本批继续扩展。
+
+## 三百四十九、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

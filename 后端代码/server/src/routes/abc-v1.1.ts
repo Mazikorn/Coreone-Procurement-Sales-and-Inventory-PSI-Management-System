@@ -396,6 +396,12 @@ const costExceptionPayload = (row: any) => ({
   updatedAt: row.updated_at,
 })
 
+const ensureCostExceptionOpen = (res: any, row: any) => {
+  if (row.status === 'open') return true
+  error(res, '成本异常已处理，不可重复操作', 'COST_EXCEPTION_ALREADY_HANDLED', 409)
+  return false
+}
+
 const trimmedText = (value: unknown) => typeof value === 'string' ? value.trim() : ''
 
 router.get('/periods', (req, res) => {
@@ -1315,6 +1321,7 @@ router.post('/exceptions/:id/resolve', requireCostWrite, (req, res) => {
     const operator = getOperator(req)
     const row = db.prepare('SELECT * FROM cost_exceptions WHERE id = ?').get(req.params.id) as any
     if (!row) { error(res, '成本异常不存在', 'NOT_FOUND', 404); return }
+    if (!ensureCostExceptionOpen(res, row)) return
     const remark = trimmedText(req.body?.remark)
     if (!remark) { error(res, '请填写处理说明', 'INVALID_PARAMETER', 400); return }
 
@@ -1353,6 +1360,7 @@ router.post('/exceptions/:id/ignore', requireCostWrite, (req, res) => {
     const operator = getOperator(req)
     const row = db.prepare('SELECT * FROM cost_exceptions WHERE id = ?').get(req.params.id) as any
     if (!row) { error(res, '成本异常不存在', 'NOT_FOUND', 404); return }
+    if (!ensureCostExceptionOpen(res, row)) return
     const reason = trimmedText(req.body?.reason || req.body?.remark)
     if (!reason) { error(res, '请填写忽略原因', 'INVALID_PARAMETER', 400); return }
 
@@ -1391,6 +1399,7 @@ router.post('/exceptions/:id/retry', requireCostWrite, (req, res) => {
     const operator = getOperator(req)
     const row = db.prepare('SELECT * FROM cost_exceptions WHERE id = ?').get(req.params.id) as any
     if (!row) { error(res, '成本异常不存在', 'NOT_FOUND', 404); return }
+    if (!ensureCostExceptionOpen(res, row)) return
     if (!row.outbound_id) { error(res, '该异常没有关联出库记录，不能自动重试', 'INVALID_PARAMETER', 400); return }
 
     const yearMonth = normalizeMonth(row.year_month)

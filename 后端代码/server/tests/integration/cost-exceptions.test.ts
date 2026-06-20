@@ -382,6 +382,32 @@ describe('成本异常台账', () => {
     expect(resolveRes.body.data.status).toBe('resolved')
     expect(resolveRes.body.data.resolvedBy).toBe('admin')
 
+    const ignoreResolved = await request(app)
+      .post(`/api/v1/abc/exceptions/${exceptionId}/ignore`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ reason: '尝试覆盖已解决结论' })
+
+    expect(ignoreResolved.status).toBe(409)
+    expect(ignoreResolved.body.error.code).toBe('COST_EXCEPTION_ALREADY_HANDLED')
+
+    const resolvedAfterConflict = db.prepare('SELECT status, resolved_by FROM cost_exceptions WHERE id = ?')
+      .get(exceptionId) as any
+    expect(resolvedAfterConflict.status).toBe('resolved')
+    expect(resolvedAfterConflict.resolved_by).toBe('admin')
+
+    const resolveIgnored = await request(app)
+      .post(`/api/v1/abc/exceptions/${warningExceptionId}/resolve`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ remark: '尝试覆盖已忽略结论' })
+
+    expect(resolveIgnored.status).toBe(409)
+    expect(resolveIgnored.body.error.code).toBe('COST_EXCEPTION_ALREADY_HANDLED')
+
+    const ignoredAfterConflict = db.prepare('SELECT status, resolved_by FROM cost_exceptions WHERE id = ?')
+      .get(warningExceptionId) as any
+    expect(ignoredAfterConflict.status).toBe('ignored')
+    expect(ignoredAfterConflict.resolved_by).toBe('admin')
+
     const blockedByNullMonth = await request(app)
       .post(`/api/v1/abc/periods/${periodRes.body.data.id}/close`)
       .set('Authorization', `Bearer ${token}`)
@@ -395,6 +421,35 @@ describe('成本异常台账', () => {
       .send({ remark: '已确认无月份异常也已处理' })
 
     expect(resolveNullMonth.status).toBe(200)
+
+    const retryHandledExceptionId = `ex-retry-handled-${Date.now()}`
+    const retryHandledOutboundId = `out-retry-handled-${Date.now()}`
+    db.prepare(`
+      INSERT INTO outbound_records (
+        id, outbound_no, type, total_cost, operator, status,
+        created_at, updated_at, cost_status, sample_count
+      )
+      VALUES (?, ?, 'bom', 12, 'tester', 'completed', ?, ?, 'recalculated', 1)
+    `).run(retryHandledOutboundId, `OUT-RETRY-HANDLED-${Date.now()}`, `${yearMonth}-15 10:00:00`, `${yearMonth}-15 10:00:00`)
+    db.prepare(`
+      INSERT INTO cost_exceptions (
+        id, exception_no, source_module, source_type, source_id, outbound_id, year_month,
+        exception_type, severity, status, message, retry_count
+      )
+      VALUES (?, ?, 'abc', 'period_close_test', ?, ?, ?, 'calculation_failed', 'error', 'resolved', '已处理异常不能重试', 0)
+    `).run(retryHandledExceptionId, `CE-RETRY-HANDLED-${Date.now()}`, retryHandledOutboundId, retryHandledOutboundId, yearMonth)
+
+    const retryHandled = await request(app)
+      .post(`/api/v1/abc/exceptions/${retryHandledExceptionId}/retry`)
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(retryHandled.status).toBe(409)
+    expect(retryHandled.body.error.code).toBe('COST_EXCEPTION_ALREADY_HANDLED')
+
+    const retriedHandledAfterConflict = db.prepare('SELECT status, retry_count FROM cost_exceptions WHERE id = ?')
+      .get(retryHandledExceptionId) as any
+    expect(retriedHandledAfterConflict.status).toBe('resolved')
+    expect(retriedHandledAfterConflict.retry_count).toBe(0)
 
     const pendingOutboundId = `out-pending-${Date.now()}`
     db.prepare(`
