@@ -17184,7 +17184,70 @@ git diff --check
 
 - 关账后调整单审批分离已阶段性保护；下一批可继续按计划复核非废弃成本运营页中的审计追踪、调整单页面状态刷新、异常规则等剩余 P0/P1 真实副作用，不在本批继续扩展。
 
-## 三百五十、结论
+## 三百五十、批次 395: 审计追踪必须展示真实日志并执行筛选
+
+**发现的问题**
+
+- 本轮继续复核非废弃成本运营页中的审计追踪，聚焦“审计页面必须展示真实当前日志，筛选必须由后端执行”不变量。
+- 前端 `/abc/audit` 仍按旧响应形态读取 `data.data.list`，但统一 request 拦截器已经把接口响应解包为 `{ list, pagination, total }`。
+- 结果是接口有真实审计日志时，页面可能仍显示 `暂无审计日志`，调整单审批、异常处理、期间关账等审计证据不可见。
+- 后端 `/api/v1/abc/audit-logs` 复用通用列表读取，忽略 `action`、`targetType`、`targetId`、日期等筛选参数。
+- 这会让前端筛选看似可点但真实无效，审计追踪无法可靠定位某一笔关账后调整或异常处理记录。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/abc-v1.1.ts`
+  - 将 `/abc/audit-logs` 改为显式查询实现。
+  - 支持 `action`、`targetType/module`、`targetId`、`operator`、`startDate`、`endDate`、分页和总数统计。
+  - 校验日期格式和起止顺序；日期筛选按 `created_at` 前 10 位日期比较，兼容 SQLite 空格格式和 ISO `T` 格式，返回保持现有成功响应风格，并补齐前端需要的 `targetType`。
+- `后端代码/server/tests/integration/cost-exceptions.test.ts`
+  - 在关账后调整单审核链路中新增审计日志筛选断言。
+  - 覆盖按 `targetType=cost_adjustment`、`action=approve`、`targetId`、同日 `startDate/endDate` 精确筛选后只返回当前审核记录。
+  - 断言审计记录中的 `operator=sunli`、`targetId`、`detail.adjustmentNo` 与真实调整单一致。
+- `前端代码/src/pages/cost/AuditTrail.tsx`
+  - 兼容当前解包后的 `{ list, pagination, total }` 响应形态，避免真实日志被误判为空。
+  - 补齐 `cost_adjustment`、`approve`、`reject`、`exception`、`cost_run`、`bom_fee_mapping` 等审计标签。
+  - 支持从后端 `detail` JSON 中展示 `remark/reason/adjustmentNo/exceptionNo`，详情弹窗同步展示审计 JSON。
+  - 补齐 React 默认导入，保证页面级 JSX 测试和运行时渲染一致。
+- `前端代码/src/pages/cost/AuditTrail.render.test.tsx`
+  - 新增页面级测试，覆盖当前审计接口响应形态、表格真实行渲染、详情弹窗审计 payload 展示。
+
+**ABC 影响评估**
+
+- 本批只修复审计日志读取、筛选和展示，不改 ABC 成本算法、成本池重算、出库 ABC 明细、库存/BOM/出库写链、成本异常生成或废弃 `/cost-analysis`。
+- `/abc/audit-logs` 属于 ABC 操作证据链的只读入口；后端筛选只收窄查询结果，不写入、不重算、不回滚任何成本输入。
+- 已补跑成本异常和全成本输入侧回归，确认调整单审核、异常处理、出库 ABC 快照、成本报表输入链仍保持稳定。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/integration/cost-exceptions.test.ts` 首次按预期失败：按调整单、审核动作和目标 ID 筛选审计日志时返回 5 条，新增测试期望只返回 1 条，证明后端筛选被忽略。
+  - `前端代码 npm test -- --run src/pages/cost/AuditTrail.render.test.tsx` 首次失败于旧页面缺少 `React` 默认导入；补齐导入后，页面级测试确认当前响应形态能渲染真实审计行。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/integration/cost-exceptions.test.ts` 通过，1 file / 11 tests passed；保留既有 Vite close timeout 提示和模拟 `outbound_abc_details` 缺失的 stderr。
+  - `前端代码 npm test -- --run src/pages/cost/AuditTrail.render.test.tsx` 通过，1 file / 1 test passed。
+  - `前端代码 npm test -- --run src/pages/cost/AuditTrail.render.test.tsx src/pages/cost/CostDashboard.test.ts src/pages/cost/CostAlerts.render.test.tsx src/pages/cost/CostAlerts.test.ts` 通过，4 files / 19 tests passed；保留既有 React Router future flag warning。
+  - `后端代码/server npm test -- --run tests/integration/cost-exceptions.test.ts tests/integration/full-cost.test.ts` 通过，2 files / 14 tests passed；保留既有 Vite close timeout 提示和模拟缺表 stderr。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `后端代码/server npm run build` 通过。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis` 无输出，确认未改废弃范围。
+- 浏览器复核:
+  - 使用用户指定 Chrome for Testing 路径启动 headless Playwright，前端 Vite 在 `127.0.0.1:8080`，注入本地 admin 登录态。
+  - 页面 `/abc/audit` 拦截 `/api/v1/abc/audit-logs` 返回一条关账后调整单审核日志。
+  - 复核结果：`hasTitle=true`、`hasAction=true`、`hasTargetType=true`、`hasOperator=true`、`hasReason=true`、`emptyHidden=true`。
+  - 详情弹窗复核结果：`hasTargetId=true`、`hasAdjustmentNo=true`、`hasRemark=true`。
+  - 筛选请求序列包含 `?page=1&pageSize=20&action=approve&targetType=cost_adjustment`，`filterRequestSeen=true`，`consoleErrors=[]`。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 审计追踪当前日志展示和后端筛选已阶段性保护；下一批可继续复核关账后调整单页面状态刷新、异常规则、非废弃成本运营页的剩余真实副作用，不在本批继续扩展。
+
+## 三百五十一、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

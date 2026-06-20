@@ -2161,15 +2161,62 @@ router.post('/quality-costs', requireCostWrite, (req, res) => {
 
 router.get('/audit-logs', (req, res) => {
   try {
-    listTable(res, 'abc_audit_logs', row => ({
+    const { page, pageSize, offset } = pageParams(req.query)
+    const db = getDatabase()
+    const {
+      action,
+      targetType,
+      module,
+      targetId,
+      operator,
+      startDate,
+      endDate,
+    } = req.query
+    let where = '1 = 1'
+    const params: any[] = []
+    const normalizedModule = String(targetType || module || '').trim()
+    const normalizedAction = String(action || '').trim()
+    const normalizedTargetId = String(targetId || '').trim()
+    const normalizedOperator = String(operator || '').trim()
+    const normalizedStartDate = String(startDate || '').trim()
+    const normalizedEndDate = String(endDate || '').trim()
+    const datePattern = /^\d{4}-\d{2}-\d{2}$/
+
+    if (normalizedStartDate && !datePattern.test(normalizedStartDate)) {
+      error(res, '开始日期格式应为 YYYY-MM-DD', 'INVALID_PARAMETER', 400); return
+    }
+    if (normalizedEndDate && !datePattern.test(normalizedEndDate)) {
+      error(res, '结束日期格式应为 YYYY-MM-DD', 'INVALID_PARAMETER', 400); return
+    }
+    if (normalizedStartDate && normalizedEndDate && normalizedStartDate > normalizedEndDate) {
+      error(res, '开始日期不能晚于结束日期', 'INVALID_PARAMETER', 400); return
+    }
+    if (normalizedAction) { where += ' AND action = ?'; params.push(normalizedAction) }
+    if (normalizedModule) { where += ' AND module = ?'; params.push(normalizedModule) }
+    if (normalizedTargetId) { where += ' AND target_id = ?'; params.push(normalizedTargetId) }
+    if (normalizedOperator) { where += ' AND operator = ?'; params.push(normalizedOperator) }
+    if (normalizedStartDate) { where += ' AND substr(created_at, 1, 10) >= ?'; params.push(normalizedStartDate) }
+    if (normalizedEndDate) { where += ' AND substr(created_at, 1, 10) <= ?'; params.push(normalizedEndDate) }
+
+    const total = (db.prepare(`SELECT COUNT(*) as total FROM abc_audit_logs WHERE ${where}`).get(...params) as any)?.total || 0
+    const rows = db.prepare(`
+      SELECT *
+      FROM abc_audit_logs
+      WHERE ${where}
+      ORDER BY created_at DESC
+      LIMIT ? OFFSET ?
+    `).all(...params, pageSize, offset) as any[]
+
+    successList(res, rows.map(row => ({
       id: row.id,
       module: row.module,
+      targetType: row.module,
       action: row.action,
       targetId: row.target_id,
       detail: row.detail,
       operator: row.operator,
       createdAt: row.created_at,
-    }), req.query)
+    })), page, pageSize, total)
   } catch (err: any) { error(res, err.message) }
 })
 

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Search, Filter, ChevronLeft, ChevronRight, Eye, Clock } from 'lucide-react'
 import { toast } from 'sonner'
 import { abcApi } from '@/api/abc'
@@ -6,12 +6,14 @@ import { Modal } from '@/components/ui/Modal'
 
 interface AuditLog {
   id: string
+  module?: string
   action: string
-  targetType: string
-  targetId: string
-  oldValue: string
-  newValue: string
-  reason: string
+  targetType?: string
+  targetId?: string
+  detail?: string
+  oldValue?: string
+  newValue?: string
+  reason?: string
   operator: string
   createdAt: string
 }
@@ -25,6 +27,12 @@ const ACTION_LABELS: Record<string, string> = {
   import: '导入',
   sync: '同步',
   recalculate: '重算',
+  auto_collect: '自动归集',
+  start_collection: '开始归集',
+  close: '关账',
+  approve: '审核通过',
+  reject: '驳回',
+  audit: '审计检查',
 }
 
 const ACTION_COLORS: Record<string, string> = {
@@ -36,6 +44,12 @@ const ACTION_COLORS: Record<string, string> = {
   import: 'bg-amber-100 text-amber-700',
   sync: 'bg-indigo-100 text-indigo-700',
   recalculate: 'bg-orange-100 text-orange-700',
+  auto_collect: 'bg-indigo-100 text-indigo-700',
+  start_collection: 'bg-indigo-100 text-indigo-700',
+  close: 'bg-slate-100 text-slate-700',
+  approve: 'bg-emerald-100 text-emerald-700',
+  reject: 'bg-red-100 text-red-700',
+  audit: 'bg-violet-100 text-violet-700',
 }
 
 const TARGET_TYPE_LABELS: Record<string, string> = {
@@ -46,6 +60,12 @@ const TARGET_TYPE_LABELS: Record<string, string> = {
   fee_standard: '收费标准',
   bom: 'BOM',
   activity_center: '作业中心',
+  period: '成本期间',
+  cost_adjustment: '关账后调整单',
+  exception: '成本异常',
+  cost_run: '成本任务',
+  export: '导出',
+  bom_fee_mapping: 'BOM收费映射',
 }
 
 const TARGET_TYPE_OPTIONS = [
@@ -57,6 +77,12 @@ const TARGET_TYPE_OPTIONS = [
   { value: 'fee_standard', label: '收费标准' },
   { value: 'bom', label: 'BOM' },
   { value: 'activity_center', label: '作业中心' },
+  { value: 'period', label: '成本期间' },
+  { value: 'cost_adjustment', label: '关账后调整单' },
+  { value: 'exception', label: '成本异常' },
+  { value: 'cost_run', label: '成本任务' },
+  { value: 'export', label: '导出' },
+  { value: 'bom_fee_mapping', label: 'BOM收费映射' },
 ]
 
 const ACTION_OPTIONS = [
@@ -68,7 +94,30 @@ const ACTION_OPTIONS = [
   { value: 'export', label: '导出' },
   { value: 'sync', label: '同步' },
   { value: 'recalculate', label: '重算' },
+  { value: 'auto_collect', label: '自动归集' },
+  { value: 'start_collection', label: '开始归集' },
+  { value: 'close', label: '关账' },
+  { value: 'approve', label: '审核通过' },
+  { value: 'reject', label: '驳回' },
+  { value: 'audit', label: '审计检查' },
 ]
+
+const listPayload = <T,>(data: any): T[] => data?.list || data?.items || data?.data?.list || data?.data?.items || []
+
+export function getAuditTargetType(log: Pick<AuditLog, 'targetType' | 'module'>) {
+  return log.targetType || log.module || ''
+}
+
+export function getAuditReason(log: Pick<AuditLog, 'reason' | 'detail'>) {
+  if (log.reason) return log.reason
+  if (!log.detail) return ''
+  try {
+    const detail = JSON.parse(log.detail)
+    return detail.reason || detail.remark || detail.adjustmentNo || detail.exceptionNo || ''
+  } catch {
+    return ''
+  }
+}
 
 export default function AuditTrail() {
   const [logs, setLogs] = useState<AuditLog[]>([])
@@ -95,8 +144,9 @@ export default function AuditTrail() {
       if (filterStartDate) params.startDate = filterStartDate
       if (filterEndDate) params.endDate = filterEndDate
       const data = await abcApi.getAuditLogs(params)
-      setLogs(data.data?.list || data.data?.items || data.data || [])
-      setTotal(data.data?.total || 0)
+      const nextLogs = listPayload<AuditLog>(data)
+      setLogs(nextLogs)
+      setTotal(Number(data?.pagination?.total ?? data?.total ?? data?.data?.pagination?.total ?? data?.data?.total ?? nextLogs.length) || 0)
     } catch {
       toast.error('加载审计日志失败')
     } finally {
@@ -123,7 +173,7 @@ export default function AuditTrail() {
     })
   }
 
-  const tryParseJson = (str: string) => {
+  const tryParseJson = (str?: string) => {
     if (!str) return null
     try {
       return JSON.parse(str)
@@ -132,7 +182,7 @@ export default function AuditTrail() {
     }
   }
 
-  const renderJsonDetail = (label: string, jsonStr: string) => {
+  const renderJsonDetail = (label: string, jsonStr?: string) => {
     const parsed = tryParseJson(jsonStr)
     if (!parsed) return null
     return (
@@ -236,7 +286,7 @@ export default function AuditTrail() {
                     </span>
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-900">
-                    {TARGET_TYPE_LABELS[log.targetType] || log.targetType}
+                    {TARGET_TYPE_LABELS[getAuditTargetType(log)] || getAuditTargetType(log) || '-'}
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-500">{log.operator || '-'}</td>
                   <td className="px-4 py-3 text-sm text-gray-500">
@@ -245,7 +295,7 @@ export default function AuditTrail() {
                       {formatDateTime(log.createdAt)}
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-sm text-gray-500 max-w-xs truncate">{log.reason || '-'}</td>
+                  <td className="px-4 py-3 text-sm text-gray-500 max-w-xs truncate">{getAuditReason(log) || '-'}</td>
                   <td className="px-4 py-3 text-right">
                     <button
                       onClick={() => setSelectedLog(log)}
@@ -305,7 +355,7 @@ export default function AuditTrail() {
               <div>
                 <span className="text-xs text-gray-500">目标类型</span>
                 <div className="mt-1 text-sm text-gray-900">
-                  {TARGET_TYPE_LABELS[selectedLog.targetType] || selectedLog.targetType}
+                  {TARGET_TYPE_LABELS[getAuditTargetType(selectedLog)] || getAuditTargetType(selectedLog) || '-'}
                 </div>
               </div>
               <div>
@@ -322,12 +372,13 @@ export default function AuditTrail() {
               </div>
               <div>
                 <span className="text-xs text-gray-500">原因</span>
-                <div className="mt-1 text-sm text-gray-900">{selectedLog.reason || '-'}</div>
+                <div className="mt-1 text-sm text-gray-900">{getAuditReason(selectedLog) || '-'}</div>
               </div>
             </div>
 
             {renderJsonDetail('变更前数据', selectedLog.oldValue)}
             {renderJsonDetail('变更后数据', selectedLog.newValue)}
+            {renderJsonDetail('审计详情', selectedLog.detail)}
           </div>
           <div className="flex items-center justify-end mt-6 pt-4 border-t border-gray-200">
             <button

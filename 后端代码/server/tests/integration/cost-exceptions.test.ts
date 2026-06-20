@@ -583,6 +583,36 @@ describe('成本异常台账', () => {
       WHERE module = 'cost_adjustment' AND target_id = ?
     `).get(adjustmentRes.body.data.id) as any
     expect(audit.total).toBeGreaterThanOrEqual(2)
+
+    db.prepare(`
+      UPDATE abc_audit_logs
+      SET created_at = '2099-02-15T12:34:56.000Z'
+      WHERE module = 'cost_adjustment' AND action = 'approve' AND target_id = ?
+    `).run(adjustmentRes.body.data.id)
+
+    const filteredAudit = await request(app)
+      .get('/api/v1/abc/audit-logs')
+      .query({
+        targetType: 'cost_adjustment',
+        action: 'approve',
+        targetId: adjustmentRes.body.data.id,
+        startDate: '2099-02-15',
+        endDate: '2099-02-15',
+        pageSize: 5,
+      })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(filteredAudit.status).toBe(200)
+    expect(filteredAudit.body.data.list).toHaveLength(1)
+    expect(filteredAudit.body.data.pagination.total).toBe(1)
+    expect(filteredAudit.body.data.list[0]).toMatchObject({
+      module: 'cost_adjustment',
+      targetType: 'cost_adjustment',
+      action: 'approve',
+      targetId: adjustmentRes.body.data.id,
+      operator: 'sunli',
+    })
+    expect(JSON.parse(filteredAudit.body.data.list[0].detail).adjustmentNo).toBe(adjustmentRes.body.data.adjustmentNo)
   })
 
   it('同一病例多个BOM按病例聚合阶梯收费', async () => {
