@@ -70,6 +70,22 @@ function rejectInvalidInventoryStatus(res: any, status: unknown) {
   return false
 }
 
+function parseInventoryPagination(query: any) {
+  const page = query.page === undefined || query.page === null || query.page === ''
+    ? 1
+    : Number(query.page)
+  const pageSize = query.pageSize === undefined || query.pageSize === null || query.pageSize === ''
+    ? 20
+    : Number(query.pageSize)
+  if (!Number.isInteger(page) || page < 1) {
+    return { valid: false, message: 'page 必须为正整数' }
+  }
+  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 200) {
+    return { valid: false, message: 'pageSize 必须为 1-200 的整数' }
+  }
+  return { valid: true, page, pageSize }
+}
+
 function rejectUnknownInventoryFilterSources(db: any, query: any, res: any) {
   const categoryId = String(query?.categoryId || '').trim()
   if (categoryId) {
@@ -430,10 +446,13 @@ router.get('/consistency-check', requireRole('admin', 'warehouse_manager'), (req
 
 router.get('/', (req, res) => {
   try {
-    let { page = 1, pageSize = 20, status } = req.query
+    const { status } = req.query
     if (rejectInvalidInventoryStatus(res, status)) return
-    page = Math.max(1, Number(page) || 1)
-    pageSize = Math.max(1, Math.min(200, Number(pageSize) || 20))
+    const pagination = parseInventoryPagination(req.query)
+    if (!pagination.valid) {
+      error(res, pagination.message, 'INVALID_PARAMETER', 400)
+      return
+    }
     const db = getDatabase()
     if (rejectUnknownInventoryFilterSources(db, req.query, res)) return
     const { where, params } = buildInventoryWhere(req.query)
@@ -482,8 +501,10 @@ router.get('/', (req, res) => {
         b.created_at ASC
       LIMIT ? OFFSET ?
     `
-    const offset = (Number(page) - 1) * Number(pageSize)
-    const list = db.prepare(sql).all(locationId, locationId, locationId, locationId, ...params, Number(pageSize), offset) as any[]
+    const page = pagination.page as number
+    const pageSize = pagination.pageSize as number
+    const offset = (page - 1) * pageSize
+    const list = db.prepare(sql).all(locationId, locationId, locationId, locationId, ...params, pageSize, offset) as any[]
 
     const result = list.map((row: any) => {
       let status: string = 'normal'
@@ -537,7 +558,7 @@ router.get('/', (req, res) => {
       }
     })
 
-    successList(res, result, Number(page), Number(pageSize), count)
+    successList(res, result, page, pageSize, count)
   } catch (err: any) { error(res, err.message) }
 })
 

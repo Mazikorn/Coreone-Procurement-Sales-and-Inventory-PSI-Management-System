@@ -309,6 +309,27 @@ describe('集成测试：库存管理', () => {
         expect(res.body.error.code).toBe('INVALID_PARAMETER')
       }
     })
+
+    it('INV-PAGE-001: 库存列表必须拒绝不可解释的分页参数', async () => {
+      const invalidCases = [
+        { page: '0', pageSize: '20' },
+        { page: 'abc', pageSize: '20' },
+        { page: '1.5', pageSize: '20' },
+        { page: '1', pageSize: '0' },
+        { page: '1', pageSize: 'abc' },
+        { page: '1', pageSize: '201' },
+      ]
+
+      for (const query of invalidCases) {
+        const res = await request(app)
+          .get('/api/v1/inventory')
+          .query(query)
+          .set('Authorization', `Bearer ${token}`)
+
+        expect(res.status, JSON.stringify(query)).toBe(400)
+        expect(res.body.error.code, JSON.stringify(query)).toBe('INVALID_PARAMETER')
+      }
+    })
   })
 
   describe('库存统计', () => {
