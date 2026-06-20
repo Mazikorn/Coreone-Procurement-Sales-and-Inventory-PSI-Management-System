@@ -15,6 +15,7 @@ import OutboundStats from './components/OutboundStats'
 import OutboundQuickFilters from './components/OutboundQuickFilters'
 import OutboundFilterBar from './components/OutboundFilterBar'
 import OutboundTable from './components/OutboundTable'
+import { getOutboundTypeLabel } from './outboundLabels'
 
 type QuickFilter = 'all' | 'today' | 'week' | 'month'
 type StatusFilter = '' | 'completed' | 'pending' | 'cancelled'
@@ -53,7 +54,7 @@ export default function Outbound() {
   const [quickFilter, setQuickFilter] = useState<QuickFilter>('all')
   const [searchText, setSearchText] = useState('')
   const [materialFilter, setMaterialFilter] = useState('')
-  const [typeFilter, setTypeFilter] = useState<'' | 'project' | 'transfer' | 'scrap'>('')
+  const [typeFilter, setTypeFilter] = useState<'' | 'project' | 'transfer' | 'scrap' | 'bom'>('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
@@ -340,7 +341,7 @@ export default function Outbound() {
       const XLSX = await import('xlsx')
       const rows = exportData.map(row => ({
         出库单号: row.outboundNo,
-        类型: row.type === 'project' ? '项目出库' : row.type === 'transfer' ? '调拨出库' : '报废出库',
+        类型: getOutboundTypeLabel(row.type),
         项目: row.projectName || '-',
         物料明细: row.items?.map(i => `${i.materialName}×${i.quantity}`).join(', ') || '-',
         总金额: row.totalCost || 0,

@@ -15,6 +15,22 @@ vi.mock('@/api/master')
 vi.mock('@/api/reconciliation')
 vi.mock('sonner')
 
+const xlsxMocks = vi.hoisted(() => ({
+  jsonToSheet: vi.fn((rows: unknown[]) => ({ rows })),
+  bookNew: vi.fn(() => ({ Sheets: {}, SheetNames: [] })),
+  bookAppendSheet: vi.fn(),
+  writeFile: vi.fn(),
+}))
+
+vi.mock('xlsx', () => ({
+  utils: {
+    json_to_sheet: xlsxMocks.jsonToSheet,
+    book_new: xlsxMocks.bookNew,
+    book_append_sheet: xlsxMocks.bookAppendSheet,
+  },
+  writeFile: xlsxMocks.writeFile,
+}))
+
 const mockMaterial: Material = {
   id: 'material-1',
   code: 'M001',
@@ -83,6 +99,63 @@ describe('Outbound page material candidates', () => {
     fireEvent.click(screen.getByTestId('submit-btn'))
 
     await waitFor(() => expect(outboundApi.create).not.toHaveBeenCalled())
+  })
+
+  it('labels BOM outbound rows consistently in the table and selected export', async () => {
+    const bomRecord = {
+      id: 'out-bom-1',
+      outboundNo: 'OB-BOM-001',
+      type: 'bom',
+      projectId: 'project-1',
+      projectName: 'HE制片',
+      caseNo: 'CASE-001',
+      sampleCount: 2,
+      items: [
+        {
+          id: 'item-1',
+          outboundId: 'out-bom-1',
+          materialId: 'material-1',
+          materialName: '苏木素',
+          batchId: 'batch-1',
+          batchNo: 'BATCH-001',
+          quantity: 3,
+          unit: 'ml',
+          unitCost: 10,
+          totalCost: 30,
+        },
+      ],
+      totalCost: 30,
+      abcTotalCost: 45,
+      feeAmount: 60,
+      profit: 15,
+      costStatus: 'costed',
+      operator: 'admin',
+      status: 'completed',
+      remark: 'BOM带出',
+      createdAt: '2026-06-20T01:00:00.000Z',
+    } satisfies OutboundRecord
+
+    vi.mocked(outboundApi.getList).mockResolvedValue({
+      list: [bomRecord],
+      pagination: { total: 1, page: 1, pageSize: 10 },
+    } as any)
+
+    render(React.createElement(MemoryRouter, null, React.createElement(Outbound)))
+
+    expect(await screen.findByText('OB-BOM-001')).toBeInTheDocument()
+    expect(screen.getByText('BOM出库')).toBeInTheDocument()
+
+    const rowCheckbox = screen.getAllByRole('checkbox')[1]
+    fireEvent.click(rowCheckbox)
+    fireEvent.click(screen.getByRole('button', { name: '导出' }))
+
+    await waitFor(() => expect(xlsxMocks.writeFile).toHaveBeenCalled())
+    expect(xlsxMocks.jsonToSheet).toHaveBeenCalledWith([
+      expect.objectContaining({
+        出库单号: 'OB-BOM-001',
+        类型: 'BOM出库',
+      }),
+    ])
   })
 })
 

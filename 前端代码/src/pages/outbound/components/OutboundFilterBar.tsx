@@ -1,9 +1,10 @@
 import { Search, Calendar } from 'lucide-react'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
-import type { Material } from '@/types'
+import type { Material, OutboundType } from '@/types'
+import { OUTBOUND_TYPE_LABELS } from '../outboundLabels'
 
 type StatusFilter = '' | 'completed' | 'pending' | 'cancelled'
-type TypeFilter = '' | 'project' | 'transfer' | 'scrap'
+type TypeFilter = '' | OutboundType
 
 interface OutboundFilterBarProps {
   searchText: string
@@ -72,9 +73,10 @@ export default function OutboundFilterBar({
           onChange={val => onTypeChange(val as TypeFilter)}
           options={[
             { value: '', label: '全部类型' },
-            { value: 'project', label: '项目出库' },
-            { value: 'transfer', label: '调拨出库' },
-            { value: 'scrap', label: '报废出库' },
+            { value: 'project', label: OUTBOUND_TYPE_LABELS.project },
+            { value: 'transfer', label: OUTBOUND_TYPE_LABELS.transfer },
+            { value: 'scrap', label: OUTBOUND_TYPE_LABELS.scrap },
+            { value: 'bom', label: OUTBOUND_TYPE_LABELS.bom },
           ]}
           placeholder="全部类型"
           className="w-32"

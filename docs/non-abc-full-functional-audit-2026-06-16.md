@@ -17754,7 +17754,61 @@ git diff --check
 
 - 出库列表日期、状态、类型、项目和物料筛选异常语义已阶段性收口；下一批可继续按计划复核库存/报表读取面中剩余导出口径和其他 P0/P1 读取参数，或回到第一阶段基础资料尚未当前复核的 P0/P1 项，不在本批继续扩展。
 
-## 三百六十一、结论
+## 三百六十一、批次 406: 出库 BOM 类型导出口径必须一致
+
+**发现的问题**
+
+- 本轮继续按第二阶段库存主链路的“读取面/导出口径”推进，聚焦“出库类型语义必须与真实业务来源一致”不变量。
+- 后端出库列表和 BOM 出库链路已经支持 `type=bom`，但前端出库记录类型、表格标签、类型筛选和批量导出仍只覆盖 `project/transfer/scrap`。
+- BOM 出库记录在表格中会显示原始 `bom`，在导出 Excel 时会被三元兜底误标为“报废出库”。
+- 这会污染出库历史说明、导出归档和 ABC 上游事实核对：同一条 BOM 出库在后端是 BOM 来源，在前端导出里却被解释成报废出库。
+
+**已完成修复**
+
+- `前端代码/src/types/index.ts`
+  - 将出库记录类型补齐为 `project/transfer/scrap/bom`。
+  - 新增普通出库表单类型边界，保持普通写接口仍只允许 `project/transfer/scrap`，避免前端类型层误放宽 `create({ type: 'bom' })`。
+- `前端代码/src/pages/outbound/outboundLabels.ts`
+  - 新增统一出库类型标签映射，集中处理 `BOM出库` 展示。
+- `前端代码/src/pages/outbound/Outbound.tsx`
+  - 批量导出使用统一类型标签，BOM 出库不再被误导出为“报废出库”。
+- `前端代码/src/pages/outbound/components/OutboundTable.tsx`
+  - 表格出库类型使用统一标签，BOM 出库显示为 `BOM出库`。
+- `前端代码/src/pages/outbound/components/OutboundFilterBar.tsx`
+  - 类型筛选补齐 `BOM出库` 选项，与后端 `type=bom` 筛选能力一致。
+- `前端代码/src/pages/outbound/Outbound.test.ts`
+  - 新增 BOM 出库记录表格展示与选中导出红绿测试，断言导出行的 `类型` 为 `BOM出库`。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 出库页面的展示、筛选选项、导出标签和前端类型，不改 ABC 成本算法、成本池重算、出库 ABC 明细、BOM 出库写入、库存扣减、成本异常生成或废弃 `/cost-analysis`。
+- 出库和 BOM 出库是 ABC 上游核心输入；本批修正的是上游事实的前端解释口径，避免导出归档把 BOM 出库误标成报废出库。
+- 已补跑后端出库和成本异常输入侧回归，确认 BOM 出库、成本异常和 ABC 输入链未被破坏。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/outbound/Outbound.test.ts -t "labels BOM outbound"` 修复前失败：测试找不到 `BOM出库`，证明 BOM 出库表格标签缺失；同一测试也覆盖导出行类型口径。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/outbound/Outbound.test.ts -t "labels BOM outbound"` 通过，1 test passed / 2 skipped。
+  - `前端代码 npm test -- --run src/pages/outbound/Outbound.test.ts` 通过，1 file / 3 tests passed。
+  - `后端代码/server npm test -- --run tests/integration/outbound.test.ts tests/integration/cost-exceptions.test.ts` 通过，2 files / 43 tests passed；保留既有 Vite close timeout 提示和模拟 `outbound_abc_details` 缺失的 stderr。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis` 无输出，确认未改废弃范围。
+- 浏览器复核:
+  - 本批核心副作用是前端 Excel 数据生成，已通过组件级测试直接拦截 `xlsx` 写入数据并断言导出口径；未修改真实写入、弹窗提交或页面路由，因此未额外启动浏览器。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 出库 BOM 类型在表格、筛选和导出中的语义已阶段性收口；下一批可继续按计划复核库存/报表读取面中剩余导出口径，或回到第一阶段基础资料尚未当前复核的 P0/P1 项，不在本批继续扩展。
+
+## 三百六十二、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

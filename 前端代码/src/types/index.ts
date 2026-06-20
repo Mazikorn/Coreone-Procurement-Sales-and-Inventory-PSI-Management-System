@@ -315,7 +315,8 @@ export interface InboundFormData {
 }
 
 // ===== 出库 =====
-export type OutboundType = 'project' | 'transfer' | 'scrap'
+export type OutboundType = 'project' | 'transfer' | 'scrap' | 'bom'
+export type OutboundFormType = Exclude<OutboundType, 'bom'>
 export type OutboundCostStatus = 'pending_cost' | 'costed' | 'cost_exception' | 'recalculated'
 
 export interface OutboundItem {
@@ -357,7 +358,7 @@ export interface OutboundRecord {
 }
 
 export interface OutboundFormData {
-  type: OutboundType
+  type: OutboundFormType
   projectId?: string
   items: Array<{
     materialId: string

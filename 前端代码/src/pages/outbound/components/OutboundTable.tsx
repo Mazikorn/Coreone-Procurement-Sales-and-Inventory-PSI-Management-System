@@ -3,17 +3,12 @@ import { Pagination } from '@/components/ui/Pagination'
 import type { OutboundRecord } from '@/types'
 import { formatDate } from '@/lib/utils'
 import { useNavigate } from 'react-router-dom'
+import { getOutboundTypeLabel } from '../outboundLabels'
 
 const statusConfig: Record<string, { label: string; bg: string; text: string }> = {
   completed: { label: '已完成', bg: 'bg-green-50', text: 'text-green-600' },
   pending: { label: '待出库', bg: 'bg-yellow-50', text: 'text-yellow-600' },
   cancelled: { label: '已取消', bg: 'bg-red-50', text: 'text-red-600' },
-}
-
-const typeConfig: Record<string, string> = {
-  project: '项目出库',
-  transfer: '调拨出库',
-  scrap: '报废出库',
 }
 
 const costStatusConfig: Record<string, { label: string; bg: string; text: string }> = {
@@ -174,7 +169,7 @@ export default function OutboundTable({
                     <td className="px-4 py-3 font-mono text-gray-500">{firstItem?.batchNo || '-'}</td>
                     <td className="px-4 py-3">
                       <span className="px-2 py-0.5 rounded text-xs bg-purple-50 text-purple-700">
-                        {typeConfig[row.type] || row.type}
+                        {getOutboundTypeLabel(row.type)}
                       </span>
                     </td>
                     <td className="px-4 py-3">
