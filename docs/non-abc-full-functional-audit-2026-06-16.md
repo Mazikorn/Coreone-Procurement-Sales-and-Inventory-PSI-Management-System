@@ -17950,7 +17950,58 @@ git diff --check
 
 - BOM 版本历史导出生效范围口径已阶段性收口；下一批可继续按第一阶段基础资料复核项目/检测服务导入导出，或回到库存/报表读取面剩余 P0/P1 项，不在本批扩展。
 
-## 三百六十五、结论
+## 三百六十五、批次 410: 检测项目列表和统计必须拒绝非法筛选条件
+
+**发现的问题**
+
+- 本轮继续第一阶段基础资料的检测项目筛选口径，聚焦“页面固定选项以外的筛选条件不能被伪装成正常空结果或全部结果”不变量。
+- 检测项目页面当前会把 `type/status/bom` 等筛选同步到 URL 并传给后端，分页和统计也已改为后端全量口径。
+- 但 API 绕过时，`GET /api/v1/projects?type=unknown-type` 会返回 200 空列表；`status=archived` 会被忽略成全部状态；`GET /api/v1/projects/stats?bomFilter=missing` 也可能被当成正常统计。
+- 这会让用户或外部调用把错误筛选解释成“没有检测服务”或“当前全部统计”，影响项目、BOM、出库和后续成本输入链路的事实核对。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/projects-v1.1.ts`
+  - 新增项目筛选白名单校验，列表和统计入口共用。
+  - `type` 仅允许页面支持的 `he/ihc/ss/mp/cyto`。
+  - `status` 仅允许 `active/inactive/all`，保留既有 `all` 兼容口径。
+  - `bomFilter` 仅允许 `configured/unconfigured`。
+  - 非法筛选统一返回 `400 INVALID_PARAMETER`，并在 SQL 查询前拦截。
+- `后端代码/server/tests/projects-batch.test.ts`
+  - 新增 `PRJ-FILTER-001` 红绿测试，覆盖项目列表非法类型、项目列表非法状态、项目统计非法 BOM 筛选。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 的检测项目只读列表/统计筛选校验和后端测试，不改项目写入、BOM 绑定、历史出库/LIS 保护、出库、库存扣减、ABC 成本算法、成本异常或废弃 `/cost-analysis`。
+- 检测项目是 BOM 出库、LIS 对账、成本归集和 ABC 输入链的上游主数据；本批阻断错误筛选污染读面解释，不改变任何合法项目、BOM 或成本事实。
+- 已补跑项目模块回归，以及 BOM、出库、成本异常输入侧回归，确认项目读面收口没有破坏 ABC 上游输入链。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/projects-batch.test.ts -t "项目列表和统计必须拒绝页面选项以外的筛选条件"` 修复前失败：`type=unknown-type` 返回 200，期望 400。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/projects-batch.test.ts -t "项目列表和统计必须拒绝页面选项以外的筛选条件"` 通过，1 test passed / 21 skipped。
+  - `后端代码/server npm test -- --run tests/projects-batch.test.ts tests/integration/projects.test.ts` 通过，2 files / 23 tests passed；保留既有 Vite close timeout 提示。
+  - `后端代码/server npm test -- --run tests/integration/bom.test.ts tests/integration/outbound.test.ts tests/integration/cost-exceptions.test.ts` 通过，3 files / 58 tests passed；保留既有 Vite close timeout 提示和模拟 `outbound_abc_details` 缺失的 stderr。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis` 无输出，确认未改废弃范围。
+- 浏览器复核:
+  - 本批核心副作用是后端 API 筛选参数校验，已通过集成测试覆盖列表和统计入口；未修改页面布局、弹窗、导入、导出或真实写接口，因此未额外启动浏览器。
+- 测试执行备注:
+  - 曾并行启动两组后端 Vitest 进程，项目测试进程出现一次 `database is locked`；随后单独重跑项目回归通过，判定为并发测试进程争用测试数据库/服务的执行噪声，不作为产品缺陷。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 检测项目列表和统计的非法筛选语义已阶段性收口；下一批可继续按第一阶段基础资料复核检测项目导入真实副作用、导出缺口或其它项目读写边界，不在本批扩展。
+
+## 三百六十六、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

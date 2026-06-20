@@ -191,6 +191,32 @@ describe('检测项目批量操作', () => {
     })
   })
 
+  it('PRJ-FILTER-001: 项目列表和统计必须拒绝页面选项以外的筛选条件', async () => {
+    const invalidListType = await request(app)
+      .get('/api/v1/projects')
+      .query({ type: 'unknown-type' })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(invalidListType.status).toBe(400)
+    expect(invalidListType.body.error?.code || invalidListType.body.code).toBe('INVALID_PARAMETER')
+
+    const invalidListStatus = await request(app)
+      .get('/api/v1/projects')
+      .query({ status: 'archived' })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(invalidListStatus.status).toBe(400)
+    expect(invalidListStatus.body.error?.code || invalidListStatus.body.code).toBe('INVALID_PARAMETER')
+
+    const invalidStatsBomFilter = await request(app)
+      .get('/api/v1/projects/stats')
+      .query({ bomFilter: 'missing' })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(invalidStatsBomFilter.status).toBe(400)
+    expect(invalidStatsBomFilter.body.error?.code || invalidStatsBomFilter.body.code).toBe('INVALID_PARAMETER')
+  })
+
   it('PRJ-BOM-000: 检测项目详情返回关联BOM名称和版本，支撑页面配置判断', async () => {
     const suffix = `bom-name-${Date.now()}`
     const bomId = `bom-prj-name-${suffix}`

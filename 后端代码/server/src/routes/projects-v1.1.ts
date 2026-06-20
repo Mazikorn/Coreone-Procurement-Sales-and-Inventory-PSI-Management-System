@@ -65,6 +65,24 @@ function buildProjectWhere(query: any, alias = '') {
   return { where, params }
 }
 
+function validateProjectFilters(query: any) {
+  const type = String(query.type || '').trim()
+  const status = String(query.status || '').trim()
+  const bomFilter = String(query.bomFilter || '').trim()
+
+  if (type && !PROJECT_TYPES.has(type)) {
+    return { ok: false, message: 'Invalid type' }
+  }
+  if (status && status !== 'all' && status !== 'active' && status !== 'inactive') {
+    return { ok: false, message: 'Invalid status' }
+  }
+  if (bomFilter && bomFilter !== 'configured' && bomFilter !== 'unconfigured') {
+    return { ok: false, message: 'Invalid BOM filter' }
+  }
+
+  return { ok: true }
+}
+
 function buildProjectDeleteCheck(db: any, id: string) {
   const existing = db.prepare('SELECT id, code, name, bom_id FROM projects WHERE id = ? AND is_deleted = 0').get(id) as any
   if (!existing) return null
@@ -177,6 +195,10 @@ function buildProjectStatusCheck(db: any, id: string, targetStatus: 'active' | '
 
 router.get('/', (req, res) => {
   try {
+    const filterValidation = validateProjectFilters(req.query)
+    if (!filterValidation.ok) {
+      error(res, filterValidation.message, 'INVALID_PARAMETER', 400); return
+    }
     let { page = 1, pageSize = 20 } = req.query
     page = Math.max(1, Number(page) || 1)
     pageSize = Math.max(1, Math.min(1000, Number(pageSize) || 20))
@@ -207,6 +229,10 @@ router.get('/', (req, res) => {
 
 router.get('/stats', (req, res) => {
   try {
+    const filterValidation = validateProjectFilters(req.query)
+    if (!filterValidation.ok) {
+      error(res, filterValidation.message, 'INVALID_PARAMETER', 400); return
+    }
     const db = getDatabase()
     const { where, params } = buildProjectWhere(req.query)
     const row = db.prepare(`
