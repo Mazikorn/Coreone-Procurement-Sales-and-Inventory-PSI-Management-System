@@ -126,6 +126,26 @@ describe('集成测试：出库管理', () => {
         expect(res.body.error.code, JSON.stringify(query)).toBe('INVALID_PARAMETER')
       }
     })
+
+    it('OUT-FILTER-001: 出库列表拒绝不可解释的来源和枚举筛选', async () => {
+      const invalidQueries = [
+        { status: 'archived' },
+        { type: 'mystery' },
+        { projectId: 'missing-outbound-project' },
+        { materialId: 'missing-outbound-material' },
+      ]
+
+      for (const query of invalidQueries) {
+        const res = await request(app)
+          .get('/api/v1/outbound')
+          .query(query)
+          .set('Authorization', `Bearer ${token}`)
+
+        expect(res.status, JSON.stringify(query)).toBe(400)
+        expect(res.body.success, JSON.stringify(query)).toBe(false)
+        expect(res.body.error.code, JSON.stringify(query)).toBe('INVALID_PARAMETER')
+      }
+    })
   })
 
   describe('出库统计', () => {

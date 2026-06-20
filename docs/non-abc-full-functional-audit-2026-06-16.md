@@ -17705,7 +17705,56 @@ git diff --check
 
 - 出库列表日期异常语义已阶段性收口；下一批可继续按计划复核库存/报表读取面中剩余来源、导出口径和其他 P0/P1 读取参数，或回到第一阶段基础资料尚未当前复核的 P0/P1 项，不在本批继续扩展。
 
-## 三百六十、结论
+## 三百六十、批次 405: 出库列表来源筛选必须可解释
+
+**发现的问题**
+
+- 本轮继续按第二阶段库存主链路的库存/报表读取面推进，聚焦“来源和枚举筛选必须可解释，不能把错误来源静默伪装成空结果”不变量。
+- 出库列表 `/api/v1/outbound` 已在上一批补齐日期校验，但 `projectId/materialId/status/type` 仍直接进入查询条件。
+- `status=archived`、`type=mystery`、不存在检测项目或不存在物料会返回 200 空列表，而不是明确业务错误。
+- 这会让 URL、集成调用或手工请求中的错误筛选被误认为“确实没有出库记录”，影响出库历史检索、库存流水解释和 ABC 上游事实核对。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/outbound-v1.1.ts`
+  - 新增出库列表筛选校验。
+  - `status` 仅允许 `completed/pending/cancelled`。
+  - `type` 仅允许普通出库类型 `project/transfer/scrap` 和 BOM 出库类型 `bom`。
+  - `projectId/materialId` 必须指向未删除检测项目或物料；不存在时返回 `400 INVALID_PARAMETER`。
+  - 校验在 SQL 查询前执行；合法筛选、列表响应结构、出库创建、BOM 出库、编辑和删除链路不变。
+- `后端代码/server/tests/integration/outbound.test.ts`
+  - 新增 `OUT-FILTER-001` 红绿测试，覆盖非法状态、非法类型、不存在项目和不存在物料筛选。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 出库列表只读筛选校验，不改 ABC 成本算法、成本池重算、出库 ABC 明细、BOM、出库扣减、成本异常生成或废弃 `/cost-analysis`。
+- 出库是 ABC 上游核心输入之一；本批不写入、不重算、不回滚任何库存或成本输入，只阻断错误筛选来源伪装成正常出库结果。
+- 已补跑库存一致性、库存列表、操作日志、非 ABC 报表日期和成本异常输入侧回归，确认库存/出库/报表/异常/ABC 输入链未被破坏。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/integration/outbound.test.ts -t "OUT-FILTER-001"` 修复前失败：`status=archived` 返回 200，证明错误枚举会被静默当成正常查询。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/integration/outbound.test.ts -t "OUT-FILTER-001"` 通过，1 test passed / 30 skipped。
+  - `后端代码/server npm test -- --run tests/integration/outbound.test.ts` 通过，1 file / 31 tests passed。
+  - `后端代码/server npm test -- --run tests/integration/outbound.test.ts tests/inventory-consistency.test.ts tests/integration/inventory.test.ts tests/logs.test.ts tests/integration/reports-date-validation.test.ts tests/integration/cost-exceptions.test.ts` 通过，6 files / 81 tests passed；保留既有 Vite close timeout 提示和模拟 `outbound_abc_details` 缺失的 stderr。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis` 无输出，确认未改废弃范围。
+- 浏览器复核:
+  - 本批为后端只读 API 参数校验修复，未修改页面、弹窗或前端交互；真实语义由接口级红绿测试覆盖，因此未额外启动浏览器。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 出库列表日期、状态、类型、项目和物料筛选异常语义已阶段性收口；下一批可继续按计划复核库存/报表读取面中剩余导出口径和其他 P0/P1 读取参数，或回到第一阶段基础资料尚未当前复核的 P0/P1 项，不在本批继续扩展。
+
+## 三百六十一、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

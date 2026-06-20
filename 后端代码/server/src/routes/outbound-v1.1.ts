@@ -8,6 +8,8 @@ import { consumeInventoryLocationStock, restoreInventoryLocationStock } from '..
 const router = Router()
 const BATCH_RESTORE_EPSILON = 0.000001
 const DIRECT_OUTBOUND_TYPES = new Set(['project', 'transfer', 'scrap'])
+const OUTBOUND_LIST_TYPES = new Set(['project', 'transfer', 'scrap', 'bom'])
+const OUTBOUND_LIST_STATUSES = new Set(['completed', 'pending', 'cancelled'])
 
 import { checkStockAlerts } from '../utils/alertChecker.js'
 import { generateNo } from '../utils/generateNo.js'
@@ -120,6 +122,30 @@ function parseOutboundDateRange(query: any) {
   return { startDate, endDate }
 }
 
+function validateOutboundListFilters(db: any, filters: { projectId?: unknown; materialId?: unknown; status?: unknown; type?: unknown }) {
+  const status = filters.status === undefined ? '' : String(filters.status).trim()
+  const type = filters.type === undefined ? '' : String(filters.type).trim()
+  const projectId = filters.projectId === undefined ? '' : String(filters.projectId).trim()
+  const materialId = filters.materialId === undefined ? '' : String(filters.materialId).trim()
+
+  if (status && !OUTBOUND_LIST_STATUSES.has(status)) {
+    return { ok: false, message: '出库状态筛选无效' }
+  }
+  if (type && !OUTBOUND_LIST_TYPES.has(type)) {
+    return { ok: false, message: '出库类型筛选无效' }
+  }
+  if (projectId) {
+    const project = db.prepare('SELECT id FROM projects WHERE id = ? AND is_deleted = 0').get(projectId)
+    if (!project) return { ok: false, message: '检测项目筛选不存在' }
+  }
+  if (materialId) {
+    const material = db.prepare('SELECT id FROM materials WHERE id = ? AND is_deleted = 0').get(materialId)
+    if (!material) return { ok: false, message: '物料筛选不存在' }
+  }
+
+  return { ok: true }
+}
+
 function normalizeOptionalSampleCount(value: unknown) {
   if (value === undefined || value === null || value === '') return { ok: true, sampleCount: 1 }
   const sampleCount = Number(value)
@@ -171,6 +197,11 @@ router.get('/', (req, res) => {
     startDate = dateRange.startDate
     endDate = dateRange.endDate
     const db = getDatabase()
+    const filterValidation = validateOutboundListFilters(db, { projectId, materialId, status, type })
+    if (!filterValidation.ok) {
+      error(res, filterValidation.message, 'INVALID_PARAMETER', 400)
+      return
+    }
     let where = 'r.is_deleted = 0'
     const params: any[] = []
     if (projectId) { where += ' AND r.project_id = ?'; params.push(projectId) }
