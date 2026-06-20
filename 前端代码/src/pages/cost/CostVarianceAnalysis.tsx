@@ -5,7 +5,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Legend, Cell, LineChart, Line,
 } from 'recharts'
-import { reportsApi } from '@/api/reports'
+import { abcApi } from '@/api/abc'
 import { formatCurrency } from '@/lib/utils'
 
 interface VarianceSummary {
@@ -16,9 +16,12 @@ interface VarianceSummary {
 }
 
 interface VarianceItem {
+  id?: string
   projectId: string
   projectName: string
-  groupType?: 'project' | 'month' | 'material'
+  groupType?: 'project' | 'month' | 'bom'
+  bomId?: string
+  bomName?: string
   unit?: string
   materialActual: number
   materialStandard: number
@@ -42,7 +45,7 @@ const VARIANCE_THRESHOLD = 10 // 10% 差异阈值
 const COMPARE_TYPES = [
   { value: 'project', label: '按项目' },
   { value: 'month', label: '按月份' },
-  { value: 'material', label: '按物料' },
+  { value: 'bom', label: '按BOM' },
 ]
 
 function validateMonthRange(startMonth: string, endMonth: string) {
@@ -80,13 +83,13 @@ export default function CostVarianceAnalysis() {
   const loadData = async () => {
     try {
       setLoading(true)
-      const data = await reportsApi.getCostVariance({
+      const data = await abcApi.getVarianceAnalysis({
         startDate: startDate + '-01',
         endDate: endDate + '-28',
         compareType,
       })
       setSummary(data?.summary || null)
-      setItems(data?.items || [])
+      setItems(data?.list || data?.items || [])
     } catch {
       toast.error('加载差异分析数据失败')
     } finally {
@@ -118,12 +121,25 @@ export default function CostVarianceAnalysis() {
 
   const filteredItems = items.filter(v => {
     if (!searchKeyword) return true
-    return v.projectName?.includes(searchKeyword)
+    const displayName = compareType === 'month'
+      ? v.month || v.projectName || ''
+      : compareType === 'bom'
+        ? v.bomName || v.projectName || ''
+        : v.projectName || ''
+    return displayName.includes(searchKeyword)
   })
 
-  const groupColumnLabel = compareType === 'month' ? '月份' : compareType === 'material' ? '物料名称' : '项目名称'
-  const quantityColumnLabel = compareType === 'material' ? '消耗数量' : '样本数'
-  const searchPlaceholder = compareType === 'month' ? '搜索月份...' : compareType === 'material' ? '搜索物料名称...' : '搜索项目名称...'
+  const groupColumnLabel = compareType === 'month' ? '月份' : compareType === 'bom' ? 'BOM名称' : '项目名称'
+  const quantityColumnLabel = '样本数'
+  const searchPlaceholder = compareType === 'month' ? '搜索月份...' : compareType === 'bom' ? '搜索BOM名称...' : '搜索项目名称...'
+
+  const getRowId = (item: VarianceItem) => item.id || item.bomId || item.month || item.projectId
+
+  const getDisplayName = (item: VarianceItem) => {
+    if (compareType === 'month') return item.month || item.projectName || '未分月'
+    if (compareType === 'bom') return item.bomName || '未关联BOM'
+    return item.projectName || '未关联项目'
+  }
 
   // 趋势图数据
   const trendData = useMemo(() => {
@@ -348,13 +364,14 @@ export default function CostVarianceAnalysis() {
             ) : (
               filteredItems.map(item => {
                 const isOverThreshold = Math.abs(item.varianceRate) > VARIANCE_THRESHOLD
-                const isExpanded = expandedRows.has(item.projectId)
+                const rowId = getRowId(item)
+                const isExpanded = expandedRows.has(rowId)
                 return (
-                  <Fragment key={item.projectId}>
+                  <Fragment key={rowId}>
                     <tr
-                      key={item.projectId}
+                      key={rowId}
                       className={`hover:bg-gray-50 cursor-pointer ${getVarianceBg(item.varianceRate)}`}
-                      onClick={() => toggleRow(item.projectId)}
+                      onClick={() => toggleRow(rowId)}
                     >
                       <td className="px-4 py-3">
                         {isExpanded ? (
@@ -365,14 +382,14 @@ export default function CostVarianceAnalysis() {
                       </td>
                       <td className="px-4 py-3 text-sm font-medium text-gray-900">
                         <div className="flex items-center gap-2">
-                          {item.projectName}
+                          {getDisplayName(item)}
                           {isOverThreshold && (
                             <AlertTriangle className="h-3.5 w-3.5 text-red-500 flex-shrink-0" />
                           )}
                         </div>
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-600 text-right font-mono">
-                        {item.sampleCount}{compareType === 'material' && item.unit ? ` ${item.unit}` : ''}
+                        {item.sampleCount}
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-900 text-right font-mono">
                         {formatCurrency(item.totalStandard)}
@@ -389,7 +406,7 @@ export default function CostVarianceAnalysis() {
                     </tr>
                     {/* 下钻明细 */}
                     {isExpanded && (
-                      <tr key={`${item.projectId}-detail`} className="bg-gray-50">
+                      <tr key={`${rowId}-detail`} className="bg-gray-50">
                         <td colSpan={7} className="px-8 py-3">
                           <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-xs">
                             <div>
