@@ -68,6 +68,23 @@ router.post('/inbound', (req, res) => {
     const material = db.prepare('SELECT * FROM materials WHERE id = ? AND is_deleted = 0').get(materialId) as any
     if (!material) { error(res, '物料不存在或已删除', 'NOT_FOUND', 404); return }
     if (Number(material.status) !== 1) { error(res, '物料已停用，不能创建调拨记录', 'CONFLICT', 409); return }
+    const normalizedBatchNo = String(batchNo || '').trim()
+    if (normalizedBatchNo) {
+      const batch = db.prepare(`
+        SELECT id, status, remaining
+        FROM batches
+        WHERE material_id = ? AND batch_no = ?
+      `).get(materialId, normalizedBatchNo) as any
+      if (!batch) { error(res, '调拨批次不存在或不属于该物料', 'BATCH_NOT_FOUND', 404); return }
+      if (Number(batch.status) !== 1) {
+        error(res, '调拨批次已停用或无可用余量', 'BATCH_UNAVAILABLE', 409)
+        return
+      }
+      if (Number(batch.remaining || 0) < transferQuantity) {
+        error(res, '调拨批次库存不足', 'BATCH_STOCK_INSUFFICIENT', 422)
+        return
+      }
+    }
     if (fromLocationId) {
       const sourceLocation = db.prepare('SELECT * FROM locations WHERE id = ? AND is_deleted = 0').get(fromLocationId) as any
       if (!sourceLocation) { error(res, '来源库位不存在或已删除', 'NOT_FOUND', 404); return }
@@ -85,7 +102,7 @@ router.post('/inbound', (req, res) => {
       db.prepare(`
         INSERT INTO inbound_records (id, inbound_no, type, material_id, batch_no, quantity, unit, location_id, from_location_id, from_location_name, operator, status, remark)
         VALUES (?, ?, 'transfer', ?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?)
-      `).run(id, inboundNo, materialId, batchNo || null, transferQuantity, material.unit || '个', toLocationId, fromLocationId || null, fromLocationName || null, operator || 'system', remark || '')
+      `).run(id, inboundNo, materialId, normalizedBatchNo || null, transferQuantity, material.unit || '个', toLocationId, fromLocationId || null, fromLocationName || null, operator || 'system', remark || '')
 
       // 调拨不改变总库存，只变更库位
       const existingInv = db.prepare('SELECT * FROM inventory WHERE material_id = ?').get(materialId) as any

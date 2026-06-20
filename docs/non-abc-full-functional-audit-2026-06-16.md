@@ -17461,7 +17461,59 @@ git diff --check
 
 - 成本差异分析当前接口、有效分组维度、刷新失败清空旧数据和导出归档已阶段性保护；下一批可继续按计划复核非废弃成本运营页剩余导入导出、弹窗写入和异常态，或回到第一、第二阶段中尚未当前复核的基础资料/库存主链路，不在本批继续扩展。
 
-## 三百五十五、结论
+## 三百五十五、批次 400: 调拨必须拒绝无效批号来源
+
+**发现的问题**
+
+- 本轮按原计划回到第二阶段库存主链路，聚焦调拨“候选来源必须存在、有效、匹配物料”的不变量。
+- 调拨接口 `/api/v1/transfers/inbound` 已校验物料、来源库位、目标库位、来源库位库存和撤销回滚，但 `batchNo` 只作为文本写入 `inbound_records.batch_no`。
+- 通过 API 绕过时，可提交不存在批号、其他物料的批号，或批次余量不足的批号；接口仍创建调拨并移动库位库存，导致调拨记录的批次追溯失真。
+- 这类错误不会改变总库存，但会污染库存流转证据，后续报废、出库、成本异常和 ABC 输入侧追溯会看到一个不可信的来源批次。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/transfers-v1.1.ts`
+  - 对非空 `batchNo` 做标准化 trim，写入记录时使用标准化后的批号。
+  - 若提交了批号，则必须在 `batches` 中存在同物料批次；不存在或属于其他物料时返回 `BATCH_NOT_FOUND` / 404。
+  - 批次停用时返回 `BATCH_UNAVAILABLE` / 409。
+  - 批次剩余量小于本次调拨数量时返回 `BATCH_STOCK_INSUFFICIENT` / 422。
+  - 校验全部放在事务和库存移动之前，确保拒绝时不创建调拨记录、不初始化库位明细、不移动库存。
+- `后端代码/server/tests/transfers.test.ts`
+  - 新增 `TR-BATCH-001` 红绿测试，覆盖不存在批号、其他物料批号、批次余量不足三种 API 绕过路径。
+  - 测试断言失败请求后总库存、目标库位明细、调拨记录均无副作用。
+
+**ABC 影响评估**
+
+- 本批只加强调拨 API 的批号来源校验，不改 ABC 成本算法、成本池重算、出库 ABC 明细、BOM、出库扣减、成本异常生成或废弃 `/cost-analysis`。
+- 调拨本身不改变总库存或批次数量；本批修复的是库存流转证据的批次身份可信度。
+- 已补跑库存一致性、入库批次、出库、报废、盘点和成本异常输入侧回归，确认库存/出库/异常/ABC 输入链未被破坏。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/transfers.test.ts -t "TR-BATCH-001"` 首次失败：不存在批号调拨返回 200，证明无效批号可创建调拨记录。
+  - 收紧批次余量断言后再次红灯：批次剩余 1、调拨 2 时接口仍返回 200，证明“存在批号”不足以保证来源有效。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/transfers.test.ts -t "TR-BATCH-001"` 通过，1 test passed / 10 skipped。
+  - `后端代码/server npm test -- --run tests/transfers.test.ts` 通过，1 file / 11 tests passed。
+  - `后端代码/server npm test -- --run tests/transfers.test.ts tests/inventory-consistency.test.ts tests/inbound-batch.test.ts tests/scraps.test.ts tests/stocktaking.test.ts tests/integration/outbound.test.ts tests/integration/cost-exceptions.test.ts` 通过，7 files / 102 tests passed；保留既有 Vite close timeout 提示和模拟 `outbound_abc_details` 缺失的 stderr。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis` 无输出，确认未改废弃范围。
+- 浏览器复核:
+  - 本批为后端 API 绕过防护，未修改页面、弹窗或前端交互；真实副作用由 Supertest + 数据库断言覆盖，因此未额外启动浏览器。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 调拨批号身份和批次余量边界已阶段性保护；因当前模型没有批次-库位拆分，本批不强行要求“该批次必须位于来源库位”，该能力若未来需要应作为独立模型/迁移批次评估。
+- `tests/supplier-returns.test.ts` 当前被 Vitest 配置显式排除，本批未把它计为验证证据；供应商退货已有历史批次回归，但如后续调整配置可单独恢复执行。
+
+## 三百五十六、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

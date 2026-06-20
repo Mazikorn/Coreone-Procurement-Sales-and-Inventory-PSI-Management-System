@@ -22,6 +22,7 @@ function seedTransferMaterial(db: any, suffix: string) {
   const materialId = `mat-transfer-${suffix}`
   const fromLocationId = `loc-transfer-from-${suffix}`
   const toLocationId = `loc-transfer-to-${suffix}`
+  const batchNo = `BATCH-TF-${suffix}`
 
   db.prepare('INSERT INTO material_categories (id, code, name, level) VALUES (?, ?, ?, ?)')
     .run(categoryId, `CAT-TF-${suffix}`, '调拨测试分类', 1)
@@ -38,9 +39,9 @@ function seedTransferMaterial(db: any, suffix: string) {
   db.prepare(`
     INSERT INTO batches (id, material_id, batch_no, quantity, remaining, inbound_id, inbound_price, status)
     VALUES (?, ?, ?, 10, 10, ?, 12, 1)
-  `).run(`batch-transfer-${suffix}`, materialId, `BATCH-TF-${suffix}`, `inbound-transfer-${suffix}`)
+  `).run(`batch-transfer-${suffix}`, materialId, batchNo, `inbound-transfer-${suffix}`)
 
-  return { materialId, fromLocationId, toLocationId }
+  return { materialId, fromLocationId, toLocationId, batchNo }
 }
 
 describe('调拨管理', () => {
@@ -421,6 +422,101 @@ describe('调拨管理', () => {
     `).get(inactiveMaterialSeed.materialId, inactiveSourceSeed.materialId, inactiveTargetSeed.materialId) as any
 
     expect(records.count).toBe(0)
+  })
+
+  it('TR-BATCH-001: 创建调拨拒绝不存在或不属于该物料的批号并保持库位库存不变', async () => {
+    const suffix = `batch-identity-${Date.now()}`
+    const { materialId, fromLocationId, toLocationId } = seedTransferMaterial(db, suffix)
+    const otherSeed = seedTransferMaterial(db, `foreign-batch-${Date.now()}`)
+    const insufficientSeed = seedTransferMaterial(db, `insufficient-batch-${Date.now()}`)
+    db.prepare('UPDATE batches SET remaining = 1 WHERE material_id = ? AND batch_no = ?')
+      .run(insufficientSeed.materialId, insufficientSeed.batchNo)
+
+    const rejectMissingBatchRes = await request(app)
+      .post('/api/v1/transfers/inbound')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId,
+        batchNo: `BATCH-TF-MISSING-${suffix}`,
+        quantity: 2,
+        fromLocationId,
+        toLocationId,
+        remark: '不存在批号调拨',
+      })
+
+    expect(rejectMissingBatchRes.status).toBe(404)
+    expect(rejectMissingBatchRes.body.error.message).toContain('调拨批次不存在或不属于该物料')
+
+    const rejectForeignBatchRes = await request(app)
+      .post('/api/v1/transfers/inbound')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId,
+        batchNo: otherSeed.batchNo,
+        quantity: 2,
+        fromLocationId,
+        toLocationId,
+        remark: '其他物料批号调拨',
+      })
+
+    expect(rejectForeignBatchRes.status).toBe(404)
+    expect(rejectForeignBatchRes.body.error.message).toContain('调拨批次不存在或不属于该物料')
+
+    const rejectInsufficientBatchRes = await request(app)
+      .post('/api/v1/transfers/inbound')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId: insufficientSeed.materialId,
+        batchNo: insufficientSeed.batchNo,
+        quantity: 2,
+        fromLocationId: insufficientSeed.fromLocationId,
+        toLocationId: insufficientSeed.toLocationId,
+        remark: '批次余量不足调拨',
+      })
+
+    expect(rejectInsufficientBatchRes.status).toBe(422)
+    expect(rejectInsufficientBatchRes.body.error.message).toContain('调拨批次库存不足')
+
+    const sourceStock = db.prepare(`
+      SELECT stock
+      FROM inventory_locations
+      WHERE material_id = ? AND location_id = ?
+    `).get(materialId, fromLocationId) as any
+    const targetStock = db.prepare(`
+      SELECT stock
+      FROM inventory_locations
+      WHERE material_id = ? AND location_id = ?
+    `).get(materialId, toLocationId) as any
+    const aggregate = db.prepare('SELECT stock, location_id FROM inventory WHERE material_id = ?').get(materialId) as any
+    const records = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM inbound_records
+      WHERE type = 'transfer' AND material_id = ? AND is_deleted = 0
+    `).get(materialId) as any
+
+    expect(sourceStock).toBeUndefined()
+    expect(targetStock).toBeUndefined()
+    expect(Number(aggregate.stock)).toBe(10)
+    expect(aggregate.location_id).toBe(fromLocationId)
+    expect(Number(records.count)).toBe(0)
+
+    const insufficientAggregate = db.prepare('SELECT stock, location_id FROM inventory WHERE material_id = ?')
+      .get(insufficientSeed.materialId) as any
+    const insufficientTargetStock = db.prepare(`
+      SELECT stock
+      FROM inventory_locations
+      WHERE material_id = ? AND location_id = ?
+    `).get(insufficientSeed.materialId, insufficientSeed.toLocationId) as any
+    const insufficientRecords = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM inbound_records
+      WHERE type = 'transfer' AND material_id = ? AND is_deleted = 0
+    `).get(insufficientSeed.materialId) as any
+
+    expect(Number(insufficientAggregate.stock)).toBe(10)
+    expect(insufficientAggregate.location_id).toBe(insufficientSeed.fromLocationId)
+    expect(insufficientTargetStock).toBeUndefined()
+    expect(Number(insufficientRecords.count)).toBe(0)
   })
 
   it('TR-008: 总库存足够但来源库位库存不足时拒绝调拨并保持库位明细不变', async () => {
