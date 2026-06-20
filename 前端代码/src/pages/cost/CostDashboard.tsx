@@ -186,6 +186,22 @@ const listPayload = <T,>(data: any): T[] => data?.list || data?.items || data ||
 const mergeReviewedAdjustment = (items: CostAdjustment[], updated: CostAdjustment) =>
   items.map(item => item.id === updated.id ? { ...item, ...updated } : item)
 
+const mergeCreatedAdjustment = (items: CostAdjustment[], created: CostAdjustment) => [
+  created,
+  ...items.filter(item => item.id !== created.id),
+]
+
+export const applyCreatedAdjustmentToSummary = (
+  current: DashboardSummary | null,
+  created: CostAdjustment,
+) => {
+  if (!current || created.status !== 'pending') return current
+  return {
+    ...current,
+    pendingAdjustmentCount: (current.pendingAdjustmentCount ?? 0) + 1,
+  }
+}
+
 export const applyReviewedAdjustmentToSummary = (
   current: DashboardSummary | null,
   previous: CostAdjustment | undefined,
@@ -401,13 +417,15 @@ export default function CostDashboard() {
     }
     try {
       setAdjustmentSubmitting(true)
-      await abcApi.createAdjustment({
+      const createdAdjustment = await abcApi.createAdjustment({
         yearMonth: month,
         adjustmentType: 'closed_period_adjustment',
         amount,
         reason: adjustmentReason.trim(),
       })
       toast.success('调整单已创建，待审核')
+      setAdjustments(prev => mergeCreatedAdjustment(prev, createdAdjustment))
+      setSummary(prev => applyCreatedAdjustmentToSummary(prev, createdAdjustment))
       setAdjustmentModalOpen(false)
       setAdjustmentAmount('')
       setAdjustmentReason('')

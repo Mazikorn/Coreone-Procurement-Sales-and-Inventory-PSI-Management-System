@@ -17354,7 +17354,60 @@ git diff --check
 
 - ABC 异常规则阈值输入已阶段性保护；下一批可继续按计划复核调整单创建后的极端刷新失败态，或继续复核非废弃成本运营页剩余 P0/P1 真实副作用，不在本批继续扩展。
 
-## 三百五十三、结论
+## 三百五十三、批次 398: 关账后调整单创建成功后不能因刷新失败而消失
+
+**发现的问题**
+
+- 本轮按上一批后续风险继续复核非废弃成本运营页中的关账后调整单，聚焦“写操作成功后页面必须先反映真实副作用”不变量。
+- 成本看板 `/abc/dashboard` 创建关账后调整单时，`/api/v1/abc/adjustments` 写入成功后只关闭弹窗、清空表单，再依赖后续 `loadDashboard()` 重拉列表和汇总。
+- 如果创建写操作已经成功，但后续看板刷新链路失败，页面不会展示刚创建的待审核调整单，待审核数也仍保持旧值。
+- 这会让用户误以为调整单没有创建成功，可能重复提交同一笔关账后调整或误判财务复核状态。
+
+**已完成修复**
+
+- `前端代码/src/pages/cost/CostDashboard.tsx`
+  - 新增创建成功后的本地合并逻辑：创建 API 返回调整单后，先把新单插入当前调整单列表，再尝试重拉整页看板。
+  - 新增 `applyCreatedAdjustmentToSummary`，在创建返回待审核调整单时只增加 `pendingAdjustmentCount`，不把待审金额计入 `adjustmentAmount`、调整后成本或调整后利润。
+  - 正常情况下仍以 `loadDashboard()` 的后端结果作为最终事实；本地合并只覆盖“写成功但刷新失败”的短暂可见性缺口。
+- `前端代码/src/pages/cost/CostDashboard.adjustments.render.test.tsx`
+  - 新增页面级红绿测试：初始已关账期间无调整单，打开弹窗填写金额和原因，创建 API 成功后让后续看板刷新失败，断言页面仍展示新调整单号、待审核状态、原因、提交人和待审数。
+- `前端代码/src/pages/cost/CostDashboard.test.ts`
+  - 新增汇总合并单测，覆盖新建待审调整单只增加待审核数，不提前计入调整金额或调整后利润。
+
+**ABC 影响评估**
+
+- 本批只修改成本看板前端创建成功后的页面状态合并和测试，不改 ABC 成本算法、成本池重算、出库 ABC 明细、库存/BOM/出库写链、成本异常生成、调整单后端接口或废弃 `/cost-analysis`。
+- 关账后调整单属于已关账期间的财务修正入口；本批仅在后端已经成功创建调整单后同步页面事实，不新增写入、不重算、不回滚任何成本输入。
+- 已补跑成本异常和全成本输入侧回归，确认调整单创建/审核、成本异常、出库 ABC 快照、BOM 收费映射、成本池重算和全成本报表输入链仍稳定。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/cost/CostDashboard.adjustments.render.test.tsx` 修复前失败：创建 API 已按预期调用并返回 `ADJ-209906-002`，但页面找不到该调整单号，证明刷新失败时新单没有本地呈现。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/cost/CostDashboard.adjustments.render.test.tsx` 通过，1 file / 2 tests passed；保留既有 React Router future flag warning。
+  - `前端代码 npm test -- --run src/pages/cost/CostDashboard.test.ts` 通过，1 file / 13 tests passed。
+  - `前端代码 npm test -- --run src/pages/cost/CostDashboard.adjustments.render.test.tsx src/pages/cost/CostDashboard.test.ts src/pages/cost/AuditTrail.render.test.tsx src/pages/cost/CostAlerts.render.test.tsx src/pages/cost/CostAlerts.test.ts` 通过，5 files / 24 tests passed；保留既有 React Router future flag warning。
+  - `后端代码/server npm test -- --run tests/integration/cost-exceptions.test.ts tests/integration/full-cost.test.ts` 通过，2 files / 15 tests passed；保留既有 Vite close timeout 提示和模拟 `outbound_abc_details` 缺失的 stderr。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `后端代码/server npm run build` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis` 无输出，确认未改废弃范围。
+- 浏览器复核:
+  - 使用用户指定 Chrome for Testing 路径启动 headless Playwright，前端 Vite 在 `127.0.0.1:8080`，注入本地 finance 登录态。
+  - 页面 `/abc/dashboard` 初始返回已关账期间且无调整单；创建 `ADJ-209906-PLAY` 成功后，后续 dashboard 刷新刻意返回 500。
+  - 复核结果：`titleVisible=true`、`modalClosed=true`、`createdVisible=true`、`pendingVisible=true`、`reasonVisible=true`、`submitterVisible=true`、`pendingCountUpdated=true`、`createRequestSeen=true`、`refreshFailureSeen=true`、`failedRequests=[]`。
+  - 本次浏览器证据中的 500 console resource error 是刻意模拟刷新失败请求产生的预期现象；页面本身未新增崩溃。
+  - 复核后无残留 Vite、Playwright 或 Google Chrome for Testing 进程。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 关账后调整单创建和审核成功后的页面状态刷新已阶段性保护；下一批可继续按计划复核非废弃成本运营页剩余 P0/P1 真实副作用，或回到第一、第二阶段中尚未当前复核的基础资料/库存主链路，不在本批继续扩展。
+
+## 三百五十四、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

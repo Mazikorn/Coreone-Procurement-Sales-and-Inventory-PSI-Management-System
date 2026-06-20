@@ -124,4 +124,61 @@ describe('CostDashboard adjustment refresh', () => {
       expect(screen.getByText('sunli')).toBeInTheDocument()
     })
   })
+
+  it('keeps a newly created adjustment visible if the follow-up dashboard refresh fails', async () => {
+    vi.mocked(abcApi.getDashboard)
+      .mockResolvedValueOnce({
+        ...dashboardResponse,
+        summary: {
+          ...dashboardResponse.summary,
+          pendingAdjustmentCount: 0,
+        },
+      })
+      .mockRejectedValueOnce(new Error('refresh failed'))
+    vi.mocked(abcApi.getPeriods).mockResolvedValue({
+      list: [{ id: 'period-1', yearMonth: '2026-06', status: 'closed' }],
+    })
+    vi.mocked(abcApi.getCostRuns).mockResolvedValue(emptyListResponse)
+    vi.mocked(abcApi.getAdjustments).mockResolvedValue(emptyListResponse)
+    vi.mocked(abcApi.createAdjustment).mockResolvedValue({
+      id: 'adjustment-created',
+      adjustmentNo: 'ADJ-209906-002',
+      yearMonth: '2026-06',
+      adjustmentType: 'closed_period_adjustment',
+      amount: 256,
+      reason: '关账后折旧补差',
+      status: 'pending',
+      submittedBy: 'sunli',
+    })
+    vi.mocked(reportsApi.getCostMonthlyComparison).mockResolvedValue(null)
+
+    render(
+      <MemoryRouter>
+        <CostDashboard />
+      </MemoryRouter>
+    )
+
+    expect(await screen.findByRole('button', { name: /^调整单$/ })).toBeEnabled()
+
+    fireEvent.click(screen.getByRole('button', { name: /^调整单$/ }))
+    fireEvent.change(screen.getByPlaceholderText('正数增加成本，负数冲减成本'), { target: { value: '256' } })
+    fireEvent.change(screen.getByPlaceholderText('例如：关账后发现设备折旧分摊差异，经财务复核调整'), {
+      target: { value: '关账后折旧补差' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '提交调整单' }))
+
+    await waitFor(() => expect(abcApi.createAdjustment).toHaveBeenCalledWith({
+      yearMonth: '2026-06',
+      adjustmentType: 'closed_period_adjustment',
+      amount: 256,
+      reason: '关账后折旧补差',
+    }))
+    await waitFor(() => {
+      expect(screen.getByText('ADJ-209906-002')).toBeInTheDocument()
+      expect(screen.getByText('待审核')).toBeInTheDocument()
+      expect(screen.getByText('关账后折旧补差')).toBeInTheDocument()
+      expect(screen.getByText('sunli')).toBeInTheDocument()
+      expect(screen.getByText(/\/ 1$/)).toBeInTheDocument()
+    })
+  })
 })

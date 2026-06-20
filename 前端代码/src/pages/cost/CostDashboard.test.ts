@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  applyCreatedAdjustmentToSummary,
   applyReviewedAdjustmentToSummary,
   buildDashboardComparisonParams,
   buildCostAlertsOverviewLink,
@@ -87,6 +88,18 @@ describe('applyReviewedAdjustmentToSummary', () => {
     feeChange: 0,
     profitChange: 0,
   }
+
+  it('新建待审调整单后只增加待审核数，不计入调整金额', () => {
+    expect(applyCreatedAdjustmentToSummary(
+      summary,
+      { id: 'adj-created', adjustmentNo: 'ADJ-CREATED', yearMonth: '2026-06', adjustmentType: 'manual', amount: 20, reason: '补差', status: 'pending' },
+    )).toMatchObject({
+      adjustmentAmount: 10,
+      pendingAdjustmentCount: 3,
+      adjustedTotalCost: 110,
+      adjustedTotalProfit: 90,
+    })
+  })
 
   it('调整单通过后减少待审核数并计入调整金额', () => {
     expect(applyReviewedAdjustmentToSummary(
