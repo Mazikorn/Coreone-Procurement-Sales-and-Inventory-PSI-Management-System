@@ -3,6 +3,7 @@ import React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { abcApi } from '@/api/abc'
 import { reportsApi } from '@/api/reports'
+import { downloadTextFile } from '@/lib/utils'
 import CostVarianceAnalysis from './CostVarianceAnalysis'
 
 vi.mock('@/api/abc', () => ({
@@ -16,6 +17,14 @@ vi.mock('@/api/reports', () => ({
     getCostVariance: vi.fn(),
   },
 }))
+
+vi.mock('@/lib/utils', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/utils')>('@/lib/utils')
+  return {
+    ...actual,
+    downloadTextFile: vi.fn(),
+  }
+})
 
 vi.mock('recharts', () => {
   const passthrough = ({ children }: { children?: React.ReactNode }) => <div>{children}</div>
@@ -38,6 +47,7 @@ describe('CostVarianceAnalysis date range validation', () => {
   beforeEach(() => {
     vi.mocked(abcApi.getVarianceAnalysis).mockReset()
     vi.mocked(reportsApi.getCostVariance).mockReset()
+    vi.mocked(downloadTextFile).mockReset()
     vi.mocked(abcApi.getVarianceAnalysis).mockResolvedValue({
       summary: { totalActual: 0, totalStandard: 0, totalVariance: 0, varianceRate: 0 },
       list: [],
@@ -186,5 +196,74 @@ describe('CostVarianceAnalysis date range validation', () => {
       expect(screen.queryByText('胃癌筛查项目')).not.toBeInTheDocument()
       expect(screen.getByText('暂无差异数据')).toBeInTheDocument()
     })
+  })
+
+  it('exports the current filtered variance rows with the visible business dimension', async () => {
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.mocked(abcApi.getVarianceAnalysis).mockResolvedValueOnce({
+      summary: { totalActual: 1200, totalStandard: 1000, totalVariance: 200, varianceRate: 20 },
+      list: [
+        {
+          projectId: 'project-1',
+          projectName: '胃癌筛查项目',
+          materialActual: 1000,
+          materialStandard: 1000,
+          laborActual: 0,
+          laborStandard: 0,
+          equipmentActual: 0,
+          equipmentStandard: 0,
+          qcActual: 0,
+          indirectActual: 200,
+          indirectStandard: 0,
+          totalActual: 1200,
+          totalStandard: 1000,
+          totalVariance: 200,
+          varianceRate: 20,
+          sampleCount: 5,
+          month: '2026-06',
+        },
+        {
+          projectId: 'project-2',
+          projectName: '未筛选项目',
+          materialActual: 500,
+          materialStandard: 500,
+          laborActual: 0,
+          laborStandard: 0,
+          equipmentActual: 0,
+          equipmentStandard: 0,
+          qcActual: 0,
+          indirectActual: 0,
+          indirectStandard: 0,
+          totalActual: 500,
+          totalStandard: 500,
+          totalVariance: 0,
+          varianceRate: 0,
+          sampleCount: 2,
+          month: '2026-06',
+        },
+      ],
+    })
+
+    try {
+      render(<CostVarianceAnalysis />)
+
+      expect(await screen.findByText('胃癌筛查项目')).toBeInTheDocument()
+      fireEvent.change(screen.getByPlaceholderText('搜索项目名称...'), { target: { value: '胃癌' } })
+      fireEvent.click(screen.getByRole('button', { name: /导出/ }))
+
+      await waitFor(() => expect(downloadTextFile).toHaveBeenCalledTimes(1))
+      const [filename, content, mimeType] = vi.mocked(downloadTextFile).mock.calls[0]
+      expect(filename).toMatch(/^abc-cost-variance-project-/)
+      expect(mimeType).toBe('text/csv;charset=utf-8')
+      expect(content).toContain('项目名称,月份,样本数,标准成本,实际成本,成本差异,差异率')
+      expect(content).toContain('胃癌筛查项目,2026-06,5,1000,1200,200,20.00%')
+      expect(content).not.toContain('未筛选项目')
+      expect(reportsApi.getCostVariance).not.toHaveBeenCalled()
+      expect(consoleErrorSpy.mock.calls.some(call =>
+        call.some(part => String(part).includes('Encountered two children with the same key'))
+      )).toBe(false)
+    } finally {
+      consoleErrorSpy.mockRestore()
+    }
   })
 })

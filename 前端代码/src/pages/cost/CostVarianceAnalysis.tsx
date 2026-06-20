@@ -1,12 +1,12 @@
 import React, { Fragment, useState, useEffect, useMemo } from 'react'
-import { Search, TrendingUp, TrendingDown, Minus, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react'
+import { Search, TrendingUp, TrendingDown, Minus, AlertTriangle, ChevronDown, ChevronRight, Download } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Legend, Cell, LineChart, Line,
 } from 'recharts'
 import { abcApi } from '@/api/abc'
-import { formatCurrency } from '@/lib/utils'
+import { downloadTextFile, formatCurrency } from '@/lib/utils'
 
 interface VarianceSummary {
   totalActual: number
@@ -47,6 +47,53 @@ const COMPARE_TYPES = [
   { value: 'month', label: '按月份' },
   { value: 'bom', label: '按BOM' },
 ]
+
+const csvCell = (value: string | number | undefined | null) => {
+  const text = String(value ?? '')
+  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
+}
+
+export function buildCostVarianceExportCsv(
+  rows: VarianceItem[],
+  dimensionLabel: string,
+  getDimensionName: (item: VarianceItem) => string,
+) {
+  const header = [
+    dimensionLabel,
+    '月份',
+    '样本数',
+    '标准成本',
+    '实际成本',
+    '成本差异',
+    '差异率',
+    '材料实际',
+    '材料标准',
+    '人工实际',
+    '人工标准',
+    '设备实际',
+    '设备标准',
+    '间接实际',
+    '间接标准',
+  ]
+  const body = rows.map(item => [
+    getDimensionName(item),
+    item.month || '',
+    item.sampleCount ?? 0,
+    item.totalStandard ?? 0,
+    item.totalActual ?? 0,
+    item.totalVariance ?? 0,
+    `${Number(item.varianceRate || 0).toFixed(2)}%`,
+    item.materialActual ?? 0,
+    item.materialStandard ?? 0,
+    item.laborActual ?? 0,
+    item.laborStandard ?? 0,
+    item.equipmentActual ?? 0,
+    item.equipmentStandard ?? 0,
+    item.indirectActual ?? 0,
+    item.indirectStandard ?? 0,
+  ])
+  return [header, ...body].map(row => row.map(csvCell).join(',')).join('\n')
+}
 
 function validateMonthRange(startMonth: string, endMonth: string) {
   if (startMonth && endMonth && startMonth > endMonth) {
@@ -135,12 +182,30 @@ export default function CostVarianceAnalysis() {
   const quantityColumnLabel = '样本数'
   const searchPlaceholder = compareType === 'month' ? '搜索月份...' : compareType === 'bom' ? '搜索BOM名称...' : '搜索项目名称...'
 
-  const getRowId = (item: VarianceItem) => item.id || item.bomId || item.month || item.projectId
+  const getRowId = (item: VarianceItem) => {
+    if (compareType === 'month') return item.id || item.month || `${item.projectId || 'project'}-${item.bomId || 'bom'}`
+    if (compareType === 'bom') return item.id || item.bomId || `${item.bomName || 'bom'}-${item.month || 'month'}`
+    return item.id || item.projectId || `${item.projectName || 'project'}-${item.month || 'month'}`
+  }
 
   const getDisplayName = (item: VarianceItem) => {
     if (compareType === 'month') return item.month || item.projectName || '未分月'
     if (compareType === 'bom') return item.bomName || '未关联BOM'
     return item.projectName || '未关联项目'
+  }
+
+  const handleExport = () => {
+    if (filteredItems.length === 0) {
+      toast.error('暂无可导出的差异数据')
+      return
+    }
+    const csv = buildCostVarianceExportCsv(filteredItems, groupColumnLabel, getDisplayName)
+    downloadTextFile(
+      `abc-cost-variance-${compareType}-${startDate}-${endDate}.csv`,
+      csv,
+      'text/csv;charset=utf-8',
+    )
+    toast.success('导出完成')
   }
 
   // 趋势图数据
@@ -208,6 +273,14 @@ export default function CostVarianceAnalysis() {
         </div>
         <div className="flex flex-col items-start gap-1 lg:items-end">
           <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={handleExport}
+            disabled={filteredItems.length === 0}
+            className="h-10 px-4 bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+          >
+            <Download className="h-4 w-4" /> 导出
+          </button>
           <select
             value={compareType}
             onChange={e => setCompareType(e.target.value)}

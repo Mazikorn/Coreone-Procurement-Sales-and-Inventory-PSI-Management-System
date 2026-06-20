@@ -17407,7 +17407,61 @@ git diff --check
 
 - 关账后调整单创建和审核成功后的页面状态刷新已阶段性保护；下一批可继续按计划复核非废弃成本运营页剩余 P0/P1 真实副作用，或回到第一、第二阶段中尚未当前复核的基础资料/库存主链路，不在本批继续扩展。
 
-## 三百五十四、结论
+## 三百五十四、批次 399: 成本差异分析导出必须交付当前筛选口径文件
+
+**发现的问题**
+
+- 本轮继续按非废弃成本运营页剩余 P0/P1 真实副作用推进，聚焦“页面读面与导出归档一致”不变量。
+- 成本差异分析 `/abc/variance` 已能按当前 `abc/variance-analysis` 接口展示项目、月份和 BOM 维度差异，但页面没有导出入口。
+- 这会导致用户只能查看当前筛选结果，无法把当前口径的差异明细归档或交给财务复核；旧的页面可见性测试不能证明导出副作用真实存在。
+- 红灯测试还暴露同一页面在项目维度下多个项目同月时，行 key 会退化成同一个月份，产生 React 重复 key 警告，存在展开状态和行身份不稳定风险。
+
+**已完成修复**
+
+- `前端代码/src/pages/cost/CostVarianceAnalysis.tsx`
+  - 新增本地 CSV 导出能力，导出当前页面筛选后的 `filteredItems`，不调用旧 `reportsApi.getCostVariance` 或通用 ABC 原始导出。
+  - 导出文件名包含当前维度和月份范围，例如 `abc-cost-variance-project-2026-01-2026-06.csv`。
+  - CSV 表头使用当前页面业务维度标签：项目名称、月份、样本数、标准成本、实际成本、成本差异、差异率等。
+  - 空结果时禁用导出按钮并提示暂无可导出数据，避免生成空归档误导用户。
+  - 修正差异表格行 key：项目维度优先使用项目身份，BOM 维度优先使用 BOM 身份，月份维度优先使用月份，避免多个项目同月时重复 key。
+- `前端代码/src/pages/cost/CostVarianceAnalysis.render.test.tsx`
+  - 新增页面级红绿测试：加载两条项目差异，按 `胃癌` 搜索后点击导出，断言下载文件只包含当前筛选行、不包含未筛选项目，并且不调用旧报表接口。
+  - 同一测试锁定重复 key 警告不得出现，防止行身份再次退化为月份。
+
+**ABC 影响评估**
+
+- 本批只修改非废弃成本差异分析页的前端导出和表格行身份，不改 ABC 成本算法、成本池重算、出库 ABC 明细、库存/BOM/出库写链、成本异常生成、后端接口或废弃 `/cost-analysis`。
+- 导出读取的是当前页面已经取得的差异结果，不新增写入、不重算、不回滚任何成本输入。
+- 已补跑成本异常和全成本输入侧回归，确认成本异常、出库 ABC 快照、BOM 收费映射、成本池重算和全成本报表输入链仍稳定。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/cost/CostVarianceAnalysis.render.test.tsx -t "exports the current filtered"` 首次失败：页面找不到可访问的“导出”按钮，证明导出副作用不存在。
+  - 导出实现补齐后，同一测试收紧重复 key 断言并按预期失败：多个项目同月时出现 `Encountered two children with the same key`，证明表格行身份不稳定。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/cost/CostVarianceAnalysis.render.test.tsx` 通过，1 file / 5 tests passed。
+  - `前端代码 npm test -- --run src/pages/cost/CostVarianceAnalysis.render.test.tsx src/pages/cost/QualityCostAnalysis.test.tsx src/pages/cost/BudgetManagement.test.tsx src/pages/cost/FeeComparison.test.tsx src/pages/cost/CostTrend.test.ts src/pages/cost/SlideCostAnalysis.test.ts src/pages/cost/ProfitabilityAnalysis.test.ts src/pages/cost/PersonnelEfficiency.render.test.tsx` 通过，8 files / 21 tests passed。
+  - `后端代码/server npm test -- --run tests/integration/cost-exceptions.test.ts tests/integration/full-cost.test.ts` 通过，2 files / 15 tests passed；保留既有 Vite close timeout 提示和模拟 `outbound_abc_details` 缺失的 stderr。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `后端代码/server npm run build` 通过。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis` 无输出，确认未改废弃范围。
+- 浏览器复核:
+  - 使用用户指定 Chrome for Testing 路径启动 headless Playwright，前端 Vite 在 `127.0.0.1:8080`，注入本地 finance 登录态。
+  - 页面 `/abc/variance` 拦截 `/api/v1/abc/variance-analysis` 返回两条项目差异；按 `胃癌` 搜索后点击导出，捕获真实 download 事件。
+  - 复核结果：`hasPage=true`、`hasExportButton=true`、`suggestedFilename=abc-cost-variance-project-2026-01-2026-06.csv`、`contentHasHeader=true`、`contentHasFilteredRow=true`、`contentOmitsFilteredOutRow=true`、`usedCurrentEndpoint=true`、`consoleErrors=[]`、`badResponses=[]`。
+  - 复核后无残留 Vite、Playwright 或 Google Chrome for Testing 进程。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 成本差异分析当前接口、有效分组维度、刷新失败清空旧数据和导出归档已阶段性保护；下一批可继续按计划复核非废弃成本运营页剩余导入导出、弹窗写入和异常态，或回到第一、第二阶段中尚未当前复核的基础资料/库存主链路，不在本批继续扩展。
+
+## 三百五十五、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 
