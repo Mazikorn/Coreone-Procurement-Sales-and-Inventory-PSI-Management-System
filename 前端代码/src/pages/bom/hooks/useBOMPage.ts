@@ -696,7 +696,7 @@ export function useBOMPage() {
       BOM编号: item.code,
       BOM名称: item.name,
       物料类型: '核心物料',
-      物料名称: material.name || material.id,
+      物料名称: material.name || material.materialId || material.id,
       规格: material.spec || '',
       用量: material.usagePerSample || 0,
       单位: material.unit || '',

@@ -444,4 +444,40 @@ describe('useBOMPage', () => {
     )
     expect(String(vi.mocked(downloadTextFile).mock.calls[0][1])).not.toContain(',ihc,')
   })
+
+  it('exports core material business ids instead of BOM item ids when names are unavailable', async () => {
+    vi.mocked(bomApi.getDetail).mockResolvedValue({
+      ...activeBom,
+      materials: [
+        {
+          id: 'bom-item-internal-1',
+          materialId: 'mat-business-1',
+          usagePerSample: 2,
+          unit: '瓶',
+        },
+      ],
+    } as any)
+
+    const { result } = renderHook(() => useBOMPage())
+
+    await waitFor(() => expect(result.current.data).toHaveLength(1))
+
+    act(() => {
+      result.current.setExportForm({
+        range: 'filtered',
+        format: 'csv',
+        includeBasic: false,
+        includeMaterials: true,
+        includeHistory: false,
+      })
+    })
+
+    await act(async () => {
+      await result.current.handleExport()
+    })
+
+    const exportedContent = String(vi.mocked(downloadTextFile).mock.calls[0][1])
+    expect(exportedContent).toContain('mat-business-1')
+    expect(exportedContent).not.toContain('bom-item-internal-1')
+  })
 })

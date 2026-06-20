@@ -17855,7 +17855,53 @@ git diff --check
 
 - BOM 基础信息导出类型口径已阶段性收口；下一批可继续按第一阶段基础资料复核 BOM 导出物料/历史明细口径、项目/检测服务导入导出，或回到库存/报表读取面剩余 P0/P1 项，不在本批扩展。
 
-## 三百六十三、结论
+## 三百六十三、批次 408: BOM 导出物料明细必须使用业务物料身份
+
+**发现的问题**
+
+- 本轮继续第一阶段基础资料的 BOM 导出物料明细口径，聚焦“导出归档必须保留可核对的业务物料身份”不变量。
+- BOM 物料清单导出中，核心物料在缺少 `name` 时会回退到 BOM 明细行自身的内部 `id`。
+- 通用试剂、通用耗材和质控品已经回退到 `materialId`，但核心物料不一致。
+- 当后端详情或历史数据缺少物料名称时，导出文件会出现类似 `bom-item-internal-1` 的内部行号，而不是可用于库存、出库和采购核对的物料业务 ID。
+
+**已完成修复**
+
+- `前端代码/src/pages/bom/hooks/useBOMPage.ts`
+  - BOM 导出核心物料名称列的兜底顺序改为 `name -> materialId -> id`。
+  - 保持已有物料名称优先；仅在名称缺失时避免泄露 BOM 明细内部 ID。
+- `前端代码/src/pages/bom/hooks/useBOMPage.test.ts`
+  - 新增 CSV 导出红绿测试，模拟核心物料无名称但存在 `materialId`，断言导出包含业务物料 `mat-business-1`，不包含 BOM 明细内部 `bom-item-internal-1`。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 的 BOM 页面物料明细导出兜底和前端测试，不改 BOM 后端 schema、BOM 写入、版本历史、出库、库存扣减、ABC 成本算法、成本异常或废弃 `/cost-analysis`。
+- BOM 物料明细是 ABC 上游核心输入之一；本批只修正导出归档中的物料身份解释，避免线下核对时把 BOM 明细行 ID 当成物料身份。
+- 已补跑 BOM、出库和成本异常输入侧回归，确认 BOM 基础链路、BOM 出库和 ABC 输入异常链未被破坏。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/bom/hooks/useBOMPage.test.ts -t "exports core material business ids"` 修复前失败：导出内容为 `BOM-001,原BOM,核心物料,bom-item-internal-1,,2,瓶,`，证明核心物料缺名称时会导出内部明细 ID。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/bom/hooks/useBOMPage.test.ts -t "exports core material business ids"` 通过，1 test passed / 13 skipped。
+  - `前端代码 npm test -- --run src/pages/bom/hooks/useBOMPage.test.ts` 通过，1 file / 14 tests passed。
+  - `后端代码/server npm test -- --run tests/integration/bom.test.ts tests/integration/outbound.test.ts tests/integration/cost-exceptions.test.ts` 通过，3 files / 58 tests passed；保留既有 Vite close timeout 提示和模拟 `outbound_abc_details` 缺失的 stderr。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis` 无输出，确认未改废弃范围。
+- 浏览器复核:
+  - 本批核心副作用是前端 CSV 内容生成，已通过 hook 级测试直接拦截 `downloadTextFile` 并断言导出内容；未修改页面布局、弹窗提交、路由或真实写接口，因此未额外启动浏览器。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- BOM 导出基础类型和核心物料身份口径已阶段性收口；下一批可继续按第一阶段基础资料复核 BOM 历史明细导出、项目/检测服务导入导出，或回到库存/报表读取面剩余 P0/P1 项，不在本批扩展。
+
+## 三百六十四、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 
