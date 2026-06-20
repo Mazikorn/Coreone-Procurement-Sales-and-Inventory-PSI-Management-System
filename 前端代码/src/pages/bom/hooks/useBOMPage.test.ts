@@ -480,4 +480,62 @@ describe('useBOMPage', () => {
     expect(exportedContent).toContain('mat-business-1')
     expect(exportedContent).not.toContain('bom-item-internal-1')
   })
+
+  it('exports version history effective scope labels consistent with the detail view', async () => {
+    vi.mocked(bomApi.getDetail).mockResolvedValue({
+      ...activeBom,
+      versionHistory: [
+        {
+          version: 'v1.2',
+          isCurrent: true,
+          effectiveScope: 'retroactive',
+          changeLog: '追溯调整用量',
+          changedBy: 'admin',
+          updatedAt: '2026-06-19T09:00:00.000Z',
+          diff: {
+            changedMaterials: [
+              {
+                materialId: 'mat-1',
+                materialName: '试剂',
+                before: { usagePerSample: 1, unit: '瓶' },
+                after: { usagePerSample: 2, unit: '瓶' },
+              },
+            ],
+          },
+        },
+        {
+          version: 'v1.1',
+          isCurrent: false,
+          effectiveScope: 'future_only',
+          changeLog: '仅后续生效',
+          changedBy: 'admin',
+          updatedAt: '2026-06-18T09:00:00.000Z',
+        },
+      ],
+    } as any)
+
+    const { result } = renderHook(() => useBOMPage())
+
+    await waitFor(() => expect(result.current.data).toHaveLength(1))
+
+    act(() => {
+      result.current.setExportForm({
+        range: 'filtered',
+        format: 'csv',
+        includeBasic: false,
+        includeMaterials: false,
+        includeHistory: true,
+      })
+    })
+
+    await act(async () => {
+      await result.current.handleExport()
+    })
+
+    const exportedContent = String(vi.mocked(downloadTextFile).mock.calls[0][1])
+    expect(exportedContent).toContain('追溯重算')
+    expect(exportedContent).toContain('仅未来生效')
+    expect(exportedContent).not.toContain('追溯历史')
+    expect(exportedContent).not.toContain('仅未来,')
+  })
 })

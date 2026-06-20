@@ -5,7 +5,7 @@ import type { BOM, BOMDeleteCheck, BOMGeneralConsumable, BOMGeneralReagent, BOMQ
 import { toast } from 'sonner'
 import { downloadTextFile } from '@/lib/utils'
 import { getUserRole } from '@/lib/permissions'
-import { getBOMTypeLabel } from '../constants'
+import { getBOMEffectiveScopeLabel, getBOMTypeLabel } from '../constants'
 
 export interface BOMForm {
   code: string
@@ -739,7 +739,7 @@ export function useBOMPage() {
     BOM名称: item.name,
     版本: version.version,
     是否当前版本: version.isCurrent ? '是' : '否',
-    生效范围: version.effectiveScope === 'retroactive' ? '追溯历史' : '仅未来',
+    生效范围: getBOMEffectiveScopeLabel(version.effectiveScope),
     变更说明: version.changeLog || '',
     变更人: version.changedBy || '',
     更新时间: version.updatedAt || '',

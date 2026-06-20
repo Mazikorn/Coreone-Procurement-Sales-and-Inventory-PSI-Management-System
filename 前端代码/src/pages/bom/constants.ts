@@ -15,6 +15,10 @@ export function getBOMTypeLabel(type?: string | null) {
   return TYPE_OPTIONS.find(option => option.value === type)?.label || type
 }
 
+export function getBOMEffectiveScopeLabel(effectiveScope?: string | null) {
+  return effectiveScope === 'retroactive' ? '追溯重算' : '仅未来生效'
+}
+
 export const STATUS_OPTIONS = [
   { value: '', label: '全部状态' },
   { value: 'active', label: '已启用' },

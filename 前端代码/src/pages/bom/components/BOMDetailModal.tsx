@@ -1,6 +1,6 @@
 import { X } from 'lucide-react'
 import type { BOM, BOMMaterial, BOMVersion } from '@/types'
-import { formatDateTime } from '../constants'
+import { formatDateTime, getBOMEffectiveScopeLabel } from '../constants'
 
 interface Props {
   open: boolean
@@ -29,10 +29,6 @@ function changedMaterialText(version: BOMVersion) {
   const after = changed.after?.usagePerSample ?? '-'
   const unit = changed.after?.unit || changed.before?.unit || ''
   return `${name}: ${before} -> ${after}${unit}`
-}
-
-function effectiveScopeLabel(version: BOMVersion) {
-  return version.effectiveScope === 'retroactive' ? '追溯重算' : '仅未来生效'
 }
 
 export function BOMDetailModal({ open, bom, tab, onClose, onChangeTab, onEdit }: Props) {
@@ -391,7 +387,7 @@ export function BOMDetailModal({ open, bom, tab, onClose, onChangeTab, onEdit }:
                                   ? 'border-amber-200 bg-amber-50 text-amber-700'
                                   : 'border-emerald-200 bg-emerald-50 text-emerald-700'
                               }`}>
-                                {effectiveScopeLabel(v)}
+                                {getBOMEffectiveScopeLabel(v.effectiveScope)}
                               </span>
                               {versionDiffSummary(v).map(item => (
                                 <span key={item} className="inline-flex items-center rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-xs text-gray-500">

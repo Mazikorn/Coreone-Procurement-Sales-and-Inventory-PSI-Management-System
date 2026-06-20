@@ -17901,7 +17901,56 @@ git diff --check
 
 - BOM 导出基础类型和核心物料身份口径已阶段性收口；下一批可继续按第一阶段基础资料复核 BOM 历史明细导出、项目/检测服务导入导出，或回到库存/报表读取面剩余 P0/P1 项，不在本批扩展。
 
-## 三百六十四、结论
+## 三百六十四、批次 409: BOM 版本历史导出必须使用详情页生效范围口径
+
+**发现的问题**
+
+- 本轮继续第一阶段基础资料的 BOM 历史明细导出口径，聚焦“同一版本事实在页面读面和导出归档中必须使用同一业务语言”不变量。
+- BOM 详情页版本历史把 `retroactive` 显示为 `追溯重算`，把非追溯显示为 `仅未来生效`。
+- 但 BOM 版本历史导出把同一字段写成 `追溯历史` 和 `仅未来`。
+- 这会让页面确认、导出归档和后续线下审计对同一版本变更产生不同解释，尤其容易影响 BOM 变更是否会追溯重算的理解。
+
+**已完成修复**
+
+- `前端代码/src/pages/bom/constants.ts`
+  - 新增 `getBOMEffectiveScopeLabel`，作为 BOM 版本生效范围的统一业务标签来源。
+- `前端代码/src/pages/bom/components/BOMDetailModal.tsx`
+  - 详情页版本历史标签改为复用统一 helper，避免页面和导出各自维护一套文案。
+- `前端代码/src/pages/bom/hooks/useBOMPage.ts`
+  - BOM 版本历史导出中的 `生效范围` 改为使用 `追溯重算 / 仅未来生效`。
+- `前端代码/src/pages/bom/hooks/useBOMPage.test.ts`
+  - 新增 CSV 导出红绿测试，断言版本历史导出包含 `追溯重算` 和 `仅未来生效`，且不再出现旧口径 `追溯历史` 或 `仅未来,`。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 的 BOM 详情展示标签、版本历史导出标签和前端测试，不改 BOM 后端 schema、BOM 写入、版本生成、出库、库存扣减、ABC 成本算法、成本异常或废弃 `/cost-analysis`。
+- BOM 版本历史是 ABC 上游事实解释的一部分；本批仅统一追溯/未来生效的展示和归档口径，不改变任何可被 ABC 计算消费的数据。
+- 已补跑 BOM、出库和成本异常输入侧回归，确认 BOM 基础链路、BOM 出库和 ABC 输入异常链未被破坏。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/bom/hooks/useBOMPage.test.ts -t "exports version history effective scope"` 修复前失败：导出内容为 `追溯历史` 和 `仅未来`，证明导出与详情页口径不一致。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/bom/hooks/useBOMPage.test.ts -t "exports version history effective scope"` 通过，1 test passed / 14 skipped。
+  - `前端代码 npm test -- --run src/pages/bom/hooks/useBOMPage.test.ts` 通过，1 file / 15 tests passed。
+  - `后端代码/server npm test -- --run tests/integration/bom.test.ts tests/integration/outbound.test.ts tests/integration/cost-exceptions.test.ts` 通过，3 files / 58 tests passed；保留既有 Vite close timeout 提示和模拟 `outbound_abc_details` 缺失的 stderr。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `后端代码/server npm run build` 通过。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis` 无输出，确认未改废弃范围。
+- 浏览器复核:
+  - 本批核心副作用是前端 CSV 内容生成，已通过 hook 级测试直接拦截 `downloadTextFile` 并断言导出内容；详情页引用由前端构建验证，未修改布局、路由、弹窗提交或真实写接口，因此未额外启动浏览器。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- BOM 版本历史导出生效范围口径已阶段性收口；下一批可继续按第一阶段基础资料复核项目/检测服务导入导出，或回到库存/报表读取面剩余 P0/P1 项，不在本批扩展。
+
+## 三百六十五、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 
