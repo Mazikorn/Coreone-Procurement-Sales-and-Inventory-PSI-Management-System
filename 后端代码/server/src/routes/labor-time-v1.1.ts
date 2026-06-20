@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
 import { normalizeDisplayText, requireValidText, type TextGuardResult } from '../utils/text-guard.js'
+import { logOperation } from '../utils/operation-logger.js'
 
 const router = Router()
 
@@ -88,7 +89,7 @@ function validateLaborTimeInput(input: {
 
 function buildLaborTimeWhere(query: any) {
   const { projectType, stepCode, keyword, referenceSource } = query
-  let where = '1=1'
+  let where = 'COALESCE(is_deleted, 0) = 0'
   const params: any[] = []
   if (projectType) {
     where += ' AND project_type = ?'
@@ -157,7 +158,8 @@ router.get('/project-type/:type', (req, res) => {
     const db = getDatabase()
     const list = db.prepare(`
       SELECT * FROM standard_labor_times
-      WHERE project_type = ? OR project_type = 'all'
+      WHERE COALESCE(is_deleted, 0) = 0
+        AND (project_type = ? OR project_type = 'all')
       ORDER BY sort_order ASC, created_at ASC
     `).all(type) as any[]
 
@@ -170,7 +172,7 @@ router.get('/:id', (req, res) => {
   try {
     const { id } = req.params
     const db = getDatabase()
-    const r = db.prepare('SELECT * FROM standard_labor_times WHERE id = ?').get(id) as any
+    const r = db.prepare('SELECT * FROM standard_labor_times WHERE id = ? AND COALESCE(is_deleted, 0) = 0').get(id) as any
     if (!r) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
 
     success(res, toLaborTimeDto(r))
@@ -193,6 +195,12 @@ router.post('/', (req, res) => {
     const id = uuidv4()
     db.prepare('INSERT INTO standard_labor_times (id, step_code, step_name, project_type, standard_minutes, labor_rate_per_minute, is_equipment_step, description, sort_order, reference_source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
       .run(id, stepCodeText.value, stepNameText.value, validation.projectType, validation.standardMinutes, validation.laborRatePerMinute || 0, isEquipmentStep ? 1 : 0, descriptionText.value, validation.sortOrder || 0, validation.referenceSource || 'system')
+    logOperation(db, req, {
+      operation: 'POST /labor-times',
+      description: `创建标准工时 ${stepNameText.value}`,
+      requestData: { module: 'labor', id, stepCode: stepCodeText.value, projectType: validation.projectType },
+      responseData: { id },
+    })
     success(res, { id }, 'Created', 201)
   } catch (err: any) {
     if (err.message?.includes('UNIQUE constraint failed')) { error(res, 'Step code exists for this project type', 'RESOURCE_CONFLICT', 409); return }
@@ -206,7 +214,7 @@ router.put('/:id', (req, res) => {
     const { id } = req.params
     const { stepCode, stepName, projectType, standardMinutes, laborRatePerMinute, isEquipmentStep, description, sortOrder, referenceSource } = req.body
     const db = getDatabase()
-    const existing = db.prepare('SELECT * FROM standard_labor_times WHERE id = ?').get(id) as any
+    const existing = db.prepare('SELECT * FROM standard_labor_times WHERE id = ? AND COALESCE(is_deleted, 0) = 0').get(id) as any
     if (!existing) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
     const stepCodeText = stepCode !== undefined
       ? requireValidText(stepCode, '步骤编号', 100)
@@ -245,6 +253,12 @@ router.put('/:id', (req, res) => {
         validation.referenceSource !== undefined ? validation.referenceSource : (existing.reference_source || 'system'),
         id
       )
+    logOperation(db, req, {
+      operation: 'PUT /labor-times/:id',
+      description: `更新标准工时 ${stepNameText.value}`,
+      requestData: { module: 'labor', id, stepCode: stepCodeText.value, projectType: normalizedProjectType },
+      responseData: { id },
+    })
     success(res, { id }, 'Updated')
   } catch (err: any) {
     if (err.message?.includes('UNIQUE constraint failed')) { error(res, 'Step code exists for this project type', 'RESOURCE_CONFLICT', 409); return }
@@ -257,9 +271,15 @@ router.delete('/:id', (req, res) => {
   try {
     const { id } = req.params
     const db = getDatabase()
-    const existing = db.prepare('SELECT * FROM standard_labor_times WHERE id = ?').get(id)
+    const existing = db.prepare('SELECT * FROM standard_labor_times WHERE id = ? AND COALESCE(is_deleted, 0) = 0').get(id) as any
     if (!existing) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
-    db.prepare('DELETE FROM standard_labor_times WHERE id = ?').run(id)
+    db.prepare('UPDATE standard_labor_times SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(id)
+    logOperation(db, req, {
+      operation: 'DELETE /labor-times/:id',
+      description: `归档标准工时 ${existing.step_name}`,
+      requestData: { module: 'labor', id, stepCode: existing.step_code, projectType: existing.project_type },
+      responseData: { id, archived: true },
+    })
     success(res, null, 'Deleted')
   } catch (err: any) { error(res, err.message) }
 })

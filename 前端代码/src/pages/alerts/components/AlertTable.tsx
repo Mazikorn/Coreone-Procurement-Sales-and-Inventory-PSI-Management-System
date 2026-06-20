@@ -1,3 +1,4 @@
+import React from 'react'
 import { CheckCircle2, Eye, RotateCcw, Search, Trash2 } from 'lucide-react'
 import { Pagination } from '@/components/ui/Pagination'
 import type {
@@ -19,6 +20,7 @@ interface Props {
   filter: FilterState
   quickFilter: AlertStatusFilter
   selectedIds: Set<string>
+  canHandle?: boolean
   onFilterChange: (filter: FilterState) => void
   onQuickFilterChange: (value: AlertStatusFilter) => void
   onResetFilters: () => void
@@ -69,6 +71,7 @@ export function AlertTable({
   filter,
   quickFilter,
   selectedIds,
+  canHandle = true,
   onFilterChange,
   onQuickFilterChange,
   onResetFilters,
@@ -177,14 +180,16 @@ export function AlertTable({
         <table className="w-full text-sm">
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
-              <th className="px-4 py-3 w-10">
-                <input
-                  type="checkbox"
-                  checked={allSelected}
-                  onChange={onSelectAll}
-                  className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                />
-              </th>
+              {canHandle && (
+                <th className="px-4 py-3 w-10">
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    onChange={onSelectAll}
+                    className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
+                </th>
+              )}
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">物料</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">类型</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">内容</th>
@@ -197,11 +202,11 @@ export function AlertTable({
           <tbody className="divide-y divide-gray-100">
             {loading ? (
               <tr>
-                <td colSpan={8} className="px-4 py-12 text-center text-gray-400">加载中...</td>
+                <td colSpan={canHandle ? 8 : 7} className="px-4 py-12 text-center text-gray-400">加载中...</td>
               </tr>
             ) : error ? (
               <tr>
-                <td colSpan={8} className="px-4 py-12 text-center">
+                <td colSpan={canHandle ? 8 : 7} className="px-4 py-12 text-center">
                   <div className="space-y-3">
                     <div className="text-sm font-medium text-red-600">预警列表加载失败</div>
                     <div className="text-xs text-gray-500">{error}</div>
@@ -219,7 +224,7 @@ export function AlertTable({
               </tr>
             ) : data.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-4 py-12 text-center text-gray-400">暂无预警</td>
+                <td colSpan={canHandle ? 8 : 7} className="px-4 py-12 text-center text-gray-400">暂无预警</td>
               </tr>
             ) : (
               data.map(alert => {
@@ -229,14 +234,16 @@ export function AlertTable({
                 const handleType = isConsumption(alert.type) ? 'consumption-handle' : 'handle'
                 return (
                   <tr key={alert.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-3">
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.has(alert.id)}
-                        onChange={() => onSelect(alert.id)}
-                        className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                      />
-                    </td>
+                    {canHandle && (
+                      <td className="px-4 py-3">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(alert.id)}
+                          onChange={() => onSelect(alert.id)}
+                          className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                      </td>
+                    )}
                     <td className="px-4 py-3">
                       <div className="font-medium text-gray-900">{alert.materialName || '-'}</div>
                       <div className="text-xs text-gray-400">{alert.batchNo || alert.projectName || '-'}</div>
@@ -263,7 +270,7 @@ export function AlertTable({
                           <Eye className="w-3.5 h-3.5" />
                           详情
                         </button>
-                        {alert.status === 'pending' && (
+                        {canHandle && alert.status === 'pending' && (
                           <>
                             <button
                               onClick={() => onOpenModal(handleType, alert)}

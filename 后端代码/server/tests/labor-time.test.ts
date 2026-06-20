@@ -125,8 +125,32 @@ describe('标准工时 API', () => {
       .set('Authorization', `Bearer ${adminToken}`)
 
     expect(deleteRes.status).toBe(200)
-    const removed = db.prepare('SELECT id FROM standard_labor_times WHERE id = ?').get(id)
-    expect(removed).toBeUndefined()
+    const archived = db.prepare('SELECT id, is_deleted FROM standard_labor_times WHERE id = ?').get(id) as any
+    expect(archived).toMatchObject({ id, is_deleted: 1 })
+
+    const deletedDetail = await request(app)
+      .get(`/api/v1/labor-times/${id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+    expect(deletedDetail.status).toBe(404)
+
+    const deletedList = await request(app)
+      .get(`/api/v1/labor-times?page=1&pageSize=10&keyword=${stepCode}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+    expect(deletedList.status).toBe(200)
+    expect(deletedList.body.data.list.some((row: any) => row.id === id)).toBe(false)
+
+    const logs = db.prepare(`
+      SELECT operation, description
+      FROM operation_logs
+      WHERE request_data LIKE ?
+      ORDER BY rowid ASC
+    `).all(`%"id":"${id}"%`) as any[]
+    expect(logs.map(log => log.operation)).toEqual([
+      'POST /labor-times',
+      'PUT /labor-times/:id',
+      'DELETE /labor-times/:id',
+    ])
+    expect(logs[2].description).toContain('归档标准工时')
   })
 
   it('LT-003: 必填校验和不存在资源返回明确错误', async () => {
@@ -252,47 +276,62 @@ describe('标准工时 API', () => {
     expect(ihcStats.body.data.equipmentSteps).toBe(1)
   })
 
-  it('LT-AUTH-001: 技术员只能查看标准工时，不能维护成本参数', async () => {
+  it('LT-COST-001: 已归档标准工时不参与人工成本计算', async () => {
     const suffix = Date.now()
+    const activeId = `lt-cost-active-${suffix}`
+    const archivedId = `lt-cost-archived-${suffix}`
+    const { calculateLaborCost } = await import('../src/utils/cost-calculator.js')
+    const before = calculateLaborCost(db, 'mp', 1)
+
+    db.prepare(`
+      INSERT INTO standard_labor_times (
+        id, step_code, step_name, project_type, standard_minutes,
+        labor_rate_per_minute, is_equipment_step, sort_order, reference_source, is_deleted
+      ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 'system', ?)
+    `).run(activeId, `COST-ACTIVE-${suffix}`, '成本有效工时', 'mp', 10, 2, 0)
+    db.prepare(`
+      INSERT INTO standard_labor_times (
+        id, step_code, step_name, project_type, standard_minutes,
+        labor_rate_per_minute, is_equipment_step, sort_order, reference_source, is_deleted
+      ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 'system', ?)
+    `).run(archivedId, `COST-ARCHIVED-${suffix}`, '成本归档工时', 'mp', 999, 999, 1)
+
+    expect(calculateLaborCost(db, 'mp', 1) - before).toBe(20)
+  })
+
+  it('LT-AUTH-001: 技术员可维护标准工时定义', async () => {
+    const suffix = Date.now()
+    const stepCode = `TECH-LAB-${suffix}`
 
     const createByTechnician = await request(app)
       .post('/api/v1/labor-times')
       .set('Authorization', `Bearer ${technicianToken}`)
       .send({
-        stepCode: `TECH-LAB-${suffix}`,
-        stepName: '技术员越权创建',
+        stepCode,
+        stepName: '技术员维护实验步骤',
         projectType: 'ihc',
         standardMinutes: 12,
         laborRatePerMinute: 2,
       })
-    expect(createByTechnician.status).toBe(403)
-
-    const createByAdmin = await request(app)
-      .post('/api/v1/labor-times')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .send({
-        stepCode: `ADMIN-LAB-${suffix}`,
-        stepName: '管理员创建',
-        projectType: 'ihc',
-        standardMinutes: 12,
-        laborRatePerMinute: 2,
-      })
-    expect(createByAdmin.status).toBe(201)
-    const id = createByAdmin.body.data.id
+    expect(createByTechnician.status).toBe(201)
+    const id = createByTechnician.body.data.id
 
     const updateByTechnician = await request(app)
       .put(`/api/v1/labor-times/${id}`)
       .set('Authorization', `Bearer ${technicianToken}`)
-      .send({ laborRatePerMinute: 99 })
-    expect(updateByTechnician.status).toBe(403)
+      .send({ stepName: '技术员更新实验步骤', standardMinutes: 14 })
+    expect(updateByTechnician.status).toBe(200)
+    const updated = db.prepare('SELECT step_name, standard_minutes FROM standard_labor_times WHERE id = ?').get(id) as any
+    expect(updated.step_name).toBe('技术员更新实验步骤')
+    expect(updated.standard_minutes).toBe(14)
 
     const deleteByTechnician = await request(app)
       .delete(`/api/v1/labor-times/${id}`)
       .set('Authorization', `Bearer ${technicianToken}`)
-    expect(deleteByTechnician.status).toBe(403)
+    expect(deleteByTechnician.status).toBe(200)
 
-    const unchanged = db.prepare('SELECT labor_rate_per_minute FROM standard_labor_times WHERE id = ?').get(id) as any
-    expect(unchanged.labor_rate_per_minute).toBe(2)
+    const archived = db.prepare('SELECT is_deleted FROM standard_labor_times WHERE id = ?').get(id) as any
+    expect(Number(archived.is_deleted)).toBe(1)
   })
 
   it('LT-AUTH-002: 财务可维护标准工时成本参数', async () => {
@@ -330,8 +369,8 @@ describe('标准工时 API', () => {
       .set('Authorization', `Bearer ${financeToken}`)
 
     expect(deleteByFinance.status).toBe(200)
-    const removed = db.prepare('SELECT id FROM standard_labor_times WHERE id = ?').get(id)
-    expect(removed).toBeUndefined()
+    const archived = db.prepare('SELECT is_deleted FROM standard_labor_times WHERE id = ?').get(id) as any
+    expect(Number(archived.is_deleted)).toBe(1)
   })
 
   it('LT-CODE-001: 标准工时步骤编号和项目类型创建后不允许修改', async () => {

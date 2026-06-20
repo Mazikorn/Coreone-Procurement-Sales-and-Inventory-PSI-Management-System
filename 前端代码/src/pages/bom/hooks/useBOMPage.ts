@@ -227,7 +227,7 @@ function buildPayload(form: BOMForm): any {
 
 function canManageBom() {
   const role = getUserRole()
-  if (['admin', 'warehouse_manager', 'technician', 'pathologist'].includes(role || '')) {
+  if (['admin', 'technician'].includes(role || '')) {
     return true
   }
   const permissions = getUserPermissions()

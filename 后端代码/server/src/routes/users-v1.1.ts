@@ -9,7 +9,7 @@ import { logOperation } from '../utils/operation-logger.js'
 const router = Router()
 
 function generateTemporaryPassword() {
-  return `Core@${randomBytes(8).toString('base64url')}`
+  return `Core@${randomBytes(8).toString('base64url')}7`
 }
 
 function normalizeRequiredText(value: unknown) {
@@ -28,8 +28,16 @@ function validateStatus(value: unknown) {
 
 function validateProvidedPassword(value: unknown) {
   if (value === undefined || value === null || value === '') return true
-  return typeof value === 'string' && value.trim().length >= 8
+  if (typeof value !== 'string') return false
+  const password = value.trim()
+  return password.length >= 8
+    && /[a-z]/.test(password)
+    && /[A-Z]/.test(password)
+    && /\d/.test(password)
+    && /[^A-Za-z0-9]/.test(password)
 }
+
+const PASSWORD_POLICY_MESSAGE = 'Password must include uppercase, lowercase, number, symbol and be at least 8 characters'
 
 function isAssignableRole(db: any, role: string) {
   return Boolean(db.prepare('SELECT 1 FROM roles WHERE code = ? AND status = 1 AND is_deleted = 0').get(role))
@@ -152,7 +160,7 @@ router.post('/', (req, res) => {
     const db = getDatabase()
     if (!role) { error(res, 'Role required', 'INVALID_PARAMETER', 400); return }
     if (!validateStatus(status)) { error(res, 'Invalid status', 'INVALID_PARAMETER', 400); return }
-    if (!validateProvidedPassword(password)) { error(res, 'Password must be at least 8 characters', 'INVALID_PARAMETER', 400); return }
+    if (!validateProvidedPassword(password)) { error(res, PASSWORD_POLICY_MESSAGE, 'INVALID_PARAMETER', 400); return }
     if (!isAssignableRole(db, role)) { error(res, 'Invalid role', 'INVALID_PARAMETER', 400); return }
     const id = uuidv4()
     const initialPassword = password || generateTemporaryPassword()
@@ -179,7 +187,7 @@ router.post('/:id/reset-password', (req, res) => {
     const db = getDatabase()
     const existing = db.prepare('SELECT * FROM users WHERE id = ? AND is_deleted = 0').get(id) as any
     if (!existing) { error(res, 'Not found', 'NOT_FOUND', 404); return }
-    if (!validateProvidedPassword(password)) { error(res, 'Password must be at least 8 characters', 'INVALID_PARAMETER', 400); return }
+    if (!validateProvidedPassword(password)) { error(res, PASSWORD_POLICY_MESSAGE, 'INVALID_PARAMETER', 400); return }
     const newPassword = password || generateTemporaryPassword()
     db.prepare('UPDATE users SET password = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND is_deleted = 0')
       .run(bcrypt.hashSync(newPassword, 12), id)
@@ -276,13 +284,16 @@ router.put('/:id', (req, res) => {
       error(res, 'Invalid status', 'INVALID_PARAMETER', 400); return
     }
     if (!validateProvidedPassword(data.password)) {
-      error(res, 'Password must be at least 8 characters', 'INVALID_PARAMETER', 400); return
+      error(res, PASSWORD_POLICY_MESSAGE, 'INVALID_PARAMETER', 400); return
     }
     // 禁止停用 admin 账户
     if ((existing.username === 'admin' || existing.id === 'USER-001') && data.status !== undefined && data.status !== 'active') {
       error(res, 'Cannot disable admin account', 'BUSINESS_CONFLICT', 409); return
     }
     const normalizedRole = data.role !== undefined ? normalizeRequiredText(data.role) : undefined
+    if ((existing.username === 'admin' || existing.id === 'USER-001') && normalizedRole !== undefined && normalizedRole !== 'admin') {
+      error(res, 'Cannot change admin account role', 'BUSINESS_CONFLICT', 409); return
+    }
     if (normalizedRole !== undefined && (!normalizedRole || !isAssignableRole(db, normalizedRole))) {
       error(res, 'Invalid role', 'INVALID_PARAMETER', 400); return
     }

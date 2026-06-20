@@ -2,9 +2,10 @@ import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
 import helmet from 'helmet'
-import { initializeDatabase } from './database/DatabaseManager.js'
+import { getDatabase, initializeDatabase } from './database/DatabaseManager.js'
 import { errorHandler } from './middleware/errorHandler.js'
 import { authenticateToken, requireRole, requireStrictRole } from './middleware/auth.js'
+import { logOperation } from './utils/operation-logger.js'
 
 // 路由导入
 import authRoutes from './routes/auth.js'
@@ -82,6 +83,67 @@ app.use((req, res, next) => {
 // 初始化数据库
 initializeDatabase()
 
+const masterDataAuditModules: Record<string, { module: string; label: string }> = {
+  '/api/v1/categories': { module: 'categories', label: '物料分类' },
+  '/api/v1/materials': { module: 'materials', label: '物料' },
+  '/api/v1/locations': { module: 'locations', label: '库位' },
+  '/api/v1/projects': { module: 'projects', label: '检测服务' },
+  '/api/v1/boms': { module: 'bom', label: 'BOM' },
+  '/api/v1/equipment': { module: 'equipment', label: '设备' },
+  '/api/v1/equipment-types': { module: 'equipment', label: '设备类型' },
+}
+
+function normalizeAuditPath(path: string, modulePrefix: string) {
+  const [withoutQuery] = path.split('?')
+  if (withoutQuery === modulePrefix) return modulePrefix.replace('/api/v1', '')
+  const suffix = withoutQuery.slice(modulePrefix.length)
+  return `${modulePrefix.replace('/api/v1', '')}${suffix
+    .replace(/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '/:id')
+    .replace(/\/(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{8,}(?=\/|$)/g, '/:id')}`
+}
+
+function auditAction(method: string) {
+  if (method === 'POST') return '创建'
+  if (method === 'PUT') return '更新'
+  if (method === 'PATCH') return '变更'
+  if (method === 'DELETE') return '删除'
+  return '维护'
+}
+
+app.use((req, res, next) => {
+  const method = req.method.toUpperCase()
+  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+    next()
+    return
+  }
+
+  const path = req.path
+  const entry = Object.entries(masterDataAuditModules)
+    .find(([prefix]) => path === prefix || path.startsWith(`${prefix}/`))
+  if (!entry) {
+    next()
+    return
+  }
+
+  const [modulePrefix, auditModule] = entry
+  res.on('finish', () => {
+    if (res.statusCode >= 400) return
+    logOperation(getDatabase(), req as any, {
+      operation: `${method} ${normalizeAuditPath(path, modulePrefix)}`,
+      description: `${auditAction(method)}${auditModule.label}主数据`,
+      requestData: {
+        module: auditModule.module,
+        path,
+        method,
+        body: req.body || null,
+        params: req.params || null,
+      },
+      responseData: { statusCode: res.statusCode },
+    })
+  })
+  next()
+})
+
 // 路由注册 - 公开路由
 app.use('/api/v1/auth', authRoutes)
 
@@ -94,9 +156,9 @@ app.use('/api/v1/logs', authenticateToken, requireRole('admin', 'finance'), logR
 app.use('/api/v1/reports', authenticateToken, requireRole('admin', 'pathologist', 'finance'), reportRoutes)
 app.use('/api/v1/depletion', authenticateToken, requireRole('admin', 'pathologist', 'finance'), depletionRoutes)
 
-// 路由注册 - warehouse/technician/pathologist/procurement共享 (库存/预警)
-app.use('/api/v1/inventory', authenticateToken, requireRole('admin', 'warehouse_manager', 'technician', 'pathologist', 'procurement'), inventoryRoutes)
-app.use('/api/v1/alerts', authenticateToken, requireRole('admin', 'warehouse_manager', 'technician', 'pathologist', 'procurement', 'finance'), alertRoutes)
+// 路由注册 - warehouse/technician/pathologist/procurement/manager共享 (库存/预警)
+app.use('/api/v1/inventory', authenticateToken, requireRole('admin', 'warehouse_manager', 'technician', 'pathologist', 'procurement', 'manager'), inventoryRoutes)
+app.use('/api/v1/alerts', authenticateToken, requireRole('admin', 'warehouse_manager', 'technician', 'pathologist', 'procurement', 'finance', 'manager'), alertRoutes)
 
 // 路由注册 - warehouse/procurement共享 (入库相关)
 app.use('/api/v1/inbound', authenticateToken, requireRole('admin', 'warehouse_manager', 'procurement'), inboundRoutes)
@@ -104,7 +166,7 @@ app.use('/api/v1/purchase-orders', authenticateToken, requireRole('admin', 'ware
 app.use('/api/v1/suppliers', authenticateToken, requireRole('admin', 'warehouse_manager', 'procurement'), supplierRoutes)
 
 // 路由注册 - warehouse专属 (库存操作)
-app.use('/api/v1/outbound', authenticateToken, requireRole('admin', 'warehouse_manager', 'technician', 'pathologist'), outboundRoutes)
+app.use('/api/v1/outbound', authenticateToken, requireStrictRole('admin', 'warehouse_manager'), outboundRoutes)
 app.use('/api/v1/stocktaking', authenticateToken, requireRole('admin', 'warehouse_manager'), stocktakingRoutes)
 app.use('/api/v1/locations', authenticateToken, requireRole('admin', 'warehouse_manager'), locationRoutes)
 app.use('/api/v1/returns', authenticateToken, requireRole('admin', 'warehouse_manager'), returnRoutes)
@@ -112,12 +174,12 @@ app.use('/api/v1/scraps', authenticateToken, requireRole('admin', 'warehouse_man
 app.use('/api/v1/transfers', authenticateToken, requireRole('admin', 'warehouse_manager'), transferRoutes)
 app.use('/api/v1/supplier-returns', authenticateToken, requireRole('admin', 'warehouse_manager', 'procurement'), supplierReturnRoutes)
 
-// 路由注册 - 检测项目/BOM 主数据；仓管出库需要只读选择 BOM，写入仍由路由内 admin 守卫
+// 路由注册 - 检测项目/BOM 主数据；仓管出库需要只读选择，写入由模块权限守卫。
 app.use('/api/v1/projects', authenticateToken, requireRole('admin', 'warehouse_manager', 'technician', 'pathologist'), projectRoutes)
 app.use('/api/v1/boms', authenticateToken, requireRole('admin', 'warehouse_manager', 'technician', 'pathologist'), bomRoutes)
 
-// 路由注册 - 成本对账 (admin/finance/pathologist可访问)
-app.use('/api/v1/reconciliation', authenticateToken, requireRole('admin', 'pathologist', 'finance', 'technician'), reconciliationRoutes)
+// 路由注册 - 成本对账：财务负责对账，技术员处理BOM异常；医生仅查看成本结果。
+app.use('/api/v1/reconciliation', authenticateToken, requireStrictRole('admin', 'finance', 'technician'), reconciliationRoutes)
 
 // 路由注册 - 设备管理 (admin/technician/pathologist可访问)
 app.use('/api/v1/equipment', authenticateToken, requireRole('admin', 'technician', 'pathologist'), equipmentRoutes)
@@ -129,8 +191,8 @@ app.use('/api/v1/labor-times', authenticateToken, requireRole('admin', 'finance'
 // 路由注册 - 间接成本中心 (admin/finance可访问)
 app.use('/api/v1/indirect-costs', authenticateToken, requireRole('admin', 'finance'), indirectCostRoutes)
 
-// 路由注册 - ABC作业成本法：财务可管理，主任可只读查看可信成本看板
-app.use('/api/v1/abc', authenticateToken, requireRole('admin', 'finance', 'pathologist'), abcRoutes)
+// 路由注册 - ABC作业成本法：财务可管理，技术/医生/管理者可只读查看可信成本结果
+app.use('/api/v1/abc', authenticateToken, requireRole('admin', 'finance', 'pathologist', 'technician', 'manager'), abcRoutes)
 
 // 路由注册 - 季度成本调整 (admin/finance可访问)
 app.use('/api/v1/cost-adjustments', authenticateToken, requireRole('admin', 'finance'), costAdjustmentRoutes)

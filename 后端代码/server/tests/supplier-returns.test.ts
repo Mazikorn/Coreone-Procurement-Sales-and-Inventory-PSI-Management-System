@@ -208,6 +208,88 @@ describe('供应商退货', () => {
     expect(log?.username).toBe('admin')
   })
 
+  it('SR-AUDIT-003: 创建和删除供应商退货必须写入操作日志，便于采购仓储交接回看', async () => {
+    const { materialId, supplierId, batchId } = seedSupplierReturnMaterialWithBatch(db, `audit-op-${Date.now()}`)
+
+    const createRes = await request(app)
+      .post('/api/v1/supplier-returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId,
+        supplierId,
+        batchId,
+        quantity: 2,
+        reason: '供应商错发退货',
+      })
+    expect(createRes.status).toBe(200)
+
+    const createLog = db.prepare(`
+      SELECT username, request_data, response_data
+      FROM operation_logs
+      WHERE operation = 'POST /supplier-returns' AND description LIKE ?
+      ORDER BY created_at DESC LIMIT 1
+    `).get(`%${createRes.body.data.id}%`) as any
+    expect(createLog?.username).toBe('admin')
+    expect(JSON.parse(createLog.request_data)).toMatchObject({ materialId, supplierId, batchId, quantity: 2 })
+    expect(JSON.parse(createLog.response_data)).toMatchObject({ id: createRes.body.data.id })
+
+    const deleteRes = await request(app)
+      .delete(`/api/v1/supplier-returns/${createRes.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+    expect(deleteRes.status).toBe(200)
+
+    const deleteLog = db.prepare(`
+      SELECT username, response_data
+      FROM operation_logs
+      WHERE operation = 'DELETE /supplier-returns/:id' AND description LIKE ?
+      ORDER BY created_at DESC LIMIT 1
+    `).get(`%${createRes.body.data.id}%`) as any
+    expect(deleteLog?.username).toBe('admin')
+    expect(JSON.parse(deleteLog.response_data)).toMatchObject({ id: createRes.body.data.id, status: 'deleted' })
+  })
+
+  it('SR-ALERT-001: 供应商退货扣减到安全线后触发低库存预警，删除后自动关闭', async () => {
+    const { materialId, supplierId, batchId } = seedSupplierReturnMaterialWithBatch(db, `alert-${Date.now()}`)
+    db.prepare('UPDATE materials SET safety_stock = 8 WHERE id = ?').run(materialId)
+
+    const createRes = await request(app)
+      .post('/api/v1/supplier-returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId,
+        supplierId,
+        batchId,
+        quantity: 3,
+        reason: '供应商退货触发预警',
+      })
+    expect(createRes.status).toBe(200)
+
+    const pendingAfterReturn = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM alerts
+      WHERE material_id = ? AND type = 'low-stock' AND status = 'pending'
+    `).get(materialId) as any
+    expect(Number(pendingAfterReturn.count)).toBe(1)
+
+    const deleteRes = await request(app)
+      .delete(`/api/v1/supplier-returns/${createRes.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+    expect(deleteRes.status).toBe(200)
+
+    const pendingAfterDelete = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM alerts
+      WHERE material_id = ? AND type = 'low-stock' AND status = 'pending'
+    `).get(materialId) as any
+    const resolvedAfterDelete = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM alerts
+      WHERE material_id = ? AND type = 'low-stock' AND status = 'auto_resolved'
+    `).get(materialId) as any
+    expect(Number(pendingAfterDelete.count)).toBe(0)
+    expect(Number(resolvedAfterDelete.count)).toBeGreaterThanOrEqual(1)
+  })
+
   it('SR-004: 创建供应商退货时扣减所选批次并保留批次线索', async () => {
     const { materialId, supplierId, batchId, batchNo } = seedSupplierReturnMaterialWithBatch(db, `batch-${Date.now()}`)
 

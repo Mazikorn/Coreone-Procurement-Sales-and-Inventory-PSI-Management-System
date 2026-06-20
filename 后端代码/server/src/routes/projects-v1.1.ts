@@ -8,7 +8,7 @@ import { normalizeDisplayText, requireValidText, type TextGuardResult } from '..
 
 const router = Router()
 
-// 项目写入权限：按 projects 模块权限放行，默认技术员/病理医生可维护检测服务。
+// 项目写入权限：按 projects 模块权限放行，默认技术员可维护，医生只读。
 const requireProjectWrite = requireRole()
 const PROJECT_TYPES = new Set(['he', 'ihc', 'ss', 'mp', 'cyto'])
 

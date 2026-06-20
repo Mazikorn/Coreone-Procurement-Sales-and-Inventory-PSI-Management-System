@@ -97,6 +97,49 @@ describe('调拨管理', () => {
     expect(afterCancel.location_id).toBe(fromLocationId)
   })
 
+  it('TR-AUDIT-001: 创建和撤销调拨写入操作日志，支撑库存位置变更审计', async () => {
+    const { materialId, fromLocationId, toLocationId, batchNo } = seedTransferMaterial(db, `audit-${Date.now()}`)
+
+    const createRes = await request(app)
+      .post('/api/v1/transfers/inbound')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId,
+        batchNo,
+        quantity: 3,
+        fromLocationId,
+        toLocationId,
+        remark: '调拨审计测试',
+      })
+    expect(createRes.status).toBe(200)
+
+    const deleteRes = await request(app)
+      .delete(`/api/v1/transfers/${createRes.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+    expect(deleteRes.status).toBe(200)
+
+    const logs = db.prepare(`
+      SELECT username, operation, request_data
+      FROM operation_logs
+      WHERE request_data LIKE ?
+      ORDER BY rowid ASC
+    `).all(`%${createRes.body.data.id}%`) as any[]
+
+    expect(logs.map(log => log.operation)).toEqual([
+      'POST /transfers/inbound',
+      'DELETE /transfers/:id',
+    ])
+    expect(logs.every(log => log.username === 'admin')).toBe(true)
+    expect(JSON.parse(logs[0].request_data)).toMatchObject({
+      module: 'transfers',
+      id: createRes.body.data.id,
+      materialId,
+      fromLocationId,
+      toLocationId,
+      quantity: 3,
+    })
+  })
+
   it('TR-002: 拒绝来源库位和目标库位相同的无效调拨', async () => {
     const { materialId, fromLocationId } = seedTransferMaterial(db, `same-${Date.now()}`)
 
@@ -314,7 +357,7 @@ describe('调拨管理', () => {
       .send({
         materialId,
         quantity: 3,
-        reason: '调拨后库位明细同步测试',
+        reason: 'damaged',
       })
     expect(scrapRes.status).toBe(200)
 

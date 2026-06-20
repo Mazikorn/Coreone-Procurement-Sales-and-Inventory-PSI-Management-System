@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid'
 import multer from 'multer'
 import * as XLSX from 'xlsx'
 import { getDatabase } from '../database/DatabaseManager.js'
+import { requireStrictRole } from '../middleware/auth.js'
 import { success, successList, error } from '../utils/response.js'
 import { recordCostException } from '../utils/cost-exceptions.js'
 
@@ -1142,7 +1143,7 @@ router.put('/cases/:id', (req, res) => {
       error(res, 'Invalid case status', 'INVALID_PARAMETER', 400); return
     }
 
-    const existing = db.prepare('SELECT * FROM lis_cases WHERE id = ?').get(id)
+    const existing = db.prepare('SELECT * FROM lis_cases WHERE id = ?').get(id) as any
     if (!existing) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
     let nextProjectName = projectName
     let normalizedStatus = hasStatus ? nextStatus : undefined
@@ -1165,6 +1166,27 @@ router.put('/cases/:id', (req, res) => {
         updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(projectId, nextProjectName, normalizedStatus, id)
+
+    const updated = db.prepare('SELECT * FROM lis_cases WHERE id = ?').get(id) as any
+    db.prepare(`
+      INSERT INTO reconciliation_logs (id, type, target_id, target_name, field, old_value, new_value, reason, operator, created_at)
+      VALUES (?, 'case_edit', ?, ?, 'project_id,project_name,status', ?, ?, '病例对账信息更新', ?, CURRENT_TIMESTAMP)
+    `).run(
+      uuidv4(),
+      id,
+      updated.case_no,
+      JSON.stringify({
+        projectId: existing.project_id || '',
+        projectName: existing.project_name || '',
+        status: existing.status || '',
+      }),
+      JSON.stringify({
+        projectId: updated.project_id || '',
+        projectName: updated.project_name || '',
+        status: updated.status || '',
+      }),
+      (req as any).user?.username || 'system',
+    )
 
     success(res, null, '病例信息已更新')
   } catch (e: any) {
@@ -1214,7 +1236,7 @@ router.get('/logs', (req, res) => {
  * POST /api/v1/reconciliation/logs
  * 记录修正日志，同时更新BOM用量（如果提供了projectId和materialId）
  */
-router.post('/logs', (req, res) => {
+router.post('/logs', requireStrictRole('admin', 'technician'), (req, res) => {
   try {
     const db = getDatabase()
     const { type, targetId, targetName, field, oldValue, newValue, reason, projectId, materialId, newUsage, newUnit } = req.body

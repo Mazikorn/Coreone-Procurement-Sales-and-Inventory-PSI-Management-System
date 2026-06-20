@@ -73,6 +73,7 @@ export default function Dashboard() {
     pathologist: '病理医师',
     procurement: '采购员',
     finance: '财务人员',
+    manager: '管理者',
   }
 
   return (

@@ -1,3 +1,4 @@
+import React from 'react'
 import { AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react'
 import type { ProjectReconcile, MaterialDiff } from '../hooks/useReconciliationPage'
 
@@ -8,6 +9,7 @@ interface Props {
   projectMaterials: Record<string, MaterialDiff[]>
   onToggleProject: (projectId: string) => void
   getDiffClass: (status: string) => string
+  canFixBom: boolean
   onFixBom: (mat: MaterialDiff, projectId: string) => void
   onAuditProject: (projectId: string) => void
   auditingProjectId: string | null
@@ -20,6 +22,7 @@ export function ReconcileProjectTab({
   projectMaterials,
   onToggleProject,
   getDiffClass,
+  canFixBom,
   onFixBom,
   onAuditProject,
   auditingProjectId,
@@ -122,7 +125,7 @@ export function ReconcileProjectTab({
                             {mat.status === 'match' ? '按规格出库，正常余量' : mat.diff > 0 ? '按规格出库，剩余在库' : '实际用量偏大'}
                           </td>
                           <td className="px-3 py-3 text-center">
-                            {mat.status !== 'match' && (
+                            {canFixBom && mat.status !== 'match' && (
                               <button
                                 onClick={() => onFixBom(mat, proj.id)}
                                 className="px-3 py-1 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100"

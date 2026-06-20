@@ -20,6 +20,8 @@ export interface ActivityCost {
 
 const round2 = (value: number): number => Math.round((Number(value) || 0) * 100) / 100
 const round4 = (value: number): number => Math.round((Number(value) || 0) * 10000) / 10000
+const activeStatusSql = (column: string) =>
+  `(${column} = 'active' OR ${column} = 1 OR ${column} = '1')`
 
 export interface TierRule {
   maxQuantity?: number
@@ -85,15 +87,16 @@ function getFeeMappings(db: any, bom: any): any[] {
     SELECT m.*, fs.name as fee_standard_name, fs.category, fs.project_type,
            fs.fee_per_slide, fs.base_price, fs.tier_rules, fs.cap_amount
     FROM bom_fee_mappings m
-    JOIN fee_standards fs ON m.fee_standard_id = fs.id AND fs.status = 'active'
-    WHERE m.bom_id = ? AND (m.status = 'active' OR m.status = 1 OR m.status = '1')
+    JOIN fee_standards fs ON m.fee_standard_id = fs.id AND ${activeStatusSql('fs.status')}
+    WHERE m.bom_id = ? AND ${activeStatusSql('m.status')}
     ORDER BY m.sort_order ASC, m.created_at ASC
   `).all(bom.id) as any[]
 
   if (rows.length) return rows
   if (!bom.fee_standard_id) return []
 
-  const legacy = db.prepare('SELECT * FROM fee_standards WHERE id = ? AND status = ?').get(bom.fee_standard_id, 'active') as any
+  const legacy = db.prepare(`SELECT * FROM fee_standards WHERE id = ? AND ${activeStatusSql('status')}`)
+    .get(bom.fee_standard_id) as any
   return legacy ? [{
     id: `legacy-${bom.fee_standard_id}`,
     fee_standard_id: legacy.id,
@@ -378,7 +381,8 @@ export function calculateLaborCost(db: any, projectType: string, sampleCount = 1
   const rows = db.prepare(`
     SELECT standard_minutes, labor_rate_per_minute
     FROM standard_labor_times
-    WHERE project_type = ? OR project_type = 'all'
+    WHERE COALESCE(is_deleted, 0) = 0
+      AND (project_type = ? OR project_type = 'all')
   `).all(projectType) as any[]
 
   return round2(rows.reduce((sum, row) =>

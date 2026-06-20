@@ -70,17 +70,18 @@ export const ROLE_MENU_MAP: Record<string, string[]> = {
   ],
   technician: [
     '/', '/alerts',
-    '/inventory', '/projects', '/bom',
+    '/inventory', '/projects', '/bom', '/reconciliation',
     '/materials', '/categories', '/equipment', '/labor-times',
-    '/abc/dashboard', '/abc/slide-cost', '/abc/profitability', '/abc/fee-comparison', '/abc/fee-mappings', '/abc/trend',
+    '/abc/slide-cost',
   ],
   procurement: [
     '/', '/alerts',
-    '/inventory', '/inbound', '/materials', '/suppliers', '/purchase-orders', '/supplier-returns', '/categories',
+    '/inventory', '/materials', '/suppliers', '/purchase-orders', '/supplier-returns', '/categories',
   ],
   finance: [
     '/', '/alerts',
     '/reconciliation', '/categories', '/labor-times', '/logs',
+    '/projects', '/bom',
     '/abc/dashboard', '/abc/slide-cost', '/abc/profitability', '/abc/fee-comparison', '/abc/fee-mappings', '/abc/trend',
     '/abc/activity-centers',
     // ABC 高级页面
@@ -91,10 +92,14 @@ export const ROLE_MENU_MAP: Record<string, string[]> = {
   ],
   pathologist: [
     '/', '/alerts',
-    '/inventory', '/projects', '/bom', '/reconciliation',
+    '/inventory', '/projects', '/bom',
     '/categories', '/equipment', '/labor-times',
-    '/abc/dashboard', '/abc/slide-cost', '/abc/profitability', '/abc/fee-comparison', '/abc/fee-mappings', '/abc/trend',
+    '/abc/dashboard', '/abc/slide-cost', '/abc/profitability', '/abc/fee-comparison', '/abc/trend',
     '/abc/forecast', '/abc/model-validation',
+  ],
+  manager: [
+    '/', '/alerts', '/inventory',
+    '/abc/dashboard', '/abc/trend', '/abc/profitability',
   ],
 }
 

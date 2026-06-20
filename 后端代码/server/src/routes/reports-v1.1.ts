@@ -554,7 +554,8 @@ router.get('/full-cost-by-project', (req, res) => {
       const laborRows = db.prepare(`
         SELECT project_type, standard_minutes, labor_rate_per_minute
         FROM standard_labor_times
-        WHERE (project_type IN (${typePlaceholders}) OR project_type = 'all') AND is_equipment_step = 0
+        WHERE COALESCE(is_deleted, 0) = 0
+          AND (project_type IN (${typePlaceholders}) OR project_type = 'all') AND is_equipment_step = 0
       `).all(...uniqueTypes) as any[]
       for (const r of laborRows) {
         const key = r.project_type
@@ -809,7 +810,8 @@ router.get('/cost-structure', (req, res) => {
       const laborRows = db.prepare(`
         SELECT project_type, standard_minutes, labor_rate_per_minute
         FROM standard_labor_times
-        WHERE (project_type IN (${placeholders}) OR project_type = 'all') AND is_equipment_step = 0
+        WHERE COALESCE(is_deleted, 0) = 0
+          AND (project_type IN (${placeholders}) OR project_type = 'all') AND is_equipment_step = 0
       `).all(...uniqueTypes) as any[]
       for (const row of laborRows) {
         const key = row.project_type || 'all'
@@ -1170,7 +1172,8 @@ router.get('/personnel-efficiency', (req, res) => {
       ? db.prepare(`
           SELECT project_type, standard_minutes, labor_rate_per_minute
           FROM standard_labor_times
-          WHERE (project_type IN (${projectTypes.map(() => '?').join(',')}) OR project_type = 'all')
+          WHERE COALESCE(is_deleted, 0) = 0
+            AND (project_type IN (${projectTypes.map(() => '?').join(',')}) OR project_type = 'all')
             AND is_equipment_step = 0
         `).all(...projectTypes) as any[]
       : []

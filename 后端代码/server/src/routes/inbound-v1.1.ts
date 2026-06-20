@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
 import { adjustInventoryLocationStock, syncInventoryPrimaryLocation } from '../utils/inventory-locations.js'
+import { logOperation } from '../utils/operation-logger.js'
 
 const router = Router()
 const BATCH_DECREASE_EPSILON = 0.000001
@@ -480,6 +481,17 @@ router.post('/batch', requireWriteAccess, (req, res) => {
     }
 
     checkStockAlerts(db, Array.from(materialIds))
+    logOperation(db, req as any, {
+      operation: 'POST /inbound/batch',
+      description: '批量创建入库记录',
+      requestData: {
+        module: 'inbound_records',
+        ids: createdIds,
+        createdCount: createdIds.length,
+        materialIds: Array.from(materialIds),
+      },
+      responseData: { createdCount: createdIds.length },
+    })
     success(res, { createdCount: createdIds.length, ids: createdIds }, 'Batch inbound created', 201)
   } catch (err: any) { error(res, err.message) }
 })
@@ -657,6 +669,24 @@ router.post('/', requireWriteAccess, (req, res) => {
 
     // 自动检查库存预警（入库后库存可能恢复）
     checkStockAlerts(db, [materialId])
+    logOperation(db, req as any, {
+      operation: 'POST /inbound',
+      description: purchaseOrderId ? '按采购订单创建入库记录' : '创建入库记录',
+      requestData: {
+        module: 'inbound_records',
+        id,
+        inboundNo,
+        type,
+        materialId,
+        quantity: inboundQuantity,
+        price: inboundPrice,
+        supplierId: effectiveSupplierId,
+        locationId,
+        purchaseOrderId: purchaseOrderId || null,
+        purchaseOrderNo,
+      },
+      responseData: { id, inboundNo, status: 'completed' },
+    })
 
     success(res, { id, inboundNo, type, materialId, quantity: inboundQuantity, status: 'completed', purchaseOrderId, purchaseOrderNo, createdAt: new Date().toISOString() }, 'Inbound created', 201)
   } catch (err: any) { error(res, err.message) }
@@ -1004,6 +1034,21 @@ router.put('/:id', requireWriteAccess, (req, res) => {
       let msg = '更新成功'
       if (newStatus === 'cancelled' && oldStatus !== 'cancelled') msg = '取消成功，库存已同步扣减'
       if (newStatus === 'completed' && oldStatus === 'cancelled') msg = '恢复成功，库存已同步增加'
+      logOperation(db, req as any, {
+        operation: 'PUT /inbound/:id',
+        description: '更新入库记录',
+        requestData: {
+          module: 'inbound_records',
+          id,
+          inboundNo: record.inbound_no,
+          materialId: record.material_id,
+          purchaseOrderId: record.purchase_order_id || null,
+          oldStatus,
+          newStatus,
+          body: req.body || null,
+        },
+        responseData: { id, message: msg },
+      })
       success(res, { id }, msg)
     } catch (err) {
       db.exec('ROLLBACK')
@@ -1131,6 +1176,19 @@ router.delete('/:id', requireWriteAccess, (req, res) => {
       throw err
     }
 
+    logOperation(db, req as any, {
+      operation: 'DELETE /inbound/:id',
+      description: '删除入库记录',
+      requestData: {
+        module: 'inbound_records',
+        id,
+        inboundNo: record.inbound_no,
+        materialId: record.material_id,
+        quantity: record.quantity,
+        purchaseOrderId: record.purchase_order_id || null,
+      },
+      responseData: { id },
+    })
     success(res, null, '删除成功，库存已同步扣减')
   } catch (err: any) { error(res, err.message) }
 })
@@ -1228,6 +1286,20 @@ router.post('/:id/cancel', requireWriteAccess, (req, res) => {
       `).run(logId, record.material_id, -record.quantity, currentStock + record.quantity, currentStock, id, (req as any).user?.username || 'system')
 
       db.exec('COMMIT')
+      logOperation(db, req as any, {
+        operation: 'POST /inbound/:id/cancel',
+        description: '取消入库记录',
+        requestData: {
+          module: 'inbound_records',
+          id,
+          inboundNo: record.inbound_no,
+          materialId: record.material_id,
+          quantity: record.quantity,
+          purchaseOrderId: record.purchase_order_id || null,
+          reason: reason || '',
+        },
+        responseData: { id, status: 'cancelled' },
+      })
       success(res, null, '取消成功，库存已同步扣减')
     } catch (err) {
       db.exec('ROLLBACK')

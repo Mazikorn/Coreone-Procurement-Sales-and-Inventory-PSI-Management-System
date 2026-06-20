@@ -258,4 +258,78 @@ describe('退库管理', () => {
     expect((db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(source.materialId) as any).stock).toBe(7)
     expect((db.prepare('SELECT COUNT(*) as count FROM return_records WHERE material_id = ?').get(source.materialId) as any).count).toBe(0)
   })
+
+  it('RT-AUDIT-001: 创建和撤销退库必须写入操作日志，便于仓管交接回看', async () => {
+    const source = seedReturnSource(db, `audit-${Date.now()}`)
+
+    const createRes = await request(app)
+      .post('/api/v1/returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ outboundItemId: source.outboundItemId, quantity: 2, reason: 'unused' })
+    expect(createRes.status).toBe(200)
+
+    const createLog = db.prepare(`
+      SELECT operation, username, request_data, response_data
+      FROM operation_logs
+      WHERE operation = 'POST /returns' AND description LIKE ?
+      ORDER BY created_at DESC LIMIT 1
+    `).get(`%${createRes.body.data.id}%`) as any
+    expect(createLog?.username).toBe('admin')
+    expect(JSON.parse(createLog.request_data)).toMatchObject({ outboundItemId: source.outboundItemId, quantity: 2 })
+    expect(JSON.parse(createLog.response_data)).toMatchObject({ id: createRes.body.data.id })
+
+    const deleteRes = await request(app)
+      .delete(`/api/v1/returns/${createRes.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+    expect(deleteRes.status).toBe(200)
+
+    const deleteLog = db.prepare(`
+      SELECT operation, username, response_data
+      FROM operation_logs
+      WHERE operation = 'DELETE /returns/:id' AND description LIKE ?
+      ORDER BY created_at DESC LIMIT 1
+    `).get(`%${createRes.body.data.id}%`) as any
+    expect(deleteLog?.username).toBe('admin')
+    expect(JSON.parse(deleteLog.response_data)).toMatchObject({ id: createRes.body.data.id, status: 'cancelled' })
+  })
+
+  it('RT-ALERT-001: 退库恢复安全库存后自动关闭低库存预警，撤销退库后重新触发', async () => {
+    const source = seedReturnSource(db, `alert-${Date.now()}`, { outboundQty: 3, currentStock: 7 })
+    db.prepare('UPDATE materials SET safety_stock = 8 WHERE id = ?').run(source.materialId)
+    db.prepare(`
+      INSERT INTO alerts (id, type, level, material_id, material_name, current_stock, threshold, message, status)
+      VALUES (?, 'low-stock', 'warning', ?, '退库预警物料', 7, 8, '库存不足', 'pending')
+    `).run(`alert-return-${Date.now()}`, source.materialId)
+
+    const createRes = await request(app)
+      .post('/api/v1/returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ outboundItemId: source.outboundItemId, quantity: 2, reason: 'unused' })
+    expect(createRes.status).toBe(200)
+
+    const afterReturnPending = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM alerts
+      WHERE material_id = ? AND type = 'low-stock' AND status = 'pending'
+    `).get(source.materialId) as any
+    const autoResolved = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM alerts
+      WHERE material_id = ? AND type = 'low-stock' AND status = 'auto_resolved'
+    `).get(source.materialId) as any
+    expect(Number(afterReturnPending.count)).toBe(0)
+    expect(Number(autoResolved.count)).toBeGreaterThanOrEqual(1)
+
+    const deleteRes = await request(app)
+      .delete(`/api/v1/returns/${createRes.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+    expect(deleteRes.status).toBe(200)
+
+    const afterCancelPending = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM alerts
+      WHERE material_id = ? AND type = 'low-stock' AND status = 'pending'
+    `).get(source.materialId) as any
+    expect(Number(afterCancelPending.count)).toBe(1)
+  })
 })

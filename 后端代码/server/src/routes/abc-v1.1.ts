@@ -55,6 +55,9 @@ const parseJsonOrNull = (value: string | null | undefined) => {
   }
 }
 
+const activeStatusSql = (column: string, allowBlank = false) =>
+  `(${column} = 'active' OR ${column} = 1 OR ${column} = '1'${allowBlank ? ` OR ${column} IS NULL OR ${column} = ''` : ''})`
+
 const feeMappingAuditSelect = `
   SELECT
     b.id as bom_id,
@@ -72,11 +75,11 @@ const feeMappingAuditSelect = `
     open_ex.created_at as exception_created_at
   FROM boms b
   LEFT JOIN fee_standards legacy_fs
-    ON b.fee_standard_id = legacy_fs.id AND legacy_fs.status = 'active'
+    ON b.fee_standard_id = legacy_fs.id AND ${activeStatusSql('legacy_fs.status')}
   LEFT JOIN bom_fee_mappings m
-    ON b.id = m.bom_id AND m.status = 'active'
+    ON b.id = m.bom_id AND ${activeStatusSql('m.status')}
   LEFT JOIN fee_standards fs
-    ON m.fee_standard_id = fs.id AND fs.status = 'active'
+    ON m.fee_standard_id = fs.id AND ${activeStatusSql('fs.status')}
   LEFT JOIN cost_exceptions open_ex
     ON open_ex.bom_id = b.id
     AND open_ex.exception_type = 'missing_fee_mapping'
@@ -152,8 +155,8 @@ function normalizeFeeMappingsInput(db: any, mappings: any[], requireNonEmpty = t
     if (seen.has(duplicateKey)) {
       return { ok: false as const, message: '同一收费标准和聚合方式不能重复配置', code: 'RESOURCE_CONFLICT', status: 409 }
     }
-    const feeStandard = db.prepare('SELECT * FROM fee_standards WHERE id = ? AND status = ?')
-      .get(feeStandardId, 'active') as any
+    const feeStandard = db.prepare(`SELECT * FROM fee_standards WHERE id = ? AND ${activeStatusSql('status')}`)
+      .get(feeStandardId) as any
     if (!feeStandard) {
       return { ok: false as const, message: '收费标准不存在或已停用', code: 'INVALID_PARAMETER', status: 400 }
     }
@@ -312,6 +315,7 @@ const getCostSourceTotals = (db: any, yearMonth: string) => {
   const laborRows = db.prepare(`
     SELECT project_type, standard_minutes, labor_rate_per_minute
     FROM standard_labor_times
+    WHERE COALESCE(is_deleted, 0) = 0
   `).all() as any[]
 
   const sampleCountByType = new Map(sampleRows.map(row => [row.project_type || 'all', Number(row.sample_count) || 0]))
@@ -667,6 +671,7 @@ router.post('/activity-centers', requireCostWrite, (req, res) => {
     const { code, name, description, costDriverType, parentId, sortOrder } = req.body
     if (!code || !name) { error(res, '缺少必填字段', 'INVALID_PARAMETER', 400); return }
     const db = getDatabase()
+    const operator = getOperator(req)
     const driverValidation = validateCostDriverType(db, costDriverType || 'slide_count')
     if (!driverValidation.ok) { error(res, driverValidation.message, 'INVALID_PARAMETER', 400); return }
     const id = uuidv4()
@@ -674,6 +679,7 @@ router.post('/activity-centers', requireCostWrite, (req, res) => {
       INSERT INTO abc_activity_centers (id, code, name, description, cost_driver_type, parent_id, sort_order, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, 'active')
     `).run(id, code, name, description || null, driverValidation.code, parentId || null, sortOrder || 0)
+    writeAuditLog(db, 'activity_center', 'create', id, { code, name, costDriverType: driverValidation.code }, operator)
     success(res, { id }, 'Created', 201)
   } catch (err: any) { error(res, err.message) }
 })
@@ -682,6 +688,7 @@ router.put('/activity-centers/:id', requireCostWrite, (req, res) => {
   try {
     const { name, description, costDriverType, parentId, sortOrder, status } = req.body
     const db = getDatabase()
+    const operator = getOperator(req)
     const existing = db.prepare('SELECT * FROM abc_activity_centers WHERE id = ?').get(req.params.id) as any
     if (!existing) { error(res, '作业中心不存在', 'NOT_FOUND', 404); return }
     const nextCostDriverType = costDriverType || existing.cost_driver_type
@@ -700,6 +707,11 @@ router.put('/activity-centers/:id', requireCostWrite, (req, res) => {
       status || existing.status,
       req.params.id
     )
+    writeAuditLog(db, 'activity_center', 'update', req.params.id, {
+      name: name || existing.name,
+      costDriverType: driverValidation.code,
+      status: status || existing.status,
+    }, operator)
     success(res, { id: req.params.id }, 'Updated')
   } catch (err: any) { error(res, err.message) }
 })
@@ -707,6 +719,7 @@ router.put('/activity-centers/:id', requireCostWrite, (req, res) => {
 router.delete('/activity-centers/:id', requireCostWrite, (req, res) => {
   try {
     const db = getDatabase()
+    const operator = getOperator(req)
     const existing = db.prepare('SELECT * FROM abc_activity_centers WHERE id = ?').get(req.params.id) as any
     if (!existing) { error(res, '作业中心不存在', 'NOT_FOUND', 404); return }
     const childCount = (db.prepare('SELECT COUNT(*) as count FROM abc_activity_centers WHERE parent_id = ?').get(req.params.id) as any)?.count || 0
@@ -716,6 +729,7 @@ router.delete('/activity-centers/:id', requireCostWrite, (req, res) => {
     const poolCount = (db.prepare('SELECT COUNT(*) as count FROM abc_cost_pools WHERE activity_center_id = ?').get(req.params.id) as any)?.count || 0
     if (Number(poolCount) > 0) { error(res, '作业中心已有成本池记录，不能删除', 'RESOURCE_CONFLICT', 409); return }
     db.prepare('DELETE FROM abc_activity_centers WHERE id = ?').run(req.params.id)
+    writeAuditLog(db, 'activity_center', 'delete', req.params.id, { code: existing.code, name: existing.name }, operator)
     success(res, null, 'Deleted')
   } catch (err: any) { error(res, err.message) }
 })
@@ -731,11 +745,14 @@ router.post('/cost-drivers', requireCostWrite, (req, res) => {
   try {
     const { code, name, unit, calculationMethod, tierRules, description } = req.body
     if (!code || !name) { error(res, '缺少必填字段', 'INVALID_PARAMETER', 400); return }
+    const db = getDatabase()
+    const operator = getOperator(req)
     const id = uuidv4()
-    getDatabase().prepare(`
+    db.prepare(`
       INSERT INTO abc_cost_drivers (id, code, name, unit, calculation_method, tier_rules, description)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(id, code, name, unit || '', calculationMethod || 'linear', tierRules ? JSON.stringify(tierRules) : null, description || null)
+    writeAuditLog(db, 'cost_driver', 'create', id, { code, name, unit, calculationMethod: calculationMethod || 'linear' }, operator)
     success(res, { id }, 'Created', 201)
   } catch (err: any) { error(res, err.message) }
 })
@@ -744,6 +761,7 @@ router.put('/cost-drivers/:id', requireCostWrite, (req, res) => {
   try {
     const { name, unit, calculationMethod, tierRules, description, status } = req.body
     const db = getDatabase()
+    const operator = getOperator(req)
     const existing = db.prepare('SELECT * FROM abc_cost_drivers WHERE id = ?').get(req.params.id) as any
     if (!existing) { error(res, '成本动因不存在', 'NOT_FOUND', 404); return }
     db.prepare(`
@@ -759,6 +777,12 @@ router.put('/cost-drivers/:id', requireCostWrite, (req, res) => {
       status || existing.status,
       req.params.id
     )
+    writeAuditLog(db, 'cost_driver', 'update', req.params.id, {
+      name: name || existing.name,
+      unit: unit !== undefined ? unit : existing.unit,
+      calculationMethod: calculationMethod || existing.calculation_method,
+      status: status || existing.status,
+    }, operator)
     success(res, { id: req.params.id }, 'Updated')
   } catch (err: any) { error(res, err.message) }
 })
@@ -766,11 +790,13 @@ router.put('/cost-drivers/:id', requireCostWrite, (req, res) => {
 router.delete('/cost-drivers/:id', requireCostWrite, (req, res) => {
   try {
     const db = getDatabase()
+    const operator = getOperator(req)
     const existing = db.prepare('SELECT * FROM abc_cost_drivers WHERE id = ?').get(req.params.id) as any
     if (!existing) { error(res, '成本动因不存在', 'NOT_FOUND', 404); return }
     const activityCenterCount = (db.prepare('SELECT COUNT(*) as count FROM abc_activity_centers WHERE cost_driver_type = ?').get(existing.code) as any)?.count || 0
     if (Number(activityCenterCount) > 0) { error(res, '成本动因已被作业中心引用，不能删除', 'RESOURCE_CONFLICT', 409); return }
     db.prepare('DELETE FROM abc_cost_drivers WHERE id = ?').run(req.params.id)
+    writeAuditLog(db, 'cost_driver', 'delete', req.params.id, { code: existing.code, name: existing.name }, operator)
     success(res, null, 'Deleted')
   } catch (err: any) { error(res, err.message) }
 })
@@ -829,6 +855,7 @@ router.get('/cost-pools', (req, res) => {
 router.post('/cost-pools', requireCostWrite, (req, res) => {
   try {
     const db = getDatabase()
+    const operator = getOperator(req)
     const input = validateCostPoolInput(db, req.body)
     if (!input.ok) { error(res, input.message, input.code, input.status); return }
     ensurePeriodOpen(db, input.yearMonth)
@@ -843,6 +870,14 @@ router.post('/cost-pools', requireCostWrite, (req, res) => {
             driver_rate = ?, amount = ?, source = ?, description = ?
         WHERE id = ?
       `).run(input.direct, input.indirect, input.total, input.driverQty, input.driverRate, input.total, input.source, input.description, existing.id)
+      writeAuditLog(db, 'cost_pool', 'update', existing.id, {
+        yearMonth: input.yearMonth,
+        activityCenterId: input.activityCenterId,
+        totalCost: input.total,
+        driverQuantity: input.driverQty,
+        driverRate: input.driverRate,
+        source: input.source,
+      }, operator)
       success(res, { id: existing.id }, 'Updated')
       return
     }
@@ -868,6 +903,14 @@ router.post('/cost-pools', requireCostWrite, (req, res) => {
       input.source,
       input.description,
     )
+    writeAuditLog(db, 'cost_pool', 'create', id, {
+      yearMonth: input.yearMonth,
+      activityCenterId: input.activityCenterId,
+      totalCost: input.total,
+      driverQuantity: input.driverQty,
+      driverRate: input.driverRate,
+      source: input.source,
+    }, operator)
     success(res, { id }, 'Created', 201)
   } catch (err: any) {
     const code = err.message?.includes('已关账') ? 'PERIOD_CLOSED' : 'INTERNAL_ERROR'

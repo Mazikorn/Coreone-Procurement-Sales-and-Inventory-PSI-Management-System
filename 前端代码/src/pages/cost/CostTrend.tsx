@@ -128,14 +128,16 @@ export default function CostTrend() {
   const [exporting, setExporting] = useState(false)
 
   useEffect(() => {
-    loadData()
-  }, [projectType, months])
+    if (dimension === 'monthly') {
+      loadData()
+    }
+  }, [dimension, projectType, months])
 
   useEffect(() => {
     if (dimension === 'quarterly') {
       loadQuarterlyData()
     }
-  }, [dimension, projectType])
+  }, [dimension, projectType, months])
 
   const loadData = async () => {
     try {
@@ -290,17 +292,15 @@ export default function CostTrend() {
               <option key={opt.value} value={opt.value}>{opt.label}</option>
             ))}
           </select>
-          {dimension === 'monthly' && (
-            <select
-              value={months}
-              onChange={e => setMonths(Number(e.target.value))}
-              className="h-10 px-3 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
-            >
-              {MONTHS_OPTIONS.map(opt => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
-          )}
+          <select
+            value={months}
+            onChange={e => setMonths(Number(e.target.value))}
+            className="h-10 px-3 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
+          >
+            {MONTHS_OPTIONS.map(opt => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
         </div>
       </div>
 

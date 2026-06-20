@@ -324,6 +324,94 @@ describe('库存盘点 API', () => {
     expect(log.remark).toContain('physical')
   })
 
+  it('ST-AUDIT-001: 创建和确认盘点写入操作日志，支撑库存差异审计', async () => {
+    const suffix = `audit-${Date.now()}`
+    const { materialId } = seedStocktakingFixture(db, suffix, 10)
+
+    const createRes = await request(app)
+      .post('/api/v1/stocktaking')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        materialId,
+        actualStock: 8,
+        remark: '盘点审计测试',
+      })
+    expect(createRes.status).toBe(200)
+
+    const confirmRes = await request(app)
+      .post(`/api/v1/stocktaking/${createRes.body.data.id}/confirm`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ reason: 'physical', remark: '盘点审计确认' })
+    expect(confirmRes.status).toBe(200)
+
+    const logs = db.prepare(`
+      SELECT username, operation, request_data
+      FROM operation_logs
+      WHERE request_data LIKE ?
+      ORDER BY rowid ASC
+    `).all(`%${createRes.body.data.id}%`) as any[]
+
+    expect(logs.map(log => log.operation)).toEqual([
+      'POST /stocktaking',
+      'POST /stocktaking/:id/confirm',
+    ])
+    expect(logs.every(log => log.username === 'admin')).toBe(true)
+    expect(JSON.parse(logs[0].request_data)).toMatchObject({
+      module: 'stocktaking',
+      id: createRes.body.data.id,
+      materialId,
+      actualStock: 8,
+      systemStock: 10,
+      difference: -2,
+    })
+  })
+
+  it('ST-ALERT-001: 盘点确认导致库存低于安全库存时生成低库存预警，撤销后自动关闭', async () => {
+    const suffix = `alert-${Date.now()}`
+    const { materialId } = seedStocktakingFixture(db, suffix, 10)
+    db.prepare('UPDATE materials SET safety_stock = ? WHERE id = ?').run(9, materialId)
+
+    const createRes = await request(app)
+      .post('/api/v1/stocktaking')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        materialId,
+        actualStock: 8,
+        remark: '盘点触发低库存预警',
+      })
+    expect(createRes.status).toBe(200)
+
+    const confirmRes = await request(app)
+      .post(`/api/v1/stocktaking/${createRes.body.data.id}/confirm`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ reason: 'physical', remark: '确认低库存预警' })
+    expect(confirmRes.status).toBe(200)
+
+    const pendingAlert = db.prepare(`
+      SELECT status, current_stock, threshold, trigger_condition
+      FROM alerts
+      WHERE material_id = ? AND type = 'low-stock'
+    `).get(materialId) as any
+    expect(pendingAlert).toMatchObject({
+      status: 'pending',
+      current_stock: 8,
+      threshold: 9,
+    })
+    expect(pendingAlert.trigger_condition).toContain('当前库存 8 <= 安全库存 9')
+
+    const deleteRes = await request(app)
+      .delete(`/api/v1/stocktaking/${createRes.body.data.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+    expect(deleteRes.status).toBe(200)
+
+    const resolvedAlert = db.prepare(`
+      SELECT status, remark
+      FROM alerts
+      WHERE material_id = ? AND type = 'low-stock'
+    `).get(materialId) as any
+    expect(resolvedAlert).toMatchObject({ status: 'auto_resolved', remark: '库存已恢复' })
+  })
+
   it('ST-VALIDATION-001: 创建盘点拒绝非有限实际库存且不写盘点记录', async () => {
     const suffix = `finite-number-${Date.now()}`
     const { materialId } = seedStocktakingFixture(db, suffix, 10)

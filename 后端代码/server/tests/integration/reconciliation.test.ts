@@ -183,6 +183,21 @@ describe('成本对账异常闭环', () => {
     expect(updated.project_id).toBe(targetProjectId)
     expect(updated.project_name).toBe('编辑后项目')
     expect(updated.status).toBe('modified')
+
+    const editLog = db.prepare(`
+      SELECT type, target_id, target_name, field, old_value, new_value, reason, operator
+      FROM reconciliation_logs
+      WHERE target_id = ? AND type = 'case_edit'
+      ORDER BY created_at DESC
+      LIMIT 1
+    `).get(imported.id) as any
+    expect(editLog).toBeTruthy()
+    expect(editLog.target_name).toBe(caseNo)
+    expect(editLog.field).toBe('project_id,project_name,status')
+    expect(editLog.reason).toBe('病例对账信息更新')
+    expect(editLog.operator).toBe('admin')
+    expect(JSON.parse(editLog.old_value)).toMatchObject({ projectId: sourceProjectId, projectName: '导入匹配项目' })
+    expect(JSON.parse(editLog.new_value)).toMatchObject({ projectId: targetProjectId, projectName: '编辑后项目', status: 'modified' })
   })
 
   it('病例编辑、列表筛选和导出必须拒绝非法病例状态', async () => {

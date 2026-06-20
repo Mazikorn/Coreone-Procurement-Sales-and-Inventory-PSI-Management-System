@@ -63,8 +63,6 @@ function canManageProjects(role: string | null, permissions: string[]): boolean 
   return (
     role === 'admin' ||
     role === 'technician' ||
-    role === 'pathologist' ||
-    role === 'warehouse_manager' ||
     permissions.includes('*') ||
     permissions.includes('projects') ||
     permissions.includes('projects:add') ||

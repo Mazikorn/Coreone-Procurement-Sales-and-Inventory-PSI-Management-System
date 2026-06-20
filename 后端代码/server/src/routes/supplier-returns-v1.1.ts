@@ -4,6 +4,8 @@ import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
 import { generateNo } from '../utils/generateNo.js'
 import { consumeInventoryLocationStock, restoreInventoryLocationStock } from '../utils/inventory-locations.js'
+import { checkStockAlerts } from '../utils/alertChecker.js'
+import { logOperation } from '../utils/operation-logger.js'
 
 const router = Router()
 const BATCH_RESTORE_EPSILON = 0.000001
@@ -425,6 +427,21 @@ router.post('/', (req, res) => {
       `).run(logId, materialId, -qty, beforeStock, afterStock, id, operator, '退货给供应商')
 
       db.exec('COMMIT')
+      checkStockAlerts(db, [materialId])
+      logOperation(db, req as any, {
+        operation: 'POST /supplier-returns',
+        description: `创建供应商退货记录 ${id}`,
+        requestData: {
+          materialId,
+          supplierId: effectiveSupplierId || null,
+          batchId: batch?.id || null,
+          quantity: qty,
+          reason,
+          purchaseOrderId: purchaseOrderId || null,
+          inboundRecordId: inboundRecordId || null,
+        },
+        responseData: { id, returnNo, materialId, quantity: qty, status: 'pending' },
+      })
       success(res, { id, returnNo }, '退货记录创建成功')
     } catch (e: any) {
       db.exec('ROLLBACK')
@@ -510,6 +527,9 @@ router.put('/:id/status', (req, res) => {
         JSON.stringify({ id: req.params.id, status }),
       )
       db.exec('COMMIT')
+      if (status === 'cancelled') {
+        checkStockAlerts(db, [record.material_id])
+      }
     } catch (e) {
       db.exec('ROLLBACK')
       throw e
@@ -569,6 +589,13 @@ router.delete('/:id', (req, res) => {
       `).run(logId, record.material_id, record.quantity, beforeStock, afterStock, req.params.id, operator, '撤销退货给供应商')
 
       db.exec('COMMIT')
+      checkStockAlerts(db, [record.material_id])
+      logOperation(db, req as any, {
+        operation: 'DELETE /supplier-returns/:id',
+        description: `删除供应商退货记录 ${req.params.id}`,
+        requestData: { id: req.params.id },
+        responseData: { id: req.params.id, materialId: record.material_id, quantity: Number(record.quantity), status: 'deleted' },
+      })
       success(res, null, '退货记录已删除')
     } catch (e: any) {
       db.exec('ROLLBACK')

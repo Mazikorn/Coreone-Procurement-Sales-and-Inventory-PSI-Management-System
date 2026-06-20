@@ -54,6 +54,22 @@ describe('useLaborTimePage', () => {
     expect(result.current.canManageLaborTimes).toBe(true)
   })
 
+  it('allows technician users to manage standard labor time steps', () => {
+    localStorage.setItem('user', JSON.stringify({ role: 'technician' }))
+
+    const { result } = renderHook(() => useLaborTimePage())
+
+    expect(result.current.canManageLaborTimes).toBe(true)
+  })
+
+  it('keeps pathologist users read-only for standard labor times', () => {
+    localStorage.setItem('user', JSON.stringify({ role: 'pathologist', permissions: ['labor_times:view'] }))
+
+    const { result } = renderHook(() => useLaborTimePage())
+
+    expect(result.current.canManageLaborTimes).toBe(false)
+  })
+
   it('keeps backend-controlled step code and project type out of edit updates', async () => {
     const { result } = renderHook(() => useLaborTimePage())
     await waitFor(() => expect(result.current.data).toHaveLength(1))

@@ -208,6 +208,41 @@ describe('采购订单入库联动', () => {
     })
   })
 
+  it('PO-AUDIT-001: 采购订单创建和取消写入操作日志，支撑仓管入库交接追踪', async () => {
+    const suffix = `audit-${Date.now()}`
+    const fixture = seedPurchaseFixture(db, suffix)
+
+    const poRes = await request(app)
+      .post('/api/v1/purchase-orders')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId: fixture.materialId,
+        supplierId: fixture.supplierId,
+        orderedQty: 3,
+        unitPrice: 8,
+      })
+
+    expect(poRes.status).toBe(200)
+
+    const cancelRes = await request(app)
+      .put(`/api/v1/purchase-orders/${poRes.body.data.id}/cancel`)
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(cancelRes.status).toBe(200)
+
+    const logs = db.prepare(`
+      SELECT operation, request_data
+      FROM operation_logs
+      WHERE request_data LIKE ?
+      ORDER BY rowid ASC
+    `).all(`%"id":"${poRes.body.data.id}"%`) as any[]
+
+    expect(logs.map(row => row.operation)).toEqual([
+      'POST /purchase-orders',
+      'PUT /purchase-orders/:id/cancel',
+    ])
+  })
+
   it('PO-VALIDATION-001: 创建采购订单拒绝非有限数量和单价，避免订单金额污染', async () => {
     const suffix = `finite-number-${Date.now()}`
     const fixture = seedPurchaseFixture(db, suffix)
@@ -289,6 +324,62 @@ describe('采购订单入库联动', () => {
     expect(inboundTotal.total).toBe(8)
     expect(batch.remaining).toBe(8)
     expect(batch.inbound_price).toBe(12)
+  })
+
+  it('PO-IN-AUDIT-001: 采购入库创建和取消写入操作日志，支撑仓管责任追踪', async () => {
+    const suffix = `inbound-audit-${Date.now()}`
+    const fixture = seedPurchaseFixture(db, suffix)
+
+    const poRes = await request(app)
+      .post('/api/v1/purchase-orders')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId: fixture.materialId,
+        supplierId: fixture.supplierId,
+        orderedQty: 8,
+        unitPrice: 12,
+      })
+
+    expect(poRes.status).toBe(200)
+    const purchaseOrderId = poRes.body.data.id
+
+    const inboundRes = await request(app)
+      .post('/api/v1/inbound')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        type: 'purchase',
+        materialId: fixture.materialId,
+        batchNo: `B-POIN-${suffix}`,
+        quantity: 3,
+        price: 12,
+        supplierId: fixture.supplierId,
+        locationId: fixture.locationId,
+        expiryDate: '2027-12-31',
+        purchaseOrderId,
+      })
+
+    expect(inboundRes.status).toBe(201)
+    const inboundId = inboundRes.body.data.id
+
+    const cancelRes = await request(app)
+      .post(`/api/v1/inbound/${inboundId}/cancel`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ reason: '审计回归取消' })
+
+    expect(cancelRes.status).toBe(200)
+
+    const logs = db.prepare(`
+      SELECT operation, request_data
+      FROM operation_logs
+      WHERE request_data LIKE ?
+      ORDER BY rowid ASC
+    `).all(`%"id":"${inboundId}"%`) as any[]
+
+    expect(logs.map(row => row.operation)).toEqual([
+      'POST /inbound',
+      'POST /inbound/:id/cancel',
+    ])
+    expect(logs.every(row => row.request_data.includes(purchaseOrderId))).toBe(true)
   })
 
   it('PO-IN-011: 采购订单入库未传单价时继承订单单价，避免批次成本被清零', async () => {

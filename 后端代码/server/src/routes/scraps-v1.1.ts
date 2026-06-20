@@ -4,6 +4,8 @@ import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
 import { generateNo } from '../utils/generateNo.js'
 import { consumeInventoryLocationStock, restoreInventoryLocationStock } from '../utils/inventory-locations.js'
+import { logOperation } from '../utils/operation-logger.js'
+import { checkStockAlerts } from '../utils/alertChecker.js'
 
 const router = Router()
 const BATCH_RESTORE_EPSILON = 0.000001
@@ -171,6 +173,7 @@ router.post('/batch', (req, res) => {
     }
 
     const createdIds: string[] = []
+    const changedMaterialIds = new Set<string>()
     db.exec('BEGIN IMMEDIATE')
     try {
       for (const record of validRecords) {
@@ -208,9 +211,27 @@ router.post('/batch', (req, res) => {
           VALUES (?, 'scrap', ?, ?, ?, ?, ?, 'scrap_batch', ?, ?)
         `).run(uuidv4(), record.materialId, -record.quantity, beforeStock, afterStock, id, operator, '批量报废')
         createdIds.push(id)
+        changedMaterialIds.add(record.materialId)
       }
 
       db.exec('COMMIT')
+      checkStockAlerts(db, Array.from(changedMaterialIds))
+      logOperation(db, req as any, {
+        operation: 'POST /scraps/batch',
+        description: `批量创建报废记录 ${createdIds.length} 条`,
+        requestData: {
+          module: 'scraps',
+          ids: createdIds,
+          createdCount: createdIds.length,
+          records: validRecords.map(record => ({
+            materialId: record.materialId,
+            batchId: record.batchId || null,
+            quantity: record.quantity,
+            reason: record.reason,
+          })),
+        },
+        responseData: { createdCount: createdIds.length, ids: createdIds },
+      })
       success(res, { createdCount: createdIds.length, ids: createdIds }, 'Batch scrap created')
     } catch (e: any) {
       db.exec('ROLLBACK')
@@ -239,6 +260,8 @@ router.post('/', (req, res) => {
     const material = db.prepare('SELECT * FROM materials WHERE id = ? AND is_deleted = 0').get(materialId) as any
     if (!material) { error(res, '物料不存在或已删除', 'NOT_FOUND', 404); return }
     if (Number(material.status) !== 1) { error(res, '物料已停用，不能创建报废记录', 'CONFLICT', 409); return }
+    const id = uuidv4()
+    let selectedBatchId: string | null = null
 
     // 库存检查移入事务内（防止 TOCTOU 竞态条件）
     db.exec('BEGIN IMMEDIATE')
@@ -255,7 +278,7 @@ router.post('/', (req, res) => {
         error(res, batchResult.error.message, batchResult.error.code, batchResult.error.status)
         return
       }
-      const id = uuidv4()
+      selectedBatchId = batchResult.batch?.id || null
       db.prepare('INSERT INTO scrap_records (id, scrap_no, material_id, batch_id, quantity, reason, operator, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
         .run(id, generateScrapNo(), materialId, batchResult.batch?.id || null, scrapQuantity, normalizedReason, operator || 'system', remark || null)
       db.prepare('UPDATE inventory SET stock = stock - ?, update_time = CURRENT_TIMESTAMP WHERE material_id = ?').run(scrapQuantity, materialId)
@@ -286,6 +309,20 @@ router.post('/', (req, res) => {
       `).run(logId, materialId, -scrapQuantity, Number(inv?.stock || 0), afterStock, id, operator || 'system')
 
       db.exec('COMMIT')
+      checkStockAlerts(db, [materialId])
+      logOperation(db, req as any, {
+        operation: 'POST /scraps',
+        description: '创建报废记录',
+        requestData: {
+          module: 'scraps',
+          id,
+          materialId,
+          batchId: selectedBatchId,
+          quantity: scrapQuantity,
+          reason: normalizedReason,
+        },
+        responseData: { id, status: 'completed' },
+      })
       success(res, { id }, 'Scrap created')
     } catch (e: any) {
       db.exec('ROLLBACK')
@@ -354,6 +391,20 @@ router.delete('/:id', (req, res) => {
       `).run(logId, record.material_id, record.quantity, beforeStock, afterStock, id, (req as any).user?.username || 'system')
 
       db.exec('COMMIT')
+      checkStockAlerts(db, [record.material_id])
+      logOperation(db, req as any, {
+        operation: 'DELETE /scraps/:id',
+        description: `撤销报废记录 ${id}`,
+        requestData: {
+          module: 'scraps',
+          id,
+          materialId: record.material_id,
+          batchId: record.batch_id || null,
+          quantity: Number(record.quantity || 0),
+          reason: record.reason,
+        },
+        responseData: { id, status: 'cancelled' },
+      })
       success(res, null, '报废记录已撤销')
     } catch (e: any) {
       db.exec('ROLLBACK')

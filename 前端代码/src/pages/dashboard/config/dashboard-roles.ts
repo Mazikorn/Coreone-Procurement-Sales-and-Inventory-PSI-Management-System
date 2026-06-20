@@ -4,6 +4,7 @@ import {
   ArrowDownToLine,
   BarChart3,
   ClipboardList,
+  Bell,
   Package,
   PackageSearch,
   ShoppingCart,
@@ -159,6 +160,49 @@ const inventoryQuickAction: DashboardQuickAction = {
   navigateTo: '/stocktaking',
 }
 
+const managerQuickActions: DashboardQuickAction[] = [
+  {
+    label: '预警中心',
+    desc: '查看库存和成本风险',
+    icon: Bell,
+    colorClass: 'text-orange-500',
+    bgClass: 'bg-orange-50',
+    navigateTo: '/alerts',
+  },
+  {
+    label: '库存风险',
+    desc: '查看库存余量和批次',
+    icon: Package,
+    colorClass: 'text-blue-500',
+    bgClass: 'bg-blue-50',
+    navigateTo: '/inventory',
+  },
+  {
+    label: '成本看板',
+    desc: '查看可信成本汇总',
+    icon: BarChart3,
+    colorClass: 'text-indigo-500',
+    bgClass: 'bg-indigo-50',
+    navigateTo: '/abc/dashboard',
+  },
+  {
+    label: '成本趋势',
+    desc: '查看月度和季度趋势',
+    icon: TrendingUp,
+    colorClass: 'text-green-500',
+    bgClass: 'bg-green-50',
+    navigateTo: '/abc/trend',
+  },
+  {
+    label: '盈利分析',
+    desc: '查看项目利润表现',
+    icon: TrendingUp,
+    colorClass: 'text-emerald-500',
+    bgClass: 'bg-emerald-50',
+    navigateTo: '/abc/profitability',
+  },
+]
+
 const defaultConfig: DashboardRoleConfig = {
   apiCalls: ['inventory', 'alerts', 'inbound-stats', 'outbound-stats'],
   statCards: [inventoryCard, inboundCard, outboundCard, alertCard],
@@ -208,6 +252,13 @@ const roleConfigs: Record<string, DashboardRoleConfig> = {
     statCards: [outboundCard, ...costCards.slice(0, 2)],
     quickActions: [baseQuickActions[1], costQuickAction],
     showBanner: false,
+  },
+  manager: {
+    apiCalls: ['inventory', 'alerts', 'abc-dashboard'],
+    statCards: [alertCard, inventoryCard, costCards[0], costCards[2], costCards[3]],
+    quickActions: managerQuickActions,
+    showBanner: true,
+    exclusiveSection: 'cost-overview',
   },
 }
 

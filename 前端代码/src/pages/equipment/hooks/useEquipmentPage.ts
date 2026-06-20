@@ -24,7 +24,7 @@ export interface EquipmentForm {
 
 function canManageEquipment() {
   const role = getUserRole()
-  if (['admin', 'technician', 'pathologist'].includes(role || '')) {
+  if (['admin', 'technician'].includes(role || '')) {
     return true
   }
   const permissions = getUserPermissions()

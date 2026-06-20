@@ -64,6 +64,7 @@ export default function Alerts() {
         filter={page.filter}
         quickFilter={page.quickFilter}
         selectedIds={page.selectedIds}
+        canHandle={page.canHandle}
         onFilterChange={(filter) => { page.setFilter(filter); page.setPage(1) }}
         onQuickFilterChange={(v) => { page.setQuickFilter(v); page.setPage(1) }}
         onResetFilters={page.resetFilters}
@@ -109,6 +110,7 @@ export default function Alerts() {
         open={page.modal.type === 'detail'}
         alert={page.modal.alert}
         onClose={page.closeModal}
+        canHandle={page.canHandle}
         onHandle={() => {
           if (page.modal.alert) page.openModal('handle', page.modal.alert)
         }}
@@ -119,6 +121,7 @@ export default function Alerts() {
         open={page.modal.type === 'consumption-detail'}
         alert={page.modal.alert}
         onClose={page.closeModal}
+        canHandle={page.canHandle}
         onHandle={() => {
           if (page.modal.alert) page.openModal('consumption-handle', page.modal.alert)
         }}

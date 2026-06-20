@@ -445,11 +445,13 @@ export function initializeDatabase(): void {
       description TEXT,
       sort_order INTEGER DEFAULT 0,
       reference_source TEXT DEFAULT 'system',
+      is_deleted INTEGER NOT NULL DEFAULT 0,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(step_code, project_type)
     )
   `)
+  ensureColumn('standard_labor_times', 'is_deleted', 'INTEGER NOT NULL DEFAULT 0')
 
   // 间接成本与季度调整
   database.exec(`
@@ -891,6 +893,7 @@ export function initializeDatabase(): void {
     { id: 'USER-DOC-STD', username: 'liuyf', realName: '刘玉芬', role: 'pathologist', department: '病理科' },
     { id: 'USER-PRO-STD', username: 'zhaohp', realName: '赵海鹏', role: 'procurement', department: '设备科' },
     { id: 'USER-FIN-STD', username: 'sunli', realName: '孙丽', role: 'finance', department: '财务科' },
+    { id: 'USER-MGR-STD', username: 'guanli', realName: '顾管理', role: 'manager', department: '院办' },
   ]
   const hashedTestPw = bcrypt.hashSync('CoreOne2026!', 12)
   const insertUser = database.prepare(
@@ -902,7 +905,7 @@ export function initializeDatabase(): void {
   // 确保 E2E 测试用户始终可用（防止被软删除后无法恢复）
   database.prepare(`
     UPDATE users SET is_deleted = 0, status = 1
-    WHERE username IN ('cangguan','jishuyuan1','yishi1','caigou','caiwu','wangkq','zhangwei','liuyf','zhaohp','sunli')
+    WHERE username IN ('cangguan','jishuyuan1','yishi1','caigou','caiwu','wangkq','zhangwei','liuyf','zhaohp','sunli','guanli')
   `).run()
 
   // 插入默认角色（E2E 测试依赖）
@@ -913,6 +916,7 @@ export function initializeDatabase(): void {
     { id: 'ROLE-DOC', code: 'pathologist', name: '病理医师', description: '负责项目审核、成本查看' },
     { id: 'ROLE-PRO', code: 'procurement', name: '采购员', description: '负责采购、供应商管理' },
     { id: 'ROLE-FIN', code: 'finance', name: '财务', description: '负责对账、成本分析' },
+    { id: 'ROLE-MGR', code: 'manager', name: '管理者', description: '只读查看库存、预警、成本和利润经营风险' },
   ]
   const insertRole = database.prepare(
     'INSERT OR IGNORE INTO roles (id, code, name, description, permissions, data_scope, status) VALUES (?, ?, ?, ?, ?, ?, ?)'
@@ -943,17 +947,38 @@ export function initializeDatabase(): void {
   }
   const warehouseRole = database.prepare('SELECT permissions FROM roles WHERE code = ? AND is_deleted = 0').get('warehouse_manager') as any
   if (warehouseRole) {
+    const withoutWarehouseWrite = removePermissions(warehouseRole.permissions, ['purchase_orders', 'bom', 'projects'])
     database.prepare(`
       UPDATE roles
       SET permissions = ?, updated_at = CURRENT_TIMESTAMP
       WHERE code = 'warehouse_manager' AND is_deleted = 0
-    `).run(removePermissions(warehouseRole.permissions, ['purchase_orders', 'bom']))
+    `).run(mergePermissions(withoutWarehouseWrite, ['projects:view']))
+  }
+  const technicianRole = database.prepare('SELECT permissions FROM roles WHERE code = ? AND is_deleted = 0').get('technician') as any
+  if (technicianRole) {
+    database.prepare(`
+      UPDATE roles
+      SET permissions = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE code = 'technician' AND is_deleted = 0
+    `).run(mergePermissions(removePermissions(technicianRole.permissions, ['outbound', 'labor_times:view']), ['labor_times']))
+  }
+  const pathologistRole = database.prepare('SELECT permissions FROM roles WHERE code = ? AND is_deleted = 0').get('pathologist') as any
+  if (pathologistRole) {
+    const readOnlyModelingPermissions = mergePermissions(
+      removePermissions(pathologistRole.permissions, ['outbound', 'projects', 'bom', 'equipment', 'labor_times']),
+      ['projects:view', 'bom:view', 'equipment:view', 'labor_times:view']
+    )
+    database.prepare(`
+      UPDATE roles
+      SET permissions = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE code = 'pathologist' AND is_deleted = 0
+    `).run(readOnlyModelingPermissions)
   }
   database.prepare(`
     UPDATE roles
     SET permissions = REPLACE(permissions, '"labor_times"', '"labor_times:view"'),
         updated_at = CURRENT_TIMESTAMP
-    WHERE code IN ('technician', 'pathologist')
+    WHERE code IN ('pathologist')
       AND is_deleted = 0
       AND permissions LIKE '%"labor_times"%'
   `).run()

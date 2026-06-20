@@ -5,7 +5,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { logOperation } from '../utils/operation-logger.js'
 
 const router = Router()
-const SYSTEM_ROLE_CODES = ['admin', 'warehouse_manager', 'technician', 'pathologist', 'procurement', 'finance'] as const
+const SYSTEM_ROLE_CODES = ['admin', 'warehouse_manager', 'technician', 'pathologist', 'procurement', 'finance', 'manager'] as const
 const SYSTEM_ROLE_CODES_SQL = SYSTEM_ROLE_CODES.map(code => `'${code}'`).join(', ')
 const VALID_PERMISSION_MODULES = new Set([
   'dashboard',

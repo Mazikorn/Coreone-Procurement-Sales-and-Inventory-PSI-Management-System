@@ -232,9 +232,9 @@ export default function LaborTimeList() {
       {/* 删除确认 */}
       <ConfirmDialog
         open={page.modalType === 'delete'}
-        title="确认删除"
-        description={`确定要删除工时定义「${page.detailRow?.stepName || ''}」吗？此操作不可撤销。`}
-        confirmText="确认删除"
+        title="归档工时定义"
+        description={`确定要归档工时定义「${page.detailRow?.stepName || ''}」吗？归档后不再参与成本计算和列表展示，历史记录仍可审计。`}
+        confirmText="确认归档"
         confirmVariant="danger"
         onConfirm={page.handleDelete}
         onCancel={() => page.setModalType(null)}

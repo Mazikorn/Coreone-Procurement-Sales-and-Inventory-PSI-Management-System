@@ -28,6 +28,9 @@ export interface RoleItem {
   isSystem?: boolean
 }
 
+const PASSWORD_POLICY_MESSAGE = '密码至少 8 位，且需包含大小写字母、数字和符号'
+const PASSWORD_POLICY_PATTERN = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/
+
 export function getTemporaryPasswordOrThrow(res: { temporaryPassword?: string } | null | undefined) {
   if (!res?.temporaryPassword) {
     throw new Error('接口未返回临时密码')
@@ -195,8 +198,8 @@ export function useUsersPage() {
       toast.error('请填写必填字段')
       return
     }
-    if (normalizedForm.password && normalizedForm.password.trim().length < 8) {
-      toast.error('初始密码至少 8 位')
+    if (normalizedForm.password && !PASSWORD_POLICY_PATTERN.test(normalizedForm.password.trim())) {
+      toast.error(PASSWORD_POLICY_MESSAGE)
       return
     }
     try {

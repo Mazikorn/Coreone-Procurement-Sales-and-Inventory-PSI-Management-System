@@ -31,13 +31,15 @@ export default function InventoryList() {
             <ShieldCheck className="w-4 h-4" />
             数据诊断
           </button>
-          <button
-            onClick={() => page.setOutboundModalOpen(true)}
-            className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-all duration-150 ease text-sm font-medium shadow-sm"
-          >
-            <Upload className="w-4 h-4" />
-            出库登记
-          </button>
+          {page.canManageInventoryActions && (
+            <button
+              onClick={() => page.setOutboundModalOpen(true)}
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-all duration-150 ease text-sm font-medium shadow-sm"
+            >
+              <Upload className="w-4 h-4" />
+              出库登记
+            </button>
+          )}
         </div>
       </div>
 
@@ -104,7 +106,8 @@ export default function InventoryList() {
           onPageChange={page.setPage}
           onPageSizeChange={page.setPageSize}
           onBatchOutbound={page.openBatchOutbound}
-          onBatchScrap={() => page.setBatchScrapModalOpen(true)}
+          onBatchScrap={page.openBatchScrap}
+          canManageInventoryActions={page.canManageInventoryActions}
         />
       )}
 
@@ -193,6 +196,7 @@ export default function InventoryList() {
         item={page.selectedItem}
         onClose={() => page.setDetailModalOpen(false)}
         onOutbound={() => page.selectedItem && page.openOutboundModal(page.selectedItem)}
+        canManageInventoryActions={page.canManageInventoryActions}
       />
 
       <BatchOutboundModal

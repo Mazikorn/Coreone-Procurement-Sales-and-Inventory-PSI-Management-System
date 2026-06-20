@@ -96,6 +96,30 @@ describe('useDashboardPage', () => {
     expect(result.current.alertCount).toBe(2)
   })
 
+  it('loads manager operating insight without execution-flow stats or recent execution lists', async () => {
+    setRole('manager')
+
+    const { result } = renderHook(() => useDashboardPage())
+
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    expect(result.current.role).toBe('manager')
+    expect(inventoryApi.getStats).toHaveBeenCalled()
+    expect(alertsApi.getList).toHaveBeenCalledWith(expect.objectContaining({ status: 'pending', pageSize: 5 }))
+    expect(abcApi.getDashboard).toHaveBeenCalled()
+    expect(inboundApi.getStats).not.toHaveBeenCalled()
+    expect(inboundApi.getList).not.toHaveBeenCalled()
+    expect(outboundApi.getStats).not.toHaveBeenCalled()
+    expect(outboundApi.getList).not.toHaveBeenCalled()
+    expect(result.current.config.quickActions.map(action => action.navigateTo)).toEqual([
+      '/alerts',
+      '/inventory',
+      '/abc/dashboard',
+      '/abc/trend',
+      '/abc/profitability',
+    ])
+  })
+
   it('orders recent inbound and outbound activities by their real timestamps', async () => {
     setRole('warehouse_manager')
     vi.mocked(inboundApi.getList).mockResolvedValue({

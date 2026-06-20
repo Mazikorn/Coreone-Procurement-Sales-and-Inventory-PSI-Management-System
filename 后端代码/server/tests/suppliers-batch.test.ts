@@ -462,4 +462,44 @@ describe('供应商批量操作', () => {
       .get(created.body.data.id) as any
     expect(unchanged.name).toBe(`B194 安全供应商 ${suffix}`)
   })
+
+  it('SUP-AUDIT-001: 供应商维护写入操作日志，支撑采购到入库来源追踪', async () => {
+    const suffix = `audit-${Date.now()}`
+    const created = await request(app)
+      .post('/api/v1/suppliers')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        name: `审计供应商-${suffix}`,
+        contact: '审计联系人',
+        phone: '13800138000',
+      })
+
+    expect(created.status).toBe(201)
+
+    const updated = await request(app)
+      .put(`/api/v1/suppliers/${created.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ contact: '更新审计联系人' })
+
+    expect(updated.status).toBe(200)
+
+    const deleted = await request(app)
+      .delete(`/api/v1/suppliers/${created.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(deleted.status).toBe(200)
+
+    const logs = db.prepare(`
+      SELECT operation, request_data
+      FROM operation_logs
+      WHERE request_data LIKE ?
+      ORDER BY rowid ASC
+    `).all(`%"id":"${created.body.data.id}"%`) as any[]
+
+    expect(logs.map(row => row.operation)).toEqual([
+      'POST /suppliers',
+      'PUT /suppliers/:id',
+      'DELETE /suppliers/:id',
+    ])
+  })
 })

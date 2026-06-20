@@ -27,6 +27,15 @@ async function loginWarehouse(app: any): Promise<string> {
   return res.body.data.token
 }
 
+async function loginRole(app: any, username: string): Promise<string> {
+  const res = await request(app)
+    .post('/api/v1/auth/login')
+    .send({ username, password: 'CoreOne2026!' })
+  expect(res.status).toBe(200)
+  expect(res.body.success).toBe(true)
+  return res.body.data.token
+}
+
 function seedBasicData(db: any) {
   db.prepare(`INSERT INTO material_categories (id, code, name, level) VALUES (?, ?, ?, ?)`).run(
     'cat-out', 'C-OUT', '试剂', 1,
@@ -215,6 +224,43 @@ describe('集成测试：出库管理', () => {
       expect(item.usage).toBe('self')
       expect(item.receiver).toBe('测试员')
       expect(tracking.receiver).toBe('测试员')
+    })
+
+    it('OUT-AUDIT-001: 普通出库创建和删除必须写入操作日志，便于仓管交接回看', async () => {
+      const createRes = await request(app)
+        .post('/api/v1/outbound')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          type: 'project',
+          items: [{ materialId, quantity: 2, usage: 'self', receiver: '审计测试员' }],
+          remark: '普通出库审计测试',
+        })
+      expect(createRes.status).toBe(201)
+
+      const createLog = db.prepare(`
+        SELECT username, request_data, response_data
+        FROM operation_logs
+        WHERE operation = 'POST /outbound' AND description LIKE ?
+        ORDER BY created_at DESC LIMIT 1
+      `).get(`%${createRes.body.data.id}%`) as any
+      expect(createLog?.username).toBe('admin')
+      expect(JSON.parse(createLog.request_data)).toMatchObject({ type: 'project' })
+      expect(JSON.parse(createLog.response_data)).toMatchObject({ id: createRes.body.data.id, type: 'project' })
+
+      const deleteRes = await request(app)
+        .delete(`/api/v1/outbound/${createRes.body.data.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ reason: '审计测试撤销' })
+      expect(deleteRes.status).toBe(200)
+
+      const deleteLog = db.prepare(`
+        SELECT username, response_data
+        FROM operation_logs
+        WHERE operation = 'DELETE /outbound/:id' AND description LIKE ?
+        ORDER BY created_at DESC LIMIT 1
+      `).get(`%${createRes.body.data.id}%`) as any
+      expect(deleteLog?.username).toBe('admin')
+      expect(JSON.parse(deleteLog.response_data)).toMatchObject({ id: createRes.body.data.id, status: 'deleted' })
     })
 
     it('外给出库记录接收方但不创建使用中记录', async () => {
@@ -796,6 +842,16 @@ describe('集成测试：出库管理', () => {
       expect(snapshot.bomSnapshot.version).toBe('v1.0')
       expect(snapshot.bomSnapshot.items[0].materialId).toBe(materialId)
       expect(snapshot.bomSnapshot.items[0].usagePerSample).toBe(1)
+
+      const auditLog = db.prepare(`
+        SELECT username, request_data, response_data
+        FROM operation_logs
+        WHERE operation = 'POST /outbound/bom' AND description LIKE ?
+        ORDER BY created_at DESC LIMIT 1
+      `).get(`%${res.body.data.id}%`) as any
+      expect(auditLog?.username).toBe('admin')
+      expect(JSON.parse(auditLog.request_data)).toMatchObject({ projectId, bomId, sampleCount: 10 })
+      expect(JSON.parse(auditLog.response_data)).toMatchObject({ id: res.body.data.id, type: 'bom' })
     })
 
     it('项目已配置BOM时可只传检测项目和样本数执行标准BOM出库', async () => {
@@ -1119,6 +1175,21 @@ describe('集成测试：出库管理', () => {
   })
 
   describe('出库权限控制', () => {
+    it('技术员和医生不能直接读取出库台账，避免绕过仓管交接边界', async () => {
+      const technicianToken = await loginRole(app, 'zhangwei')
+      const pathologistToken = await loginRole(app, 'liuyf')
+
+      const techList = await request(app)
+        .get('/api/v1/outbound')
+        .set('Authorization', `Bearer ${technicianToken}`)
+      const pathologistList = await request(app)
+        .get('/api/v1/outbound')
+        .set('Authorization', `Bearer ${pathologistToken}`)
+
+      expect(techList.status).toBe(403)
+      expect(pathologistList.status).toBe(403)
+    })
+
     it('仓管可读取项目和BOM用于BOM出库但不能写BOM', async () => {
       const whToken = await loginWarehouse(app)
 

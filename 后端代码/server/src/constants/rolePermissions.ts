@@ -4,15 +4,15 @@ export const ROLE_PERMISSIONS: Record<string, string[]> = {
     'dashboard', 'inventory', 'inbound', 'outbound', 'stocktaking',
     'categories', 'materials', 'suppliers', 'locations', 'alerts',
     'returns', 'scraps', 'transfers', 'supplier_returns',
-    'projects', 'bom:view', 'purchase_orders:view',
+    'projects:view', 'bom:view', 'purchase_orders:view',
   ],
   technician: [
-    'dashboard', 'inventory', 'outbound', 'projects', 'bom', 'materials', 'alerts',
-    'equipment', 'labor_times:view', 'cost_analysis',
+    'dashboard', 'inventory', 'projects', 'bom', 'materials', 'alerts',
+    'equipment', 'labor_times', 'cost_analysis',
   ],
   pathologist: [
-    'dashboard', 'inventory', 'outbound', 'projects', 'bom', 'materials',
-    'cost_analysis', 'alerts', 'equipment', 'labor_times:view',
+    'dashboard', 'inventory', 'projects:view', 'bom:view', 'materials',
+    'cost_analysis', 'alerts', 'equipment:view', 'labor_times:view',
   ],
   procurement: [
     'dashboard', 'inventory', 'inbound', 'categories', 'materials',
@@ -20,5 +20,12 @@ export const ROLE_PERMISSIONS: Record<string, string[]> = {
   ],
   finance: [
     'dashboard', 'cost_analysis', 'logs', 'alerts', 'labor_times',
+    'projects:view', 'bom:view', 'materials:view',
+  ],
+  manager: [
+    'dashboard',
+    'inventory:view',
+    'alerts:view',
+    'cost_analysis:view',
   ],
 }

@@ -41,7 +41,7 @@ export const PROJECT_TYPE_OPTIONS = [
 
 function canManageLaborTimeRecords() {
   const role = getUserRole()
-  if (['admin', 'finance'].includes(role || '')) {
+  if (['admin', 'finance', 'technician'].includes(role || '')) {
     return true
   }
   const permissions = getUserPermissions()
@@ -191,11 +191,11 @@ export function useLaborTimePage() {
     if (!detailRow) return
     try {
       await laborTimeApi.delete(detailRow.id)
-      toast.success('工时定义已删除')
+      toast.success('工时定义已归档')
       setModalType(null)
       refresh()
     } catch {
-      toast.error('删除工时定义失败')
+      toast.error('归档工时定义失败')
     }
   }
 

@@ -22,4 +22,32 @@ describe('App routes', () => {
     expect(appSource).toContain('getAllowedPaths(role)')
     expect(appSource).toContain('<Route path="/logs" element={<RoleRoute><Logs /></RoleRoute>} />')
   })
+
+  it('guards inbound from direct URL entry so procurement cannot bypass purchase handoff', () => {
+    expect(appSource).toContain('<Route path="/inbound" element={<RoleRoute><Inbound /></RoleRoute>} />')
+  })
+
+  it('guards outbound and reverse warehouse routes from direct URL entry', () => {
+    expect(appSource).toContain('<Route path="/outbound" element={<RoleRoute><Outbound /></RoleRoute>} />')
+    expect(appSource).toContain('<Route path="/returns" element={<RoleRoute><Returns /></RoleRoute>} />')
+    expect(appSource).toContain('<Route path="/supplier-returns" element={<RoleRoute><SupplierReturns /></RoleRoute>} />')
+    expect(appSource).toContain('<Route path="/stocktaking" element={<RoleRoute><Stocktaking /></RoleRoute>} />')
+    expect(appSource).toContain('<Route path="/scraps" element={<RoleRoute><Scraps /></RoleRoute>} />')
+    expect(appSource).toContain('<Route path="/transfers" element={<RoleRoute><Transfers /></RoleRoute>} />')
+  })
+
+  it('guards technical modeling routes from direct URL entry', () => {
+    expect(appSource).toContain('<Route path="/projects" element={<RoleRoute><Projects /></RoleRoute>} />')
+    expect(appSource).toContain('<Route path="/bom" element={<RoleRoute><BOMList /></RoleRoute>} />')
+    expect(appSource).toContain('<Route path="/equipment" element={<RoleRoute><EquipmentList /></RoleRoute>} />')
+    expect(appSource).toContain('<Route path="/labor-times" element={<RoleRoute><LaborTimeList /></RoleRoute>} />')
+  })
+
+  it('guards reconciliation and ABC cost routes from direct URL entry', () => {
+    expect(appSource).toContain('<Route path="/reconciliation" element={<RoleRoute><Reconciliation /></RoleRoute>} />')
+    expect(appSource).toContain('<Route path="/abc/slide-cost" element={<RoleRoute><SlideCostAnalysis /></RoleRoute>} />')
+    expect(appSource).toContain('<Route path="/abc/fee-mappings" element={<RoleRoute><FeeMappingConfig /></RoleRoute>} />')
+    expect(appSource).toContain('<Route path="/abc/cost-pools" element={<RoleRoute><CostPoolList /></RoleRoute>} />')
+    expect(appSource).toContain('<Route path="/indirect-costs" element={<RoleRoute><IndirectCostCenterList /></RoleRoute>} />')
+  })
 })

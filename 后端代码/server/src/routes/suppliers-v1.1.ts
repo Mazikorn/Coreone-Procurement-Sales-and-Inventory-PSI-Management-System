@@ -4,6 +4,7 @@ import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
 import { authenticateToken, requireRole } from '../middleware/auth.js'
 import { normalizeDisplayText, requireValidText, type TextGuardResult } from '../utils/text-guard.js'
+import { logOperation } from '../utils/operation-logger.js'
 
 const router = Router()
 
@@ -207,6 +208,12 @@ router.post('/', authenticateToken, requireSupplierWrite, (req, res) => {
       bankNameText.value,
       bankAccountText.value,
     )
+    logOperation(db, req, {
+      operation: 'POST /suppliers',
+      description: `创建供应商 ${nameText.value}`,
+      requestData: { module: 'suppliers', id, code: finalCode, name: nameText.value },
+      responseData: { id, code: finalCode },
+    })
     success(res, { id, code: finalCode }, 'Created', 201)
   } catch (err: any) {
     if (err.message?.includes('UNIQUE constraint failed')) { error(res, 'Code exists', 'RESOURCE_CONFLICT', 409); return }
@@ -245,6 +252,12 @@ router.patch('/batch-status', authenticateToken, requireSupplierWrite, (req, res
         SET status = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id IN (${placeholders}) AND is_deleted = 0
       `).run(status === 'active' ? 1 : 0, ...ids)
+      logOperation(db, req, {
+        operation: 'PATCH /suppliers/batch-status',
+        description: `${status === 'active' ? '启用' : '停用'}供应商`,
+        requestData: { module: 'suppliers', ids, status },
+        responseData: { updatedCount: ids.length },
+      })
       db.exec('COMMIT')
     } catch (e) {
       db.exec('ROLLBACK')
@@ -274,6 +287,12 @@ router.delete('/batch', authenticateToken, requireSupplierWrite, (req, res) => {
         SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP
         WHERE id IN (${ids.map(() => '?').join(',')})
       `).run(...ids)
+      logOperation(db, req, {
+        operation: 'DELETE /suppliers/batch',
+        description: '批量删除供应商',
+        requestData: { module: 'suppliers', ids },
+        responseData: { deletedCount: ids.length },
+      })
       db.exec('COMMIT')
     } catch (e) {
       db.exec('ROLLBACK')
@@ -350,6 +369,12 @@ router.put('/:id', authenticateToken, requireSupplierWrite, (req, res) => {
     }
     if (data.status !== undefined) { fields.push('status = ?'); params.push(data.status === 'active' ? 1 : 0) }
     if (fields.length > 0) { params.push(id); db.prepare(`UPDATE suppliers SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND is_deleted = 0`).run(...params) }
+    logOperation(db, req, {
+      operation: 'PUT /suppliers/:id',
+      description: `更新供应商 ${(existing as any).name || id}`,
+      requestData: { module: 'suppliers', id, fields: Object.keys(data || {}) },
+      responseData: { id },
+    })
     success(res, { id }, 'Updated')
   } catch (err: any) {
     if (err.message?.includes('UNIQUE constraint failed')) { error(res, 'Code exists', 'RESOURCE_CONFLICT', 409); return }
@@ -400,6 +425,12 @@ router.post('/:id/rating', authenticateToken, requireSupplierWrite, (req, res) =
 
     const rating = calculateSupplierRating(db, id)
     db.prepare('UPDATE suppliers SET rating = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(rating, id)
+    logOperation(db, req, {
+      operation: 'POST /suppliers/:id/rating',
+      description: `更新供应商评级 ${(existing as any).name || id}`,
+      requestData: { module: 'suppliers', id },
+      responseData: { id, rating },
+    })
     success(res, { id, rating })
   } catch (err: any) { error(res, err.message) }
 })
@@ -417,6 +448,12 @@ router.post('/rating/all', authenticateToken, requireSupplierWrite, (req, res) =
         db.prepare('UPDATE suppliers SET rating = ? WHERE id = ?').run(rating, s.id)
         updated++
       }
+      logOperation(db, req, {
+        operation: 'POST /suppliers/rating/all',
+        description: '批量更新供应商评级',
+        requestData: { module: 'suppliers', ids: suppliers.map((s: any) => s.id) },
+        responseData: { updatedCount: updated },
+      })
       db.exec('COMMIT')
       success(res, { updatedCount: updated }, `Updated ${updated} suppliers`)
     } catch (e) {
@@ -438,6 +475,12 @@ router.delete('/:id', authenticateToken, requireSupplierWrite, (req, res) => {
       return
     }
     db.prepare('UPDATE suppliers SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(id)
+    logOperation(db, req, {
+      operation: 'DELETE /suppliers/:id',
+      description: `删除供应商 ${(existing as any).name || id}`,
+      requestData: { module: 'suppliers', id },
+      responseData: { id },
+    })
     success(res, null, 'Deleted')
   } catch (err: any) { error(res, err.message) }
 })

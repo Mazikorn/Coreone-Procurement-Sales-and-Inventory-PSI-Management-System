@@ -53,6 +53,7 @@ function renderTable(data: InventoryRow[], overrides: Partial<Parameters<typeof 
     onPageSizeChange: vi.fn(),
     onBatchOutbound: vi.fn(),
     onBatchScrap: vi.fn(),
+    canManageInventoryActions: true,
     ...overrides,
   }
 
@@ -115,5 +116,17 @@ describe('InventoryTable', () => {
       materialId: 'mat-b',
       code: 'INV-SAME-B',
     }))
+  })
+
+  it('hides outbound and batch execution actions for readonly manager inventory users', () => {
+    const data = [makeRow('mat-manager', 'INV-MGR', 5)]
+
+    renderTable(data, { canManageInventoryActions: false })
+
+    expect(screen.getAllByText('同名试剂').length).toBeGreaterThan(0)
+    expect(screen.queryByText('出库')).not.toBeInTheDocument()
+    expect(screen.queryByText('批量出库')).not.toBeInTheDocument()
+    expect(screen.queryByText('批量报废')).not.toBeInTheDocument()
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
   })
 })

@@ -12,7 +12,7 @@ export function generateClientTemporaryPassword() {
   const bytes = new Uint8Array(9)
   globalThis.crypto.getRandomValues(bytes)
   const suffix = Array.from(bytes, byte => PASSWORD_ALPHABET[byte % PASSWORD_ALPHABET.length]).join('')
-  return `Core@${suffix}`
+  return `Core@${suffix}7`
 }
 
 interface Props {
@@ -138,7 +138,7 @@ export function UserFormModal({ open, type, form, roles, onClose, onChange, onSu
                   随机生成
                 </button>
               </div>
-              <div className="text-xs text-gray-500 mt-1">留空时由系统生成临时密码，并在创建成功后显示</div>
+              <div className="text-xs text-gray-500 mt-1">留空时由系统生成临时密码；手填需至少 8 位并包含大小写字母、数字和符号</div>
             </div>
           )}
         </div>

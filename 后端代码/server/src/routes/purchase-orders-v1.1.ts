@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
 import { requireRole } from '../middleware/auth.js'
+import { logOperation } from '../utils/operation-logger.js'
 
 const router = Router()
 const requirePurchaseOrderWrite = requireRole('admin', 'procurement')
@@ -179,6 +180,19 @@ router.post('/', requirePurchaseOrderWrite, (req, res) => {
       expectedDate || null,
       remark || '',
     )
+    logOperation(db, req, {
+      operation: 'POST /purchase-orders',
+      description: `创建采购订单 ${orderNo}`,
+      requestData: {
+        module: 'purchase_orders',
+        id,
+        orderNo,
+        materialId: normalizedMaterialId,
+        supplierId: supplierResult.supplierId,
+        orderedQty: normalizedOrderedQty,
+      },
+      responseData: { id, orderNo },
+    })
     success(res, { id, orderNo }, '采购订单创建成功')
   } catch (err: any) { error(res, err.message) }
 })
@@ -206,6 +220,12 @@ router.put('/:id/cancel', requirePurchaseOrderWrite, (req, res) => {
       error(res, '已取消的订单不能重复取消', 'INVALID_PARAMETER', 400); return
     }
     db.prepare("UPDATE purchase_orders SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND is_deleted = 0").run(req.params.id)
+    logOperation(db, req, {
+      operation: 'PUT /purchase-orders/:id/cancel',
+      description: `取消采购订单 ${order.order_no || req.params.id}`,
+      requestData: { module: 'purchase_orders', id: req.params.id, orderNo: order.order_no },
+      responseData: { id: req.params.id, status: 'cancelled' },
+    })
     success(res, { id: req.params.id }, '订单已取消')
   } catch (err: any) { error(res, err.message) }
 })

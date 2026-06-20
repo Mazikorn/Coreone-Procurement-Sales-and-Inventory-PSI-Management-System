@@ -55,6 +55,14 @@ describe('useEquipmentTypePage', () => {
     expect(result.current.canManageEquipmentTypes).toBe(true)
   })
 
+  it('keeps pathologist users read-only for equipment types', () => {
+    localStorage.setItem('user', JSON.stringify({ role: 'pathologist', permissions: ['equipment:view'] }))
+
+    const { result } = renderHook(() => useEquipmentTypePage())
+
+    expect(result.current.canManageEquipmentTypes).toBe(false)
+  })
+
   it('keeps backend-controlled type code and submits status changes on edit', async () => {
     const { result } = renderHook(() => useEquipmentTypePage())
     await waitFor(() => expect(result.current.data).toHaveLength(1))

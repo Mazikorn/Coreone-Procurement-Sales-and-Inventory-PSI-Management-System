@@ -119,6 +119,14 @@ describe('useBOMPage', () => {
     expect(result.current.canWrite).toBe(true)
   })
 
+  it('keeps pathologist users read-only for BOM modeling', () => {
+    localStorage.setItem('user', JSON.stringify({ role: 'pathologist', permissions: ['bom:view'] }))
+
+    const { result } = renderHook(() => useBOMPage())
+
+    expect(result.current.canWrite).toBe(false)
+  })
+
   it('keeps backend-controlled code and supportable samples out of edit updates', async () => {
     vi.mocked(bomApi.update).mockResolvedValue({ id: 'bom-1' } as any)
     const { result } = renderHook(() => useBOMPage())

@@ -8,6 +8,8 @@ const getApp = async () => {
   return { app }
 }
 
+const STRONG_PASSWORD_PATTERN = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/
+
 async function loginAdmin(app: any): Promise<string> {
   const res = await request(app)
     .post('/api/v1/auth/login')
@@ -38,6 +40,7 @@ describe('用户创建与密码重置', () => {
 
     expect(create.status).toBe(201)
     expect(create.body.data.initialPassword).toMatch(/^Core@[A-Za-z0-9_-]{8,}$/)
+    expect(create.body.data.initialPassword).toMatch(STRONG_PASSWORD_PATTERN)
     expect(create.body.data.initialPassword).not.toBe('Abc@123456')
 
     const login = await request(app)
@@ -65,6 +68,7 @@ describe('用户创建与密码重置', () => {
 
     expect(reset.status).toBe(200)
     expect(reset.body.data.temporaryPassword).toMatch(/^Core@[A-Za-z0-9_-]{8,}$/)
+    expect(reset.body.data.temporaryPassword).toMatch(STRONG_PASSWORD_PATTERN)
     expect(reset.body.data.temporaryPassword).not.toBe('Abc@123456')
 
     const oldLogin = await request(app)
@@ -388,6 +392,29 @@ describe('用户创建与密码重置', () => {
     })
   })
 
+  it('USER-ADMIN-PROTECT-001: 内置管理员账号不可被降权为其他角色', async () => {
+    const demote = await request(app)
+      .put('/api/v1/users/USER-001')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ role: 'technician' })
+
+    expect(demote.status).toBe(409)
+    expect(demote.body.error.message).toContain('Cannot change admin account role')
+
+    const listed = await request(app)
+      .get('/api/v1/users')
+      .query({ keyword: 'admin' })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(listed.status).toBe(200)
+    expect(listed.body.data.list[0]).toMatchObject({
+      id: 'USER-001',
+      username: 'admin',
+      role: 'admin',
+      status: 'active',
+    })
+  })
+
   it('USER-INPUT-001: 创建用户会修剪身份字段并拒绝非法状态或弱密码', async () => {
     const suffix = Date.now()
     const username = `user-trim-${suffix}`
@@ -447,6 +474,18 @@ describe('用户创建与密码重置', () => {
       })
     expect(weakPassword.status).toBe(400)
 
+    const weakLongPassword = await request(app)
+      .post('/api/v1/users')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        username: `user-weak-long-password-${suffix}`,
+        realName: '弱但够长密码用户',
+        role: 'technician',
+        password: 'password1',
+      })
+    expect(weakLongPassword.status).toBe(400)
+    expect(weakLongPassword.body.error.message).toContain('Password must include')
+
     const blankName = await request(app)
       .post('/api/v1/users')
       .set('Authorization', `Bearer ${token}`)
@@ -489,6 +528,13 @@ describe('用户创建与密码重置', () => {
       .set('Authorization', `Bearer ${token}`)
       .send({ password: '123' })
     expect(weakReset.status).toBe(400)
+
+    const weakLongReset = await request(app)
+      .post(`/api/v1/users/${create.body.data.id}/reset-password`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ password: 'password1' })
+    expect(weakLongReset.status).toBe(400)
+    expect(weakLongReset.body.error.message).toContain('Password must include')
 
     const oldLogin = await request(app)
       .post('/api/v1/auth/login')

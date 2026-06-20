@@ -8,10 +8,11 @@ interface Props {
   alert: AlertItem | null
   onClose: () => void
   onHandle: () => void
+  canHandle?: boolean
   formatDate: (dateStr: string) => string
 }
 
-export function AlertDetailModal({ open, alert, onClose, onHandle, formatDate }: Props) {
+export function AlertDetailModal({ open, alert, onClose, onHandle, canHandle = true, formatDate }: Props) {
   if (!open || !alert) return null
 
   const typeInfo = ALERT_TYPE_MAP[alert.type] || { label: alert.type, bg: 'bg-gray-50', text: 'text-gray-600' }
@@ -80,7 +81,7 @@ export function AlertDetailModal({ open, alert, onClose, onHandle, formatDate }:
           <button onClick={onClose} className="px-4 py-2 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-md hover:bg-gray-50 transition-colors">
             关闭
           </button>
-          {alert.status === 'pending' && (
+          {canHandle && alert.status === 'pending' && (
             <button onClick={onHandle} className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 transition-colors shadow-sm">
               处理预警
             </button>

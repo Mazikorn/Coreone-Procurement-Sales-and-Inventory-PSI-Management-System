@@ -12,9 +12,10 @@ interface Props {
   item: InventoryRow | null
   onClose: () => void
   onOutbound: () => void
+  canManageInventoryActions?: boolean
 }
 
-export function InventoryDetailModal({ open, item, onClose, onOutbound }: Props) {
+export function InventoryDetailModal({ open, item, onClose, onOutbound, canManageInventoryActions = true }: Props) {
   if (!open || !item) return null
 
   const rows = [
@@ -48,10 +49,12 @@ export function InventoryDetailModal({ open, item, onClose, onOutbound }: Props)
           <button type="button" onClick={onClose} className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
             关闭
           </button>
-          <button type="button" onClick={onOutbound} className="inline-flex items-center gap-1.5 rounded-md bg-blue-500 px-4 py-2 text-sm font-medium text-white hover:bg-blue-600">
-            <Upload className="h-4 w-4" />
-            出库
-          </button>
+          {canManageInventoryActions && (
+            <button type="button" onClick={onOutbound} className="inline-flex items-center gap-1.5 rounded-md bg-blue-500 px-4 py-2 text-sm font-medium text-white hover:bg-blue-600">
+              <Upload className="h-4 w-4" />
+              出库
+            </button>
+          )}
         </div>
       </div>
     </Modal>

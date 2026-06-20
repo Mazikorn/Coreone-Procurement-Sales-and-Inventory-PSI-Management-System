@@ -55,8 +55,8 @@ describe('purchase order role capabilities', () => {
     expect(canWritePurchaseOrders('warehouse_manager')).toBe(false)
   })
 
-  it('allows procurement users to create, cancel, and receive purchase orders', () => {
-    expect(canReceivePurchaseOrders('procurement')).toBe(true)
+  it('allows procurement users to create and cancel purchase orders, but leaves receiving to warehouse users', () => {
+    expect(canReceivePurchaseOrders('procurement')).toBe(false)
     expect(canWritePurchaseOrders('procurement')).toBe(true)
   })
 })

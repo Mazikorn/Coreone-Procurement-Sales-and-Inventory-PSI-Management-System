@@ -4,6 +4,8 @@ import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
 import { generateNo } from '../utils/generateNo.js'
 import { consumeInventoryLocationStock, restoreInventoryLocationStock } from '../utils/inventory-locations.js'
+import { checkStockAlerts } from '../utils/alertChecker.js'
+import { logOperation } from '../utils/operation-logger.js'
 
 const router = Router()
 const BATCH_RESTORE_EPSILON = 0.000001
@@ -292,6 +294,13 @@ router.post('/', (req, res) => {
       `).run(logId, source.material_id, returnQuantity, beforeStock, afterStock, id, operator)
 
       db.exec('COMMIT')
+      checkStockAlerts(db, [source.material_id])
+      logOperation(db, req as any, {
+        operation: 'POST /returns',
+        description: `创建退库记录 ${id}`,
+        requestData: { outboundItemId: normalizedOutboundItemId, quantity: returnQuantity, reason, remark: remark || null },
+        responseData: { id, materialId: source.material_id, quantity: returnQuantity },
+      })
       success(res, { id }, 'Return created')
     } catch (e: any) {
       db.exec('ROLLBACK')
@@ -373,6 +382,13 @@ router.delete('/:id', (req, res) => {
       `).run(logId, record.material_id, -Number(record.quantity), beforeStock, afterStock, id, operator)
 
       db.exec('COMMIT')
+      checkStockAlerts(db, [record.material_id])
+      logOperation(db, req as any, {
+        operation: 'DELETE /returns/:id',
+        description: `撤销退库记录 ${id}`,
+        requestData: { id },
+        responseData: { id, materialId: record.material_id, quantity: Number(record.quantity), status: 'cancelled' },
+      })
       success(res, null, '退库记录已撤销')
     } catch (e: any) {
       db.exec('ROLLBACK')

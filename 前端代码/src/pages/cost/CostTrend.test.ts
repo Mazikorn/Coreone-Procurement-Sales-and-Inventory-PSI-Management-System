@@ -166,4 +166,32 @@ describe('CostTrend', () => {
     expect(reportsApi.getCostTrend).not.toHaveBeenCalled()
     expect(await screen.findByText('2026-Q2')).toBeInTheDocument()
   })
+
+  it('reloads quarterly trend when the selected range changes', async () => {
+    vi.mocked(abcApi.getSlideCostTrend)
+      .mockResolvedValueOnce({ trend: [] } as any)
+      .mockResolvedValueOnce({
+        trend: [{ period: '2026-Q2', cost: 300, recordCount: 2, sampleCount: 5, isComplete: true }],
+      } as any)
+      .mockResolvedValueOnce({
+        trend: [{ period: '2026-Q1', cost: 180, recordCount: 1, sampleCount: 2, isComplete: true }],
+      } as any)
+
+    render(React.createElement(CostTrend))
+
+    await waitFor(() => expect(abcApi.getSlideCostTrend).toHaveBeenCalledWith({ months: 12 }))
+    fireEvent.click(screen.getByRole('button', { name: '季度' }))
+    await waitFor(() => expect(abcApi.getSlideCostTrend).toHaveBeenLastCalledWith({
+      dimension: 'quarterly',
+      months: 12,
+    }))
+
+    fireEvent.change(screen.getByDisplayValue('近 12 个月'), { target: { value: '6' } })
+
+    await waitFor(() => expect(abcApi.getSlideCostTrend).toHaveBeenLastCalledWith({
+      dimension: 'quarterly',
+      months: 6,
+    }))
+    expect(await screen.findByText('2026-Q1')).toBeInTheDocument()
+  })
 })

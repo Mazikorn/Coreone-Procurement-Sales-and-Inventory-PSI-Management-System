@@ -99,6 +99,42 @@ describe('useInventoryPage', () => {
     expect(userApi.getList).not.toHaveBeenCalled()
   })
 
+  it('keeps manager inventory users read-only for warehouse execution actions', async () => {
+    localStorage.setItem('user', JSON.stringify({
+      id: 'USER-MGR',
+      username: 'guanli',
+      realName: '顾管理',
+      role: 'manager',
+    }))
+
+    const { result } = renderHook(() => useInventoryPage())
+
+    await waitFor(() => expect(categoryApi.getList).toHaveBeenCalled())
+
+    expect(result.current.canManageInventoryActions).toBe(false)
+    expect(projectApi.getList).not.toHaveBeenCalled()
+    expect(locationApi.getList).not.toHaveBeenCalled()
+    expect(userApi.getList).not.toHaveBeenCalled()
+
+    act(() => {
+      result.current.openOutboundModal()
+      result.current.openBatchOutbound()
+      result.current.openBatchScrap()
+      result.current.toggleSelectOne('any-inventory-row')
+      result.current.setScrapReason('expired')
+    })
+
+    expect(result.current.outboundModalOpen).toBe(false)
+    expect(result.current.batchOutboundModalOpen).toBe(false)
+    expect(result.current.batchScrapModalOpen).toBe(false)
+
+    await act(async () => {
+      await result.current.confirmBatchScrap()
+    })
+
+    expect(scrapApi.batchCreate).not.toHaveBeenCalled()
+  })
+
   it('passes materialId from URL to inventory list and stats APIs', async () => {
     window.history.replaceState(null, '', '/inventory?materialId=MAT-URL-001')
 

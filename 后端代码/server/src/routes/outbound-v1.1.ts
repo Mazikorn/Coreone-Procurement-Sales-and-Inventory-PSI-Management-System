@@ -4,6 +4,7 @@ import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
 import { allocateBatches, allocateGroupBatches, BatchAllocation, GroupBatchAllocation } from '../utils/allocation.js'
 import { consumeInventoryLocationStock, restoreInventoryLocationStock } from '../utils/inventory-locations.js'
+import { logOperation } from '../utils/operation-logger.js'
 
 const router = Router()
 const BATCH_RESTORE_EPSILON = 0.000001
@@ -385,7 +386,14 @@ router.post('/', requireWriteAccess, (req, res) => {
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).run(itemId, id, ia.materialId, alloc.batchId, alloc.batchNo, alloc.quantity, unitMap.get(ia.materialId) || 'pcs', alloc.unitCost, subtotal, ia.usage, ia.receiver)
 
-          db.prepare('UPDATE inventory SET stock = stock - ? WHERE material_id = ?').run(alloc.quantity, ia.materialId)
+          db.prepare(`
+            UPDATE inventory
+            SET stock = stock - ?,
+                last_outbound_id = ?,
+                last_outbound_date = date('now','localtime'),
+                update_time = CURRENT_TIMESTAMP
+            WHERE material_id = ?
+          `).run(alloc.quantity, id, ia.materialId)
           consumeInventoryLocationStock(db, ia.materialId, alloc.quantity, { relatedType: 'outbound', relatedId: id })
 
           if (alloc.batchId) {
@@ -421,6 +429,12 @@ router.post('/', requireWriteAccess, (req, res) => {
       // 自动检查库存预警（出库后库存可能不足）
       const outboundMaterialIds = itemAllocations.map((ia: any) => ia.materialId)
       checkStockAlerts(db, [...new Set(outboundMaterialIds)])
+      logOperation(db, req as any, {
+        operation: 'POST /outbound',
+        description: `创建普通出库记录 ${id}`,
+        requestData: { type: typeValidation.type, projectId: projectId || null, items, remark: remark || null, sampleCount: sc },
+        responseData: { id, outboundNo, type: typeValidation.type, projectId: projectId || null, totalCost, status: 'completed' },
+      })
     } catch (err: any) {
       db.exec('ROLLBACK')
       if (err.message && (err.message.includes('批次库存不足') || err.message.includes('指定出库批次'))) {
@@ -620,7 +634,14 @@ router.post('/bom', (req, res) => {
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).run(itemId, id, alloc.materialId, alloc.batchId, alloc.batchNo, alloc.quantity, unitMap.get(alloc.materialId) || 'pcs', alloc.unitCost, subtotal, 'self', null)
 
-          db.prepare('UPDATE inventory SET stock = stock - ? WHERE material_id = ?').run(alloc.quantity, alloc.materialId)
+          db.prepare(`
+            UPDATE inventory
+            SET stock = stock - ?,
+                last_outbound_id = ?,
+                last_outbound_date = date('now','localtime'),
+                update_time = CURRENT_TIMESTAMP
+            WHERE material_id = ?
+          `).run(alloc.quantity, id, alloc.materialId)
           consumeInventoryLocationStock(db, alloc.materialId, alloc.quantity, { relatedType: 'outbound', relatedId: id })
 
           if (alloc.batchId) {
@@ -785,6 +806,18 @@ router.post('/bom', (req, res) => {
       // 自动检查库存预警（BOM出库后库存可能不足）
       const bomMaterialIds = itemAllocations.map((ia: any) => ia.materialId)
       checkStockAlerts(db, [...new Set(bomMaterialIds)])
+      logOperation(db, req as any, {
+        operation: 'POST /outbound/bom',
+        description: `创建BOM出库记录 ${id}`,
+        requestData: {
+          projectId: effectiveProjectId || null,
+          bomId: effectiveBomId,
+          sampleCount: sc,
+          caseNo: normalizedCaseNo || null,
+          remark: remark || null,
+        },
+        responseData: { id, outboundNo, type: 'bom', projectId: effectiveProjectId || null, bomId: effectiveBomId, totalCost, status: 'completed' },
+      })
     } catch (err: any) {
       db.exec('ROLLBACK')
       if (err.message && (err.message.includes('批次库存不足') || err.message.includes('指定出库批次'))) {
@@ -1183,6 +1216,17 @@ router.put('/:id', requireWriteAccess, (req, res) => {
       }
 
       db.exec('COMMIT')
+      const affectedMaterialIds = [
+        ...oldItems.map((item: any) => item.material_id),
+        ...processedItems.map(item => item.materialId),
+      ]
+      checkStockAlerts(db, [...new Set(affectedMaterialIds)])
+      logOperation(db, req as any, {
+        operation: 'PUT /outbound/:id',
+        description: `更新普通出库记录 ${id}`,
+        requestData: { id, type: nextType, projectId: nextProjectId, items: newItems, remark: remark || null },
+        responseData: { id, totalCost: newTotalCost },
+      })
     } catch (err: any) {
       db.exec('ROLLBACK')
       if (err.message && (err.message.includes('批次库存不足') || err.message.includes('指定出库批次'))) {
@@ -1268,6 +1312,14 @@ router.delete('/:id', requireWriteAccess, (req, res) => {
       db.prepare('DELETE FROM outbound_abc_details WHERE outbound_id = ?').run(id)
 
       db.exec('COMMIT')
+      const affectedMaterialIds = [...new Set(items.map((item: any) => item.material_id))]
+      checkStockAlerts(db, affectedMaterialIds)
+      logOperation(db, req as any, {
+        operation: 'DELETE /outbound/:id',
+        description: `删除出库记录 ${id}`,
+        requestData: { id, reason: reason || null, remark: remark || null },
+        responseData: { id, type: record.type, status: 'deleted' },
+      })
       success(res, null, '删除成功，库存已同步回退')
     } catch (err) {
       db.exec('ROLLBACK')

@@ -33,7 +33,7 @@ const defaultForm: EquipmentTypeForm = {
 
 function canManageEquipmentTypeRecords() {
   const role = getUserRole()
-  if (['admin', 'technician', 'pathologist'].includes(role || '')) {
+  if (['admin', 'technician'].includes(role || '')) {
     return true
   }
   const permissions = getUserPermissions()

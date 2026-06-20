@@ -45,7 +45,7 @@ export function canWritePurchaseOrders(role: string | null): boolean {
 }
 
 export function canReceivePurchaseOrders(role: string | null): boolean {
-  return role === 'admin' || role === 'procurement' || role === 'warehouse_manager'
+  return role === 'admin' || role === 'warehouse_manager'
 }
 
 export default function PurchaseOrders() {

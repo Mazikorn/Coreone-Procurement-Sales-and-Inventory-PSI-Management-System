@@ -124,6 +124,7 @@ function getRoleLabel(role: string | null): string {
     procurement: '采购员',
     finance: '财务人员',
     pathologist: '病理医生',
+    manager: '管理者',
   }
   return labels[role || ''] || '用户'
 }

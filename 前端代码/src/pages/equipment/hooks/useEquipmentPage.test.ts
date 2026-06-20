@@ -64,6 +64,14 @@ describe('useEquipmentPage', () => {
     expect(result.current.canManageEquipmentAssets).toBe(true)
   })
 
+  it('keeps pathologist users read-only for equipment assets', () => {
+    localStorage.setItem('user', JSON.stringify({ role: 'pathologist', permissions: ['equipment:view'] }))
+
+    const { result } = renderHook(() => useEquipmentPage())
+
+    expect(result.current.canManageEquipmentAssets).toBe(false)
+  })
+
   it('keeps backend-controlled equipment code out of edit updates', async () => {
     const { result } = renderHook(() => useEquipmentPage())
     await waitFor(() => expect(result.current.data).toHaveLength(1))

@@ -4,6 +4,7 @@ import { useUrlParams } from '@/hooks/useUrlParams'
 import { alertsApi } from '@/api/alerts'
 import type { Alert } from '@/types'
 import { toast } from 'sonner'
+import { getUserRole } from '@/lib/permissions'
 
 export interface AlertItem extends Alert {
   projectName?: string
@@ -104,6 +105,8 @@ function toApiLevelValue(value: AlertLevelFilter): AlertApiLevelValue | undefine
 
 export function useAlertsPage() {
   const url = useUrlParams()
+  const role = getUserRole()
+  const canHandle = role === 'admin' || role === 'warehouse_manager'
 
   const initialPage = Math.max(1, url.getNumber('page', 1))
   const initialPageSize = [10, 20, 50, 100].includes(url.getNumber('pageSize', 10))
@@ -284,6 +287,7 @@ export function useAlertsPage() {
   }, [page, pageSize, filter.keyword, filter.type, filter.level, filter.status, filter.dateRange, quickFilter])
 
   const handleSelect = (id: string) => {
+    if (!canHandle) return
     const next = new Set(selectedIds)
     if (next.has(id)) next.delete(id)
     else next.add(id)
@@ -291,6 +295,7 @@ export function useAlertsPage() {
   }
 
   const handleSelectAll = () => {
+    if (!canHandle) return
     if (data.length > 0 && selectedIds.size === data.length) {
       setSelectedIds(new Set())
     } else {
@@ -301,6 +306,10 @@ export function useAlertsPage() {
   const clearSelection = () => setSelectedIds(new Set())
 
   const handleProcess = async (id: string, remark?: string) => {
+    if (!canHandle) {
+      toast.error('当前角色只能查看预警')
+      return
+    }
     try {
       await alertsApi.process(id, { remark })
       toast.success('处理成功')
@@ -313,6 +322,10 @@ export function useAlertsPage() {
   }
 
   const handleIgnore = async (id: string, remark?: string) => {
+    if (!canHandle) {
+      toast.error('当前角色只能查看预警')
+      return
+    }
     try {
       await alertsApi.ignore(id, { remark })
       toast.success('已忽略')
@@ -367,6 +380,10 @@ export function useAlertsPage() {
   }
 
   const handleBatchProcess = async () => {
+    if (!canHandle) {
+      toast.error('当前角色只能查看预警')
+      return
+    }
     const ids = Array.from(selectedIds)
     if (ids.length === 0) return
     try {
@@ -408,6 +425,7 @@ export function useAlertsPage() {
     setPageSize,
     refresh,
     stats,
+    canHandle,
     handleSelect,
     handleSelectAll,
     clearSelection,

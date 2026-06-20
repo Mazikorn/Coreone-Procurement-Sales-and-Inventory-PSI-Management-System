@@ -174,6 +174,86 @@ describe('报废管理 API', () => {
     expect(cancelLog.after_stock).toBe(6)
   })
 
+  it('SC-AUDIT-001: 创建和撤销报废写入操作日志，支撑损耗责任审计', async () => {
+    const materialId = seedScrapMaterial(db, `audit-${Date.now()}`, 8)
+
+    const createRes = await request(app)
+      .post('/api/v1/scraps')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        materialId,
+        quantity: 2,
+        reason: 'damaged',
+        remark: '报废审计测试',
+      })
+    expect(createRes.status).toBe(200)
+
+    const deleteRes = await request(app)
+      .delete(`/api/v1/scraps/${createRes.body.data.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+    expect(deleteRes.status).toBe(200)
+
+    const logs = db.prepare(`
+      SELECT username, operation, request_data
+      FROM operation_logs
+      WHERE request_data LIKE ?
+      ORDER BY rowid ASC
+    `).all(`%${createRes.body.data.id}%`) as any[]
+
+    expect(logs.map(log => log.operation)).toEqual([
+      'POST /scraps',
+      'DELETE /scraps/:id',
+    ])
+    expect(logs.every(log => log.username === 'admin')).toBe(true)
+    expect(JSON.parse(logs[0].request_data)).toMatchObject({
+      module: 'scraps',
+      id: createRes.body.data.id,
+      materialId,
+      quantity: 2,
+      reason: 'damaged',
+    })
+  })
+
+  it('SC-ALERT-001: 报废导致库存低于安全库存时生成低库存预警，撤销后自动关闭', async () => {
+    const materialId = seedScrapMaterial(db, `alert-${Date.now()}`, 8)
+    db.prepare('UPDATE materials SET safety_stock = ? WHERE id = ?').run(7, materialId)
+
+    const createRes = await request(app)
+      .post('/api/v1/scraps')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        materialId,
+        quantity: 2,
+        reason: 'damaged',
+        remark: '报废触发低库存预警',
+      })
+    expect(createRes.status).toBe(200)
+
+    const pendingAlert = db.prepare(`
+      SELECT status, current_stock, threshold, trigger_condition
+      FROM alerts
+      WHERE material_id = ? AND type = 'low-stock'
+    `).get(materialId) as any
+    expect(pendingAlert).toMatchObject({
+      status: 'pending',
+      current_stock: 6,
+      threshold: 7,
+    })
+    expect(pendingAlert.trigger_condition).toContain('当前库存 6 <= 安全库存 7')
+
+    const cancelRes = await request(app)
+      .delete(`/api/v1/scraps/${createRes.body.data.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+    expect(cancelRes.status).toBe(200)
+
+    const resolvedAlert = db.prepare(`
+      SELECT status, remark
+      FROM alerts
+      WHERE material_id = ? AND type = 'low-stock'
+    `).get(materialId) as any
+    expect(resolvedAlert).toMatchObject({ status: 'auto_resolved', remark: '库存已恢复' })
+  })
+
   it('SC-004: 缺少字段、负数数量、库存不足和不存在资源返回明确错误', async () => {
     const materialId = seedScrapMaterial(db, `invalid-${Date.now()}`, 1)
 

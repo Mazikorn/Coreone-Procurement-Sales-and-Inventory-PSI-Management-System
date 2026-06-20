@@ -75,47 +75,47 @@ function ProtectedLayout() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/alerts" element={<Alerts />} />
-            <Route path="/inbound" element={<Inbound />} />
+            <Route path="/inbound" element={<RoleRoute><Inbound /></RoleRoute>} />
             <Route path="/inventory" element={<InventoryList />} />
-            <Route path="/outbound" element={<Outbound />} />
-            <Route path="/stocktaking" element={<Stocktaking />} />
+            <Route path="/outbound" element={<RoleRoute><Outbound /></RoleRoute>} />
+            <Route path="/stocktaking" element={<RoleRoute><Stocktaking /></RoleRoute>} />
             <Route path="/purchase-orders" element={<PurchaseOrders />} />
-            <Route path="/returns" element={<Returns />} />
+            <Route path="/returns" element={<RoleRoute><Returns /></RoleRoute>} />
             <Route path="/suppliers" element={<Suppliers />} />
             <Route path="/materials" element={<Materials />} />
             <Route path="/categories" element={<Categories />} />
             <Route path="/locations" element={<Locations />} />
-            <Route path="/projects" element={<Projects />} />
-            <Route path="/bom" element={<BOMList />} />
+            <Route path="/projects" element={<RoleRoute><Projects /></RoleRoute>} />
+            <Route path="/bom" element={<RoleRoute><BOMList /></RoleRoute>} />
             <Route path="/users" element={<RoleRoute><Users /></RoleRoute>} />
             <Route path="/roles" element={<RoleRoute><Roles /></RoleRoute>} />
             <Route path="/logs" element={<RoleRoute><Logs /></RoleRoute>} />
-            <Route path="/scraps" element={<Scraps />} />
-            <Route path="/supplier-returns" element={<SupplierReturns />} />
-            <Route path="/transfers" element={<Transfers />} />
-            <Route path="/reconciliation" element={<Reconciliation />} />
-            <Route path="/equipment" element={<EquipmentList />} />
-            <Route path="/equipment/types" element={<EquipmentTypeList />} />
-            <Route path="/equipment/depreciation" element={<EquipmentDepreciationStats />} />
-            <Route path="/labor-times" element={<LaborTimeList />} />
-            <Route path="/abc/dashboard" element={<CostDashboard />} />
-            <Route path="/abc/slide-cost" element={<SlideCostAnalysis />} />
-            <Route path="/abc/profitability" element={<ProfitabilityAnalysis />} />
-            <Route path="/abc/fee-comparison" element={<FeeComparison />} />
-            <Route path="/abc/fee-mappings" element={<FeeMappingConfig />} />
-            <Route path="/abc/trend" element={<CostTrend />} />
-            <Route path="/abc/activity-centers" element={<ActivityCenterList />} />
-            <Route path="/abc/cost-drivers" element={<CostDriverList />} />
-            <Route path="/abc/cost-pools" element={<CostPoolList />} />
-            <Route path="/abc/budgets" element={<BudgetManagement />} />
-            <Route path="/abc/quality-costs" element={<QualityCostAnalysis />} />
-            <Route path="/abc/variance" element={<CostVarianceAnalysis />} />
-            <Route path="/abc/alerts" element={<CostAlerts />} />
-            <Route path="/abc/audit" element={<AuditTrail />} />
-            <Route path="/abc/quarterly-adjustment" element={<QuarterlyAdjustment />} />
-            <Route path="/abc/personnel-efficiency" element={<PersonnelEfficiency />} />
-            <Route path="/abc/model-validation" element={<CostModelValidation />} />
-            <Route path="/indirect-costs" element={<IndirectCostCenterList />} />
+            <Route path="/scraps" element={<RoleRoute><Scraps /></RoleRoute>} />
+            <Route path="/supplier-returns" element={<RoleRoute><SupplierReturns /></RoleRoute>} />
+            <Route path="/transfers" element={<RoleRoute><Transfers /></RoleRoute>} />
+            <Route path="/reconciliation" element={<RoleRoute><Reconciliation /></RoleRoute>} />
+            <Route path="/equipment" element={<RoleRoute><EquipmentList /></RoleRoute>} />
+            <Route path="/equipment/types" element={<RoleRoute><EquipmentTypeList /></RoleRoute>} />
+            <Route path="/equipment/depreciation" element={<RoleRoute><EquipmentDepreciationStats /></RoleRoute>} />
+            <Route path="/labor-times" element={<RoleRoute><LaborTimeList /></RoleRoute>} />
+            <Route path="/abc/dashboard" element={<RoleRoute><CostDashboard /></RoleRoute>} />
+            <Route path="/abc/slide-cost" element={<RoleRoute><SlideCostAnalysis /></RoleRoute>} />
+            <Route path="/abc/profitability" element={<RoleRoute><ProfitabilityAnalysis /></RoleRoute>} />
+            <Route path="/abc/fee-comparison" element={<RoleRoute><FeeComparison /></RoleRoute>} />
+            <Route path="/abc/fee-mappings" element={<RoleRoute><FeeMappingConfig /></RoleRoute>} />
+            <Route path="/abc/trend" element={<RoleRoute><CostTrend /></RoleRoute>} />
+            <Route path="/abc/activity-centers" element={<RoleRoute><ActivityCenterList /></RoleRoute>} />
+            <Route path="/abc/cost-drivers" element={<RoleRoute><CostDriverList /></RoleRoute>} />
+            <Route path="/abc/cost-pools" element={<RoleRoute><CostPoolList /></RoleRoute>} />
+            <Route path="/abc/budgets" element={<RoleRoute><BudgetManagement /></RoleRoute>} />
+            <Route path="/abc/quality-costs" element={<RoleRoute><QualityCostAnalysis /></RoleRoute>} />
+            <Route path="/abc/variance" element={<RoleRoute><CostVarianceAnalysis /></RoleRoute>} />
+            <Route path="/abc/alerts" element={<RoleRoute><CostAlerts /></RoleRoute>} />
+            <Route path="/abc/audit" element={<RoleRoute><AuditTrail /></RoleRoute>} />
+            <Route path="/abc/quarterly-adjustment" element={<RoleRoute><QuarterlyAdjustment /></RoleRoute>} />
+            <Route path="/abc/personnel-efficiency" element={<RoleRoute><PersonnelEfficiency /></RoleRoute>} />
+            <Route path="/abc/model-validation" element={<RoleRoute><CostModelValidation /></RoleRoute>} />
+            <Route path="/indirect-costs" element={<RoleRoute><IndirectCostCenterList /></RoleRoute>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </main>

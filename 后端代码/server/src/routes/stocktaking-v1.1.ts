@@ -4,6 +4,8 @@ import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
 import { generateNo } from '../utils/generateNo.js'
 import { consumeInventoryLocationStock, ensureInventoryLocationRows, restoreInventoryLocationStock } from '../utils/inventory-locations.js'
+import { logOperation } from '../utils/operation-logger.js'
+import { checkStockAlerts } from '../utils/alertChecker.js'
 
 const router = Router()
 const STOCKTAKING_STATUSES = new Set(['completed', 'confirmed'])
@@ -257,10 +259,25 @@ router.post('/', (req, res) => {
       const systemStock = Number(inventory.stock || 0)
       const difference = normalizedActualStock - systemStock
       const id = uuidv4()
+      const stocktakingNo = generateStocktakingNo()
       db.prepare('INSERT INTO stocktaking_records (id, stocktaking_no, material_id, system_stock, actual_stock, difference, operator, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-        .run(id, generateStocktakingNo(), materialId, systemStock, normalizedActualStock, difference, operator || 'system', remark || null)
+        .run(id, stocktakingNo, materialId, systemStock, normalizedActualStock, difference, operator || 'system', remark || null)
 
       db.exec('COMMIT')
+      logOperation(db, req as any, {
+        operation: 'POST /stocktaking',
+        description: `创建库存盘点记录 ${stocktakingNo}`,
+        requestData: {
+          module: 'stocktaking',
+          id,
+          stocktakingNo,
+          materialId,
+          systemStock,
+          actualStock: normalizedActualStock,
+          difference,
+        },
+        responseData: { id, stocktakingNo, status: 'completed' },
+      })
       success(res, { id }, 'Stocktaking created')
     } catch (e: any) {
       db.exec('ROLLBACK')
@@ -343,6 +360,23 @@ router.post('/:id/confirm', (req, res) => {
       }
 
       db.exec('COMMIT')
+      checkStockAlerts(db, [record.material_id])
+      logOperation(db, req as any, {
+        operation: 'POST /stocktaking/:id/confirm',
+        description: `确认库存盘点记录 ${record.stocktaking_no || id}`,
+        requestData: {
+          module: 'stocktaking',
+          id,
+          stocktakingNo: record.stocktaking_no,
+          materialId: record.material_id,
+          systemStock: Number(record.system_stock || 0),
+          actualStock: Number(record.actual_stock || 0),
+          difference: Number(record.difference || 0),
+          reason: normalizedReason || null,
+          remark: remark || null,
+        },
+        responseData: { id, status: 'confirmed' },
+      })
       success(res, { id, status: 'confirmed' }, '盘点已确认')
     } catch (e: any) {
       db.exec('ROLLBACK')
@@ -408,6 +442,22 @@ router.delete('/:id', (req, res) => {
       }
 
       db.exec('COMMIT')
+      checkStockAlerts(db, [record.material_id])
+      logOperation(db, req as any, {
+        operation: 'DELETE /stocktaking/:id',
+        description: `撤销库存盘点记录 ${record.stocktaking_no || id}`,
+        requestData: {
+          module: 'stocktaking',
+          id,
+          stocktakingNo: record.stocktaking_no,
+          materialId: record.material_id,
+          systemStock: Number(record.system_stock || 0),
+          actualStock: Number(record.actual_stock || 0),
+          difference: Number(record.difference || 0),
+          status: record.status,
+        },
+        responseData: { id, status: 'cancelled' },
+      })
       success(res, null, '盘点记录已撤销')
     } catch (e: any) {
       db.exec('ROLLBACK')

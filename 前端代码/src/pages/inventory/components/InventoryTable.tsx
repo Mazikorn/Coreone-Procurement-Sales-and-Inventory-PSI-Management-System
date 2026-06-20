@@ -58,6 +58,7 @@ interface Props {
   onPageSizeChange: (s: number) => void
   onBatchOutbound: () => void
   onBatchScrap: () => void
+  canManageInventoryActions?: boolean
 }
 
 function getStatusInfo(item: InventoryRow) {
@@ -119,6 +120,7 @@ export function InventoryTable({
   onPageSizeChange,
   onBatchOutbound,
   onBatchScrap,
+  canManageInventoryActions = true,
 }: Props) {
   const navigate = useNavigate()
   const sortedData = [...data]
@@ -241,7 +243,7 @@ export function InventoryTable({
         </div>
 
         {/* 批量操作栏 */}
-        {selectedIds.size > 0 && (
+        {canManageInventoryActions && selectedIds.size > 0 && (
           <div className="px-5 py-3 bg-blue-50 border-b border-blue-100 flex items-center justify-between">
             <span className="text-sm text-gray-700">
               已选择 <strong className="text-blue-500">{selectedIds.size}</strong> 项
@@ -277,14 +279,16 @@ export function InventoryTable({
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
-                <th className="w-10 px-4 py-3">
-                  <input
-                    type="checkbox"
-                    checked={selectedIds.size === sortedData.length && sortedData.length > 0}
-                    onChange={onToggleSelectAll}
-                    className="w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-500"
-                  />
-                </th>
+                {canManageInventoryActions && (
+                  <th className="w-10 px-4 py-3">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.size === sortedData.length && sortedData.length > 0}
+                      onChange={onToggleSelectAll}
+                      className="w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-500"
+                    />
+                  </th>
+                )}
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 tracking-wide">耗材名称</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 tracking-wide">批号</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 tracking-wide">库位</th>
@@ -315,7 +319,7 @@ export function InventoryTable({
             <tbody className="divide-y divide-gray-100">
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-12 text-center text-gray-400">
+                  <td colSpan={canManageInventoryActions ? 8 : 7} className="px-4 py-12 text-center text-gray-400">
                     <div className="flex items-center justify-center gap-2">
                       <div className="w-5 h-5 border-2 border-gray-200 border-t-[#3b82f6] rounded-full animate-spin" />
                       加载中...
@@ -324,7 +328,7 @@ export function InventoryTable({
                 </tr>
               ) : sortedData.length === 0 ? (
                 <tr>
-                  <td colSpan={8}>
+                  <td colSpan={canManageInventoryActions ? 8 : 7}>
                     <div className="flex flex-col items-center justify-center py-16">
                       <svg className="w-16 h-16 text-gray-300 mb-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                         <path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/>
@@ -332,12 +336,14 @@ export function InventoryTable({
                       <div className="text-base font-medium text-gray-900 mb-1">暂无库存数据</div>
                       <div className="text-sm text-gray-500 mb-4">当前筛选条件下没有找到库存记录，请尝试调整筛选条件或添加入库记录</div>
                       <div className="flex items-center gap-3">
-                        <button
-                          onClick={() => { window.location.href = '/inbound' }}
-                          className="px-4 py-2 bg-blue-500 text-white rounded-md text-sm font-medium hover:bg-blue-600 transition-all duration-150 ease"
-                        >
-                          添加入库
-                        </button>
+                        {canManageInventoryActions && (
+                          <button
+                            onClick={() => { window.location.href = '/inbound' }}
+                            className="px-4 py-2 bg-blue-500 text-white rounded-md text-sm font-medium hover:bg-blue-600 transition-all duration-150 ease"
+                          >
+                            添加入库
+                          </button>
+                        )}
                         <button
                           onClick={onReset}
                           className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md text-sm font-medium hover:bg-gray-50 transition-all duration-150 ease"
@@ -367,15 +373,17 @@ export function InventoryTable({
                         className="hover:bg-gray-50 transition-colors duration-150 cursor-pointer bg-gray-50/50"
                         onClick={() => onToggleGroup(groupKey)}
                       >
-                        <td className="px-4 py-3">
-                          <input
-                            type="checkbox"
-                            checked={isGroupSelected}
-                            className="w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-500"
-                            onClick={(e) => e.stopPropagation()}
-                            onChange={toggleGroupSelection}
-                          />
-                        </td>
+                        {canManageInventoryActions && (
+                          <td className="px-4 py-3">
+                            <input
+                              type="checkbox"
+                              checked={isGroupSelected}
+                              className="w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-500"
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={toggleGroupSelection}
+                            />
+                          </td>
+                        )}
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
                             <span className={`transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`}>
@@ -407,7 +415,9 @@ export function InventoryTable({
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
                             <button onClick={(e) => { e.stopPropagation(); onDetail(first!) }} className="text-sm text-gray-600 hover:text-gray-900 transition-colors">详情</button>
-                            <button onClick={(e) => { e.stopPropagation(); onOutbound(first!) }} className="text-sm text-blue-500 hover:text-blue-600 transition-colors">出库</button>
+                            {canManageInventoryActions && (
+                              <button onClick={(e) => { e.stopPropagation(); onOutbound(first!) }} className="text-sm text-blue-500 hover:text-blue-600 transition-colors">出库</button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -419,14 +429,16 @@ export function InventoryTable({
                             key={row.id}
                             className="hover:bg-gray-50 transition-colors duration-150"
                           >
-                            <td className="px-4 py-3 pl-8">
-                              <input
-                                type="checkbox"
-                                checked={isSelected}
-                                onChange={() => onToggleSelectOne(row.id)}
-                                className="w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-500"
-                              />
-                            </td>
+                            {canManageInventoryActions && (
+                              <td className="px-4 py-3 pl-8">
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={() => onToggleSelectOne(row.id)}
+                                  className="w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-500"
+                                />
+                              </td>
+                            )}
                             <td className="px-4 py-3 pl-12">
                               <span className="text-gray-400 text-xs mr-1">└</span>
                               <span className="font-medium text-gray-900">{row.name}</span>
@@ -449,7 +461,9 @@ export function InventoryTable({
                             <td className="px-4 py-3">
                               <div className="flex items-center gap-2">
                                 <button onClick={() => onDetail(row)} className="text-sm text-gray-600 hover:text-gray-900 transition-colors">详情</button>
-                                <button onClick={() => onOutbound(row)} className="text-sm text-blue-500 hover:text-blue-600 transition-colors">出库</button>
+                                {canManageInventoryActions && (
+                                  <button onClick={() => onOutbound(row)} className="text-sm text-blue-500 hover:text-blue-600 transition-colors">出库</button>
+                                )}
                               </div>
                             </td>
                           </tr>

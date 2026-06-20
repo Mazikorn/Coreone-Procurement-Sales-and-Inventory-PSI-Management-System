@@ -13,6 +13,7 @@ import {
   type TabType,
   type PeriodType,
 } from './hooks/useReconciliationPage'
+import { getUserRole } from '@/lib/permissions'
 
 const tabs: Array<{ key: TabType; label: string }> = [
   { key: 'reconcile', label: '按项目对账' },
@@ -35,6 +36,8 @@ export default function Reconciliation() {
   const [exportScope, setExportScope] = React.useState<ReconciliationExportScope>('filtered')
 
   const activeTabLabel = tabs.find(tab => tab.key === page.activeTab)?.label || '当前页面'
+  const userRole = getUserRole()
+  const canFixBom = userRole === 'admin' || userRole === 'technician'
   const openExportModal = () => setExportModalOpen(true)
   const confirmExport = async () => {
     await page.handleExport({ format: exportFormat, scope: exportScope })
@@ -153,6 +156,7 @@ export default function Reconciliation() {
           projectMaterials={page.projectMaterials}
           onToggleProject={page.loadProjectMaterials}
           getDiffClass={page.getDiffClass}
+          canFixBom={canFixBom}
           onFixBom={page.openFixBomModal}
           onAuditProject={page.handleAuditProject}
           auditingProjectId={page.auditingProjectId}

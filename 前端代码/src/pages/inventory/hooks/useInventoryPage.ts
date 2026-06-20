@@ -243,6 +243,10 @@ export function useInventoryPage() {
     const role = getUserRole()
     return role === 'admin' || role === 'pathologist' || role === 'finance'
   }, [])
+  const canManageInventoryActions = useMemo(() => {
+    const role = getUserRole()
+    return role === 'admin' || role === 'warehouse_manager'
+  }, [])
 
   const loadInventory = useCallback(async () => {
     setLoading(true)
@@ -505,6 +509,10 @@ export function useInventoryPage() {
   }
 
   const openOutboundModal = (item?: InventoryRow) => {
+    if (!canManageInventoryActions) {
+      toast.error('当前角色只能查看库存')
+      return
+    }
     if (item) {
       setOutboundMaterials([toOutboundMaterial(item)])
     }
@@ -512,10 +520,26 @@ export function useInventoryPage() {
   }
 
   const openBatchOutbound = () => {
+    if (!canManageInventoryActions) {
+      toast.error('当前角色只能查看库存')
+      return
+    }
     setBatchOutboundModalOpen(true)
   }
 
+  const openBatchScrap = () => {
+    if (!canManageInventoryActions) {
+      toast.error('当前角色只能查看库存')
+      return
+    }
+    setBatchScrapModalOpen(true)
+  }
+
   const confirmBatchOutboundOnly = () => {
+    if (!canManageInventoryActions) {
+      toast.error('当前角色只能查看库存')
+      return
+    }
     const items = data.filter(item => selectedIds.has(item.id)).map(item => toOutboundMaterial(item))
     setOutboundMaterials(items)
     setBatchOutboundModalOpen(false)
@@ -523,6 +547,10 @@ export function useInventoryPage() {
   }
 
   const openMaterialSelector = () => {
+    if (!canManageInventoryActions) {
+      toast.error('当前角色只能查看库存')
+      return
+    }
     setMaterialSelectorOpen(true)
     setMaterialSelectorTab('material')
     setCheckedMaterialIds(new Set())
@@ -554,6 +582,10 @@ export function useInventoryPage() {
   }
 
   const confirmOutbound = async () => {
+    if (!canManageInventoryActions) {
+      toast.error('当前角色只能查看库存')
+      return
+    }
     if (outboundMaterials.length === 0) {
       toast.error('请先选择出库物料')
       return
@@ -628,6 +660,10 @@ export function useInventoryPage() {
   }
 
   const confirmAddMaterials = () => {
+    if (!canManageInventoryActions) {
+      toast.error('当前角色只能查看库存')
+      return
+    }
     const items = materialSelectorTab === 'bom'
       ? bomMaterials.map(item => toOutboundMaterial(item))
       : selectedMaterials
@@ -643,6 +679,10 @@ export function useInventoryPage() {
   }
 
   const confirmBatchScrap = async () => {
+    if (!canManageInventoryActions) {
+      toast.error('当前角色只能查看库存')
+      return
+    }
     const items = data.filter(item => selectedIds.has(item.id))
     if (items.length === 0) {
       toast.error('请先选择报废物料')
@@ -744,6 +784,7 @@ export function useInventoryPage() {
     activeTab,
     setActiveTab,
     canAccessDepletion,
+    canManageInventoryActions,
     data,
     loading,
     total,
@@ -777,6 +818,7 @@ export function useInventoryPage() {
     viewDetail,
     openOutboundModal,
     openBatchOutbound,
+    openBatchScrap,
     setOutboundModalOpen,
     outboundModalOpen,
     outboundMaterials,

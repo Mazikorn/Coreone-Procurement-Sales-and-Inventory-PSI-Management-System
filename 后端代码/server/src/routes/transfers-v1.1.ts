@@ -4,6 +4,7 @@ import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
 import { generateNo } from '../utils/generateNo.js'
 import { adjustInventoryLocationStock, getInventoryLocationStock, syncInventoryPrimaryLocation } from '../utils/inventory-locations.js'
+import { logOperation } from '../utils/operation-logger.js'
 
 const router = Router()
 
@@ -145,6 +146,22 @@ router.post('/inbound', (req, res) => {
       `).run(logId, materialId, beforeStock, beforeStock, id, operator || 'system', `从 ${fromLocationName || fromLocationId} 调拨至 ${location.name}`)
 
       db.exec('COMMIT')
+      logOperation(db, req as any, {
+        operation: 'POST /transfers/inbound',
+        description: `创建库存调拨记录 ${inboundNo}`,
+        requestData: {
+          module: 'transfers',
+          id,
+          inboundNo,
+          materialId,
+          batchNo: normalizedBatchNo || null,
+          quantity: transferQuantity,
+          fromLocationId,
+          fromLocationName: fromLocationName || null,
+          toLocationId,
+        },
+        responseData: { id, inboundNo, status: 'completed' },
+      })
       success(res, { id, inboundNo, materialId, quantity: transferQuantity, fromLocationId, fromLocationName, toLocationId }, 'Transfer created')
     } catch (e: any) {
       db.exec('ROLLBACK')
@@ -202,6 +219,21 @@ router.delete('/:id', (req, res) => {
       `).run(logId, record.material_id, beforeStock, beforeStock, id, (req as any).user?.username || 'system', restoreLocationId ? `撤销调拨记录，恢复至 ${restoreLocationId}` : '撤销调拨记录')
 
       db.exec('COMMIT')
+      logOperation(db, req as any, {
+        operation: 'DELETE /transfers/:id',
+        description: `撤销库存调拨记录 ${record.inbound_no || id}`,
+        requestData: {
+          module: 'transfers',
+          id,
+          inboundNo: record.inbound_no,
+          materialId: record.material_id,
+          batchNo: record.batch_no || null,
+          quantity: Number(record.quantity || 0),
+          fromLocationId: record.from_location_id || null,
+          toLocationId: record.location_id,
+        },
+        responseData: { id, status: 'cancelled' },
+      })
       success(res, null, '调拨记录已撤销')
     } catch (e: any) {
       db.exec('ROLLBACK')

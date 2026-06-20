@@ -15,7 +15,7 @@ export function checkStockAlerts(db: any, materialIds: string[]): void {
 
       // 库存低于安全库存时生成预警
       if (currentStock <= safetyStock && safetyStock > 0) {
-        const exists = db.prepare('SELECT COUNT(*) as c FROM alerts WHERE material_id = ? AND type = ? AND status = "pending"').get(materialId, 'low-stock') as any
+        const exists = db.prepare("SELECT COUNT(*) as c FROM alerts WHERE material_id = ? AND type = ? AND status = 'pending'").get(materialId, 'low-stock') as any
         if (exists.c === 0) {
           const triggerCondition = `当前库存 ${currentStock} <= 安全库存 ${safetyStock}`
           db.prepare(`INSERT INTO alerts (id, type, level, material_id, material_name, current_stock, threshold, message, status, rule_id, trigger_condition, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, CURRENT_TIMESTAMP)`)
