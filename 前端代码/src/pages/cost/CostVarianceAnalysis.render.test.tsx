@@ -147,4 +147,44 @@ describe('CostVarianceAnalysis date range validation', () => {
       }))
     })
   })
+
+  it('clears stale variance rows when a refreshed request fails', async () => {
+    vi.mocked(abcApi.getVarianceAnalysis)
+      .mockResolvedValueOnce({
+        summary: { totalActual: 1200, totalStandard: 1000, totalVariance: 200, varianceRate: 20 },
+        list: [
+          {
+            projectId: 'project-1',
+            projectName: '胃癌筛查项目',
+            materialActual: 1000,
+            materialStandard: 1000,
+            laborActual: 0,
+            laborStandard: 0,
+            equipmentActual: 0,
+            equipmentStandard: 0,
+            qcActual: 0,
+            indirectActual: 200,
+            indirectStandard: 0,
+            totalActual: 1200,
+            totalStandard: 1000,
+            totalVariance: 200,
+            varianceRate: 20,
+            sampleCount: 5,
+            month: '2026-06',
+          },
+        ],
+      })
+      .mockRejectedValueOnce(new Error('network down'))
+
+    const { container } = render(<CostVarianceAnalysis />)
+
+    expect(await screen.findByText('胃癌筛查项目')).toBeInTheDocument()
+    fireEvent.change(container.querySelector('select') as HTMLSelectElement, { target: { value: 'bom' } })
+
+    await waitFor(() => expect(abcApi.getVarianceAnalysis).toHaveBeenCalledTimes(2))
+    await waitFor(() => {
+      expect(screen.queryByText('胃癌筛查项目')).not.toBeInTheDocument()
+      expect(screen.getByText('暂无差异数据')).toBeInTheDocument()
+    })
+  })
 })

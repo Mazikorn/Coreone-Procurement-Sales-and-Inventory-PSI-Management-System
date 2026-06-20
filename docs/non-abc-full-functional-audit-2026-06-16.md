@@ -16982,7 +16982,56 @@ git diff --check
 
 - 成本差异分析当前接口和分组维度已阶段性保护；下一批可继续复核该页面的空态、错误态、导出能力，或进入非废弃告警、审计追踪、季度调整等剩余成本运营页面，不在本批继续扩展。
 
-## 三百四十六、结论
+## 三百四十六、批次 391: 成本差异分析刷新失败不能保留旧差异数据
+
+**发现的问题**
+
+- 本轮继续复核成本差异分析页面，聚焦“刷新失败时不能把上一次结果伪装成当前筛选结果”不变量。
+- 旧 `CostVarianceAnalysis.loadData` 在接口失败时只弹出 toast，不清空 `summary/items`。
+- 用户从已有项目差异数据切换到 BOM 或其他筛选条件时，如果当前请求失败，页面仍会保留旧项目行、旧标准成本、旧实际成本和旧差异率。
+- 这会造成当前筛选结果与屏幕展示不一致，属于成本复盘页面的数据可信度问题。
+
+**已完成修复**
+
+- `前端代码/src/pages/cost/CostVarianceAnalysis.tsx`
+  - `loadData` 的失败分支增加 `setSummary(null)` 和 `setItems([])`。
+  - 保留原有 `toast.error('加载差异分析数据失败')`，但页面主体回到真实空态，避免旧数据残留。
+- `前端代码/src/pages/cost/CostVarianceAnalysis.render.test.tsx`
+  - 新增红绿测试：首次加载显示 `胃癌筛查项目` 后，切换到 BOM 维度并模拟接口失败，页面必须移除旧项目行并显示 `暂无差异数据`。
+
+**ABC 影响评估**
+
+- 本批只修改成本差异分析页面错误态渲染；不改 ABC 成本算法、成本池重算、出库 ABC 明细、成本异常、收费映射、关账、库存/BOM/出库写链或废弃 `/cost-analysis`。
+- 页面失败态清空只影响前端展示，不写入、不回滚、不重算任何 ABC 输入或成本快照。
+- 已补跑全成本和成本异常输入侧回归，确认不会破坏已完成的 ABC 成本透明化闭环。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/cost/CostVarianceAnalysis.render.test.tsx` 按预期失败：刷新失败后找不到 `暂无差异数据`，旧项目行和旧汇总仍残留。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/cost/CostVarianceAnalysis.render.test.tsx` 通过，4 tests passed。
+  - `前端代码 npm test -- --run src/pages/cost/CostVarianceAnalysis.render.test.tsx src/pages/cost/QualityCostAnalysis.test.tsx src/pages/cost/BudgetManagement.test.tsx src/pages/cost/FeeComparison.test.tsx src/pages/cost/CostTrend.test.ts src/pages/cost/SlideCostAnalysis.test.ts src/pages/cost/ProfitabilityAnalysis.test.ts src/pages/cost/PersonnelEfficiency.render.test.tsx` 通过，8 files / 20 tests passed。
+  - `后端代码/server npm test -- --run tests/integration/cost-exceptions.test.ts tests/integration/full-cost.test.ts` 通过，2 files / 14 tests passed；命令退出码为 0，保留既有 Vite close timeout 提示和 `cost-exceptions` 中模拟 `outbound_abc_details` 缺失的 stderr。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis` 无输出，确认未改废弃范围。
+- 浏览器复核:
+  - 使用用户指定 Chrome for Testing 路径启动 headless Playwright，前端 Vite 在 `127.0.0.1:8080`，注入本地 admin 登录态。
+  - `/api/v1/abc/variance-analysis?compareType=project` 返回项目差异数据，切换到 BOM 后刻意让 `/api/v1/abc/variance-analysis?compareType=bom` 返回 500，以验证失败态。
+  - 页面 `/abc/variance` 复核结果：`hasPage=true`、`initialProjectVisible=true`、`emptyStateVisible=true`、`staleProjectHidden=true`、`staleSummaryCleared=true`、请求序列包含 `compareType=project` 和 `compareType=bom`。
+  - 本次浏览器证据中的 500 response 和 console resource error 是刻意模拟失败请求产生的预期现象；页面本身未新增崩溃。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- 成本差异分析当前接口、有效分组维度和刷新失败清空旧数据已阶段性保护；下一批可继续复核该页面是否存在导出入口缺失/无效，或按计划进入非废弃告警、审计追踪、季度调整等剩余成本运营页面。
+
+## 三百四十七、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

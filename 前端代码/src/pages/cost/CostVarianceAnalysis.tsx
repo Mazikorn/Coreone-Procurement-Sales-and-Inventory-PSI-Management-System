@@ -91,6 +91,8 @@ export default function CostVarianceAnalysis() {
       setSummary(data?.summary || null)
       setItems(data?.list || data?.items || [])
     } catch {
+      setSummary(null)
+      setItems([])
       toast.error('加载差异分析数据失败')
     } finally {
       setLoading(false)
