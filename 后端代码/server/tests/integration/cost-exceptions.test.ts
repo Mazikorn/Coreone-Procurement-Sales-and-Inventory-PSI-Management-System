@@ -151,6 +151,28 @@ describe('成本异常台账', () => {
     expect(writeRes.status).toBe(403)
   })
 
+  it('ABC异常规则必须拒绝非有限或负数阈值且不写入脏规则', async () => {
+    const before = (db.prepare('SELECT COUNT(*) as total FROM abc_alert_rules').get() as any).total
+
+    const infiniteThreshold = await request(app)
+      .post('/api/v1/abc/alert-rules')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ type: 'profit', name: '非法无限阈值', threshold: 'Infinity' })
+
+    const negativeThreshold = await request(app)
+      .post('/api/v1/abc/alert-rules')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ type: 'profit', name: '非法负数阈值', threshold: -1 })
+
+    expect(infiniteThreshold.status).toBe(400)
+    expect(infiniteThreshold.body.error.code).toBe('INVALID_PARAMETER')
+    expect(negativeThreshold.status).toBe(400)
+    expect(negativeThreshold.body.error.code).toBe('INVALID_PARAMETER')
+
+    const after = (db.prepare('SELECT COUNT(*) as total FROM abc_alert_rules').get() as any).total
+    expect(after).toBe(before)
+  })
+
   it('BOM出库扩展物料库存不足时阻断出库，不创建低估成本记录', async () => {
     const suffix = unique('block')
     const base = seedBase(db, suffix)

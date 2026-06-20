@@ -17304,7 +17304,57 @@ git diff --check
 
 - 关账后调整单审核成功后的页面状态刷新已阶段性保护；下一批可继续按计划复核非废弃成本运营页中的异常规则、调整单创建后的极端刷新失败态，或回到成本相关剩余 P0/P1 真实副作用，不在本批继续扩展。
 
-## 三百五十二、结论
+## 三百五十二、批次 397: ABC 异常规则必须拒绝不可解释阈值
+
+**发现的问题**
+
+- 本轮按上一批后续风险继续复核非废弃成本运营页中的异常规则，聚焦“规则配置写入口不能把不可解释阈值写成运营事实”不变量。
+- 库存预警规则 `/api/v1/alert-rules/:id` 已经使用有限数和非负数校验，但当前 ABC 异常规则 `/api/v1/abc/alert-rules` 仍使用 `Number(threshold) || 0`。
+- API 绕过时，`threshold='Infinity'` 会返回 201 并写入规则；负数阈值也会被接受。
+- 这会污染成本异常规则配置，让后续告警、审计追踪或页面展示读取到不可解释的阈值。
+
+**已完成修复**
+
+- `后端代码/server/src/routes/abc-v1.1.ts`
+  - 创建 ABC 异常规则时先规范化阈值。
+  - 未传、`null` 或空字符串阈值保持旧兼容行为，继续按 0 写入。
+  - 显式传入非有限数或负数时返回 `400 INVALID_PARAMETER`，不写入 `abc_alert_rules`。
+  - 保持既有响应风格、权限入口和合法创建路径，不新增 schema。
+- `后端代码/server/tests/integration/cost-exceptions.test.ts`
+  - 新增红绿测试，覆盖 `Infinity` 和 `-1` 阈值都必须被拒绝。
+  - 断言非法请求前后 `abc_alert_rules` 记录数不变，证明不会落库脏规则。
+
+**ABC 影响评估**
+
+- 本批修改的是 ABC 异常规则配置写入口，不改 ABC 成本算法、成本池重算、出库 ABC 明细、库存/BOM/出库写链、成本异常生成逻辑或废弃 `/cost-analysis`。
+- 该规则表属于成本运营规则配置；收紧阈值只阻断不可解释输入，不改变合法规则创建或已有成本事实。
+- 已补跑成本异常和全成本输入侧回归，确认调整单、成本异常、出库 ABC 快照、BOM 收费映射、成本池重算和全成本报表输入链仍稳定。
+
+**验证结果**
+
+- 红灯验证:
+  - `后端代码/server npm test -- --run tests/integration/cost-exceptions.test.ts -t "ABC异常规则"` 修复前失败：`threshold='Infinity'` 创建规则返回 201，新增测试期望 400。
+- 修复后验证:
+  - `后端代码/server npm test -- --run tests/integration/cost-exceptions.test.ts -t "ABC异常规则"` 通过，1 test passed / 11 skipped；保留既有 Vite close timeout 提示。
+  - `后端代码/server npm test -- --run tests/integration/cost-exceptions.test.ts tests/integration/full-cost.test.ts` 通过，2 files / 15 tests passed；保留既有 Vite close timeout 提示和模拟 `outbound_abc_details` 缺失的 stderr。
+  - `前端代码 npm test -- --run src/pages/cost/CostDashboard.adjustments.render.test.tsx src/pages/cost/CostDashboard.test.ts src/pages/cost/AuditTrail.render.test.tsx src/pages/cost/CostAlerts.render.test.tsx src/pages/cost/CostAlerts.test.ts` 通过，5 files / 22 tests passed；保留既有 React Router future flag warning。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis` 无输出，确认未改废弃范围。
+- 浏览器复核:
+  - 本批为后端 API 绕过保护，没有新增或修改页面、弹窗、路由或样式；真实副作用证据以 Supertest 直接调用接口和数据库记录数断言为准。
+  - 复核后无残留 Vite、Playwright 或 Google Chrome for Testing 进程。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- ABC 异常规则阈值输入已阶段性保护；下一批可继续按计划复核调整单创建后的极端刷新失败态，或继续复核非废弃成本运营页剩余 P0/P1 真实副作用，不在本批继续扩展。
+
+## 三百五十三、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 

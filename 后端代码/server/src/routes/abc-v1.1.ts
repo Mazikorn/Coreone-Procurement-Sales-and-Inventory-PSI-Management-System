@@ -2238,10 +2238,14 @@ router.post('/alert-rules', requireCostWrite, (req, res) => {
   try {
     const id = uuidv4()
     const { type, name, threshold, enabled } = req.body
+    const normalizedThreshold = threshold === undefined || threshold === null || threshold === '' ? 0 : Number(threshold)
+    if (!Number.isFinite(normalizedThreshold) || normalizedThreshold < 0) {
+      error(res, '预警阈值必须为非负有限数字', 'INVALID_PARAMETER', 400); return
+    }
     getDatabase().prepare(`
       INSERT INTO abc_alert_rules (id, type, name, threshold, enabled)
       VALUES (?, ?, ?, ?, ?)
-    `).run(id, type || 'profit', name || '成本预警', Number(threshold) || 0, enabled === false ? 0 : 1)
+    `).run(id, type || 'profit', name || '成本预警', normalizedThreshold, enabled === false ? 0 : 1)
     success(res, { id }, 'Created', 201)
   } catch (err: any) { error(res, err.message) }
 })
