@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { AlertTriangle, CheckCircle2, EyeOff, RefreshCw, RotateCcw, Search } from 'lucide-react'
 import { toast } from 'sonner'
@@ -138,6 +138,9 @@ export default function CostAlerts() {
       setSummary(normalizeExceptionSummary(data?.summary))
       setTotal(Number(data?.pagination?.total ?? data?.total ?? nextList.length) || 0)
     } catch {
+      setExceptions([])
+      setSummary(normalizeExceptionSummary())
+      setTotal(0)
       toast.error('加载成本异常失败')
     } finally {
       setLoading(false)
