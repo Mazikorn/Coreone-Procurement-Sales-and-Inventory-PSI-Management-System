@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { bomApi, materialApi, projectApi } from '@/api/master'
 import { useBOMPage } from './useBOMPage'
 import { toast } from 'sonner'
+import { downloadTextFile } from '@/lib/utils'
 
 vi.mock('@/api/master', () => ({
   bomApi: {
@@ -32,6 +33,10 @@ vi.mock('sonner', () => ({
     success: vi.fn(),
     warning: vi.fn(),
   },
+}))
+
+vi.mock('@/lib/utils', () => ({
+  downloadTextFile: vi.fn(),
 }))
 
 const activeBom = {
@@ -411,5 +416,32 @@ describe('useBOMPage', () => {
 
     expect(toast.error).toHaveBeenCalledWith('原BOM缺少物料清单，不能复制')
     expect(bomApi.create).not.toHaveBeenCalled()
+  })
+
+  it('exports BOM type labels instead of internal type codes', async () => {
+    const { result } = renderHook(() => useBOMPage())
+
+    await waitFor(() => expect(result.current.data).toHaveLength(1))
+
+    act(() => {
+      result.current.setExportForm({
+        range: 'filtered',
+        format: 'csv',
+        includeBasic: true,
+        includeMaterials: false,
+        includeHistory: false,
+      })
+    })
+
+    await act(async () => {
+      await result.current.handleExport()
+    })
+
+    expect(downloadTextFile).toHaveBeenCalledWith(
+      expect.stringMatching(/^BOM清单_\d{4}-\d{2}-\d{2}\.csv$/),
+      expect.stringContaining('免疫组化'),
+      'text/csv;charset=utf-8'
+    )
+    expect(String(vi.mocked(downloadTextFile).mock.calls[0][1])).not.toContain(',ihc,')
   })
 })

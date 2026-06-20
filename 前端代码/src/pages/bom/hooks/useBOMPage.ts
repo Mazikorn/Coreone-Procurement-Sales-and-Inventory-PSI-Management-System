@@ -5,6 +5,7 @@ import type { BOM, BOMDeleteCheck, BOMGeneralConsumable, BOMGeneralReagent, BOMQ
 import { toast } from 'sonner'
 import { downloadTextFile } from '@/lib/utils'
 import { getUserRole } from '@/lib/permissions'
+import { getBOMTypeLabel } from '../constants'
 
 export interface BOMForm {
   code: string
@@ -680,7 +681,7 @@ export function useBOMPage() {
   const buildBasicRows = (rows: BOM[]) => rows.map(item => ({
     BOM编号: item.code,
     BOM名称: item.name,
-    类型: item.type,
+    类型: getBOMTypeLabel(item.type),
     版本: item.version,
     状态: item.status === 'active' ? '已启用' : '已停用',
     物料数: item.materialCount || 0,

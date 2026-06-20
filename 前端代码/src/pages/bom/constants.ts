@@ -10,6 +10,11 @@ export const TYPE_OPTIONS = [
   { value: 'project', label: '项目BOM' },
 ]
 
+export function getBOMTypeLabel(type?: string | null) {
+  if (!type) return ''
+  return TYPE_OPTIONS.find(option => option.value === type)?.label || type
+}
+
 export const STATUS_OPTIONS = [
   { value: '', label: '全部状态' },
   { value: 'active', label: '已启用' },

@@ -17808,7 +17808,54 @@ git diff --check
 
 - 出库 BOM 类型在表格、筛选和导出中的语义已阶段性收口；下一批可继续按计划复核库存/报表读取面中剩余导出口径，或回到第一阶段基础资料尚未当前复核的 P0/P1 项，不在本批继续扩展。
 
-## 三百六十二、结论
+## 三百六十二、批次 407: BOM 导出类型必须使用业务标签
+
+**发现的问题**
+
+- 本轮回到第一阶段基础资料的 BOM 导出口径，聚焦“导出归档必须与业务读面一致，不能泄露内部枚举”不变量。
+- BOM 类型筛选和页面配置使用 `HE/免疫组化/特殊染色/分子病理/细胞学/项目BOM` 等业务标签，但 BOM 基础信息导出直接写入内部枚举值。
+- 例如免疫组化 BOM 导出为 `ihc`，而不是 `免疫组化`。
+- 这会让导出归档、线下审计和检测服务/BOM 绑定复核使用不同语言解释同一条 BOM，增加误读风险，也不利于后续核对 BOM 出库和 ABC 上游输入。
+
+**已完成修复**
+
+- `前端代码/src/pages/bom/constants.ts`
+  - 新增 `getBOMTypeLabel`，复用现有 BOM 类型选项作为统一业务标签来源。
+- `前端代码/src/pages/bom/hooks/useBOMPage.ts`
+  - BOM 基础信息导出中的 `类型` 改为业务标签，不再直接导出 `ihc/he/ss/mp/cyto/project` 等内部枚举。
+- `前端代码/src/pages/bom/hooks/useBOMPage.test.ts`
+  - 新增 CSV 导出红绿测试，断言免疫组化 BOM 导出包含 `免疫组化`，且不再出现 `,ihc,` 这种内部类型码。
+
+**ABC 影响评估**
+
+- 本批只修改非 ABC 的 BOM 页面导出标签和前端测试，不改 BOM 后端 schema、BOM 写入、版本历史、出库、库存扣减、ABC 成本算法、成本异常或废弃 `/cost-analysis`。
+- BOM 是 ABC 上游核心输入；本批只修正上游事实在导出文件中的解释口径，不改变任何可被 ABC 计算消费的数据。
+- 已补跑 BOM、出库和成本异常输入侧回归，确认 BOM 基础链路、BOM 出库和 ABC 输入异常链未被破坏。
+
+**验证结果**
+
+- 红灯验证:
+  - `前端代码 npm test -- --run src/pages/bom/hooks/useBOMPage.test.ts -t "exports BOM type labels"` 修复前失败：导出 CSV 内容为 `BOM-001,原BOM,ihc,...`，证明导出泄露内部枚举。
+- 修复后验证:
+  - `前端代码 npm test -- --run src/pages/bom/hooks/useBOMPage.test.ts -t "exports BOM type labels"` 通过，1 test passed / 12 skipped。
+  - `前端代码 npm test -- --run src/pages/bom/hooks/useBOMPage.test.ts` 通过，1 file / 13 tests passed。
+  - `后端代码/server npm test -- --run tests/integration/bom.test.ts tests/integration/outbound.test.ts tests/integration/cost-exceptions.test.ts` 通过，3 files / 58 tests passed；保留既有 Vite close timeout 提示和模拟 `outbound_abc_details` 缺失的 stderr。
+  - `后端代码/server npm run build` 通过。
+  - `前端代码 npm run build` 通过，保留既有 chunk size warning。
+  - `git diff --check` 通过。
+  - `git diff --name-only -- 前端代码/deprecated/legacy-cost-analysis` 无输出，确认未改废弃范围。
+- 浏览器复核:
+  - 本批核心副作用是前端 CSV 内容生成，已通过 hook 级测试直接拦截 `downloadTextFile` 并断言导出内容；未修改页面布局、弹窗提交、路由或真实写接口，因此未额外启动浏览器。
+
+**commit**
+
+- 本批最终提交 hash 见本轮完成回复；避免把提交自身 hash 写入同一提交导致 amend 后 hash 漂移。
+
+**后续风险**
+
+- BOM 基础信息导出类型口径已阶段性收口；下一批可继续按第一阶段基础资料复核 BOM 导出物料/历史明细口径、项目/检测服务导入导出，或回到库存/报表读取面剩余 P0/P1 项，不在本批扩展。
+
+## 三百六十三、结论
 
 当前非 ABC 主功能的 P0 数据一致性问题、本轮识别出的主要假入口、BOM 页面接入、测试门禁噪声、全角色非 ABC 菜单路由的权限/预加载 403 问题，以及入库删除、入库取消、退库/报废/供应商退货/出库删除/出库编辑/调拨/库存盘点等库存写操作恢复链路已完成阶段性收口。BOM 出库库存不足策略已按“任一组成项缺货则整体阻断出库”执行；入库删除、入库取消、退库、报废、供应商退货、出库删除、出库编辑和库存盘点均已把总库存与批次数量/剩余量放进同一条一致性链路，盘点录入也已区分“未填写”和“明确填写 0”，采购订单物料单位/参考价、入库打印所选范围、操作日志导出日期范围、间接成本中心金额/分摊率边界、设备折旧统计字段口径、未分类设备汇总、设备详情入口和设备使用登记也已与用户选择和真实业务规则一致，以保护采购上游、库存流水、纸质归档、审计追踪、设备成本展示、报表分摊和 ABC 上游成本输入。
 
