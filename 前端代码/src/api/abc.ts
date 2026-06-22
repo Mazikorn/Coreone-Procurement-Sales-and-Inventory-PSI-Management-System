@@ -123,11 +123,14 @@ export const abcApi = {
   getProfitability: (params?: any) =>
     request.get('/abc/profitability', { params }),
 
-  // ===== 成本看板 =====
-  getDashboard: (month?: string) =>
-    request.get('/abc/dashboard', { params: { month } }),
+	  // ===== 成本看板 =====
+	  getDashboard: (month?: string) =>
+	    request.get('/abc/dashboard', { params: { month } }),
 
-  // ===== 收费对照 =====
+	  getClosingReadiness: (yearMonth: string) =>
+	    request.get('/abc/closing-readiness', { params: { yearMonth } }),
+
+	  // ===== 收费对照 =====
   getFeeComparison: (params?: any) =>
     request.get('/abc/fee-comparison', { params }),
 

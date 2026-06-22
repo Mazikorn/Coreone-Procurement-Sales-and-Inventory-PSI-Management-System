@@ -123,6 +123,36 @@ interface CostAdjustment {
   reviewRemark?: string
 }
 
+interface ClosingReadinessIssue {
+  code: string
+  source: string
+  severity: 'blocker' | 'warning' | 'info'
+  title: string
+  message: string
+  count?: number
+}
+
+interface ClosingReadinessAction {
+  action: string
+  label: string
+  href: string
+  source: string
+}
+
+interface ClosingReadiness {
+  yearMonth: string
+  status: 'ready' | 'blocked' | 'warning'
+  summary: {
+    blockerCount: number
+    warningCount: number
+    infoCount: number
+  }
+  blockers: ClosingReadinessIssue[]
+  warnings: ClosingReadinessIssue[]
+  nextActions: ClosingReadinessAction[]
+  sources: Record<string, unknown>
+}
+
 type ComparisonDirection = 'up' | 'down' | 'flat'
 
 interface MonthlyComparison {
@@ -181,6 +211,24 @@ const ADJUSTMENT_STATUS: Record<string, { label: string; className: string }> = 
   pending: { label: '待审核', className: 'bg-amber-50 text-amber-700' },
   approved: { label: '已通过', className: 'bg-emerald-50 text-emerald-700' },
   rejected: { label: '已驳回', className: 'bg-red-50 text-red-700' },
+}
+
+const CLOSING_READINESS_STATUS: Record<ClosingReadiness['status'], { label: string; className: string; panelClassName: string }> = {
+  ready: {
+    label: '可关账',
+    className: 'bg-emerald-50 text-emerald-700',
+    panelClassName: 'border-emerald-200 bg-emerald-50',
+  },
+  blocked: {
+    label: '阻断',
+    className: 'bg-red-50 text-red-700',
+    panelClassName: 'border-red-200 bg-red-50',
+  },
+  warning: {
+    label: '警告',
+    className: 'bg-amber-50 text-amber-700',
+    panelClassName: 'border-amber-200 bg-amber-50',
+  },
 }
 
 const listPayload = <T,>(data: any): T[] => data?.list || data?.items || data || []
@@ -316,6 +364,8 @@ export default function CostDashboard() {
   const [currentPeriod, setCurrentPeriod] = useState<CostPeriod | null>(null)
   const [costRuns, setCostRuns] = useState<CostRun[]>([])
   const [adjustments, setAdjustments] = useState<CostAdjustment[]>([])
+  const [closingReadiness, setClosingReadiness] = useState<ClosingReadiness | null>(null)
+  const [closingReadinessFailed, setClosingReadinessFailed] = useState(false)
   const [workbenchLoading, setWorkbenchLoading] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [adjustmentModalOpen, setAdjustmentModalOpen] = useState(false)
@@ -336,7 +386,10 @@ export default function CostDashboard() {
       setProfitByProject(data.profitByProject || [])
       setCostByActivity(data.costByActivity || [])
       setAlerts(data.alerts || [])
-      const [periodData, runData, adjustmentData] = await Promise.all([
+      const closingReadinessRequest = abcApi.getClosingReadiness(month)
+        .then(data => ({ data, failed: false }))
+        .catch(() => ({ data: null, failed: true }))
+      const [periodData, runData, adjustmentData, closingReadinessData] = await Promise.all([
         abcApi.getPeriods({ yearMonth: month, pageSize: 1 }),
         abcApi.getCostRuns({
           yearMonth: month,
@@ -348,10 +401,13 @@ export default function CostDashboard() {
           pageSize: dashboardKeyword ? 20 : 5,
           keyword: dashboardKeyword || undefined,
         }),
+        closingReadinessRequest,
       ])
       setCurrentPeriod(listPayload<CostPeriod>(periodData)[0] || null)
       setCostRuns(listPayload<CostRun>(runData))
       setAdjustments(listPayload<CostAdjustment>(adjustmentData))
+      setClosingReadiness(closingReadinessData.data)
+      setClosingReadinessFailed(closingReadinessData.failed)
     } catch {
       toast.error('加载看板数据失败')
     } finally {
@@ -499,6 +555,14 @@ export default function CostDashboard() {
     openAlertCount,
     summary?.pendingCostCount ?? 0,
   )
+  const closingReadinessMeta = closingReadiness
+    ? CLOSING_READINESS_STATUS[closingReadiness.status]
+    : null
+  const visibleClosingReadinessIssues = [
+    ...(closingReadiness?.blockers || []),
+    ...(closingReadiness?.warnings || []),
+  ].slice(0, 5)
+  const visibleClosingReadinessActions = (closingReadiness?.nextActions || []).slice(0, 4)
 
   if (loading && !summary) {
     return (
@@ -762,6 +826,75 @@ export default function CostDashboard() {
                 })}
               </tbody>
             </table>
+          </div>
+        )}
+      </div>
+
+      {/* 结账健康检查 */}
+      <div className={`rounded-lg border p-4 ${closingReadinessMeta?.panelClassName || 'border-gray-200 bg-white'}`}>
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-sm font-semibold text-gray-900">结账健康检查</h3>
+              {closingReadinessFailed ? (
+                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">暂不可用</span>
+              ) : closingReadinessMeta ? (
+                <span className={`rounded-full px-2 py-0.5 text-xs ${closingReadinessMeta.className}`}>
+                  {closingReadinessMeta.label}
+                </span>
+              ) : (
+                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500">检查中</span>
+              )}
+            </div>
+            <div className="mt-2 flex flex-wrap gap-3 text-xs text-gray-600">
+              <span>期间 {month}</span>
+              <span className="inline-flex items-center gap-1">
+                <span>阻断</span>
+                <span>{closingReadiness?.summary.blockerCount ?? 0} 项</span>
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span>警告</span>
+                <span>{closingReadiness?.summary.warningCount ?? 0} 项</span>
+              </span>
+            </div>
+          </div>
+          {visibleClosingReadinessActions.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {visibleClosingReadinessActions.map(action => (
+                <Link
+                  key={`${action.action}-${action.href}`}
+                  to={action.href}
+                  className="inline-flex h-8 items-center rounded-md border border-gray-300 bg-white px-3 text-xs text-gray-700 hover:bg-gray-50"
+                >
+                  {action.label}
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
+        {closingReadinessFailed ? (
+          <div className="mt-3 rounded-md border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600">
+            结账健康检查暂时不可用，请稍后刷新。
+          </div>
+        ) : visibleClosingReadinessIssues.length > 0 ? (
+          <div className="mt-3 divide-y divide-gray-200 overflow-hidden rounded-md border border-gray-200 bg-white">
+            {visibleClosingReadinessIssues.map(issue => (
+              <div key={`${issue.source}-${issue.code}`} className="flex flex-col gap-1 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-gray-900">{issue.title}</div>
+                  <div className="text-xs text-gray-600">{issue.message}</div>
+                </div>
+                <span className={`w-fit rounded-full px-2 py-0.5 text-xs ${
+                  issue.severity === 'blocker' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'
+                }`}>
+                  {issue.count ?? 1}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="mt-3 rounded-md border border-emerald-100 bg-white px-3 py-2 text-sm text-emerald-700">
+            当前期间没有发现结账阻断项。
           </div>
         )}
       </div>

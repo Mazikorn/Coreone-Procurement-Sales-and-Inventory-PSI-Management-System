@@ -17,9 +17,10 @@ vi.mock('recharts', () => ({
 
 vi.mock('@/api/abc', () => ({
   abcApi: {
-    getDashboard: vi.fn(),
-    getPeriods: vi.fn(),
-    getCostRuns: vi.fn(),
+	    getDashboard: vi.fn(),
+	    getClosingReadiness: vi.fn(),
+	    getPeriods: vi.fn(),
+	    getCostRuns: vi.fn(),
     getAdjustments: vi.fn(),
     approveAdjustment: vi.fn(),
     rejectAdjustment: vi.fn(),
@@ -60,18 +61,34 @@ const periodResponse = {
 
 const emptyListResponse = { list: [] }
 
+const readyClosingReadiness = {
+  yearMonth: '2026-06',
+  status: 'ready',
+  summary: {
+    blockerCount: 0,
+    warningCount: 0,
+    infoCount: 0,
+  },
+  blockers: [],
+  warnings: [],
+  nextActions: [],
+  sources: {},
+}
+
 describe('CostDashboard adjustment refresh', () => {
   beforeEach(() => {
     window.localStorage.setItem('user', JSON.stringify({ role: 'finance', username: 'sunli' }))
-    vi.mocked(abcApi.getDashboard).mockReset()
-    vi.mocked(abcApi.getPeriods).mockReset()
+	    vi.mocked(abcApi.getDashboard).mockReset()
+	    vi.mocked(abcApi.getClosingReadiness).mockReset()
+	    vi.mocked(abcApi.getPeriods).mockReset()
     vi.mocked(abcApi.getCostRuns).mockReset()
     vi.mocked(abcApi.getAdjustments).mockReset()
     vi.mocked(abcApi.approveAdjustment).mockReset()
     vi.mocked(abcApi.rejectAdjustment).mockReset()
     vi.mocked(abcApi.createAdjustment).mockReset()
-    vi.mocked(reportsApi.getCostMonthlyComparison).mockReset()
-  })
+	    vi.mocked(reportsApi.getCostMonthlyComparison).mockReset()
+	    vi.mocked(abcApi.getClosingReadiness).mockResolvedValue(readyClosingReadiness)
+	  })
 
   it('marks an approved adjustment as handled even if the follow-up dashboard refresh fails', async () => {
     vi.mocked(abcApi.getDashboard)
@@ -298,7 +315,7 @@ describe('CostDashboard adjustment refresh', () => {
     expect(row!).toHaveTextContent('1')
   })
 
-  it('loads cost period status from audit month deep link on first render', async () => {
+	  it('loads cost period status from audit month deep link on first render', async () => {
     vi.mocked(abcApi.getDashboard).mockResolvedValue(dashboardResponse)
     vi.mocked(abcApi.getPeriods).mockResolvedValue({
       list: [{ id: 'period-209905', yearMonth: '2099-05', status: 'closed' }],
@@ -321,6 +338,91 @@ describe('CostDashboard adjustment refresh', () => {
       }))
     })
     expect(screen.getByDisplayValue('2099-05')).toBeInTheDocument()
-    expect(await screen.findByText('已关账')).toBeInTheDocument()
-  })
-})
+	    expect(await screen.findByText('已关账')).toBeInTheDocument()
+	  })
+
+	  it('renders closing readiness status and blocking reasons', async () => {
+	    vi.mocked(abcApi.getDashboard).mockResolvedValue(dashboardResponse)
+	    vi.mocked(abcApi.getPeriods).mockResolvedValue(periodResponse)
+	    vi.mocked(abcApi.getCostRuns).mockResolvedValue(emptyListResponse)
+	    vi.mocked(abcApi.getAdjustments).mockResolvedValue(emptyListResponse)
+	    vi.mocked(abcApi.getClosingReadiness).mockResolvedValue({
+	      yearMonth: '2026-06',
+	      status: 'blocked',
+	      summary: {
+	        blockerCount: 2,
+	        warningCount: 1,
+	        infoCount: 0,
+	      },
+	      blockers: [
+	        {
+	          code: 'OPEN_ERROR_COST_EXCEPTIONS',
+	          source: 'cost_exceptions',
+	          severity: 'blocker',
+	          title: '开放错误级成本异常',
+	          message: '存在 1 条未处理的错误级成本异常',
+	          count: 1,
+	        },
+	        {
+	          code: 'PENDING_COST_ITEMS',
+	          source: 'outbound_records',
+	          severity: 'blocker',
+	          title: '未补算或成本异常出库',
+	          message: '存在 1 单未补算或成本异常的出库记录',
+	          count: 1,
+	        },
+	      ],
+	      warnings: [
+	        {
+	          code: 'OPEN_WARNING_COST_EXCEPTIONS',
+	          source: 'cost_exceptions',
+	          severity: 'warning',
+	          title: '开放警告级成本异常',
+	          message: '存在 1 条建议处理的成本异常',
+	          count: 1,
+	        },
+	      ],
+	      nextActions: [
+	        { action: 'review_cost_exceptions', label: '处理成本异常', href: '/abc/alerts?yearMonth=2026-06&status=open&includeUnassigned=1' },
+	        { action: 'review_outbound_costs', label: '查看消耗对账', href: '/abc/alerts?yearMonth=2026-06&status=open' },
+	      ],
+	      sources: {},
+	    })
+	    vi.mocked(reportsApi.getCostMonthlyComparison).mockResolvedValue(null)
+
+	    render(
+	      <MemoryRouter>
+	        <CostDashboard />
+	      </MemoryRouter>
+	    )
+
+	    expect(await screen.findByText('结账健康检查')).toBeInTheDocument()
+	    expect(screen.getAllByText('阻断').length).toBeGreaterThanOrEqual(1)
+	    expect(screen.getByText('2 项')).toBeInTheDocument()
+	    expect(screen.getByText('警告')).toBeInTheDocument()
+	    expect(screen.getByText('1 项')).toBeInTheDocument()
+	    expect(screen.getByText('存在 1 条未处理的错误级成本异常')).toBeInTheDocument()
+	    expect(screen.getByText('存在 1 单未补算或成本异常的出库记录')).toBeInTheDocument()
+	    expect(screen.getByRole('link', { name: '处理成本异常' })).toHaveAttribute('href', '/abc/alerts?yearMonth=2026-06&status=open&includeUnassigned=1')
+	  })
+
+	  it('renders a degraded closing readiness message when the health check API fails', async () => {
+	    vi.mocked(abcApi.getDashboard).mockResolvedValue(dashboardResponse)
+	    vi.mocked(abcApi.getPeriods).mockResolvedValue(periodResponse)
+	    vi.mocked(abcApi.getCostRuns).mockResolvedValue(emptyListResponse)
+	    vi.mocked(abcApi.getAdjustments).mockResolvedValue(emptyListResponse)
+	    vi.mocked(abcApi.getClosingReadiness).mockRejectedValue(new Error('closing readiness unavailable'))
+	    vi.mocked(reportsApi.getCostMonthlyComparison).mockResolvedValue(null)
+
+	    render(
+	      <MemoryRouter>
+	        <CostDashboard />
+	      </MemoryRouter>
+	    )
+
+	    expect(await screen.findByText('结账健康检查')).toBeInTheDocument()
+	    expect(screen.getByText('暂不可用')).toBeInTheDocument()
+	    expect(screen.getByText('结账健康检查暂时不可用，请稍后刷新。')).toBeInTheDocument()
+	    expect(screen.getByText('成本看板')).toBeInTheDocument()
+	  })
+	})

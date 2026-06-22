@@ -5,6 +5,7 @@ import { success, successList, error } from '../utils/response.js'
 import { calculateSlideCostWithFee } from '../utils/cost-calculator.js'
 import { recordCostException } from '../utils/cost-exceptions.js'
 import { ensurePeriodOpen, getOrCreatePeriod, normalizeMonth, runCostRecalculation, writeAuditLog } from '../utils/cost-runs.js'
+import { buildClosingReadiness } from '../utils/closing-readiness.js'
 import { requireCostWorkbenchAccess } from '../middleware/auth.js'
 import { logOperation } from '../utils/operation-logger.js'
 
@@ -800,6 +801,18 @@ const ensureCostExceptionOpen = (res: any, row: any) => {
 }
 
 const trimmedText = (value: unknown) => typeof value === 'string' ? value.trim() : ''
+
+router.get('/closing-readiness', requireCostWorkbenchRead, (req, res) => {
+  try {
+    const yearMonth = normalizeMonth(req.query.yearMonth)
+    if (!/^\d{4}-\d{2}$/.test(yearMonth)) {
+      error(res, 'yearMonth 必须为 YYYY-MM', 'INVALID_PARAMETER', 400)
+      return
+    }
+    const db = getDatabase()
+    success(res, buildClosingReadiness(db, yearMonth))
+  } catch (err: any) { error(res, err.message) }
+})
 
 router.get('/periods', (req, res) => {
   try {
