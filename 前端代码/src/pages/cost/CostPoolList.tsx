@@ -1,5 +1,5 @@
-import { type ReactNode, useEffect, useMemo, useState } from 'react'
-import { Calculator, Database, RefreshCw, RotateCcw, Search } from 'lucide-react'
+import React, { type ReactNode, useEffect, useMemo, useState } from 'react'
+import { Calculator, Database, Plus, RefreshCw, RotateCcw, Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { abcApi } from '@/api/abc'
 import { Pagination } from '@/components/ui/Pagination'
@@ -19,6 +19,28 @@ interface CostPool {
   driverRate: number
   source?: string
   description?: string
+  adjustmentReason?: string
+  sourceDocumentNo?: string
+  attachmentUrl?: string
+  linkedAdjustmentId?: string
+}
+
+interface ActivityCenterOption {
+  id: string
+  name: string
+  code?: string
+  status?: string | number
+}
+
+interface ManualCostPoolForm {
+  activityCenterId: string
+  directCost: string
+  indirectCost: string
+  driverQuantity: string
+  adjustmentReason: string
+  sourceDocumentNo: string
+  attachmentUrl: string
+  description: string
 }
 
 interface SourceTotals {
@@ -54,9 +76,37 @@ function getTotal(payload: any, list: CostPool[]) {
   return payload?.pagination?.total ?? payload?.total ?? list.length
 }
 
+export function isManualCostPoolFormReady(form: ManualCostPoolForm) {
+  const directCost = Number(form.directCost)
+  const indirectCost = Number(form.indirectCost)
+  const driverQuantity = Number(form.driverQuantity)
+  return Boolean(
+    form.activityCenterId &&
+    Number.isFinite(directCost) &&
+    directCost >= 0 &&
+    Number.isFinite(indirectCost) &&
+    indirectCost >= 0 &&
+    Number.isFinite(driverQuantity) &&
+    driverQuantity > 0 &&
+    form.adjustmentReason.trim()
+  )
+}
+
+const initialManualForm: ManualCostPoolForm = {
+  activityCenterId: '',
+  directCost: '',
+  indirectCost: '',
+  driverQuantity: '',
+  adjustmentReason: '',
+  sourceDocumentNo: '',
+  attachmentUrl: '',
+  description: '',
+}
+
 export function CostPoolList() {
   const [month, setMonth] = useState(currentMonth())
-  const [keyword, setKeyword] = useState('')
+  const initialKeyword = new URLSearchParams(window.location.search).get('keyword') || ''
+  const [keyword, setKeyword] = useState(initialKeyword)
   const [source, setSource] = useState('')
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
@@ -65,6 +115,10 @@ export function CostPoolList() {
   const [loading, setLoading] = useState(false)
   const [acting, setActing] = useState<string | null>(null)
   const [sourceTotals, setSourceTotals] = useState<SourceTotals | null>(null)
+  const [activityCenters, setActivityCenters] = useState<ActivityCenterOption[]>([])
+  const [manualModalOpen, setManualModalOpen] = useState(false)
+  const [manualForm, setManualForm] = useState<ManualCostPoolForm>(initialManualForm)
+  const [manualSubmitting, setManualSubmitting] = useState(false)
 
   const canWrite = useMemo(() => {
     const role = getUserRole()
@@ -75,7 +129,7 @@ export function CostPoolList() {
     const normalized = keyword.trim().toLowerCase()
     if (!normalized) return pools
     return pools.filter(pool =>
-      `${pool.activityCenterName} ${pool.activityCenterCode || ''} ${pool.description || ''}`
+      `${pool.id || ''} ${pool.activityCenterName} ${pool.activityCenterCode || ''} ${pool.adjustmentReason || ''} ${pool.sourceDocumentNo || ''} ${pool.attachmentUrl || ''} ${pool.description || ''}`
         .toLowerCase()
         .includes(normalized)
     )
@@ -110,6 +164,19 @@ export function CostPoolList() {
       console.error('load cost pools failed', err)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const loadActivityCenters = async () => {
+    try {
+      const payload: any = await abcApi.getActivityCenters()
+      const list = payload?.list || payload?.items || (Array.isArray(payload) ? payload : [])
+      setActivityCenters(list.filter((center: ActivityCenterOption) =>
+        center.status === undefined || center.status === 'active' || center.status === 1 || center.status === '1'
+      ))
+    } catch (err) {
+      console.error('load activity centers failed', err)
+      setActivityCenters([])
     }
   }
 
@@ -150,6 +217,43 @@ export function CostPoolList() {
     setPage(1)
   }
 
+  const openManualModal = () => {
+    setManualForm(initialManualForm)
+    setManualModalOpen(true)
+    loadActivityCenters()
+  }
+
+  const submitManualCostPool = async () => {
+    if (!isManualCostPoolFormReady(manualForm)) {
+      toast.error('请填写作业中心、成本、动因量和调整原因')
+      return
+    }
+    setManualSubmitting(true)
+    try {
+      await abcApi.createCostPool({
+        activityCenterId: manualForm.activityCenterId,
+        yearMonth: month,
+        directCost: Number(manualForm.directCost),
+        indirectCost: Number(manualForm.indirectCost),
+        driverQuantity: Number(manualForm.driverQuantity),
+        source: 'manual',
+        adjustmentReason: manualForm.adjustmentReason.trim(),
+        sourceDocumentNo: manualForm.sourceDocumentNo.trim() || undefined,
+        attachmentUrl: manualForm.attachmentUrl.trim() || undefined,
+        description: manualForm.description.trim() || undefined,
+      })
+      toast.success('手工成本池已保存')
+      setManualModalOpen(false)
+      setManualForm(initialManualForm)
+      await loadPools()
+    } catch (err) {
+      console.error('manual cost pool failed', err)
+      toast.error('手工成本池保存失败')
+    } finally {
+      setManualSubmitting(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 border-b border-gray-200 pb-5 lg:flex-row lg:items-end lg:justify-between">
@@ -161,6 +265,15 @@ export function CostPoolList() {
         </div>
         {canWrite && (
           <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={openManualModal}
+              disabled={acting !== null}
+              className="inline-flex h-10 items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-4 text-sm font-medium text-amber-800 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <Plus className="h-4 w-4" />
+              手工录入
+            </button>
             <button
               type="button"
               onClick={() => runAction('sync')}
@@ -300,17 +413,18 @@ export function CostPoolList() {
                 <Th align="right">动因量</Th>
                 <Th align="right">动因费率</Th>
                 <Th>计算公式</Th>
+                <Th>调整依据</Th>
                 <Th>说明</Th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200 bg-white">
               {loading ? (
                 <tr>
-                  <td colSpan={9} className="px-4 py-10 text-center text-sm text-gray-500">加载中...</td>
+                  <td colSpan={10} className="px-4 py-10 text-center text-sm text-gray-500">加载中...</td>
                 </tr>
               ) : filteredPools.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-4 py-10 text-center text-sm text-gray-500">
+                  <td colSpan={10} className="px-4 py-10 text-center text-sm text-gray-500">
                     暂无成本池数据，可先执行自动归集。
                   </td>
                 </tr>
@@ -337,6 +451,14 @@ export function CostPoolList() {
                     <td className="min-w-[240px] px-4 py-3 text-sm text-gray-700">
                       总成本 / 动因量 = {formatCurrency(pool.totalCost)} / {formatNumber(pool.driverQuantity, 0)}
                     </td>
+                    <td className="min-w-[220px] px-4 py-3 text-sm text-gray-600">
+                      {pool.adjustmentReason ? (
+                        <div className="space-y-1">
+                          <div>{pool.adjustmentReason}</div>
+                          <div className="text-xs text-gray-400">{pool.sourceDocumentNo || pool.attachmentUrl || '-'}</div>
+                        </div>
+                      ) : '-'}
+                    </td>
                     <td className="min-w-[220px] px-4 py-3 text-sm text-gray-500">
                       {pool.description || '按本期来源自动归集'}
                     </td>
@@ -360,7 +482,106 @@ export function CostPoolList() {
           />
         </div>
       </div>
+
+      {manualModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 px-4 pt-20">
+          <div className="flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg bg-white shadow-xl">
+            <div className="shrink-0 border-b border-gray-200 px-6 py-4">
+              <h2 className="text-base font-semibold text-gray-900">手工录入成本池</h2>
+              <p className="mt-1 text-sm text-gray-500">手工成本会影响本期动因费率，必须说明调整原因。</p>
+            </div>
+            <div className="grid overflow-y-auto px-6 py-5 sm:grid-cols-2 gap-4">
+              <label className="flex flex-col gap-1 text-sm font-medium text-gray-700 sm:col-span-2">
+                作业中心
+                <select
+                  value={manualForm.activityCenterId}
+                  onChange={event => setManualForm(form => ({ ...form, activityCenterId: event.target.value }))}
+                  className="h-10 rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/10"
+                >
+                  <option value="">请选择作业中心</option>
+                  {activityCenters.map(center => (
+                    <option key={center.id} value={center.id}>{center.name} ({center.code || '-'})</option>
+                  ))}
+                </select>
+              </label>
+              <ManualInput label="直接成本" value={manualForm.directCost} onChange={value => setManualForm(form => ({ ...form, directCost: value }))} />
+              <ManualInput label="间接成本" value={manualForm.indirectCost} onChange={value => setManualForm(form => ({ ...form, indirectCost: value }))} />
+              <ManualInput label="动因量" value={manualForm.driverQuantity} onChange={value => setManualForm(form => ({ ...form, driverQuantity: value }))} />
+              <label className="flex flex-col gap-1 text-sm font-medium text-gray-700">
+                来源单据
+                <input
+                  value={manualForm.sourceDocumentNo}
+                  onChange={event => setManualForm(form => ({ ...form, sourceDocumentNo: event.target.value }))}
+                  placeholder="如：FIN-ADJ-202606"
+                  className="h-10 rounded-md border border-gray-300 px-3 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/10"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm font-medium text-gray-700 sm:col-span-2">
+                调整原因 <span className="text-xs font-normal text-red-500">必填</span>
+                <textarea
+                  value={manualForm.adjustmentReason}
+                  onChange={event => setManualForm(form => ({ ...form, adjustmentReason: event.target.value }))}
+                  rows={3}
+                  placeholder="例如：月末人工成本补录，经财务复核调整本期成本池"
+                  className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/10"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm font-medium text-gray-700 sm:col-span-2">
+                附件或凭证链接
+                <input
+                  value={manualForm.attachmentUrl}
+                  onChange={event => setManualForm(form => ({ ...form, attachmentUrl: event.target.value }))}
+                  placeholder="可填写共享文件链接或凭证编号"
+                  className="h-10 rounded-md border border-gray-300 px-3 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/10"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm font-medium text-gray-700 sm:col-span-2">
+                说明
+                <textarea
+                  value={manualForm.description}
+                  onChange={event => setManualForm(form => ({ ...form, description: event.target.value }))}
+                  rows={2}
+                  placeholder="显示在成本池列表的补充说明"
+                  className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/10"
+                />
+              </label>
+            </div>
+            <div className="flex shrink-0 justify-end gap-3 border-t border-gray-200 px-6 py-4">
+              <button
+                type="button"
+                onClick={() => setManualModalOpen(false)}
+                className="h-10 rounded-md border border-gray-300 bg-white px-4 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={submitManualCostPool}
+                disabled={manualSubmitting}
+                className="h-10 rounded-md bg-amber-600 px-4 text-sm font-medium text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {manualSubmitting ? '保存中...' : '保存成本池'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
+  )
+}
+
+function ManualInput({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  return (
+    <label className="flex flex-col gap-1 text-sm font-medium text-gray-700">
+      {label}
+      <input
+        type="number"
+        min="0"
+        value={value}
+        onChange={event => onChange(event.target.value)}
+        className="h-10 rounded-md border border-gray-300 px-3 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/10"
+      />
+    </label>
   )
 }
 

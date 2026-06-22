@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
 import { adjustInventoryLocationStock, syncInventoryPrimaryLocation } from '../utils/inventory-locations.js'
+import { adjustBatchLocationStock } from '../utils/batch-locations.js'
 import { logOperation } from '../utils/operation-logger.js'
 
 const router = Router()
@@ -443,11 +444,14 @@ router.post('/batch', requireWriteAccess, (req, res) => {
         if (existingBatch) {
           db.prepare('UPDATE batches SET quantity = quantity + ?, remaining = remaining + ?, status = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
             .run(record.quantity, record.quantity, existingBatch.id)
+          adjustBatchLocationStock(db, existingBatch.id, record.materialId, record.locationId, Number(record.quantity), { relatedType: 'inbound', relatedId: id, operator })
         } else {
+          const batchId = uuidv4()
           db.prepare(`
             INSERT INTO batches (id, material_id, batch_no, quantity, remaining, production_date, expiry_date, inbound_id, inbound_price, supplier_id, status)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-          `).run(uuidv4(), record.materialId, record.batchNo, record.quantity, record.quantity, record.productionDate || null, record.expiryDate, id, price, record.supplierId || null)
+          `).run(batchId, record.materialId, record.batchNo, record.quantity, record.quantity, record.productionDate || null, record.expiryDate, id, price, record.supplierId || null)
+          adjustBatchLocationStock(db, batchId, record.materialId, record.locationId, Number(record.quantity), { relatedType: 'inbound', relatedId: id, operator })
         }
 
         const existingInv = db.prepare('SELECT * FROM inventory WHERE material_id = ?').get(record.materialId) as any
@@ -621,12 +625,14 @@ router.post('/', requireWriteAccess, (req, res) => {
             db.prepare('UPDATE batches SET quantity = quantity + ?, remaining = remaining + ? WHERE id = ?')
               .run(inboundQuantity, inboundQuantity, existingBatch.id)
           }
+          adjustBatchLocationStock(db, existingBatch.id, materialId, locationId, inboundQuantity, { relatedType: 'inbound', relatedId: id, operator })
         } else {
           const batchId = uuidv4()
           db.prepare(`
             INSERT INTO batches (id, material_id, batch_no, quantity, remaining, production_date, expiry_date, inbound_id, inbound_price, supplier_id, status)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
           `).run(batchId, materialId, batchNo, inboundQuantity, inboundQuantity, productionDate || null, expiryDate || null, id, inboundPrice, effectiveSupplierId)
+          adjustBatchLocationStock(db, batchId, materialId, locationId, inboundQuantity, { relatedType: 'inbound', relatedId: id, operator })
         }
       }
 

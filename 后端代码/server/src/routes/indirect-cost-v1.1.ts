@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
+import { logOperation } from '../utils/operation-logger.js'
 import { normalizeDisplayText, requireValidText, type TextGuardResult } from '../utils/text-guard.js'
 
 const router = Router()
@@ -82,6 +83,32 @@ function buildCostCenterWhere(query: any) {
     params.push(status === 'active' ? 1 : 0)
   }
   return { where, params }
+}
+
+function costCenterSnapshot(row: any) {
+  if (!row) return null
+  return {
+    id: row.id,
+    code: row.code,
+    name: row.name,
+    costType: row.cost_type,
+    monthlyAmount: row.monthly_amount,
+    allocationBase: row.allocation_base,
+    description: row.description,
+    status: Number(row.status) === 1 ? 'active' : 'inactive',
+  }
+}
+
+function allocationSnapshot(row: any) {
+  if (!row) return null
+  return {
+    id: row.id,
+    costCenterId: row.cost_center_id,
+    yearMonth: row.year_month,
+    totalAmount: row.total_amount,
+    allocationBaseValue: row.allocation_base_value,
+    allocationRate: row.allocation_rate,
+  }
 }
 
 // 获取成本中心列表
@@ -202,6 +229,13 @@ router.post('/', (req, res) => {
     const id = uuidv4()
     db.prepare('INSERT INTO indirect_cost_centers (id, code, name, cost_type, monthly_amount, allocation_base, description, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
       .run(id, codeText.value, nameText.value, normalizedCostType, amount.value, normalizedAllocationBase, descriptionText.value, parsedStatus.value)
+    const created = db.prepare('SELECT * FROM indirect_cost_centers WHERE id = ?').get(id) as any
+    logOperation(db, req as any, {
+      operation: 'POST /indirect-costs',
+      description: '创建间接成本中心',
+      requestData: costCenterSnapshot(created),
+      responseData: { costCenterId: id },
+    })
     success(res, { id }, 'Created', 201)
   } catch (err: any) {
     if (err.message?.includes('UNIQUE constraint failed')) { error(res, 'Code exists', 'RESOURCE_CONFLICT', 409); return }
@@ -251,6 +285,16 @@ router.put('/:id', (req, res) => {
         parsedStatus.value,
         id
       )
+    const updated = db.prepare('SELECT * FROM indirect_cost_centers WHERE id = ?').get(id) as any
+    logOperation(db, req as any, {
+      operation: 'PUT /indirect-costs/:id',
+      description: '更新间接成本中心',
+      requestData: {
+        before: costCenterSnapshot(existing),
+        after: costCenterSnapshot(updated),
+      },
+      responseData: { costCenterId: id },
+    })
     success(res, { id }, 'Updated')
   } catch (err: any) { error(res, err.message) }
 })
@@ -271,6 +315,12 @@ router.delete('/:id', (req, res) => {
     try {
       db.prepare('DELETE FROM indirect_cost_centers WHERE id = ?').run(id)
       db.exec('COMMIT')
+      logOperation(db, req as any, {
+        operation: 'DELETE /indirect-costs/:id',
+        description: '删除间接成本中心',
+        requestData: costCenterSnapshot(existing),
+        responseData: { costCenterId: id },
+      })
     } catch (innerErr: any) {
       db.exec('ROLLBACK')
       throw innerErr
@@ -335,11 +385,32 @@ router.post('/:id/allocations', (req, res) => {
     if (existing) {
       db.prepare('UPDATE indirect_cost_allocations SET total_amount = ?, allocation_base_value = ?, allocation_rate = ? WHERE id = ?')
         .run(amount.value, baseValue, rate, existing.id)
+      const updated = db.prepare('SELECT * FROM indirect_cost_allocations WHERE id = ?').get(existing.id) as any
+      logOperation(db, req as any, {
+        operation: 'POST /indirect-costs/:id/allocations',
+        description: '更新间接成本分摊',
+        requestData: {
+          costCenter: costCenterSnapshot(costCenter),
+          before: allocationSnapshot(existing),
+          after: allocationSnapshot(updated),
+        },
+        responseData: { costCenterId: id, allocationId: existing.id },
+      })
       success(res, { id: existing.id, rate }, 'Updated')
     } else {
       const allocId = uuidv4()
       db.prepare('INSERT INTO indirect_cost_allocations (id, cost_center_id, year_month, total_amount, allocation_base_value, allocation_rate) VALUES (?, ?, ?, ?, ?, ?)')
         .run(allocId, id, yearMonth, amount.value, baseValue, rate)
+      const created = db.prepare('SELECT * FROM indirect_cost_allocations WHERE id = ?').get(allocId) as any
+      logOperation(db, req as any, {
+        operation: 'POST /indirect-costs/:id/allocations',
+        description: '录入间接成本分摊',
+        requestData: {
+          costCenter: costCenterSnapshot(costCenter),
+          allocation: allocationSnapshot(created),
+        },
+        responseData: { costCenterId: id, allocationId: allocId },
+      })
       success(res, { id: allocId, rate }, 'Created', 201)
     }
   } catch (err: any) { error(res, err.message) }

@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
 import { X, Plus, Trash2 } from 'lucide-react'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
-import type { Material, Project, BOM } from '@/types'
-import { bomApi } from '@/api/master'
+import type { Material, Project, BOM, Batch } from '@/types'
+import { bomApi, materialApi } from '@/api/master'
 import { reconciliationApi } from '@/api/reconciliation'
+import { getUserRole } from '@/lib/permissions'
 
 export interface OutboundItemForm {
   materialId: string
@@ -53,6 +54,185 @@ interface LisCaseOption {
   operateTime?: string
 }
 
+interface BatchPreviewOption extends Batch {
+  materialName?: string
+}
+
+interface BatchPreviewAllocation {
+  batchId: string
+  batchNo: string
+  materialName?: string
+  quantity: number
+}
+
+interface BomBatchPreviewRow {
+  key: string
+  source: string
+  label: string
+  requiredQuantity: number
+  availableQuantity: number
+  unit: string
+  allocations: BatchPreviewAllocation[]
+  insufficient: boolean
+  showMaterialName?: boolean
+}
+
+const roundQuantity = (value: number) => Math.round(value * 1_000_000) / 1_000_000
+
+const formatQuantity = (value: number) => {
+  const rounded = roundQuantity(value)
+  return Number.isInteger(rounded) ? String(rounded) : String(rounded).replace(/0+$/, '').replace(/\.$/, '')
+}
+
+const collectBomMaterialIds = (bom: BOM) => Array.from(new Set([
+  ...(bom.materials || []).map(material => material.id),
+  ...(bom.generalReagents || []).map(item => item.materialId),
+  ...(bom.generalConsumables || []).map(item => item.materialId),
+  ...(bom.qualityControls || []).map(item => item.materialId),
+].filter(Boolean)))
+
+const allocatePreviewBatches = (batches: BatchPreviewOption[], requiredQuantity: number) => {
+  const sortedBatches = [...batches]
+    .filter(batch => Number(batch.remaining || 0) > 0 && batch.status === 'normal')
+    .sort((a, b) => {
+      const expiryCompare = String(a.expiryDate || '9999-12-31').localeCompare(String(b.expiryDate || '9999-12-31'))
+      if (expiryCompare !== 0) return expiryCompare
+      return String(a.createdAt || '').localeCompare(String(b.createdAt || ''))
+    })
+
+  let remainingRequired = requiredQuantity
+  const allocations: BatchPreviewAllocation[] = []
+
+  for (const batch of sortedBatches) {
+    if (remainingRequired <= 0) break
+    const available = Number(batch.remaining || 0)
+    const quantity = Math.min(available, remainingRequired)
+    allocations.push({
+      batchId: batch.id,
+      batchNo: batch.batchNo,
+      materialName: batch.materialName,
+      quantity: roundQuantity(quantity),
+    })
+    remainingRequired = roundQuantity(remainingRequired - quantity)
+  }
+
+  return {
+    allocations,
+    availableQuantity: roundQuantity(sortedBatches.reduce((sum, batch) => sum + Number(batch.remaining || 0), 0)),
+  }
+}
+
+const makeBomBatchPreviewRow = ({
+  key,
+  source,
+  label,
+  requiredQuantity,
+  unit,
+  batches,
+  showMaterialName,
+}: {
+  key: string
+  source: string
+  label: string
+  requiredQuantity: number
+  unit: string
+  batches: BatchPreviewOption[]
+  showMaterialName?: boolean
+}): BomBatchPreviewRow => {
+  const allocation = allocatePreviewBatches(batches, requiredQuantity)
+  return {
+    key,
+    source,
+    label,
+    requiredQuantity: roundQuantity(requiredQuantity),
+    availableQuantity: allocation.availableQuantity,
+    unit,
+    allocations: allocation.allocations,
+    insufficient: allocation.availableQuantity < requiredQuantity,
+    showMaterialName,
+  }
+}
+
+const buildBomBatchPreviewRows = (
+  bom: BOM,
+  sampleCount: number,
+  batchesByMaterialId: Record<string, Batch[]>,
+  materialNameFallback: (materialId: string) => string,
+): BomBatchPreviewRow[] => {
+  const rows: BomBatchPreviewRow[] = []
+  const materialGroups = new Map<string, typeof bom.materials>()
+
+  for (const material of bom.materials || []) {
+    const groupKey = material.groupName || `_single_${material.id}`
+    materialGroups.set(groupKey, [...(materialGroups.get(groupKey) || []), material])
+  }
+
+  for (const [groupKey, groupMaterials] of materialGroups.entries()) {
+    const firstMaterial = groupMaterials[0]
+    const requiredQuantity = Number(firstMaterial.usagePerSample || 0) * sampleCount
+    if (requiredQuantity <= 0) continue
+    const isGroup = groupMaterials.length > 1
+    const batches = groupMaterials.flatMap(material =>
+      (batchesByMaterialId[material.id] || []).map(batch => ({
+        ...batch,
+        materialName: material.name,
+      })),
+    )
+    rows.push(makeBomBatchPreviewRow({
+      key: `bom-material-${groupKey}`,
+      source: 'BOM物料',
+      label: isGroup ? (firstMaterial.groupName || '组合物料') : firstMaterial.name,
+      requiredQuantity,
+      unit: firstMaterial.unit,
+      batches,
+      showMaterialName: isGroup,
+    }))
+  }
+
+  for (const item of bom.generalReagents || []) {
+    const requiredQuantity = Number(item.usagePerSample || 0) * sampleCount
+    if (requiredQuantity <= 0) continue
+    rows.push(makeBomBatchPreviewRow({
+      key: `general-reagent-${item.materialId}`,
+      source: '通用试剂',
+      label: item.name || materialNameFallback(item.materialId),
+      requiredQuantity,
+      unit: item.unit,
+      batches: batchesByMaterialId[item.materialId] || [],
+    }))
+  }
+
+  for (const item of bom.generalConsumables || []) {
+    const requiredQuantity = Number(item.usagePerSample || 0) * sampleCount
+    if (requiredQuantity <= 0) continue
+    rows.push(makeBomBatchPreviewRow({
+      key: `general-consumable-${item.materialId}`,
+      source: '通用耗材',
+      label: item.name || materialNameFallback(item.materialId),
+      requiredQuantity,
+      unit: item.unit,
+      batches: batchesByMaterialId[item.materialId] || [],
+    }))
+  }
+
+  for (const item of bom.qualityControls || []) {
+    const coversSamples = Math.max(1, Number(item.coversSamples || 1))
+    const batchesNeeded = Math.ceil(sampleCount / coversSamples)
+    const requiredQuantity = batchesNeeded * Number(item.usagePerBatch || 0)
+    if (requiredQuantity <= 0) continue
+    rows.push(makeBomBatchPreviewRow({
+      key: `quality-control-${item.materialId}`,
+      source: '质控品',
+      label: item.name || materialNameFallback(item.materialId),
+      requiredQuantity,
+      unit: item.unit,
+      batches: batchesByMaterialId[item.materialId] || [],
+    }))
+  }
+
+  return rows
+}
+
 export default function OutboundFormModal({
   open,
   editRecordId,
@@ -67,6 +247,7 @@ export default function OutboundFormModal({
   const [lisCases, setLisCases] = useState<LisCaseOption[]>([])
   const [selectedBom, setSelectedBom] = useState<BOM | null>(null)
   const [costPreview, setCostPreview] = useState<CostPreview | null>(null)
+  const [batchesByMaterialId, setBatchesByMaterialId] = useState<Record<string, Batch[]>>({})
   const selectedProject = projects.find(project => project.id === form.projectId)
   const compatibleBoms = boms.filter(bom => {
     if (bom.status !== 'active') return false
@@ -74,6 +255,7 @@ export default function OutboundFormModal({
     return bom.type === selectedProject.type || bom.type === 'project'
   })
   const isBomOutbound = Boolean(form.bomId || form.caseNo?.trim())
+  const canReadLisCases = ['admin', 'finance', 'technician'].includes(getUserRole() || '')
 
   // Load BOM and LIS case list when modal opens
   useEffect(() => {
@@ -81,6 +263,10 @@ export default function OutboundFormModal({
     bomApi.getList({ page: 1, pageSize: 999, status: 'active' }).then((res: any) => {
       setBoms(res?.list || [])
     }).catch(() => {})
+    if (!canReadLisCases) {
+      setLisCases([])
+      return
+    }
     reconciliationApi.getCases({ page: 1, pageSize: 100 }).then((res: any) => {
       setLisCases((res?.list || []).map((item: any) => ({
         id: item.id,
@@ -93,7 +279,43 @@ export default function OutboundFormModal({
         operateTime: item.operateTime || item.operate_time,
       })).filter((item: LisCaseOption) => item.caseNo))
     }).catch(() => {})
-  }, [open])
+  }, [open, canReadLisCases])
+
+  const ordinaryMaterialIdsForBatchLookup = form.items
+    .map(item => item.materialId)
+    .filter(Boolean)
+    .join('|')
+  const bomMaterialIdsForBatchLookup = selectedBom ? collectBomMaterialIds(selectedBom).join('|') : ''
+  const materialIdsForBatchLookup = isBomOutbound ? bomMaterialIdsForBatchLookup : ordinaryMaterialIdsForBatchLookup
+
+  useEffect(() => {
+    if (!open) {
+      setBatchesByMaterialId({})
+      return
+    }
+
+    const materialIds = Array.from(new Set(materialIdsForBatchLookup.split('|').filter(Boolean)))
+    if (materialIds.length === 0) {
+      setBatchesByMaterialId({})
+      return
+    }
+
+    let cancelled = false
+    Promise.all(materialIds.map(async materialId => {
+      try {
+        const detail = await materialApi.getDetail(materialId)
+        const batches = (detail?.batches || []).filter(batch => Number(batch.remaining || 0) > 0 && batch.status === 'normal')
+        return [materialId, batches] as const
+      } catch {
+        return [materialId, []] as const
+      }
+    })).then(entries => {
+      if (cancelled) return
+      setBatchesByMaterialId(Object.fromEntries(entries))
+    })
+
+    return () => { cancelled = true }
+  }, [open, materialIdsForBatchLookup])
 
   // Load BOM detail when bomId changes
   useEffect(() => {
@@ -167,12 +389,38 @@ export default function OutboundFormModal({
       items: form.items.filter((_, i) => i !== idx),
     })
 
-  const updateItem = (idx: number, field: keyof OutboundItemForm, value: string | number) => {
+  const updateItem = (idx: number, field: keyof OutboundItemForm, value: string | number | undefined) => {
     onFormChange({
       ...form,
       items: form.items.map((item, i) => (i === idx ? { ...item, [field]: value } : item)),
     })
   }
+
+  const updateItemMaterial = (idx: number, materialId: string) => {
+    onFormChange({
+      ...form,
+      items: form.items.map((item, i) => (i === idx ? { ...item, materialId, batchId: undefined } : item)),
+    })
+  }
+
+  const getSelectedBatch = (item: OutboundItemForm) =>
+    (batchesByMaterialId[item.materialId] || []).find(batch => batch.id === item.batchId)
+  const hasBatchQuantityConflict = form.items.some(item => {
+    const selectedBatch = getSelectedBatch(item)
+    return selectedBatch && Number(item.quantity || 0) > Number(selectedBatch.remaining || 0)
+  })
+  const bomPreviewMaterialIds = isBomOutbound && selectedBom ? collectBomMaterialIds(selectedBom) : []
+  const hasLoadedBomBatchDetails = bomPreviewMaterialIds.length > 0
+    && bomPreviewMaterialIds.every(materialId => Object.prototype.hasOwnProperty.call(batchesByMaterialId, materialId))
+  const bomBatchPreviewRows = selectedBom && form.sampleCount && form.sampleCount > 0 && hasLoadedBomBatchDetails
+    ? buildBomBatchPreviewRows(
+      selectedBom,
+      form.sampleCount,
+      batchesByMaterialId,
+      materialId => materials.find(material => material.id === materialId)?.name || '未命名物料',
+    )
+    : []
+  const hasBomBatchPreviewConflict = isBomOutbound && bomBatchPreviewRows.some(row => row.insufficient)
 
   const formatCurrency = (v: number) => `¥${v.toFixed(2)}`
 
@@ -301,7 +549,7 @@ export default function OutboundFormModal({
           )}
 
           {isBomOutbound ? (
-            <div>
+            <div className="space-y-3">
               <label className="block text-sm font-medium text-gray-700 mb-2">BOM自动出库明细</label>
               <div className="overflow-hidden rounded-md border border-gray-200">
                 <table className="w-full text-sm">
@@ -327,6 +575,56 @@ export default function OutboundFormModal({
                   </tbody>
                 </table>
               </div>
+              {bomBatchPreviewRows.length > 0 && (
+                <div data-testid="bom-batch-preview" className="overflow-hidden rounded-md border border-gray-200">
+                  <div className="px-3 py-2 bg-gray-50 text-sm font-medium text-gray-700">预计批次扣减</div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[640px] text-sm">
+                      <thead className="bg-gray-50 text-xs text-gray-500">
+                        <tr>
+                          <th className="px-3 py-2 text-left font-medium">来源</th>
+                          <th className="px-3 py-2 text-left font-medium">物料</th>
+                          <th className="px-3 py-2 text-left font-medium">应扣数量</th>
+                          <th className="px-3 py-2 text-left font-medium">预计批次</th>
+                          <th className="px-3 py-2 text-left font-medium">状态</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {bomBatchPreviewRows.map(row => (
+                          <tr key={row.key}>
+                            <td className="px-3 py-2 text-gray-500">{row.source}</td>
+                            <td className="px-3 py-2 text-gray-900">{row.label}</td>
+                            <td className="px-3 py-2 text-gray-600">{formatQuantity(row.requiredQuantity)}{row.unit}</td>
+                            <td className="px-3 py-2 text-gray-600">
+                              {row.allocations.length > 0 ? (
+                                <div className="space-y-1">
+                                  {row.allocations.map(allocation => (
+                                    <div key={`${row.key}-${allocation.batchId}`}>
+                                      {row.showMaterialName && allocation.materialName ? `${allocation.materialName} / ` : ''}
+                                      {allocation.batchNo} × {formatQuantity(allocation.quantity)}{row.unit}
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <span className="text-red-600">无可用批次</span>
+                              )}
+                            </td>
+                            <td className="px-3 py-2">
+                              {row.insufficient ? (
+                                <span className="text-red-600">
+                                  批次库存不足：需要 {formatQuantity(row.requiredQuantity)}{row.unit}，可用 {formatQuantity(row.availableQuantity)}{row.unit}
+                                </span>
+                              ) : (
+                                <span className="text-green-600">可出库</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <div>
@@ -342,35 +640,63 @@ export default function OutboundFormModal({
                 </button>
               </div>
               <div className="space-y-2">
-                {form.items.map((item, idx) => (
-                  <div key={idx} className="flex items-center gap-2 p-3 bg-gray-50 rounded-md">
-                    <SearchableSelect
-                      value={item.materialId}
-                      onChange={val => updateItem(idx, 'materialId', val)}
-                      options={materials.map(m => ({ value: m.id, label: `${m.name} (${m.code})` }))}
-                      placeholder="选择物料"
-                      className="flex-1"
-                      testId={`material-select-${idx}`}
-                    />
+                {form.items.map((item, idx) => {
+                  const selectedBatch = getSelectedBatch(item)
+                  const quantityExceedsBatch = selectedBatch && Number(item.quantity || 0) > Number(selectedBatch.remaining || 0)
+                  return (
+                  <div key={idx} className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(180px,240px)_96px_32px] items-start gap-2 p-3 bg-gray-50 rounded-md">
+                    <div>
+                      <SearchableSelect
+                        value={item.materialId}
+                        onChange={val => updateItemMaterial(idx, val)}
+                        options={materials.map(m => ({ value: m.id, label: `${m.name} (${m.code})` }))}
+                        placeholder="选择物料"
+                        testId={`material-select-${idx}`}
+                      />
+                    </div>
+                    <div>
+                      <SearchableSelect
+                        value={item.batchId || ''}
+                        onChange={val => updateItem(idx, 'batchId', val || undefined)}
+                        options={(batchesByMaterialId[item.materialId] || []).map(batch => ({
+                          value: batch.id,
+                          label: `${batch.batchNo} (余${batch.remaining}${materials.find(m => m.id === item.materialId)?.unit || ''} @${formatCurrency(Number(batch.inboundPrice || 0))})`,
+                        }))}
+                        placeholder={(batchesByMaterialId[item.materialId] || []).length > 0 ? '选择出库批次' : '按系统批次'}
+                        disabled={!item.materialId || (batchesByMaterialId[item.materialId] || []).length === 0}
+                        testId={`outbound-batch-select-${idx}`}
+                      />
+                      {item.batchId && (
+                        <div className={`mt-1 text-xs ${quantityExceedsBatch ? 'text-red-500' : 'text-gray-500'}`}>
+                          {quantityExceedsBatch
+                            ? `出库数量不能超过批次剩余 ${selectedBatch?.remaining}${materials.find(m => m.id === item.materialId)?.unit || ''}`
+                            : '按所选批次扣减库存和成本'}
+                        </div>
+                      )}
+                    </div>
                     <input
                       type="number"
                       placeholder="数量"
                       min={1}
+                      max={selectedBatch?.remaining}
                       value={item.quantity || ''}
                       onChange={e => updateItem(idx, 'quantity', Number(e.target.value))}
                       data-testid={`quantity-input-${idx}`}
-                      className="w-24 h-9 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="h-10 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
-                    {form.items.length > 1 && (
-                      <button
-                        onClick={() => removeItem(idx)}
-                        className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors duration-150"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
+                    <div className="h-10 flex items-center justify-center">
+                      {form.items.length > 1 && (
+                        <button
+                          onClick={() => removeItem(idx)}
+                          className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors duration-150"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
                   </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
           )}
@@ -398,7 +724,10 @@ export default function OutboundFormModal({
           <button
             onClick={onSubmit}
             data-testid="submit-btn"
-            className="px-4 py-2 text-sm text-white bg-blue-500 rounded-md hover:bg-blue-600 transition-colors duration-150"
+            disabled={hasBatchQuantityConflict || hasBomBatchPreviewConflict}
+            className={`px-4 py-2 text-sm text-white rounded-md transition-colors duration-150 ${
+              hasBatchQuantityConflict || hasBomBatchPreviewConflict ? 'bg-gray-300 cursor-not-allowed' : 'bg-blue-500 hover:bg-blue-600'
+            }`}
           >
             {editRecordId ? '确认更新' : '确认出库'}
           </button>

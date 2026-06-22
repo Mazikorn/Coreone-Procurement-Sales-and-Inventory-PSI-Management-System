@@ -49,7 +49,7 @@ describe('useInventoryPage', () => {
     vi.mocked(scrapApi.batchCreate).mockResolvedValue({ createdCount: 1, ids: ['scrap-1'] } as any)
   })
 
-  it('does not fetch admin-only users list for non-admin inventory users', async () => {
+  it('lets warehouse inventory users load depletion tabs without fetching admin-only users', async () => {
     const { result } = renderHook(() => useInventoryPage())
 
     await waitFor(() => expect(projectApi.getList).toHaveBeenCalled())
@@ -61,9 +61,90 @@ describe('useInventoryPage', () => {
         real_name: '王坤强',
       }),
     ]))
-    expect(depletionApi.getTracking).not.toHaveBeenCalled()
-    expect(depletionApi.getDepletion).not.toHaveBeenCalled()
-    expect(result.current.canAccessDepletion).toBe(false)
+    expect(depletionApi.getTracking).toHaveBeenCalledWith({ status: 'in-use' })
+    expect(depletionApi.getDepletion).toHaveBeenCalledTimes(1)
+    expect(result.current.canAccessDepletion).toBe(true)
+    expect(result.current.canManageDepletionActions).toBe(true)
+  })
+
+  it('maps depletion tracking and depleted records returned by the backend snake_case API', async () => {
+    vi.mocked(depletionApi.getTracking).mockResolvedValue({
+      list: [
+        {
+          id: 'tracking-1',
+          material_id: 'MAT-DPL-001',
+          material_name: 'DAB染色液',
+          batch: 'BATCH-DPL-001',
+          spec: '1ml',
+          total_qty: 10,
+          remaining: 3,
+          unit: 'ml',
+          days_used: 5,
+          expected_days: 12,
+          status: 'in-use',
+        },
+      ],
+    } as any)
+    vi.mocked(depletionApi.getDepletion).mockResolvedValue({
+      list: [
+        {
+          id: 'DPL-001',
+          material_name: '苏木素染液',
+          batch: 'BATCH-DPL-OLD',
+          spec: '500ml',
+          deplete_type: 'abnormal',
+          deplete_reason: '瓶口污染',
+          operator: 'wangkq',
+          total_qty: 8,
+          remain_qty: 1,
+          unit: 'ml',
+          start_date: '2026-06-01',
+          end_date: '2026-06-22',
+          actual_days: 21,
+        },
+      ],
+    } as any)
+
+    const { result } = renderHook(() => useInventoryPage())
+
+    await waitFor(() => expect(result.current.depletionTracking).toHaveLength(1))
+    expect(result.current.depletionTracking[0]).toEqual(expect.objectContaining({
+      id: 'tracking-1',
+      materialName: 'DAB染色液',
+      batch: 'BATCH-DPL-001',
+      totalQty: 10,
+      remaining: 3,
+      daysUsed: 5,
+      expectedDays: 12,
+    }))
+    expect(result.current.depletedRecords[0]).toEqual(expect.objectContaining({
+      id: 'DPL-001',
+      materialName: '苏木素染液',
+      batch: 'BATCH-DPL-OLD',
+      depleteType: '异常耗尽',
+      depleteReason: '瓶口污染',
+      operator: 'wangkq',
+      totalQty: 8,
+      remainQty: 1,
+      startDate: '2026-06-01',
+      endDate: '2026-06-22',
+      actualDays: 21,
+    }))
+  })
+
+  it('keeps pathologist depletion access read-only', async () => {
+    localStorage.setItem('user', JSON.stringify({
+      id: 'USER-PATH',
+      username: 'liuyf',
+      realName: '刘医生',
+      role: 'pathologist',
+    }))
+
+    const { result } = renderHook(() => useInventoryPage())
+
+    await waitFor(() => expect(depletionApi.getTracking).toHaveBeenCalledWith({ status: 'in-use' }))
+    expect(result.current.canAccessDepletion).toBe(true)
+    expect(result.current.canManageDepletionActions).toBe(false)
   })
 
   it('does not fetch warehouse-only locations for technician inventory users', async () => {
@@ -150,6 +231,22 @@ describe('useInventoryPage', () => {
     })
   })
 
+  it('uses keyword from URL so audit and business links land on a filtered inventory view', async () => {
+    window.history.replaceState(null, '', '/inventory?keyword=BATCH-URL-001')
+
+    const { result } = renderHook(() => useInventoryPage())
+
+    await waitFor(() => {
+      expect(inventoryApi.getList).toHaveBeenCalledWith(expect.objectContaining({
+        keyword: 'BATCH-URL-001',
+      }))
+      expect(inventoryApi.getStats).toHaveBeenCalledWith(expect.objectContaining({
+        keyword: 'BATCH-URL-001',
+      }))
+    })
+    expect(result.current.keyword).toBe('BATCH-URL-001')
+  })
+
   it('opens and stores inventory consistency check results', async () => {
     const { result } = renderHook(() => useInventoryPage())
 
@@ -210,6 +307,8 @@ describe('useInventoryPage', () => {
     act(() => {
       result.current.toggleSelectOne('INV-MAT-001-BATCH-001')
       result.current.setScrapReason('expired')
+      result.current.setScrapResponsiblePerson(' 张三 ')
+      result.current.setScrapResponsibleDepartment(' 病理科 ')
     })
 
     await act(async () => {
@@ -222,6 +321,8 @@ describe('useInventoryPage', () => {
         batchId: 'BATCH-001',
         quantity: 3,
         reason: 'expired',
+        responsiblePerson: '张三',
+        responsibleDepartment: '病理科',
       }),
     ])
   })

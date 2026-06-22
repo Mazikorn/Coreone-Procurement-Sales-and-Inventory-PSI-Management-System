@@ -40,6 +40,7 @@ const equipmentType = {
 describe('useEquipmentTypePage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    window.history.replaceState(null, '', '/')
     localStorage.clear()
     localStorage.setItem('user', JSON.stringify({ role: 'admin' }))
     vi.mocked(equipmentApi.getTypes).mockResolvedValue({ list: [equipmentType], pagination: { total: 1 } } as any)
@@ -86,5 +87,31 @@ describe('useEquipmentTypePage', () => {
       name: '停用染色设备',
       status: 'inactive',
     }))
+  })
+
+  it('keeps deleted equipment type review context from audit links', async () => {
+    window.history.replaceState(null, '', '/equipment/types?keyword=EQT-DEEP-001&includeDeleted=true')
+    vi.mocked(equipmentApi.getTypes).mockResolvedValue({
+      list: [{ ...equipmentType, id: 'type-deleted-001', isDeleted: true }],
+      pagination: { total: 1 },
+    } as any)
+
+    const { result } = renderHook(() => useEquipmentTypePage())
+
+    await waitFor(() => expect(equipmentApi.getTypes).toHaveBeenCalledWith(expect.objectContaining({
+      page: 1,
+      pageSize: 20,
+      keyword: 'EQT-DEEP-001',
+      includeDeleted: true,
+    })))
+    await waitFor(() => expect(equipmentApi.getTypeStats).toHaveBeenCalledWith(expect.objectContaining({
+      keyword: 'EQT-DEEP-001',
+      includeDeleted: true,
+    })))
+    expect(result.current.keyword).toBe('EQT-DEEP-001')
+    expect(result.current.searchInput).toBe('EQT-DEEP-001')
+    expect(result.current.data).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'type-deleted-001', isDeleted: true }),
+    ]))
   })
 })

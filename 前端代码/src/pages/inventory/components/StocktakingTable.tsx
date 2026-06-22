@@ -1,3 +1,4 @@
+import React from 'react'
 import { Search, FolderOpen, Loader2, Trash2 } from 'lucide-react'
 import { Pagination } from '@/components/ui/Pagination'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
@@ -36,6 +37,16 @@ export function StocktakingTable({
   const statusClass = (status: string) => status === 'confirmed'
     ? 'bg-blue-50 text-blue-600'
     : 'bg-green-50 text-green-600'
+  const scopeLabel = (row: StocktakingRecord) => {
+    if (row.batchId) return '批次库位'
+    if (row.locationId) return '库位'
+    return '整物料'
+  }
+  const scopeDetail = (row: StocktakingRecord) => {
+    if (row.batchId) return `${row.locationName || row.locationId || '-'} / ${row.batchNo || row.batchId}`
+    if (row.locationId) return row.locationName || row.locationId
+    return ''
+  }
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
@@ -83,7 +94,10 @@ export function StocktakingTable({
               <tr key={row.id} className="hover:bg-gray-50 transition-colors">
                 <td className="px-4 py-3 font-mono text-gray-600 text-xs">{row.stocktakingNo}</td>
                 <td className="px-4 py-3 font-medium text-gray-900">{row.materialName ? `${row.materialName}盘点` : row.stocktakingNo}</td>
-                <td className="px-4 py-3 text-gray-500">单物料</td>
+                <td className="px-4 py-3">
+                  <div className="text-gray-700">{scopeLabel(row)}</div>
+                  {scopeDetail(row) && <div className="text-xs text-gray-400 mt-0.5">{scopeDetail(row)}</div>}
+                </td>
                 <td className="px-4 py-3 text-gray-500">实盘调整</td>
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-2">

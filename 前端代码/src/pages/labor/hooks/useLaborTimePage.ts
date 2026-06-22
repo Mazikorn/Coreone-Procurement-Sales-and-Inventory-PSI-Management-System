@@ -52,8 +52,9 @@ function canManageLaborTimeRecords() {
 
 export function useLaborTimePage() {
   const canManageLaborTimes = canManageLaborTimeRecords()
-  const [searchInput, setSearchInput] = useState('')
-  const [keyword, setKeyword] = useState('')
+  const initialKeyword = new URLSearchParams(window.location.search).get('keyword') || ''
+  const [searchInput, setSearchInput] = useState(initialKeyword)
+  const [keyword, setKeyword] = useState(initialKeyword)
   const [filterProjectType, setFilterProjectType] = useState('')
   const [filterReferenceSource, setFilterReferenceSource] = useState('')
   const [modalType, setModalType] = useState<'create' | 'edit' | 'detail' | 'delete' | null>(null)

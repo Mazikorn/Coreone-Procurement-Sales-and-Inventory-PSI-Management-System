@@ -38,6 +38,19 @@ describe('role story 012 pathologist readonly insight boundaries', () => {
     }
   })
 
+  it('blocks pathologists from reading material master data directly', async () => {
+    for (const path of [
+      '/api/v1/materials',
+      '/api/v1/materials/stats',
+    ]) {
+      const res = await request(app)
+        .get(path)
+        .set('Authorization', `Bearer ${pathologistToken}`)
+
+      expect(res.status).toBe(403)
+    }
+  })
+
   it('blocks pathologists from changing modeling, reconciliation, or finance configuration facts', async () => {
     const project = await request(app)
       .post('/api/v1/projects')
@@ -72,5 +85,21 @@ describe('role story 012 pathologist readonly insight boundaries', () => {
       .set('Authorization', `Bearer ${pathologistToken}`)
       .send({ mappings: [] })
     expect(feeMapping.status).toBe(403)
+  })
+
+  it('blocks pathologists from reading finance-owned ABC configuration workbench data', async () => {
+    for (const path of [
+      '/api/v1/abc/activity-centers',
+      '/api/v1/abc/cost-drivers',
+      '/api/v1/abc/cost-pools',
+      '/api/v1/abc/bom-fee-mappings/audit',
+      '/api/v1/abc/fee-standards',
+    ]) {
+      const res = await request(app)
+        .get(path)
+        .set('Authorization', `Bearer ${pathologistToken}`)
+
+      expect(res.status).toBe(403)
+    }
   })
 })

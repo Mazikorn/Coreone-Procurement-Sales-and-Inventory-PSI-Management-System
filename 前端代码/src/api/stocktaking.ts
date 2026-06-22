@@ -15,6 +15,8 @@ export const stocktakingApi = {
 
   create: (data: {
     materialId: string
+    locationId?: string
+    batchId?: string
     systemStock: number
     actualStock: number
     remark?: string

@@ -104,6 +104,7 @@ describe('useBOMPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     localStorage.clear()
+    window.history.replaceState(null, '', '/bom')
     localStorage.setItem('user', JSON.stringify({ role: 'admin' }))
     vi.mocked(bomApi.getList).mockResolvedValue({ list: [activeBom], pagination: { total: 1 } } as any)
     vi.mocked(bomApi.getDetail).mockResolvedValue(activeBom as any)
@@ -125,6 +126,24 @@ describe('useBOMPage', () => {
     const { result } = renderHook(() => useBOMPage())
 
     expect(result.current.canWrite).toBe(false)
+  })
+
+  it('keeps deleted BOM review context from audit links', async () => {
+    window.history.replaceState(null, '', '/bom?keyword=BOM-DEEP-001&includeDeleted=true')
+    vi.mocked(bomApi.getList).mockResolvedValue({ list: [{ ...activeBom, id: 'bom-deleted-1', isDeleted: true }], pagination: { total: 1 } } as any)
+
+    const { result } = renderHook(() => useBOMPage())
+
+    await waitFor(() => expect(bomApi.getList).toHaveBeenCalledWith(expect.objectContaining({
+      page: 1,
+      pageSize: 20,
+      keyword: 'BOM-DEEP-001',
+      includeDeleted: true,
+    })))
+    expect(result.current.searchInput).toBe('BOM-DEEP-001')
+    expect(result.current.data).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'bom-deleted-1', isDeleted: true }),
+    ]))
   })
 
   it('keeps backend-controlled code and supportable samples out of edit updates', async () => {

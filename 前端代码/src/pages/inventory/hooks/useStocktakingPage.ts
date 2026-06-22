@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { stocktakingApi } from '@/api/stocktaking'
+import { inventoryApi } from '@/api/inventory'
 import { materialApi } from '@/api/master'
-import type { Material } from '@/types'
+import type { InventoryItem, Material } from '@/types'
 import { toast } from 'sonner'
 import { usePagination } from '@/hooks/usePagination'
 import { useUrlParams } from '@/hooks/useUrlParams'
@@ -10,6 +11,9 @@ export interface StocktakingRecord {
   id: string
   stocktakingNo: string
   materialId: string
+  locationId?: string | null
+  batchId?: string | null
+  batchNo?: string | null
   materialName: string
   materialCode?: string
   materialUnit?: string
@@ -24,8 +28,17 @@ export interface StocktakingRecord {
   remark?: string
 }
 
+export type StocktakingScopeType = 'material' | 'location' | 'batch'
+
+export type StocktakingScopeRow = InventoryItem
+
+export const STOCKTAKING_SCOPE_PAGE_SIZE = 200
+
 export interface FormData {
   materialId: string
+  scopeType: StocktakingScopeType
+  locationId: string
+  batchId: string
   systemStock: number
   actualStock: number | ''
   remark: string
@@ -63,8 +76,9 @@ export function useStocktakingPage() {
   const [recordToDelete, setRecordToDelete] = useState<StocktakingRecord | null>(null)
 
   const [materials, setMaterials] = useState<Material[]>([])
+  const [inventoryRows, setInventoryRows] = useState<StocktakingScopeRow[]>([])
   const [form, setForm] = useState<FormData>({
-    materialId: '', systemStock: 0, actualStock: '', remark: '',
+    materialId: '', scopeType: 'material', locationId: '', batchId: '', systemStock: 0, actualStock: '', remark: '',
   })
 
   const fetchFn = useCallback(
@@ -131,8 +145,9 @@ export function useStocktakingPage() {
   const openCreate = async () => {
     const res: any = await materialApi.getList({ page: 1, pageSize: 999, status: 'active' })
     setMaterials(res?.list || [])
+    setInventoryRows([])
     setForm({
-      materialId: '', systemStock: 0, actualStock: '', remark: '',
+      materialId: '', scopeType: 'material', locationId: '', batchId: '', systemStock: 0, actualStock: '', remark: '',
     })
     setCreateStep(1)
     setModalType('create')
@@ -148,6 +163,8 @@ export function useStocktakingPage() {
     try {
       await stocktakingApi.create({
         materialId: form.materialId,
+        locationId: form.locationId || undefined,
+        batchId: form.batchId || undefined,
         systemStock: form.systemStock,
         actualStock: Number(form.actualStock),
         remark: form.remark
@@ -169,6 +186,8 @@ export function useStocktakingPage() {
     try {
       await stocktakingApi.create({
         materialId: form.materialId,
+        locationId: form.locationId || undefined,
+        batchId: form.batchId || undefined,
         systemStock: form.systemStock,
         actualStock: Number(form.actualStock),
         remark: form.remark,
@@ -236,6 +255,21 @@ export function useStocktakingPage() {
 
   const handleQuery = () => { setPage(1) }
   const handleReset = () => { setKeyword(''); setStatusFilter(''); setPage(1) }
+  const handleFormChange = (nextForm: FormData) => {
+    setForm(nextForm)
+    if (nextForm.materialId && nextForm.materialId !== form.materialId) {
+      inventoryApi.getList({ materialId: nextForm.materialId, page: 1, pageSize: STOCKTAKING_SCOPE_PAGE_SIZE })
+        .then((res: any) => {
+          const payload = res?.data ?? res
+          setInventoryRows(payload?.list || [])
+        })
+        .catch(() => setInventoryRows([]))
+      return
+    }
+    if (!nextForm.materialId) {
+      setInventoryRows([])
+    }
+  }
 
   const selectedMaterial = materials.find(m => m.id === form.materialId)
 
@@ -249,7 +283,8 @@ export function useStocktakingPage() {
     deleteConfirmOpen, setDeleteConfirmOpen,
     recordToDelete, setRecordToDelete,
     materials, setMaterials,
-    form, setForm,
+    inventoryRows, setInventoryRows,
+    form, setForm: handleFormChange,
     stats,
     handleQuery, handleReset,
     openCreate, openDetail, openAdjust, openDelete,

@@ -1,3 +1,5 @@
+import React from 'react'
+
 interface DepletionItem {
   id: string
   materialName: string
@@ -14,11 +16,12 @@ interface DepletionItem {
 
 interface Props {
   items: DepletionItem[]
+  canManage?: boolean
   onEditRemain: (item: DepletionItem) => void
   onConfirmDeplete: (item: DepletionItem) => void
 }
 
-export function DepletionTab({ items, onEditRemain, onConfirmDeplete }: Props) {
+export function DepletionTab({ items, canManage = true, onEditRemain, onConfirmDeplete }: Props) {
   return (
     <div className="space-y-4">
       {items.map(dep => (
@@ -60,20 +63,22 @@ export function DepletionTab({ items, onEditRemain, onConfirmDeplete }: Props) {
               style={{ width: `${dep.progress}%` }}
             />
           </div>
-          <div className="flex justify-end gap-2 mt-3">
-            <button
-              onClick={() => onEditRemain(dep)}
-              className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900 transition-colors"
-            >
-              修改剩余量
-            </button>
-            <button
-              onClick={() => onConfirmDeplete(dep)}
-              className="px-3 py-1.5 text-sm text-blue-500 hover:text-blue-600 transition-colors"
-            >
-              确认耗尽
-            </button>
-          </div>
+          {canManage && (
+            <div className="flex justify-end gap-2 mt-3">
+              <button
+                onClick={() => onEditRemain(dep)}
+                className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900 transition-colors"
+              >
+                修改剩余量
+              </button>
+              <button
+                onClick={() => onConfirmDeplete(dep)}
+                className="px-3 py-1.5 text-sm text-blue-500 hover:text-blue-600 transition-colors"
+              >
+                确认耗尽
+              </button>
+            </div>
+          )}
         </div>
       ))}
     </div>

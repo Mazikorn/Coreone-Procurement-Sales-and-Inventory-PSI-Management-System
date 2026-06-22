@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
+import { logOperation } from '../utils/operation-logger.js'
 
 const router = Router()
 
@@ -41,6 +42,25 @@ function updateAlertStatus(db: any, id: string, status: 'processed' | 'ignored',
   db.prepare('UPDATE alerts SET status = ?, handled_by = ?, remark = ?, handled_at = CURRENT_TIMESTAMP WHERE id = ?')
     .run(status, operator, normalizedRemark, id)
   return { ok: true }
+}
+
+function logAlertOperation(db: any, req: any, input: {
+  action: string
+  description: string
+  alertIds?: string[]
+  requestData?: Record<string, unknown>
+  responseData?: Record<string, unknown>
+}) {
+  logOperation(db, req, {
+    operation: input.action,
+    description: input.description,
+    requestData: {
+      module: 'alerts',
+      alertIds: input.alertIds || [],
+      ...(input.requestData || {}),
+    },
+    responseData: input.responseData,
+  })
 }
 
 function appendStatusFilter(where: string, params: any[], status: unknown) {
@@ -183,6 +203,12 @@ router.put('/rules/:id', (req, res) => {
     }
     if (enabled !== undefined) { fields.push('enabled = ?'); params.push(enabled ? 1 : 0) }
     if (fields.length > 0) { params.push(id); db.prepare(`UPDATE alert_rules SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(...params) }
+    logAlertOperation(db, req, {
+      action: 'PUT /alerts/rules/:id',
+      description: '更新预警规则',
+      requestData: { ruleId: id, threshold, thresholdDays, enabled },
+      responseData: { id },
+    })
     success(res, { id }, 'Updated')
   } catch (err: any) { error(res, err.message) }
 })
@@ -265,6 +291,13 @@ router.post('/batch/handle', (req, res) => {
         }
       }
       db.exec('COMMIT')
+      logAlertOperation(db, req, {
+        action: 'POST /alerts/batch/handle',
+        description: action === 'ignored' ? '批量忽略预警' : '批量处理预警',
+        alertIds: ids as string[],
+        requestData: { action, remark: normalizeRemark(remark) },
+        responseData: { handledCount: ids.length },
+      })
       success(res, { handledCount: ids.length }, 'Handled')
     } catch (e) {
       db.exec('ROLLBACK')
@@ -286,6 +319,13 @@ router.post('/:id/handle', (req, res) => {
     const normalizedAction = action === 'ignored' ? 'ignored' : 'processed'
     const result = updateAlertStatus(db, id, normalizedAction, (req as any).user?.username || 'system', remark)
     if (!result.ok) { error(res, result.message, result.code, result.statusCode); return }
+    logAlertOperation(db, req, {
+      action: 'POST /alerts/:id/handle',
+      description: normalizedAction === 'ignored' ? '忽略预警' : '处理预警',
+      alertIds: [id],
+      requestData: { action: normalizedAction, remark: normalizeRemark(remark) },
+      responseData: { id, status: normalizedAction },
+    })
     success(res, null, 'Handled')
   } catch (err: any) { error(res, err.message) }
 })
@@ -299,6 +339,13 @@ router.post('/:id/process', (req, res) => {
     const db = getDatabase()
     const result = updateAlertStatus(db, req.params.id, 'processed', (req as any).user?.username || 'system', req.body?.remark)
     if (!result.ok) { error(res, result.message, result.code, result.statusCode); return }
+    logAlertOperation(db, req, {
+      action: 'POST /alerts/:id/process',
+      description: '处理预警',
+      alertIds: [req.params.id],
+      requestData: { remark: normalizeRemark(req.body?.remark) },
+      responseData: { id: req.params.id, status: 'processed' },
+    })
     success(res, null, 'Processed')
   } catch (err: any) { error(res, err.message) }
 })
@@ -312,6 +359,13 @@ router.post('/:id/ignore', (req, res) => {
     const db = getDatabase()
     const result = updateAlertStatus(db, req.params.id, 'ignored', (req as any).user?.username || 'system', req.body?.remark)
     if (!result.ok) { error(res, result.message, result.code, result.statusCode); return }
+    logAlertOperation(db, req, {
+      action: 'POST /alerts/:id/ignore',
+      description: '忽略预警',
+      alertIds: [req.params.id],
+      requestData: { remark: normalizeRemark(req.body?.remark) },
+      responseData: { id: req.params.id, status: 'ignored' },
+    })
     success(res, null, 'Ignored')
   } catch (err: any) { error(res, err.message) }
 })
@@ -378,6 +432,12 @@ router.post('/generate', (req, res) => {
       }
     }
 
+    logAlertOperation(db, req, {
+      action: 'POST /alerts/generate',
+      description: '手动生成预警',
+      requestData: { source: 'manual_scan' },
+      responseData: { generatedCount: count },
+    })
     success(res, { generatedCount: count }, `Generated ${count} alerts`)
   } catch (err: any) { error(res, err.message) }
 })

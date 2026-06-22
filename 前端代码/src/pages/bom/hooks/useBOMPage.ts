@@ -238,8 +238,11 @@ function canManageBom() {
 
 export function useBOMPage() {
   const canWrite = canManageBom()
-  const [searchInput, setSearchInput] = useState('')
-  const [keyword, setKeyword] = useState('')
+  const initialParams = new URLSearchParams(window.location.search)
+  const initialKeyword = initialParams.get('keyword') || ''
+  const [includeDeleted, setIncludeDeleted] = useState(initialParams.get('includeDeleted') === 'true')
+  const [searchInput, setSearchInput] = useState(initialKeyword)
+  const [keyword, setKeyword] = useState(initialKeyword)
   const [filterType, setFilterType] = useState('')
   const [filterStatus, setFilterStatus] = useState('')
   const [quickFilter, setQuickFilter] = useState('all')
@@ -279,6 +282,7 @@ export function useBOMPage() {
       keyword: keyword || undefined,
       type: filterType || undefined,
       status: effectiveStatus || undefined,
+      includeDeleted: includeDeleted || undefined,
     })
     let list = res.list || []
     if (lowSupportOnly) {
@@ -292,11 +296,11 @@ export function useBOMPage() {
         total: lowSupportOnly ? list.length : res.pagination?.total || list.length,
       },
     }
-  }, [keyword, filterType, effectiveStatus, lowSupportOnly])
+  }, [keyword, filterType, effectiveStatus, lowSupportOnly, includeDeleted])
 
   const { data, loading, page, pageSize, total, setPage, setPageSize, refresh } = usePagination<BOM>({
     fetchFn,
-    deps: [keyword, filterType, effectiveStatus, lowSupportOnly],
+    deps: [keyword, filterType, effectiveStatus, lowSupportOnly, includeDeleted],
   })
 
   const fetchRefs = useCallback(async () => {
@@ -673,6 +677,7 @@ export function useBOMPage() {
       keyword: keyword || undefined,
       type: filterType || undefined,
       status: effectiveStatus || undefined,
+      includeDeleted: includeDeleted || undefined,
     })
     const rows = res.list || []
     return lowSupportOnly
@@ -863,6 +868,7 @@ export function useBOMPage() {
     handleReset: () => {
       setSearchInput('')
       setKeyword('')
+      setIncludeDeleted(false)
       setFilterType('')
       setFilterStatus('')
       setQuickFilter('all')

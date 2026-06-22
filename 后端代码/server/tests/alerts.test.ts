@@ -34,6 +34,18 @@ function seedAlert(db: any, suffix: string, status = 'pending') {
   return id
 }
 
+function latestOperationLog(db: any, operation: string, alertId?: string) {
+  const rows = db.prepare(`
+    SELECT operation, description, username, request_data, response_data
+    FROM operation_logs
+    WHERE operation = ?
+    ORDER BY created_at DESC
+    LIMIT 20
+  `).all(operation) as any[]
+  if (!alertId) return rows[0]
+  return rows.find(row => String(row.request_data || '').includes(alertId))
+}
+
 function seedLowStockMaterial(db: any, suffix: string) {
   const categoryId = `cat-alert-${suffix}`
   const materialId = `mat-alert-low-${suffix}`
@@ -118,6 +130,10 @@ describe('预警处理', () => {
     expect(alert.handled_by).toBe('admin')
     expect(alert.remark).toBe('已补货')
     expect(alert.handled_at).toBeTruthy()
+    const opLog = latestOperationLog(db, 'POST /alerts/:id/process', alertId)
+    expect(opLog).toMatchObject({ username: 'admin', description: '处理预警' })
+    expect(JSON.parse(opLog.request_data)).toMatchObject({ module: 'alerts', alertIds: [alertId], remark: '已补货' })
+    expect(JSON.parse(opLog.response_data)).toMatchObject({ id: alertId, status: 'processed' })
   })
 
   it('ALERT-010: process 端点拒绝空处理意见且不更新状态', async () => {
@@ -212,6 +228,9 @@ describe('预警处理', () => {
     expect(alert.status).toBe('ignored')
     expect(alert.handled_by).toBe('admin')
     expect(alert.remark).toBe('无需处理')
+    const opLog = latestOperationLog(db, 'POST /alerts/:id/ignore', alertId)
+    expect(opLog).toMatchObject({ username: 'admin', description: '忽略预警' })
+    expect(JSON.parse(opLog.request_data)).toMatchObject({ module: 'alerts', alertIds: [alertId], remark: '无需处理' })
   })
 
   it('ALERT-003: 批量处理遇到已处理预警时整批拒绝，不部分更新', async () => {
@@ -244,6 +263,9 @@ describe('预警处理', () => {
     expect(alert.status).toBe('ignored')
     expect(alert.handled_by).toBe('admin')
     expect(alert.remark).toBe('旧端点兼容')
+    const opLog = latestOperationLog(db, 'POST /alerts/:id/handle', alertId)
+    expect(opLog).toMatchObject({ username: 'admin', description: '忽略预警' })
+    expect(JSON.parse(opLog.request_data)).toMatchObject({ module: 'alerts', alertIds: [alertId], action: 'ignored' })
   })
 
   it('ALERT-005: 历史查询返回已处理和已忽略预警，不混入待处理', async () => {
@@ -358,6 +380,9 @@ describe('预警处理', () => {
       remark: '处理结论：采购跟进中\n处理意见：已创建补货任务',
     })
     expect(history.body.data.list[0].handledAt).toBeTruthy()
+    const generateLog = latestOperationLog(db, 'POST /alerts/generate')
+    expect(generateLog).toMatchObject({ username: 'admin', description: '手动生成预警' })
+    expect(JSON.parse(generateLog.response_data).generatedCount).toBeGreaterThanOrEqual(1)
   })
 
   it('ALERT-016: 有效期扫描按批次生成预警并返回来源事实', async () => {
@@ -406,6 +431,28 @@ describe('预警处理', () => {
     expect(afterSecondGenerate.body.data.list).toHaveLength(2)
   })
 
+  it('ALERT-AUDIT-001: 批量处理预警写入操作日志并保留处理对象', async () => {
+    const stamp = Date.now()
+    const firstId = seedAlert(db, `batch-audit-a-${stamp}`)
+    const secondId = seedAlert(db, `batch-audit-b-${stamp}`)
+
+    const res = await request(app)
+      .post('/api/v1/alerts/batch/handle')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ ids: [firstId, secondId], action: 'processed', remark: '批量补货完成' })
+
+    expect(res.status).toBe(200)
+    const opLog = latestOperationLog(db, 'POST /alerts/batch/handle', firstId)
+    expect(opLog).toMatchObject({ username: 'admin', description: '批量处理预警' })
+    expect(JSON.parse(opLog.request_data)).toMatchObject({
+      module: 'alerts',
+      alertIds: [firstId, secondId],
+      action: 'processed',
+      remark: '批量补货完成',
+    })
+    expect(JSON.parse(opLog.response_data)).toMatchObject({ handledCount: 2 })
+  })
+
   it('ALERT-RULE-001: 预警规则拒绝非有限阈值且不更新原规则', async () => {
     const beforeLowStock = db.prepare('SELECT threshold, threshold_days FROM alert_rules WHERE id = ?')
       .get('RULE-001') as any
@@ -433,6 +480,23 @@ describe('预警处理', () => {
       .get('RULE-002') as any
     expect(afterLowStock).toMatchObject(beforeLowStock)
     expect(afterExpiry).toMatchObject(beforeExpiry)
+  })
+
+  it('ALERT-RULE-002: 更新预警规则写入操作日志', async () => {
+    const res = await request(app)
+      .put('/api/v1/alerts/rules/RULE-001')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ threshold: 8, enabled: true })
+
+    expect(res.status).toBe(200)
+    const opLog = latestOperationLog(db, 'PUT /alerts/rules/:id')
+    expect(opLog).toMatchObject({ username: 'admin', description: '更新预警规则' })
+    expect(JSON.parse(opLog.request_data)).toMatchObject({
+      module: 'alerts',
+      ruleId: 'RULE-001',
+      threshold: 8,
+      enabled: true,
+    })
   })
 
   it('ALERT-013: 列表支持按规范级别筛选 urgent 预警', async () => {

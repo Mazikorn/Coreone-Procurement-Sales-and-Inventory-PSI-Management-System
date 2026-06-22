@@ -246,7 +246,7 @@ export const runCostRecalculation = (
     SET status = ?, calculated_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
     WHERE year_month = ?
   `).run(failed > 0 ? 'collecting' : 'calculated', yearMonth)
-  writeAuditLog(db, 'cost_run', runType, runId, summary, operator)
+  writeAuditLog(db, 'cost_run', runType, runId, { yearMonth, ...summary }, operator)
 
   return {
     id: runId,

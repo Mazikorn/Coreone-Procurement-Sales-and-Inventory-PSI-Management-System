@@ -12,6 +12,7 @@ const role: Role = {
   permissions: ['inventory:view'],
   status: 'active',
   dataScope: 'self',
+  isSystem: true,
   userCount: 1,
   associatedUsers: [
     {
@@ -38,5 +39,12 @@ describe('RoleDetailModal', () => {
     expect(screen.getByText('仅本人数据')).toBeInTheDocument()
     expect(screen.getByText('正常')).toBeInTheDocument()
     expect(screen.queryByText('暂无关联用户数据')).not.toBeInTheDocument()
+  })
+
+  it('shows custom when backend does not mark a seeded-code role as system', () => {
+    render(<RoleDetailModal open role={{ ...role, isSystem: false }} onClose={vi.fn()} />)
+
+    expect(screen.getByText('自定义')).toBeInTheDocument()
+    expect(screen.queryByText('系统角色')).not.toBeInTheDocument()
   })
 })

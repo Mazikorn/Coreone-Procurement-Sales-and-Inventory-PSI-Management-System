@@ -4,6 +4,7 @@ import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
 import { allocateBatches, allocateGroupBatches, BatchAllocation, GroupBatchAllocation } from '../utils/allocation.js'
 import { consumeInventoryLocationStock, restoreInventoryLocationStock } from '../utils/inventory-locations.js'
+import { consumeBatchLocationStockByLocations, getBatchLocationIds, restoreBatchLocationStock } from '../utils/batch-locations.js'
 import { logOperation } from '../utils/operation-logger.js'
 
 const router = Router()
@@ -394,9 +395,17 @@ router.post('/', requireWriteAccess, (req, res) => {
                 update_time = CURRENT_TIMESTAMP
             WHERE material_id = ?
           `).run(alloc.quantity, id, ia.materialId)
-          consumeInventoryLocationStock(db, ia.materialId, alloc.quantity, { relatedType: 'outbound', relatedId: id })
+          const batchLocationIds = alloc.batchId ? getBatchLocationIds(db, alloc.batchId, ia.materialId) : []
+          const consumedLocations = consumeInventoryLocationStock(
+            db,
+            ia.materialId,
+            alloc.quantity,
+            { relatedType: 'outbound', relatedId: id },
+            { preferredLocationIds: batchLocationIds },
+          )
 
           if (alloc.batchId) {
+            consumeBatchLocationStockByLocations(db, alloc.batchId, ia.materialId, consumedLocations, { relatedType: 'outbound', relatedId: id, operator })
             db.prepare('UPDATE batches SET remaining = remaining - ? WHERE id = ?').run(alloc.quantity, alloc.batchId)
             const batchRemaining = (db.prepare('SELECT remaining FROM batches WHERE id = ?').get(alloc.batchId) as any)?.remaining
             if (batchRemaining <= 0) {
@@ -642,9 +651,17 @@ router.post('/bom', (req, res) => {
                 update_time = CURRENT_TIMESTAMP
             WHERE material_id = ?
           `).run(alloc.quantity, id, alloc.materialId)
-          consumeInventoryLocationStock(db, alloc.materialId, alloc.quantity, { relatedType: 'outbound', relatedId: id })
+          const batchLocationIds = alloc.batchId ? getBatchLocationIds(db, alloc.batchId, alloc.materialId) : []
+          const consumedLocations = consumeInventoryLocationStock(
+            db,
+            alloc.materialId,
+            alloc.quantity,
+            { relatedType: 'outbound', relatedId: id },
+            { preferredLocationIds: batchLocationIds },
+          )
 
           if (alloc.batchId) {
+            consumeBatchLocationStockByLocations(db, alloc.batchId, alloc.materialId, consumedLocations, { relatedType: 'outbound', relatedId: id, operator })
             db.prepare('UPDATE batches SET remaining = remaining - ? WHERE id = ?').run(alloc.quantity, alloc.batchId)
             const batchRemaining = (db.prepare('SELECT remaining FROM batches WHERE id = ?').get(alloc.batchId) as any)?.remaining
             if (batchRemaining <= 0) {
@@ -1132,6 +1149,7 @@ router.put('/:id', requireWriteAccess, (req, res) => {
           restoredOldMaterials.add(item.material_id)
         }
         if (item.batch_id) {
+          restoreBatchLocationStock(db, item.batch_id, item.material_id, item.quantity, { relatedType: 'outbound', relatedId: id, operator: (req as any).user?.username || 'system' })
           db.prepare('UPDATE batches SET remaining = remaining + ?, status = 1 WHERE id = ?').run(item.quantity, item.batch_id)
         }
         if (item.batch_no) {
@@ -1186,8 +1204,16 @@ router.put('/:id', requireWriteAccess, (req, res) => {
           `).run(itemId, id, pi.materialId, alloc.batchId, alloc.batchNo, alloc.quantity, unitMap.get(pi.materialId) || 'pcs', alloc.unitCost, subtotal, pi.usage, pi.receiver)
 
           db.prepare('UPDATE inventory SET stock = stock - ? WHERE material_id = ?').run(alloc.quantity, pi.materialId)
-          consumeInventoryLocationStock(db, pi.materialId, alloc.quantity, { relatedType: 'outbound', relatedId: id })
+          const batchLocationIds = alloc.batchId ? getBatchLocationIds(db, alloc.batchId, pi.materialId) : []
+          const consumedLocations = consumeInventoryLocationStock(
+            db,
+            pi.materialId,
+            alloc.quantity,
+            { relatedType: 'outbound', relatedId: id },
+            { preferredLocationIds: batchLocationIds },
+          )
           if (alloc.batchId) {
+            consumeBatchLocationStockByLocations(db, alloc.batchId, pi.materialId, consumedLocations, { relatedType: 'outbound', relatedId: id, operator: (req as any).user?.username || 'system' })
             db.prepare('UPDATE batches SET remaining = remaining - ? WHERE id = ?').run(alloc.quantity, alloc.batchId)
             const remaining = (db.prepare('SELECT remaining FROM batches WHERE id = ?').get(alloc.batchId) as any)?.remaining
             if (remaining <= 0) {
@@ -1283,6 +1309,7 @@ router.delete('/:id', requireWriteAccess, (req, res) => {
           restoredMaterials.add(item.material_id)
         }
         if (item.batch_id) {
+          restoreBatchLocationStock(db, item.batch_id, item.material_id, item.quantity, { relatedType: 'outbound', relatedId: id, operator: (req as any).user?.username || 'system' })
           db.prepare('UPDATE batches SET remaining = remaining + ?, status = 1 WHERE id = ?').run(item.quantity, item.batch_id)
         }
         if (item.batch_no) {

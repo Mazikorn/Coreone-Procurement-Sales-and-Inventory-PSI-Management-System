@@ -4,9 +4,37 @@ import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
 import { generateNo } from '../utils/generateNo.js'
 import { adjustInventoryLocationStock, getInventoryLocationStock, syncInventoryPrimaryLocation } from '../utils/inventory-locations.js'
+import { moveBatchLocationStock } from '../utils/batch-locations.js'
 import { logOperation } from '../utils/operation-logger.js'
 
 const router = Router()
+
+function buildTransferListFilter(query: any) {
+  const whereParts = ["i.type = 'transfer'", 'i.is_deleted = 0']
+  const params: any[] = []
+  const keyword = typeof query.keyword === 'string' ? query.keyword.trim() : ''
+
+  if (keyword) {
+    const like = `%${keyword}%`
+    whereParts.push(`(
+      i.inbound_no LIKE ?
+      OR i.batch_no LIKE ?
+      OR i.from_location_name LIKE ?
+      OR i.operator LIKE ?
+      OR i.remark LIKE ?
+      OR m.name LIKE ?
+      OR m.code LIKE ?
+      OR target_l.name LIKE ?
+      OR source_l.name LIKE ?
+    )`)
+    params.push(like, like, like, like, like, like, like, like, like)
+  }
+
+  return {
+    whereSql: whereParts.join(' AND '),
+    params,
+  }
+}
 
 // 获取调拨记录列表
 router.get('/', (req, res) => {
@@ -15,7 +43,15 @@ router.get('/', (req, res) => {
     const normalizedPage = Math.max(1, Number(page) || 1)
     const normalizedPageSize = Math.min(Math.max(1, Number(pageSize) || 20), 1000)
     const db = getDatabase()
-    const count = (db.prepare("SELECT COUNT(*) as total FROM inbound_records WHERE type = 'transfer' AND is_deleted = 0").get() as any)?.total || 0
+    const filter = buildTransferListFilter(req.query)
+    const count = (db.prepare(`
+      SELECT COUNT(*) as total
+      FROM inbound_records i
+      LEFT JOIN materials m ON i.material_id = m.id AND m.is_deleted = 0
+      LEFT JOIN locations target_l ON i.location_id = target_l.id AND target_l.is_deleted = 0
+      LEFT JOIN locations source_l ON i.from_location_id = source_l.id AND source_l.is_deleted = 0
+      WHERE ${filter.whereSql}
+    `).get(...filter.params) as any)?.total || 0
     const offset = (normalizedPage - 1) * normalizedPageSize
     const list = db.prepare(`
       SELECT
@@ -27,10 +63,10 @@ router.get('/', (req, res) => {
       LEFT JOIN materials m ON i.material_id = m.id AND m.is_deleted = 0
       LEFT JOIN locations target_l ON i.location_id = target_l.id AND target_l.is_deleted = 0
       LEFT JOIN locations source_l ON i.from_location_id = source_l.id AND source_l.is_deleted = 0
-      WHERE i.type = 'transfer' AND i.is_deleted = 0
+      WHERE ${filter.whereSql}
       ORDER BY i.created_at DESC
       LIMIT ? OFFSET ?
-    `).all(normalizedPageSize, offset) as any[]
+    `).all(...filter.params, normalizedPageSize, offset) as any[]
     successList(res, list.map((r: any) => ({
       id: r.id, inboundNo: r.inbound_no, materialId: r.material_id, materialName: r.material_name,
       batchNo: r.batch_no, quantity: r.quantity,
@@ -79,18 +115,19 @@ router.post('/inbound', (req, res) => {
       error(res, '请选择调拨批次', 'BATCH_REQUIRED', 422)
       return
     }
+    let transferBatch: any = null
     if (normalizedBatchNo) {
-      const batch = db.prepare(`
+      transferBatch = db.prepare(`
         SELECT id, status, remaining
         FROM batches
         WHERE material_id = ? AND batch_no = ?
       `).get(materialId, normalizedBatchNo) as any
-      if (!batch) { error(res, '调拨批次不存在或不属于该物料', 'BATCH_NOT_FOUND', 404); return }
-      if (Number(batch.status) !== 1) {
+      if (!transferBatch) { error(res, '调拨批次不存在或不属于该物料', 'BATCH_NOT_FOUND', 404); return }
+      if (Number(transferBatch.status) !== 1) {
         error(res, '调拨批次已停用或无可用余量', 'BATCH_UNAVAILABLE', 409)
         return
       }
-      if (Number(batch.remaining || 0) < transferQuantity) {
+      if (Number(transferBatch.remaining || 0) < transferQuantity) {
         error(res, '调拨批次库存不足', 'BATCH_STOCK_INSUFFICIENT', 422)
         return
       }
@@ -136,6 +173,13 @@ router.post('/inbound', (req, res) => {
         adjustInventoryLocationStock(db, materialId, fromLocationId, -transferQuantity)
       }
       adjustInventoryLocationStock(db, materialId, toLocationId, transferQuantity)
+      if (transferBatch) {
+        moveBatchLocationStock(db, transferBatch.id, materialId, fromLocationId, toLocationId, transferQuantity, {
+          relatedType: 'transfer',
+          relatedId: id,
+          operator,
+        })
+      }
       syncInventoryPrimaryLocation(db, materialId)
 
       // 记录 stock_logs（调拨记录，数量为 0 表示库位变更）
@@ -193,6 +237,9 @@ router.delete('/:id', (req, res) => {
 
       const beforeStock = inv.stock
       const restoreLocationId = record.from_location_id
+      const transferBatch = record.batch_no
+        ? db.prepare('SELECT id FROM batches WHERE material_id = ? AND batch_no = ?').get(record.material_id, record.batch_no) as any
+        : null
       if (restoreLocationId) {
         const sourceLocation = db.prepare('SELECT id FROM locations WHERE id = ? AND is_deleted = 0').get(restoreLocationId) as any
         if (!sourceLocation) {
@@ -208,6 +255,17 @@ router.delete('/:id', (req, res) => {
         }
         adjustInventoryLocationStock(db, record.material_id, record.location_id, -Number(record.quantity || 0))
         adjustInventoryLocationStock(db, record.material_id, restoreLocationId, Number(record.quantity || 0))
+        if (transferBatch?.id) {
+          moveBatchLocationStock(
+            db,
+            transferBatch.id,
+            record.material_id,
+            record.location_id,
+            restoreLocationId,
+            Number(record.quantity || 0),
+            { relatedType: 'transfer_cancel', relatedId: id, operator: (req as any).user?.username || 'system' },
+          )
+        }
         syncInventoryPrimaryLocation(db, record.material_id)
       }
 

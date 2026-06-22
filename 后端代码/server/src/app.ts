@@ -4,7 +4,7 @@ import cors from 'cors'
 import helmet from 'helmet'
 import { getDatabase, initializeDatabase } from './database/DatabaseManager.js'
 import { errorHandler } from './middleware/errorHandler.js'
-import { authenticateToken, requireRole, requireStrictRole } from './middleware/auth.js'
+import { authenticateToken, requireCostWorkbenchAccess, requireRole, requireStrictRole } from './middleware/auth.js'
 import { logOperation } from './utils/operation-logger.js'
 
 // 路由导入
@@ -90,7 +90,7 @@ const masterDataAuditModules: Record<string, { module: string; label: string }> 
   '/api/v1/projects': { module: 'projects', label: '检测服务' },
   '/api/v1/boms': { module: 'bom', label: 'BOM' },
   '/api/v1/equipment': { module: 'equipment', label: '设备' },
-  '/api/v1/equipment-types': { module: 'equipment', label: '设备类型' },
+  '/api/v1/equipment-types': { module: 'equipment_types', label: '设备类型' },
 }
 
 function normalizeAuditPath(path: string, modulePrefix: string) {
@@ -154,7 +154,7 @@ app.use('/api/v1/roles', authenticateToken, requireStrictRole('admin'), roleRout
 // 路由注册 - finance可访问
 app.use('/api/v1/logs', authenticateToken, requireRole('admin', 'finance'), logRoutes)
 app.use('/api/v1/reports', authenticateToken, requireRole('admin', 'pathologist', 'finance'), reportRoutes)
-app.use('/api/v1/depletion', authenticateToken, requireRole('admin', 'pathologist', 'finance'), depletionRoutes)
+app.use('/api/v1/depletion', authenticateToken, requireStrictRole('admin', 'warehouse_manager', 'pathologist', 'finance'), depletionRoutes)
 
 // 路由注册 - warehouse/technician/pathologist/procurement/manager共享 (库存/预警)
 app.use('/api/v1/inventory', authenticateToken, requireRole('admin', 'warehouse_manager', 'technician', 'pathologist', 'procurement', 'manager'), inventoryRoutes)
@@ -189,17 +189,17 @@ app.use('/api/v1/equipment-types', authenticateToken, requireRole('admin', 'tech
 app.use('/api/v1/labor-times', authenticateToken, requireRole('admin', 'finance', 'technician', 'pathologist'), laborTimeRoutes)
 
 // 路由注册 - 间接成本中心 (admin/finance可访问)
-app.use('/api/v1/indirect-costs', authenticateToken, requireRole('admin', 'finance'), indirectCostRoutes)
+app.use('/api/v1/indirect-costs', authenticateToken, requireCostWorkbenchAccess, indirectCostRoutes)
 
 // 路由注册 - ABC作业成本法：财务可管理，技术/医生/管理者可只读查看可信成本结果
 app.use('/api/v1/abc', authenticateToken, requireRole('admin', 'finance', 'pathologist', 'technician', 'manager'), abcRoutes)
 
 // 路由注册 - 季度成本调整 (admin/finance可访问)
-app.use('/api/v1/cost-adjustments', authenticateToken, requireRole('admin', 'finance'), costAdjustmentRoutes)
+app.use('/api/v1/cost-adjustments', authenticateToken, requireCostWorkbenchAccess, costAdjustmentRoutes)
 
 // 路由注册 - 通用主数据 (所有已认证角色可查看)
 app.use('/api/v1/categories', authenticateToken, categoryRoutes)
-app.use('/api/v1/materials', authenticateToken, requireRole('admin', 'warehouse_manager', 'technician', 'pathologist', 'procurement'), materialRoutes)
+app.use('/api/v1/materials', authenticateToken, requireRole('admin', 'warehouse_manager', 'technician', 'procurement'), materialRoutes)
 
 // 健康检查
 app.get('/api/health', (_req, res) => {

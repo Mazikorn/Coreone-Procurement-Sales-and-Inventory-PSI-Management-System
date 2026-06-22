@@ -1,3 +1,4 @@
+import React from 'react'
 import { X } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { Material } from '@/types'
@@ -20,9 +21,14 @@ export function MaterialDetailModal({ open, row, getCategoryName, getSupplierNam
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
       onClick={e => { if (e.target === e.currentTarget) onClose() }}
     >
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto flex flex-col">
+      <div
+        className="bg-white rounded-xl shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto flex flex-col"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="material-detail-title"
+      >
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
-          <h3 className="text-base font-semibold text-gray-900">物料详情</h3>
+          <h3 id="material-detail-title" className="text-base font-semibold text-gray-900">物料详情</h3>
           <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors">
             <X className="w-5 h-5 text-gray-500" />
           </button>

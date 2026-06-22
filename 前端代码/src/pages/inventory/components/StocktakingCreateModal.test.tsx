@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { toast } from 'sonner'
 import { StocktakingCreateModal } from './StocktakingCreateModal'
 import type { Material } from '@/types'
-import type { FormData } from '../hooks/useStocktakingPage'
+import type { FormData, StocktakingScopeRow } from '../hooks/useStocktakingPage'
 
 vi.mock('sonner', () => ({
   toast: {
@@ -37,6 +37,7 @@ function renderModal(form: FormData, overrides: Partial<Parameters<typeof Stockt
       form={form}
       createStep={1}
       materials={materials}
+      inventoryRows={[]}
       isSubmitting={false}
       onClose={vi.fn()}
       onChange={vi.fn()}
@@ -47,6 +48,58 @@ function renderModal(form: FormData, overrides: Partial<Parameters<typeof Stockt
   )
 }
 
+function renderControlledModal(
+  initialForm: FormData,
+  overrides: Partial<Parameters<typeof StocktakingCreateModal>[0]> = {}
+) {
+  const onChange = overrides.onChange || vi.fn()
+
+  function Harness() {
+    const [form, setForm] = React.useState(initialForm)
+    const [createStep, setCreateStep] = React.useState(overrides.createStep || 1)
+
+    return (
+      <StocktakingCreateModal
+        open
+        form={form}
+        createStep={createStep}
+        materials={materials}
+        inventoryRows={[]}
+        isSubmitting={false}
+        onClose={vi.fn()}
+        onChange={nextForm => {
+          setForm(nextForm)
+          onChange(nextForm)
+        }}
+        onSetCreateStep={setCreateStep}
+        onSubmit={vi.fn()}
+        {...overrides}
+      />
+    )
+  }
+
+  return { ...render(<Harness />), onChange }
+}
+
+const scopedRows: StocktakingScopeRow[] = [{
+  id: 'inv-row-1',
+  materialId: 'mat-001',
+  batchId: 'batch-001',
+  batchNo: 'B-001',
+  code: 'MAT-001',
+  name: '测试物料',
+  spec: '1ml',
+  unit: '瓶',
+  stock: 6,
+  totalStock: 10,
+  minStock: 0,
+  maxStock: 100,
+  availableStock: 6,
+  locationId: 'loc-001',
+  locationName: 'A1-01',
+  status: 'normal',
+}]
+
 describe('StocktakingCreateModal', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -56,6 +109,9 @@ describe('StocktakingCreateModal', () => {
     const onSetCreateStep = vi.fn()
     renderModal({
       materialId: 'mat-001',
+      scopeType: 'material',
+      locationId: '',
+      batchId: '',
       systemStock: 10,
       actualStock: '',
       remark: '',
@@ -72,6 +128,9 @@ describe('StocktakingCreateModal', () => {
     const onSetCreateStep = vi.fn()
     renderModal({
       materialId: 'mat-001',
+      scopeType: 'material',
+      locationId: '',
+      batchId: '',
       systemStock: 10,
       actualStock: '',
       remark: '',
@@ -82,6 +141,9 @@ describe('StocktakingCreateModal', () => {
 
     renderModal({
       materialId: 'mat-001',
+      scopeType: 'material',
+      locationId: '',
+      batchId: '',
       systemStock: 10,
       actualStock: 0,
       remark: '',
@@ -89,5 +151,39 @@ describe('StocktakingCreateModal', () => {
     fireEvent.click(screen.getAllByTestId('next-step-btn').at(-1)!)
 
     expect(onSetCreateStep).toHaveBeenCalledWith(2)
+  })
+
+  it('lets warehouse users scope stocktaking to a batch location and previews that fact', async () => {
+    const form: FormData = {
+      materialId: 'mat-001',
+      scopeType: 'material',
+      locationId: '',
+      batchId: '',
+      systemStock: 10,
+      actualStock: 5,
+      remark: '',
+    }
+
+    const { onChange } = renderControlledModal(form, {
+      inventoryRows: scopedRows,
+    })
+
+    fireEvent.click(screen.getByTestId('batch-scope-btn'))
+    fireEvent.click(screen.getByTestId('batch-select').firstElementChild!)
+    fireEvent.click(await screen.findByTestId('option-batch-001'))
+
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
+      scopeType: 'batch',
+      locationId: 'loc-001',
+      batchId: 'batch-001',
+      systemStock: 6,
+    }))
+
+    fireEvent.click(screen.getByTestId('next-step-btn'))
+
+    expect(screen.getByText(/批次库位盘点/)).toBeInTheDocument()
+    expect(screen.getByText('B-001')).toBeInTheDocument()
+    expect(screen.getByText('A1-01')).toBeInTheDocument()
+    expect(screen.getByText(/-1瓶/)).toBeInTheDocument()
   })
 })

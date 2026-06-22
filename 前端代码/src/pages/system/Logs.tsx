@@ -1,9 +1,10 @@
 import { Download, Trash2 } from 'lucide-react'
-import { useLogsPage, LOG_TYPES, MODULES } from './hooks/useLogsPage'
+import { useLogsPage, LOG_TYPES, MODULES, LOG_SOURCES } from './hooks/useLogsPage'
 import { LogsTable } from './components/LogsTable'
 import { LogDetailModal } from './components/LogDetailModal'
 import { LogExportModal } from './components/LogExportModal'
 import { LogCleanModal } from './components/LogCleanModal'
+import { LogArchiveCredentialsPanel } from './components/LogArchiveCredentialsPanel'
 import { getUserRole } from '@/lib/permissions'
 
 export default function Logs() {
@@ -15,17 +16,17 @@ export default function Logs() {
       {/* Page Header */}
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-[28px] font-semibold text-gray-900 tracking-tight leading-tight">操作日志</h1>
-          <p className="text-sm text-gray-500 mt-1">查看系统操作记录，追踪用户行为</p>
+          <h1 className="text-[28px] font-semibold text-gray-900 tracking-tight leading-tight">审计日志</h1>
+          <p className="text-sm text-gray-500 mt-1">按统一时间线回看操作、库存、成本和对账事实</p>
         </div>
         <div className="flex items-center gap-2">
           {isAdmin && (
             <button onClick={() => page.setShowClean(true)} className="inline-flex items-center gap-2 px-4 py-2.5 bg-white text-red-600 border border-red-200 rounded-md hover:bg-red-50 text-sm font-medium shadow-sm transition-all">
-              <Trash2 className="w-4 h-4" /> 清理日志
+              <Trash2 className="w-4 h-4" /> 清理操作日志
             </button>
           )}
           <button onClick={page.openExport} className="inline-flex items-center gap-2 px-4 py-2.5 bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 text-sm font-medium shadow-sm transition-all">
-            <Download className="w-4 h-4" /> 导出日志
+            <Download className="w-4 h-4" /> 导出审计日志
           </button>
         </div>
       </div>
@@ -50,6 +51,18 @@ export default function Logs() {
         </div>
       </div>
 
+      {isAdmin && (
+        <LogArchiveCredentialsPanel
+          archives={page.archiveCredentials}
+          onVerify={page.handleVerifyArchiveChain}
+          onExportReport={page.handleExportArchiveVerificationReport}
+          verifying={page.verifyingArchiveChain}
+          exportingReport={page.exportingArchiveReport}
+          reportSignature={page.archiveReportSignature}
+          verification={page.archiveVerification}
+        />
+      )}
+
       {/* Logs Table */}
       <LogsTable
         data={page.data}
@@ -60,19 +73,23 @@ export default function Logs() {
         keyword={page.keyword}
         typeFilter={page.typeFilter}
         moduleFilter={page.moduleFilter}
+        sourceFilter={page.sourceFilter}
         userFilter={page.userFilter}
         startDate={page.startDate}
         endDate={page.endDate}
         dateError={page.dateError}
         logTypes={LOG_TYPES}
         modules={MODULES}
+        sources={LOG_SOURCES}
         users={page.userOptions}
         getLogType={page.getLogType}
         getAvatarChar={page.getAvatarChar}
         getModuleLabel={page.getModuleLabel}
+        getSourceLabel={page.getSourceLabel}
         onKeywordChange={page.setKeyword}
         onTypeFilterChange={page.setTypeFilter}
         onModuleFilterChange={page.setModuleFilter}
+        onSourceFilterChange={page.setSourceFilter}
         onUserFilterChange={page.setUserFilter}
         onStartDateChange={page.setStartDate}
         onEndDateChange={page.setEndDate}

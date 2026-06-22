@@ -13,19 +13,23 @@ interface Props {
   keyword: string
   typeFilter: string
   moduleFilter: string
+  sourceFilter: string
   userFilter: string
   startDate: string
   endDate: string
   dateError?: string
   logTypes: { value: string; label: string }[]
   modules: { value: string; label: string }[]
+  sources: { value: string; label: string }[]
   users: { value: string; label: string }[]
   getLogType: (op: string, operationType?: string) => { value: string; label: string; className: string }
   getAvatarChar: (name: string) => string
   getModuleLabel: (moduleVal: string) => string
+  getSourceLabel: (sourceVal?: string) => string
   onKeywordChange: (v: string) => void
   onTypeFilterChange: (v: string) => void
   onModuleFilterChange: (v: string) => void
+  onSourceFilterChange: (v: string) => void
   onUserFilterChange: (v: string) => void
   onStartDateChange: (v: string) => void
   onEndDateChange: (v: string) => void
@@ -38,10 +42,10 @@ interface Props {
 
 export function LogsTable({
   data, loading, total, page, pageSize,
-  keyword, typeFilter, moduleFilter, userFilter, startDate, endDate, dateError = '',
-  logTypes, modules, users,
-  getLogType, getAvatarChar, getModuleLabel,
-  onKeywordChange, onTypeFilterChange, onModuleFilterChange, onUserFilterChange,
+  keyword, typeFilter, moduleFilter, sourceFilter, userFilter, startDate, endDate, dateError = '',
+  logTypes, modules, sources, users,
+  getLogType, getAvatarChar, getModuleLabel, getSourceLabel,
+  onKeywordChange, onTypeFilterChange, onModuleFilterChange, onSourceFilterChange, onUserFilterChange,
   onStartDateChange, onEndDateChange,
   onSearch, onReset,
   onPageChange, onPageSizeChange,
@@ -50,7 +54,7 @@ export function LogsTable({
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
       <div className="px-5 py-4 border-b border-gray-200 bg-gray-50 flex items-center justify-between flex-wrap gap-3">
-        <span className="text-base font-semibold text-gray-900">操作记录</span>
+        <span className="text-base font-semibold text-gray-900">审计记录</span>
         <div className="flex items-center gap-3 flex-wrap">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
@@ -78,6 +82,13 @@ export function LogsTable({
             onChange={val => onModuleFilterChange(val)}
             options={modules.map(m => ({ value: m.value, label: m.label }))}
             placeholder="全部模块"
+            className="w-32"
+          />
+          <SearchableSelect
+            value={sourceFilter}
+            onChange={val => onSourceFilterChange(val || 'all')}
+            options={sources.map(s => ({ value: s.value, label: s.label }))}
+            placeholder="统一审计"
             className="w-32"
           />
           <SearchableSelect
@@ -118,16 +129,16 @@ export function LogsTable({
         <table className="w-full border-collapse">
           <thead>
             <tr className="bg-gray-50 border-b border-gray-200">
-              {['操作时间', '操作用户', '操作类型', '操作模块', '操作内容', 'IP地址', '操作'].map(h => (
+              {['操作时间', '操作用户', '来源', '操作类型', '操作模块', '业务单据', '操作内容', '操作'].map(h => (
                 <th key={h} className="px-4 py-3 text-left text-xs font-medium text-gray-700 tracking-wide">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200">
             {loading ? (
-              <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">加载中...</td></tr>
+              <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-400">加载中...</td></tr>
             ) : data.length === 0 ? (
-              <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">暂无日志数据</td></tr>
+              <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-400">暂无审计记录</td></tr>
             ) : data.map(row => {
               const logType = getLogType(row.operation, row.operationType)
               return (
@@ -144,6 +155,9 @@ export function LogsTable({
                     </div>
                   </td>
                   <td className="px-4 py-3.5">
+                    <span className="text-xs px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 font-medium">{row.sourceLabel || getSourceLabel(row.sourceType)}</span>
+                  </td>
+                  <td className="px-4 py-3.5">
                     <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${logType.className}`}>
                       {logType.label}
                     </span>
@@ -151,13 +165,28 @@ export function LogsTable({
                   <td className="px-4 py-3.5">
                     <span className="text-xs px-2.5 py-1 rounded-full bg-gray-100 text-gray-700 font-medium">{getModuleLabel(row.module || (row.requestData?.module as string) || '')}</span>
                   </td>
+                  <td className="px-4 py-3.5 font-mono text-[13px] text-gray-600">
+                    {row.businessId && row.businessUrl ? (
+                      <a
+                        href={row.businessUrl}
+                        className="text-blue-600 hover:text-blue-700 hover:underline"
+                      >
+                        {row.businessId}
+                      </a>
+                    ) : row.businessId || '-'}
+                  </td>
                   <td className="px-4 py-3.5">
                     <div className="text-sm text-gray-900">{row.description}</div>
+                    {row.auditEvent && (
+                      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-500">
+                        <span>标准事件：{row.auditEvent.eventCode}</span>
+                        <span>证据：{row.auditEvent.evidenceSource}</span>
+                      </div>
+                    )}
                     {row.requestData && (
                       <div className="text-xs text-gray-500 mt-0.5">{JSON.stringify(row.requestData).slice(0, 60)}...</div>
                     )}
                   </td>
-                  <td className="px-4 py-3.5 font-mono text-[13px] text-gray-500">{row.ip}</td>
                   <td className="px-4 py-3.5">
                     <button onClick={() => onOpenDetail(row)} className="h-8 px-3 text-[13px] text-gray-700 hover:bg-gray-100 rounded-md transition-colors">详情</button>
                   </td>

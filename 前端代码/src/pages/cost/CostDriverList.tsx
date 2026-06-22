@@ -1,8 +1,22 @@
-import { useState, useEffect } from 'react'
+import React, { useEffect, useState } from 'react'
 import { Plus, Edit, Trash2, Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { Modal } from '@/components/ui/Modal'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+
+export interface CostDriverTierRule {
+  from: number
+  to: number | null
+  rate: number
+  label: string
+}
+
+interface CostDriverTierRuleInput {
+  from: string | number
+  to?: string | number | null
+  rate: string | number
+  label?: string
+}
 
 interface CostDriver {
   id: string
@@ -10,7 +24,7 @@ interface CostDriver {
   name: string
   unit: string
   calculationMethod: string
-  tierRules: any[] | null
+  tierRules: CostDriverTierRule[] | null
   description: string
   status: string
   createdAt: string
@@ -22,10 +36,67 @@ const CALCULATION_METHODS = [
   { value: 'fixed', label: '固定' },
 ]
 
+const EMPTY_TIER_RULE = { from: '0', to: '', rate: '', label: '' }
+
+export function normalizeTierRulesForSubmit(rules: CostDriverTierRuleInput[], unit = '') {
+  if (!Array.isArray(rules) || rules.length === 0) {
+    return { ok: false as const, message: '阶梯成本动因必须配置区间费率' }
+  }
+
+  const normalized: CostDriverTierRule[] = []
+  for (let index = 0; index < rules.length; index += 1) {
+    const rule = rules[index]
+    const from = Number(rule.from)
+    const hasOpenEnd = rule.to === null || rule.to === undefined || String(rule.to).trim() === ''
+    const to = hasOpenEnd ? null : Number(rule.to)
+    const rate = Number(rule.rate)
+
+    if (!Number.isFinite(from) || from < 0) {
+      return { ok: false as const, message: `第${index + 1}行起始数量必须大于等于0` }
+    }
+    if (to !== null && (!Number.isFinite(to) || to <= from)) {
+      return { ok: false as const, message: `第${index + 1}行结束数量必须大于起始数量` }
+    }
+    if (!Number.isFinite(rate) || rate < 0) {
+      return { ok: false as const, message: `第${index + 1}行费率必须大于等于0` }
+    }
+
+    const label = String(rule.label || '').trim() || `${from}${to === null ? `${unit}以上` : `-${to}${unit}`}`
+    normalized.push({ from, to, rate, label })
+  }
+
+  for (let index = 0; index < normalized.length; index += 1) {
+    const rule = normalized[index]
+    if (index === 0 && rule.from !== 0) {
+      return { ok: false as const, message: '阶梯费率必须从0开始' }
+    }
+    if (index > 0) {
+      const previous = normalized[index - 1]
+      if (previous.to === null || rule.from !== previous.to) {
+        return { ok: false as const, message: '阶梯区间必须连续且不能重叠' }
+      }
+    }
+    if (rule.to === null && index !== normalized.length - 1) {
+      return { ok: false as const, message: '开口阶梯只能放在最后一行' }
+    }
+  }
+
+  return { ok: true as const, tierRules: normalized }
+}
+
+export function formatTierRulesForDisplay(rules: CostDriverTierRule[] | null | undefined, unit = '') {
+  if (!Array.isArray(rules) || rules.length === 0) return '-'
+  const denominator = unit || '单位'
+  return rules
+    .map(rule => `${rule.label || `${rule.from}-${rule.to ?? '以上'}`}：¥${rule.rate}/${denominator}`)
+    .join('；')
+}
+
 export function CostDriverList() {
+  const initialKeyword = new URLSearchParams(window.location.search).get('keyword') || ''
   const [costDrivers, setCostDrivers] = useState<CostDriver[]>([])
   const [loading, setLoading] = useState(true)
-  const [searchKeyword, setSearchKeyword] = useState('')
+  const [searchKeyword, setSearchKeyword] = useState(initialKeyword)
   const [showDialog, setShowDialog] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
@@ -35,7 +106,9 @@ export function CostDriverList() {
     name: '',
     unit: '',
     calculationMethod: 'linear',
+    tierRules: [EMPTY_TIER_RULE],
     description: '',
+    status: 'active',
   })
 
   useEffect(() => {
@@ -45,7 +118,11 @@ export function CostDriverList() {
   const loadCostDrivers = async () => {
     try {
       setLoading(true)
-      const response = await fetch('/api/v1/abc/cost-drivers', {
+      const params = new URLSearchParams()
+      const keyword = searchKeyword.trim()
+      if (keyword) params.set('keyword', keyword)
+      const url = `/api/v1/abc/cost-drivers${params.toString() ? `?${params.toString()}` : ''}`
+      const response = await fetch(url, {
         headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
       })
       const data = await response.json()
@@ -62,7 +139,7 @@ export function CostDriverList() {
 
   const handleAdd = () => {
     setEditingDriver(null)
-    setFormData({ code: '', name: '', unit: '', calculationMethod: 'linear', description: '' })
+    setFormData({ code: '', name: '', unit: '', calculationMethod: 'linear', tierRules: [EMPTY_TIER_RULE], description: '', status: 'active' })
     setShowDialog(true)
   }
 
@@ -73,15 +150,80 @@ export function CostDriverList() {
       name: driver.name,
       unit: driver.unit,
       calculationMethod: driver.calculationMethod,
+      tierRules: (driver.tierRules || [EMPTY_TIER_RULE]).map(rule => ({
+        from: String(rule.from),
+        to: rule.to === null ? '' : String(rule.to),
+        rate: String(rule.rate),
+        label: rule.label || '',
+      })),
       description: driver.description || '',
+      status: driver.status || 'active',
     })
     setShowDialog(true)
+  }
+
+  const updateTierRule = (index: number, key: keyof typeof EMPTY_TIER_RULE, value: string) => {
+    setFormData(current => ({
+      ...current,
+      tierRules: current.tierRules.map((rule, ruleIndex) =>
+        ruleIndex === index ? { ...rule, [key]: value } : rule
+      ),
+    }))
+  }
+
+  const addTierRule = () => {
+    setFormData(current => {
+      const previous = current.tierRules[current.tierRules.length - 1]
+      return {
+        ...current,
+        tierRules: [
+          ...current.tierRules,
+          { from: previous?.to || previous?.from || '0', to: '', rate: previous?.rate || '', label: '' },
+        ],
+      }
+    })
+  }
+
+  const removeTierRule = (index: number) => {
+    setFormData(current => ({
+      ...current,
+      tierRules: current.tierRules.length === 1
+        ? [EMPTY_TIER_RULE]
+        : current.tierRules.filter((_rule, ruleIndex) => ruleIndex !== index),
+    }))
+  }
+
+  const handleCalculationMethodChange = (calculationMethod: string) => {
+    setFormData(current => ({
+      ...current,
+      calculationMethod,
+      tierRules: calculationMethod === 'tiered' && current.tierRules.length === 0 ? [EMPTY_TIER_RULE] : current.tierRules,
+    }))
   }
 
   const handleSave = async () => {
     if (!formData.code || !formData.name || !formData.unit) {
       toast.error('请填写必填字段')
       return
+    }
+
+    const payload: Record<string, unknown> = {
+      code: formData.code.trim(),
+      name: formData.name.trim(),
+      unit: formData.unit.trim(),
+      calculationMethod: formData.calculationMethod,
+      description: formData.description,
+      status: formData.status,
+      tierRules: null,
+    }
+
+    if (formData.calculationMethod === 'tiered') {
+      const normalized = normalizeTierRulesForSubmit(formData.tierRules, formData.unit.trim())
+      if (!normalized.ok) {
+        toast.error(normalized.message)
+        return
+      }
+      payload.tierRules = normalized.tierRules
     }
 
     try {
@@ -95,7 +237,7 @@ export function CostDriverList() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
         },
-        body: JSON.stringify(formData),
+        body: JSON.stringify(payload),
       })
 
       const data = await response.json()
@@ -143,8 +285,12 @@ export function CostDriverList() {
   }
 
   const filteredDrivers = costDrivers.filter(driver =>
+    driver.id.includes(searchKeyword) ||
     driver.name.includes(searchKeyword) ||
     driver.code.includes(searchKeyword) ||
+    driver.unit.includes(searchKeyword) ||
+    driver.calculationMethod.includes(searchKeyword) ||
+    formatTierRulesForDisplay(driver.tierRules, driver.unit).includes(searchKeyword) ||
     driver.description?.includes(searchKeyword)
   )
 
@@ -177,14 +323,15 @@ export function CostDriverList() {
         </div>
       </div>
 
-      <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-        <table className="w-full">
+      <div className="bg-white rounded-lg border border-gray-200 overflow-x-auto">
+        <table className="w-full min-w-[980px]">
           <thead className="bg-gray-50">
             <tr>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">代码</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">名称</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">单位</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">计算方法</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">阶梯口径</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">描述</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">状态</th>
               <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">操作</th>
@@ -193,11 +340,11 @@ export function CostDriverList() {
           <tbody className="divide-y divide-gray-200">
             {loading ? (
               <tr>
-                <td colSpan={7} className="px-4 py-12 text-center text-gray-400">加载中...</td>
+                <td colSpan={8} className="px-4 py-12 text-center text-gray-400">加载中...</td>
               </tr>
             ) : filteredDrivers.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-4 py-12 text-center text-gray-400">暂无数据</td>
+                <td colSpan={8} className="px-4 py-12 text-center text-gray-400">暂无数据</td>
               </tr>
             ) : (
               filteredDrivers.map(driver => (
@@ -207,6 +354,9 @@ export function CostDriverList() {
                   <td className="px-4 py-3 text-sm text-gray-500">{driver.unit}</td>
                   <td className="px-4 py-3 text-sm text-gray-500">
                     {CALCULATION_METHODS.find(m => m.value === driver.calculationMethod)?.label || driver.calculationMethod}
+                  </td>
+                  <td className="px-4 py-3 text-sm text-gray-600 max-w-sm">
+                    {driver.calculationMethod === 'tiered' ? formatTierRulesForDisplay(driver.tierRules, driver.unit) : '-'}
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-500">{driver.description || '-'}</td>
                   <td className="px-4 py-3">
@@ -232,7 +382,7 @@ export function CostDriverList() {
       </div>
 
       {showDialog && (
-        <Modal onClose={() => setShowDialog(false)} title={editingDriver ? '编辑成本动因' : '新增成本动因'}>
+        <Modal onClose={() => setShowDialog(false)} title={editingDriver ? '编辑成本动因' : '新增成本动因'} size="lg">
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">代码 *</label>
@@ -248,10 +398,53 @@ export function CostDriverList() {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">计算方法</label>
-              <select value={formData.calculationMethod} onChange={(e) => setFormData({ ...formData, calculationMethod: e.target.value })} className="w-full h-10 px-3 border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500">
+              <select value={formData.calculationMethod} onChange={(e) => handleCalculationMethodChange(e.target.value)} className="w-full h-10 px-3 border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500">
                 {CALCULATION_METHODS.map(method => (
                   <option key={method.value} value={method.value}>{method.label}</option>
                 ))}
+              </select>
+            </div>
+            {formData.calculationMethod === 'tiered' && (
+              <div className="rounded-md border border-gray-200 p-3 space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <label className="block text-sm font-medium text-gray-700">阶梯费率 *</label>
+                  <button type="button" onClick={addTierRule} className="h-8 px-3 text-sm text-[#3b82f6] bg-blue-50 rounded-md hover:bg-blue-100 transition-colors flex items-center gap-1">
+                    <Plus className="h-4 w-4" />
+                    添加阶梯
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {formData.tierRules.map((rule, index) => (
+                    <div key={index} className="grid grid-cols-[1fr_1fr_1fr_1.4fr_auto] gap-2 items-end">
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">起始数量</label>
+                        <input type="number" min="0" value={rule.from} onChange={(e) => updateTierRule(index, 'from', e.target.value)} className="w-full h-9 px-2 border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500" />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">结束数量</label>
+                        <input type="number" min="0" value={rule.to} onChange={(e) => updateTierRule(index, 'to', e.target.value)} placeholder="留空为以上" className="w-full h-9 px-2 border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500" />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">单位费率</label>
+                        <input type="number" min="0" step="0.01" value={rule.rate} onChange={(e) => updateTierRule(index, 'rate', e.target.value)} className="w-full h-9 px-2 border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500" />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">阶梯名称</label>
+                        <input type="text" value={rule.label} onChange={(e) => updateTierRule(index, 'label', e.target.value)} placeholder="例如：100张以上" className="w-full h-9 px-2 border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500" />
+                      </div>
+                      <button type="button" onClick={() => removeTierRule(index)} className="h-9 w-9 inline-flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors" title="删除阶梯">
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">状态</label>
+              <select value={formData.status} onChange={(e) => setFormData({ ...formData, status: e.target.value })} className="w-full h-10 px-3 border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500">
+                <option value="active">启用</option>
+                <option value="inactive">禁用</option>
               </select>
             </div>
             <div>

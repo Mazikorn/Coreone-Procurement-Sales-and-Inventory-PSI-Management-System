@@ -117,6 +117,18 @@ function rejectUnknownInventoryFilterSources(db: any, query: any, res: any) {
   return false
 }
 
+function formatBatchMovementLabel(type: string, quantityDelta: number) {
+  if (type === 'inbound') return '采购入库'
+  if (type === 'transfer') return quantityDelta < 0 ? '调拨转出' : '调拨转入'
+  if (type === 'outbound' || type === 'outbound_edit') return quantityDelta < 0 ? '出库扣减' : '出库恢复'
+  if (type === 'outbound_delete') return '撤销出库恢复'
+  if (type === 'return') return quantityDelta > 0 ? '退库恢复' : '撤销退库扣减'
+  if (type === 'scrap') return quantityDelta < 0 ? '报废扣减' : '撤销报废恢复'
+  if (type === 'supplier_return') return quantityDelta < 0 ? '供应商退货扣减' : '供应商退货恢复'
+  if (type === 'stocktaking') return '盘点调整'
+  return quantityDelta < 0 ? '库存扣减' : '库存增加'
+}
+
 function getBatchSubQuery(field: string): string {
   return `(SELECT b.${field} FROM batches b WHERE b.material_id = i.material_id AND b.status = 1 AND b.remaining > 0 ORDER BY b.expiry_date ASC LIMIT 1)`
 }
@@ -440,6 +452,163 @@ router.get('/consistency-check', requireRole('admin', 'warehouse_manager'), (req
         warningCount,
       },
       issues,
+    })
+  } catch (err: any) { error(res, err.message) }
+})
+
+router.get('/batches/:batchId/trace', (req, res) => {
+  try {
+    const { batchId } = req.params
+    const db = getDatabase()
+
+    const batch = db.prepare(`
+      SELECT
+        b.id,
+        b.material_id,
+        b.batch_no,
+        b.quantity,
+        b.remaining,
+        b.production_date,
+        b.expiry_date,
+        b.inbound_id,
+        b.inbound_price,
+        b.status,
+        b.created_at,
+        b.updated_at,
+        m.code as material_code,
+        m.name as material_name,
+        m.unit,
+        i.inbound_no,
+        i.type as inbound_type,
+        i.quantity as inbound_quantity,
+        i.price as inbound_price_actual,
+        i.location_id as inbound_location_id,
+        i.operator as inbound_operator,
+        i.created_at as inbound_created_at,
+        s.name as supplier_name,
+        l.name as inbound_location_name
+      FROM batches b
+      JOIN materials m ON b.material_id = m.id AND m.is_deleted = 0
+      LEFT JOIN inbound_records i ON b.inbound_id = i.id AND i.is_deleted = 0
+      LEFT JOIN suppliers s ON COALESCE(i.supplier_id, b.supplier_id) = s.id AND s.is_deleted = 0
+      LEFT JOIN locations l ON i.location_id = l.id AND l.is_deleted = 0
+      WHERE b.id = ?
+    `).get(batchId) as any
+
+    if (!batch) { error(res, 'Batch not found', 'NOT_FOUND', 404); return }
+
+    const locationBalances = db.prepare(`
+      SELECT
+        bl.location_id,
+        COALESCE(l.name, bl.location_id) as location_name,
+        bl.remaining,
+        bl.updated_at
+      FROM batch_location_balances bl
+      LEFT JOIN locations l ON bl.location_id = l.id AND l.is_deleted = 0
+      WHERE bl.batch_id = ? AND bl.remaining > 0
+      ORDER BY COALESCE(l.name, bl.location_id)
+    `).all(batchId) as any[]
+
+    const adjustments = db.prepare(`
+      SELECT
+        bla.id,
+        bla.related_type,
+        bla.related_id,
+        bla.quantity_delta,
+        bla.created_at,
+        COALESCE(l.name, bla.location_id) as location_name,
+        COALESCE(
+          bla.operator,
+          ir.operator,
+          obr.operator,
+          st.operator,
+          rr.operator,
+          sr.operator,
+          scr.operator
+        ) as operator
+      FROM batch_location_adjustments bla
+      LEFT JOIN locations l ON bla.location_id = l.id AND l.is_deleted = 0
+      LEFT JOIN inbound_records ir ON ir.id = bla.related_id
+        AND bla.related_type IN ('inbound', 'transfer', 'transfer_cancel')
+        AND ir.is_deleted = 0
+      LEFT JOIN outbound_records obr ON obr.id = bla.related_id
+        AND bla.related_type = 'outbound'
+        AND obr.is_deleted = 0
+      LEFT JOIN stocktaking_records st ON st.id = bla.related_id
+        AND bla.related_type IN ('stocktaking', 'stocktaking_cancel')
+        AND st.is_deleted = 0
+      LEFT JOIN return_records rr ON rr.id = bla.related_id
+        AND bla.related_type IN ('return', 'return_cancel')
+        AND rr.is_deleted = 0
+      LEFT JOIN supplier_returns sr ON sr.id = bla.related_id
+        AND bla.related_type = 'supplier_return'
+        AND sr.is_deleted = 0
+      LEFT JOIN scrap_records scr ON scr.id = bla.related_id
+        AND bla.related_type = 'scrap'
+        AND scr.is_deleted = 0
+      WHERE bla.batch_id = ?
+      ORDER BY bla.created_at ASC, bla.id ASC
+    `).all(batchId) as any[]
+
+    const movements = [
+      ...(batch.inbound_id ? [{
+        id: `inbound-${batch.inbound_id}`,
+        type: 'inbound',
+        label: formatBatchMovementLabel('inbound', Number(batch.inbound_quantity || batch.quantity || 0)),
+        relatedType: 'inbound',
+        relatedId: batch.inbound_id,
+        documentNo: batch.inbound_no || batch.inbound_id,
+        quantityDelta: Number(batch.inbound_quantity || batch.quantity || 0),
+        locationName: batch.inbound_location_name || batch.inbound_location_id || '-',
+        operator: batch.inbound_operator || '-',
+        createdAt: batch.inbound_created_at || batch.created_at,
+      }] : []),
+      ...adjustments.map((row: any) => {
+        const quantityDelta = Number(row.quantity_delta || 0)
+        return {
+          id: row.id,
+          type: row.related_type,
+          label: formatBatchMovementLabel(row.related_type, quantityDelta),
+          relatedType: row.related_type,
+          relatedId: row.related_id,
+          documentNo: row.related_id,
+          quantityDelta,
+          locationName: row.location_name || '-',
+          operator: row.operator || null,
+          createdAt: row.created_at,
+        }
+      }),
+    ]
+
+    success(res, {
+      batch: {
+        id: batch.id,
+        materialId: batch.material_id,
+        materialCode: batch.material_code,
+        materialName: batch.material_name,
+        batchNo: batch.batch_no,
+        quantity: Number(batch.quantity || 0),
+        remaining: Number(batch.remaining || 0),
+        unit: batch.unit,
+        productionDate: batch.production_date,
+        expiryDate: batch.expiry_date,
+        inboundId: batch.inbound_id,
+        inboundNo: batch.inbound_no || null,
+        inboundPrice: Number(batch.inbound_price || batch.inbound_price_actual || 0),
+        supplierName: batch.supplier_name || null,
+        locationName: batch.inbound_location_name || null,
+        operator: batch.inbound_operator || null,
+        status: Number(batch.status) === 1 ? 'normal' : 'depleted',
+        createdAt: batch.created_at,
+        updatedAt: batch.updated_at,
+      },
+      locationBalances: locationBalances.map((row: any) => ({
+        locationId: row.location_id,
+        locationName: row.location_name,
+        remaining: Number(row.remaining || 0),
+        updatedAt: row.updated_at,
+      })),
+      movements,
     })
   } catch (err: any) { error(res, err.message) }
 })

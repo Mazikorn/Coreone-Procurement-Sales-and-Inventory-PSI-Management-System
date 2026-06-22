@@ -60,6 +60,7 @@ export interface Category {
   level: number
   sortOrder: number
   status?: 'active' | 'inactive'
+  isDeleted?: boolean
   children?: Category[]
   count?: number
   isLeaf?: boolean
@@ -89,6 +90,7 @@ export interface Material {
   supplierId?: string
   supplierName?: string
   status: 'active' | 'inactive'
+  isDeleted?: boolean
   remark?: string
   batches?: Batch[]
   stockLogs?: StockLog[]
@@ -143,6 +145,50 @@ export interface Batch {
   createdAt: string
 }
 
+export interface InventoryBatchTraceMovement {
+  id: string
+  type: string
+  label: string
+  relatedType?: string
+  relatedId?: string
+  documentNo?: string
+  quantityDelta: number
+  locationName?: string
+  operator?: string | null
+  createdAt: string
+}
+
+export interface InventoryBatchTrace {
+  batch: {
+    id: string
+    materialId: string
+    materialCode?: string
+    materialName?: string
+    batchNo: string
+    quantity: number
+    remaining: number
+    unit?: string
+    productionDate?: string
+    expiryDate?: string
+    inboundId?: string
+    inboundNo?: string | null
+    inboundPrice?: number
+    supplierName?: string | null
+    locationName?: string | null
+    operator?: string | null
+    status?: string
+    createdAt: string
+    updatedAt?: string
+  }
+  locationBalances: Array<{
+    locationId: string
+    locationName: string
+    remaining: number
+    updatedAt?: string
+  }>
+  movements: InventoryBatchTraceMovement[]
+}
+
 // ===== 供应商 =====
 export interface Supplier {
   id: string
@@ -156,6 +202,7 @@ export interface Supplier {
   bankName?: string
   bankAccount?: string
   status: 'active' | 'inactive'
+  isDeleted?: boolean
   cooperationCount: number
   totalAmount: number
   rating: number
@@ -176,6 +223,7 @@ export interface Location {
   capacity: number
   used: number
   status: 'active' | 'inactive'
+  isDeleted?: boolean
   createdAt: string
 }
 
@@ -383,6 +431,7 @@ export interface Project {
   bomVersion?: string
   supportableSamples?: number
   status: 'active' | 'inactive'
+  isDeleted?: boolean
   manager?: string
   description?: string
   costStats?: {
@@ -558,6 +607,7 @@ export interface BOM {
   standardSlideCost?: number
   standardFeePerSlide?: number
   status: 'active' | 'inactive'
+  isDeleted?: boolean
   materials: BOMMaterial[]
   generalReagents?: BOMGeneralReagent[]
   generalConsumables?: BOMGeneralConsumable[]
@@ -728,6 +778,23 @@ export interface OperationLog {
   description: string
   requestData?: Record<string, unknown>
   responseData?: Record<string, unknown>
+  sourceType?: 'operation' | 'stock' | 'batch_location' | 'abc' | 'reconciliation'
+  sourceLabel?: string
+  businessId?: string
+  businessUrl?: string
+  auditEvent?: {
+    eventCode: string
+    action: string
+    subjectType: string
+    subjectId: string
+    businessId: string
+    businessUrl: string
+    actor: string
+    responsibility?: string
+    evidenceSource: string
+    occurredAt?: string
+    summary?: string
+  }
   ip: string
   userAgent?: string
   createdAt: string
@@ -822,6 +889,14 @@ export interface ScrapRecord {
   reason: string
   operator: string
   status: string
+  responsiblePerson?: string
+  responsibleDepartment?: string
+  scrapAmount?: number
+  requiresReview?: boolean
+  reviewStatus?: 'not_required' | 'pending' | 'approved' | 'rejected'
+  reviewedBy?: string
+  reviewedAt?: string
+  reviewReason?: string
   remark?: string
   createdAt: string
 }
@@ -899,6 +974,7 @@ export interface EquipmentType {
   defaultCapacityUnit?: string
   status: 'active' | 'inactive'
   equipmentCount?: number
+  isDeleted?: boolean
   createdAt: string
   updatedAt: string
 }
@@ -924,6 +1000,7 @@ export interface Equipment {
   annualDepreciation?: number
   accumulatedDepreciation?: number
   netBookValue?: number
+  isDeleted?: boolean
   createdAt: string
   updatedAt: string
 }

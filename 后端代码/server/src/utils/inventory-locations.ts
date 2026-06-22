@@ -9,6 +9,15 @@ type InventoryLocationAdjustmentContext = {
   relatedId: string
 }
 
+export type InventoryLocationConsumption = {
+  locationId: string
+  quantity: number
+}
+
+type ConsumeInventoryLocationOptions = {
+  preferredLocationIds?: string[]
+}
+
 function recordInventoryLocationAdjustment(
   db: Db,
   context: InventoryLocationAdjustmentContext | undefined,
@@ -87,10 +96,11 @@ export function consumeInventoryLocationStock(
   materialId: string,
   quantity: number,
   context?: InventoryLocationAdjustmentContext,
-): void {
+  options?: ConsumeInventoryLocationOptions,
+): InventoryLocationConsumption[] {
   ensureInventoryLocationRows(db, materialId)
   const requiredQuantity = Number(quantity)
-  if (!Number.isFinite(requiredQuantity) || requiredQuantity <= 0) return
+  if (!Number.isFinite(requiredQuantity) || requiredQuantity <= 0) return []
 
   const inventory = db.prepare('SELECT location_id FROM inventory WHERE material_id = ?').get(materialId) as any
   const primaryLocationId = inventory?.location_id || ''
@@ -104,12 +114,22 @@ export function consumeInventoryLocationStock(
       update_time DESC
   `).all(materialId, primaryLocationId) as any[]
 
+  const preferredOrder = new Map((options?.preferredLocationIds || []).map((locationId, index) => [locationId, index]))
+  if (preferredOrder.size > 0) {
+    rows.sort((a, b) => {
+      const aOrder = preferredOrder.has(a.location_id) ? preferredOrder.get(a.location_id)! : Number.MAX_SAFE_INTEGER
+      const bOrder = preferredOrder.has(b.location_id) ? preferredOrder.get(b.location_id)! : Number.MAX_SAFE_INTEGER
+      return aOrder - bOrder
+    })
+  }
+
   const totalLocationStock = rows.reduce((sum, row) => sum + Number(row.stock || 0), 0)
   if (totalLocationStock + LOCATION_STOCK_EPSILON < requiredQuantity) {
     throw new Error('LOCATION_STOCK_INSUFFICIENT')
   }
 
   let remaining = requiredQuantity
+  const consumedLocations: InventoryLocationConsumption[] = []
   for (const row of rows) {
     if (remaining <= LOCATION_STOCK_EPSILON) break
     const currentStock = Number(row.stock || 0)
@@ -125,10 +145,12 @@ export function consumeInventoryLocationStock(
       `).run(nextStock, row.id)
     }
     recordInventoryLocationAdjustment(db, context, materialId, row.location_id, -consumed)
+    consumedLocations.push({ locationId: row.location_id, quantity: consumed })
     remaining -= consumed
   }
 
   syncInventoryPrimaryLocation(db, materialId)
+  return consumedLocations
 }
 
 export function restoreInventoryLocationStock(

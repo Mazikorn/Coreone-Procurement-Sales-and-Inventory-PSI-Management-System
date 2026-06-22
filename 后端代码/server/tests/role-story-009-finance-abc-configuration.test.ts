@@ -78,6 +78,8 @@ describe('role story 009 finance ABC configuration boundaries', () => {
         directCost: 100,
         indirectCost: 25,
         driverQuantity: 5,
+        adjustmentReason: '角色故事验证财务手工录入成本池原因',
+        sourceDocumentNo: 'RS009-MANUAL-POOL',
         description: '财务配置故事成本池',
       })
 

@@ -1,6 +1,6 @@
 import type { Request, Response, NextFunction } from 'express'
 import jwt from 'jsonwebtoken'
-import { ROLE_PERMISSIONS } from '../constants/rolePermissions.js'
+import { ROLE_PERMISSIONS, SYSTEM_ROLE_CODES } from '../constants/rolePermissions.js'
 import { getDatabase } from '../database/DatabaseManager.js'
 export { ROLE_PERMISSIONS }
 
@@ -149,4 +149,26 @@ export function requireStrictRole(...allowedRoles: string[]) {
 
     next()
   }
+}
+
+export function requireCostWorkbenchAccess(req: AuthRequest, res: Response, next: NextFunction): void {
+  const user = req.user
+  if (!user) {
+    res.status(401).json({ success: false, error: { message: 'Unauthorized', code: 'UNAUTHORIZED' } })
+    return
+  }
+
+  if (user.role === 'admin' || user.role === 'finance') {
+    next()
+    return
+  }
+
+  const userPerms = getRolePermissions(user.role)
+  const isCustomRole = !SYSTEM_ROLE_CODES.includes(user.role)
+  if (isCustomRole && (userPerms.includes('*') || userPerms.includes('cost_analysis'))) {
+    next()
+    return
+  }
+
+  res.status(403).json({ success: false, error: { message: 'Forbidden: insufficient permissions', code: 'FORBIDDEN' } })
 }

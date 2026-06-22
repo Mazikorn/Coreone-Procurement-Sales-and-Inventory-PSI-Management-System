@@ -4,6 +4,7 @@ import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
 import { requireRole } from '../middleware/auth.js'
 import { normalizeDisplayText, requireValidText, type TextGuardResult } from '../utils/text-guard.js'
+import { logOperation } from '../utils/operation-logger.js'
 
 const router = Router()
 const requireEquipmentWrite = requireRole()
@@ -48,7 +49,8 @@ router.get('/depreciation-stats', (req, res) => {
         COALESCE(SUM(CASE WHEN e.depreciation_method = 'straight_line' AND e.depreciable_life_years > 0
           THEN (e.purchase_price - e.residual_value) / e.depreciable_life_years / 12 ELSE 0 END), 0) as total_monthly_depreciation
       FROM equipment_types et
-      LEFT JOIN equipment e ON e.type_id = et.id AND e.status != 2
+      LEFT JOIN equipment e ON e.type_id = et.id AND e.status != 2 AND e.is_deleted = 0
+      WHERE et.is_deleted = 0
       GROUP BY et.id
       ORDER BY total_annual_depreciation DESC
     `).all() as any[]
@@ -72,7 +74,7 @@ router.get('/depreciation-stats', (req, res) => {
         COALESCE(SUM(CASE WHEN e.depreciation_method = 'straight_line' AND e.depreciable_life_years > 0
           THEN (e.purchase_price - e.residual_value) / e.depreciable_life_years / 12 ELSE 0 END), 0) as total_monthly_depreciation
       FROM equipment e
-      WHERE e.type_id IS NULL AND e.status != 2
+      WHERE e.type_id IS NULL AND e.status != 2 AND e.is_deleted = 0
     `).get() as any
 
     if ((unclassified?.equipment_count || 0) > 0) {
@@ -101,12 +103,13 @@ router.get('/depreciation-stats', (req, res) => {
 // 获取设备列表
 function buildEquipmentWhere(query: any) {
   const { keyword, status, typeId } = query
-  let where = '1=1'
+  const includeDeleted = query?.includeDeleted === true || query?.includeDeleted === 'true'
+  let where = includeDeleted ? '1=1' : 'e.is_deleted = 0'
   const params: any[] = []
   if (keyword) {
-    where += ' AND (e.code LIKE ? OR e.name LIKE ? OR e.model LIKE ?)'
+    where += ' AND (e.id LIKE ? OR e.code LIKE ? OR e.name LIKE ? OR e.model LIKE ?)'
     const like = `%${keyword}%`
-    params.push(like, like, like)
+    params.push(like, like, like, like)
   }
   if (status && status !== 'all') {
     where += ' AND e.status = ?'
@@ -189,6 +192,28 @@ function validateEquipmentValues(input: {
   return { ok: true, purchasePrice, depreciableLifeYears, residualValue, depreciationMethod: depreciationMethod.value, totalCapacity }
 }
 
+function toEquipmentAuditSnapshot(row: any) {
+  if (!row) return null
+  return {
+    id: row.id,
+    code: row.code,
+    name: row.name,
+    model: row.model || null,
+    manufacturer: row.manufacturer || null,
+    purchasePrice: row.purchase_price || 0,
+    purchaseDate: row.purchase_date || null,
+    depreciableLifeYears: row.depreciable_life_years || 0,
+    residualValue: row.residual_value || 0,
+    depreciationMethod: row.depreciation_method || null,
+    totalCapacity: row.total_capacity || null,
+    capacityUnit: row.capacity_unit || null,
+    status: row.status === 1 ? 'active' : row.status === 0 ? 'inactive' : 'scrapped',
+    locationId: row.location_id || null,
+    typeId: row.type_id || null,
+    isDeleted: Number(row.is_deleted || 0) !== 0,
+  }
+}
+
 router.get('/', (req, res) => {
   try {
     const { page = 1, pageSize = 20 } = req.query
@@ -238,6 +263,7 @@ router.get('/', (req, res) => {
         locationId: r.location_id,
         typeId: r.type_id || null,
         typeName: r.type_name || null,
+        isDeleted: Number(r.is_deleted || 0) !== 0,
         annualDepreciation,
         accumulatedDepreciation: usage?.total_depreciation || 0,
         netBookValue: (r.purchase_price || 0) - (usage?.total_depreciation || 0),
@@ -276,12 +302,13 @@ router.get('/stats', (req, res) => {
 router.get('/:id', (req, res) => {
   try {
     const { id } = req.params
+    const includeDeleted = req.query?.includeDeleted === 'true'
     const db = getDatabase()
     const r = db.prepare(`
       SELECT e.*, et.name as type_name, et.code as type_code
       FROM equipment e
       LEFT JOIN equipment_types et ON e.type_id = et.id
-      WHERE e.id = ?
+      WHERE e.id = ? ${includeDeleted ? '' : 'AND e.is_deleted = 0'}
     `).get(id) as any
     if (!r) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
 
@@ -316,6 +343,7 @@ router.get('/:id', (req, res) => {
       locationId: r.location_id,
       typeId: r.type_id || null,
       typeName: r.type_name || null,
+      isDeleted: Number(r.is_deleted || 0) !== 0,
       annualDepreciation: Math.round(annualDepreciation * 100) / 100,
       accumulatedDepreciation: Math.round(accumulatedDepreciation * 100) / 100,
       netBookValue: Math.round(netBookValue * 100) / 100,
@@ -347,6 +375,23 @@ router.post('/', requireEquipmentWrite, (req, res) => {
     const id = uuidv4()
     db.prepare('INSERT INTO equipment (id, code, name, model, manufacturer, purchase_price, purchase_date, depreciable_life_years, residual_value, depreciation_method, total_capacity, capacity_unit, status, location_id, type_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
       .run(id, codeText.value, nameText.value, modelText.value, manufacturerText.value, values.purchasePrice, purchaseDate || null, values.depreciableLifeYears, values.residualValue, values.depreciationMethod, values.totalCapacity || null, capacityUnitText.value, parsedStatus.value, locationId || null, typeId || null)
+    const created = db.prepare('SELECT * FROM equipment WHERE id = ?').get(id)
+    const after = toEquipmentAuditSnapshot(created)
+    logOperation(db, req as any, {
+      operation: 'POST /equipment',
+      description: '创建设备折旧口径',
+      requestData: {
+        module: 'equipment',
+        businessId: id,
+        code: codeText.value,
+        name: nameText.value,
+        after,
+      },
+      responseData: {
+        id,
+        after,
+      },
+    })
     success(res, { id }, 'Created', 201)
   } catch (err: any) {
     if (err.message?.includes('UNIQUE constraint failed')) { error(res, 'Code exists', 'RESOURCE_CONFLICT', 409); return }
@@ -360,8 +405,9 @@ router.put('/:id', requireEquipmentWrite, (req, res) => {
     const { id } = req.params
     const { code, name, model, manufacturer, purchasePrice, purchaseDate, depreciableLifeYears, residualValue, depreciationMethod, totalCapacity, capacityUnit, status, locationId, typeId } = req.body
     const db = getDatabase()
-    const existing = db.prepare('SELECT * FROM equipment WHERE id = ?').get(id) as any
+    const existing = db.prepare('SELECT * FROM equipment WHERE id = ? AND is_deleted = 0').get(id) as any
     if (!existing) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
+    const before = toEquipmentAuditSnapshot(existing)
     if (code !== undefined) {
       const codeText = requireValidText(code, '设备编码', 100)
       if (sendTextError(res, codeText)) return
@@ -413,6 +459,23 @@ router.put('/:id', requireEquipmentWrite, (req, res) => {
         typeId !== undefined ? typeId : existing.type_id,
         id
       )
+    const updated = db.prepare('SELECT * FROM equipment WHERE id = ?').get(id)
+    const after = toEquipmentAuditSnapshot(updated)
+    logOperation(db, req as any, {
+      operation: 'PUT /equipment/:id',
+      description: '更新设备折旧口径',
+      requestData: {
+        module: 'equipment',
+        businessId: id,
+        before,
+        after,
+      },
+      responseData: {
+        id,
+        beforeStatus: before?.status,
+        afterStatus: after?.status,
+      },
+    })
     success(res, { id }, 'Updated')
   } catch (err: any) { error(res, err.message) }
 })
@@ -422,8 +485,9 @@ router.delete('/:id', requireEquipmentWrite, (req, res) => {
   try {
     const { id } = req.params
     const db = getDatabase()
-    const existing = db.prepare('SELECT * FROM equipment WHERE id = ?').get(id)
+    const existing = db.prepare('SELECT * FROM equipment WHERE id = ? AND is_deleted = 0').get(id)
     if (!existing) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
+    const before = toEquipmentAuditSnapshot(existing)
 
     // 检查是否有使用记录
     const usageCount = (db.prepare('SELECT COUNT(*) as count FROM equipment_usage WHERE equipment_id = ?').get(id) as any)?.count || 0
@@ -437,7 +501,21 @@ router.delete('/:id', requireEquipmentWrite, (req, res) => {
       return
     }
 
-    db.prepare('DELETE FROM equipment WHERE id = ?').run(id)
+    db.prepare('UPDATE equipment SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(id)
+    logOperation(db, req as any, {
+      operation: 'DELETE /equipment/:id',
+      description: '删除设备折旧口径',
+      requestData: {
+        module: 'equipment',
+        businessId: id,
+        before,
+      },
+      responseData: {
+        id,
+        isDeleted: true,
+        beforeStatus: before?.status,
+      },
+    })
     success(res, null, 'Deleted')
   } catch (err: any) { error(res, err.message) }
 })
@@ -448,7 +526,7 @@ router.get('/:id/usage', (req, res) => {
     const { id } = req.params
     const { page = 1, pageSize = 20 } = req.query
     const db = getDatabase()
-    const equipment = db.prepare('SELECT id FROM equipment WHERE id = ?').get(id)
+    const equipment = db.prepare('SELECT id FROM equipment WHERE id = ? AND is_deleted = 0').get(id)
     if (!equipment) { error(res, 'Equipment not found', 'NOT_FOUND', 404); return }
     const count = (db.prepare('SELECT COUNT(*) as total FROM equipment_usage WHERE equipment_id = ?').get(id) as any)?.total || 0
     const pageNum = Math.max(1, Number(page))
@@ -487,7 +565,7 @@ router.post('/:id/usage', (req, res) => {
     const db = getDatabase()
     const operator = (req as any).user?.username || 'system'
 
-    const equipment = db.prepare('SELECT * FROM equipment WHERE id = ?').get(id) as any
+    const equipment = db.prepare('SELECT * FROM equipment WHERE id = ? AND is_deleted = 0').get(id) as any
     if (!equipment) { error(res, 'Equipment not found', 'NOT_FOUND', 404); return }
     if (Number(equipment.status) !== 1) { error(res, '设备未启用，不能登记使用', 'BUSINESS_RULE', 400); return }
 
@@ -511,8 +589,34 @@ router.post('/:id/usage', (req, res) => {
     }
 
     const usageId = uuidv4()
+    const usageDateValue = usageDate || new Date().toISOString().split('T')[0]
     db.prepare('INSERT INTO equipment_usage (id, equipment_id, project_id, outbound_id, usage_minutes, usage_count, depreciation_cost, operator, usage_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(usageId, id, projectId || null, outboundId || null, parsedUsageMinutes, parsedUsageCount, depreciationCost, operator, usageDate || new Date().toISOString().split('T')[0])
+      .run(usageId, id, projectId || null, outboundId || null, parsedUsageMinutes, parsedUsageCount, depreciationCost, operator, usageDateValue)
+
+    logOperation(db, req as any, {
+      operation: 'POST /equipment/:id/usage',
+      description: '登记设备使用与折旧成本',
+      requestData: {
+        module: 'equipment',
+        equipmentId: id,
+        equipmentCode: equipment.code,
+        equipmentName: equipment.name,
+        projectId: projectId || null,
+        outboundId: outboundId || null,
+        usageMinutes: parsedUsageMinutes,
+        usageCount: parsedUsageCount,
+        usageDate: usageDateValue,
+      },
+      responseData: {
+        id: usageId,
+        equipmentId: id,
+        operator,
+        depreciationCost,
+        depreciationMethod: equipment.depreciation_method,
+        depreciableAmount,
+        totalCapacity: equipment.total_capacity,
+      },
+    })
 
     success(res, { id: usageId, depreciationCost }, 'Created', 201)
   } catch (err: any) { error(res, err.message) }

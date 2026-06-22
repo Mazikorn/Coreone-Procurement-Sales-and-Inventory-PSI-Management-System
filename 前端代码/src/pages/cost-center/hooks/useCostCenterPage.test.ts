@@ -44,6 +44,7 @@ const inactiveCenter = {
 describe('useCostCenterPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    window.history.replaceState(null, '', '/')
     vi.mocked(indirectCostApi.getList).mockResolvedValue({
       list: [mockCenter],
       pagination: { page: 1, pageSize: 20, total: 1 },
@@ -225,5 +226,22 @@ describe('useCostCenterPage', () => {
     expect(indirectCostApi.getList).toHaveBeenLastCalledWith(expect.not.objectContaining({
       status: 'all',
     }))
+  })
+
+  it('uses keyword from URL so audit links open a filtered indirect cost center list', async () => {
+    window.history.replaceState(null, '', '/indirect-costs?keyword=IDC-DEEP-001')
+
+    const { result } = renderHook(() => useCostCenterPage())
+
+    await waitFor(() => expect(indirectCostApi.getList).toHaveBeenCalledWith(expect.objectContaining({
+      page: 1,
+      pageSize: 20,
+      keyword: 'IDC-DEEP-001',
+    })))
+    await waitFor(() => expect(indirectCostApi.getStats).toHaveBeenCalledWith(expect.objectContaining({
+      keyword: 'IDC-DEEP-001',
+    })))
+    expect(result.current.keyword).toBe('IDC-DEEP-001')
+    expect(result.current.searchInput).toBe('IDC-DEEP-001')
   })
 })

@@ -4,6 +4,7 @@ import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
 import { authenticateToken, requireRole } from '../middleware/auth.js'
 import { normalizeDisplayText, requireValidText, type TextGuardResult } from '../utils/text-guard.js'
+import { logOperation } from '../utils/operation-logger.js'
 
 const router = Router()
 const requireEquipmentTypeWrite = requireRole()
@@ -78,13 +79,14 @@ function validateEquipmentTypeValues(input: {
 
 function buildEquipmentTypeWhere(query: any) {
   const { keyword, status } = query
-  let where = '1=1'
+  const includeDeleted = query?.includeDeleted === true || query?.includeDeleted === 'true'
+  let where = includeDeleted ? '1=1' : 'et.is_deleted = 0'
   const params: any[] = []
 
   if (keyword) {
-    where += ' AND (et.code LIKE ? OR et.name LIKE ?)'
+    where += ' AND (et.id LIKE ? OR et.code LIKE ? OR et.name LIKE ?)'
     const like = `%${keyword}%`
-    params.push(like, like)
+    params.push(like, like, like)
   }
   if (status !== undefined && status !== '' && status !== 'all') {
     where += ' AND et.status = ?'
@@ -102,6 +104,24 @@ function sendTextError(res: any, result: TextGuardResult): result is Extract<Tex
   return false
 }
 
+function toEquipmentTypeAuditSnapshot(row: any) {
+  if (!row) return null
+  return {
+    id: row.id,
+    code: row.code,
+    name: row.name,
+    description: row.description || null,
+    defaultPurchasePrice: row.default_purchase_price || 0,
+    defaultDepreciableLifeYears: row.default_depreciable_life_years || 0,
+    defaultValue: row.default_residual_value || 0,
+    defaultDepreciationMethod: row.default_depreciation_method || null,
+    defaultTotalCapacity: row.default_total_capacity || 0,
+    defaultCapacityUnit: row.default_capacity_unit || null,
+    status: row.status === 1 ? 'active' : 'inactive',
+    isDeleted: Number(row.is_deleted || 0) !== 0,
+  }
+}
+
 // 获取设备类型列表
 router.get('/', (req, res) => {
   try {
@@ -117,7 +137,7 @@ router.get('/', (req, res) => {
 
     // 统计每个类型下的设备数量
     const eqCounts = db.prepare(`
-      SELECT type_id, COUNT(*) as cnt FROM equipment WHERE type_id IS NOT NULL GROUP BY type_id
+      SELECT type_id, COUNT(*) as cnt FROM equipment WHERE type_id IS NOT NULL AND is_deleted = 0 GROUP BY type_id
     `).all() as any[]
     const countMap = new Map(eqCounts.map((c: any) => [c.type_id, c.cnt]))
 
@@ -134,6 +154,7 @@ router.get('/', (req, res) => {
       defaultCapacityUnit: r.default_capacity_unit,
       status: r.status === 1 ? 'active' : 'inactive',
       equipmentCount: countMap.get(r.id) || 0,
+      isDeleted: Number(r.is_deleted || 0) !== 0,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
     })), Number(page), Number(pageSize), count)
@@ -150,7 +171,7 @@ router.get('/stats', (req, res) => {
         COALESCE(SUM(CASE WHEN et.status = 1 THEN 1 ELSE 0 END), 0) as active,
         COUNT(e.id) as equipmentCount
       FROM equipment_types et
-      LEFT JOIN equipment e ON e.type_id = et.id
+      LEFT JOIN equipment e ON e.type_id = et.id AND e.is_deleted = 0
       WHERE ${where}
     `).get(...params) as any
     success(res, {
@@ -165,12 +186,13 @@ router.get('/stats', (req, res) => {
 router.get('/:id', (req, res) => {
   try {
     const { id } = req.params
+    const includeDeleted = req.query?.includeDeleted === 'true'
     const db = getDatabase()
-    const r = db.prepare('SELECT * FROM equipment_types WHERE id = ?').get(id) as any
+    const r = db.prepare(`SELECT * FROM equipment_types WHERE id = ? ${includeDeleted ? '' : 'AND is_deleted = 0'}`).get(id) as any
     if (!r) { error(res, '设备类型不存在', 'NOT_FOUND', 404); return }
 
     // 统计设备数量
-    const eqCount = (db.prepare('SELECT COUNT(*) as cnt FROM equipment WHERE type_id = ?').get(id) as any)?.cnt || 0
+    const eqCount = (db.prepare('SELECT COUNT(*) as cnt FROM equipment WHERE type_id = ? AND is_deleted = 0').get(id) as any)?.cnt || 0
 
     success(res, {
       id: r.id,
@@ -185,6 +207,7 @@ router.get('/:id', (req, res) => {
       defaultCapacityUnit: r.default_capacity_unit,
       status: r.status === 1 ? 'active' : 'inactive',
       equipmentCount: eqCount,
+      isDeleted: Number(r.is_deleted || 0) !== 0,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
     })
@@ -228,6 +251,24 @@ router.post('/', authenticateToken, requireEquipmentTypeWrite, (req, res) => {
         capacityUnitText.value || 'minutes',
       )
 
+    const created = db.prepare('SELECT * FROM equipment_types WHERE id = ?').get(id)
+    const after = toEquipmentTypeAuditSnapshot(created)
+    logOperation(db, req as any, {
+      operation: 'POST /equipment-types',
+      description: '创建设备类型折旧口径',
+      requestData: {
+        module: 'equipment_types',
+        businessId: id,
+        code: codeText.value,
+        name: nameText.value,
+        after,
+      },
+      responseData: {
+        id,
+        after,
+      },
+    })
+
     success(res, { id }, 'Created', 201)
   } catch (err: any) {
     if (err.message?.includes('UNIQUE constraint failed')) { error(res, `类型编码 ${req.body.code} 已存在`, 'RESOURCE_CONFLICT', 409); return }
@@ -241,8 +282,9 @@ router.put('/:id', authenticateToken, requireEquipmentTypeWrite, (req, res) => {
     const { id } = req.params
     const { code, name, description, defaultPurchasePrice, defaultDepreciableLifeYears, defaultValue, defaultDepreciationMethod, defaultTotalCapacity, defaultCapacityUnit, status } = req.body
     const db = getDatabase()
-    const existing = db.prepare('SELECT * FROM equipment_types WHERE id = ?').get(id) as any
+    const existing = db.prepare('SELECT * FROM equipment_types WHERE id = ? AND is_deleted = 0').get(id) as any
     if (!existing) { error(res, '设备类型不存在', 'NOT_FOUND', 404); return }
+    const before = toEquipmentTypeAuditSnapshot(existing)
     if (code !== undefined) {
       const codeText = requireValidText(code, '设备类型编码', 100)
       if (sendTextError(res, codeText)) return
@@ -287,6 +329,24 @@ router.put('/:id', authenticateToken, requireEquipmentTypeWrite, (req, res) => {
         id
       )
 
+    const updated = db.prepare('SELECT * FROM equipment_types WHERE id = ?').get(id)
+    const after = toEquipmentTypeAuditSnapshot(updated)
+    logOperation(db, req as any, {
+      operation: 'PUT /equipment-types/:id',
+      description: '更新设备类型折旧口径',
+      requestData: {
+        module: 'equipment_types',
+        businessId: id,
+        before,
+        after,
+      },
+      responseData: {
+        id,
+        beforeStatus: before?.status,
+        afterStatus: after?.status,
+      },
+    })
+
     success(res, { id }, 'Updated')
   } catch (err: any) { error(res, err.message) }
 })
@@ -296,11 +356,12 @@ router.delete('/:id', authenticateToken, requireEquipmentTypeWrite, (req, res) =
   try {
     const { id } = req.params
     const db = getDatabase()
-    const existing = db.prepare('SELECT * FROM equipment_types WHERE id = ?').get(id)
+    const existing = db.prepare('SELECT * FROM equipment_types WHERE id = ? AND is_deleted = 0').get(id)
     if (!existing) { error(res, '设备类型不存在', 'NOT_FOUND', 404); return }
+    const before = toEquipmentTypeAuditSnapshot(existing)
 
     // 检查是否有设备关联
-    const eqCount = (db.prepare('SELECT COUNT(*) as count FROM equipment WHERE type_id = ?').get(id) as any)?.count || 0
+    const eqCount = (db.prepare('SELECT COUNT(*) as count FROM equipment WHERE type_id = ? AND is_deleted = 0').get(id) as any)?.count || 0
     if (eqCount > 0) {
       error(res, `该类型下有 ${eqCount} 台设备，无法删除。请先将设备转移到其他类型`, 'CONFLICT', 409)
       return
@@ -311,7 +372,21 @@ router.delete('/:id', authenticateToken, requireEquipmentTypeWrite, (req, res) =
       return
     }
 
-    db.prepare('DELETE FROM equipment_types WHERE id = ?').run(id)
+    db.prepare('UPDATE equipment_types SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(id)
+    logOperation(db, req as any, {
+      operation: 'DELETE /equipment-types/:id',
+      description: '删除设备类型折旧口径',
+      requestData: {
+        module: 'equipment_types',
+        businessId: id,
+        before,
+      },
+      responseData: {
+        id,
+        isDeleted: true,
+        beforeStatus: before?.status,
+      },
+    })
     success(res, null, 'Deleted')
   } catch (err: any) { error(res, err.message) }
 })

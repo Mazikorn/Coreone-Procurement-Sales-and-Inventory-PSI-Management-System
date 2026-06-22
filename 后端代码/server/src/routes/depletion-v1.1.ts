@@ -2,8 +2,11 @@ import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../database/DatabaseManager.js'
 import { success, error } from '../utils/response.js'
+import { logOperation } from '../utils/operation-logger.js'
+import { requireStrictRole } from '../middleware/auth.js'
 
 const router = Router()
+const requireDepletionWrite = requireStrictRole('admin', 'warehouse_manager')
 
 // ===== 获取使用中批次列表 =====
 router.get('/tracking', (req, res) => {
@@ -21,7 +24,7 @@ router.get('/tracking', (req, res) => {
 })
 
 // ===== 创建使用中记录 =====
-router.post('/tracking', (req, res) => {
+router.post('/tracking', requireDepletionWrite, (req, res) => {
   try {
     const db = getDatabase()
     const { material_id, material_name, batch, spec, total_qty, remaining, unit, start_date, expected_days, usage, receiver } = req.body
@@ -48,12 +51,32 @@ router.post('/tracking', (req, res) => {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, ?, ?, 'in-use', datetime('now'), datetime('now'))
     `).run(id, material_id, material_name, batch, spec, totalQty, remainingQty, unit, start_date, expected_days, usage, receiver)
 
+    logOperation(db, req as any, {
+      operation: 'POST /depletion/tracking',
+      description: '创建使用中批次记录',
+      requestData: {
+        module: 'depletion',
+        materialId: material_id,
+        materialName: material_name,
+        batchNo: batch,
+        spec,
+        totalQty,
+        remaining: remainingQty,
+        unit,
+        startDate: start_date,
+        expectedDays: expected_days,
+        usage,
+        receiver,
+      },
+      responseData: { id, status: 'in-use' },
+    })
+
     success(res, { id })
   } catch (err: any) { error(res, err.message) }
 })
 
 // ===== 更新剩余量 =====
-router.put('/tracking/:id/remain', (req, res) => {
+router.put('/tracking/:id/remain', requireDepletionWrite, (req, res) => {
   try {
     const db = getDatabase()
     const { id } = req.params
@@ -78,12 +101,31 @@ router.put('/tracking/:id/remain', (req, res) => {
       WHERE id = ?
     `).run(remainingQty, id)
 
+    logOperation(db, req as any, {
+      operation: 'PUT /depletion/tracking/:id/remain',
+      description: '调整使用中批次剩余量',
+      requestData: {
+        module: 'depletion',
+        trackingId: id,
+        materialId: existing.material_id,
+        batchNo: existing.batch,
+        remaining: remainingQty,
+        reason: String(reason).trim(),
+      },
+      responseData: {
+        trackingId: id,
+        beforeRemaining: Number(existing.remaining || 0),
+        afterRemaining: remainingQty,
+        status: existing.status,
+      },
+    })
+
     success(res, { id, remaining: remainingQty })
   } catch (err: any) { error(res, err.message) }
 })
 
 // ===== 确认耗尽 =====
-router.post('/tracking/:id/deplete', (req, res) => {
+router.post('/tracking/:id/deplete', requireDepletionWrite, (req, res) => {
   try {
     const db = getDatabase()
     const { id } = req.params
@@ -145,6 +187,28 @@ router.post('/tracking/:id/deplete', (req, res) => {
           WHERE batch_no = ? AND material_id = ?
         `).run(remainQty, tracking.batch, tracking.material_id)
       }
+
+      logOperation(db, req as any, {
+        operation: 'POST /depletion/tracking/:id/deplete',
+        description: '确认使用中批次耗尽',
+        requestData: {
+          module: 'depletion',
+          trackingId: id,
+          materialId: tracking.material_id,
+          batchNo: tracking.batch,
+          remainQty,
+          depleteType: deplete_type,
+          depleteReason: deplete_reason,
+        },
+        responseData: {
+          id: depletionId,
+          trackingId: id,
+          beforeStatus: tracking.status,
+          afterStatus: 'depleted',
+          beforeRemaining: Number(tracking.remaining || 0),
+          afterRemaining: remainQty,
+        },
+      })
 
       db.exec('COMMIT')
       success(res, { id: depletionId })

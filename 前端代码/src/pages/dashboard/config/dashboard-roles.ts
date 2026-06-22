@@ -248,9 +248,19 @@ const roleConfigs: Record<string, DashboardRoleConfig> = {
     showBanner: true,
   },
   pathologist: {
-    apiCalls: ['outbound-stats', 'abc-dashboard'],
-    statCards: [outboundCard, ...costCards.slice(0, 2)],
-    quickActions: [baseQuickActions[1], costQuickAction],
+    apiCalls: ['inventory', 'abc-dashboard'],
+    statCards: [inventoryCard, ...costCards.slice(0, 2)],
+    quickActions: [
+      {
+        label: '库存风险',
+        desc: '查看库存余量和批次',
+        icon: Package,
+        colorClass: 'text-blue-500',
+        bgClass: 'bg-blue-50',
+        navigateTo: '/inventory',
+      },
+      costQuickAction,
+    ],
     showBanner: false,
   },
   manager: {

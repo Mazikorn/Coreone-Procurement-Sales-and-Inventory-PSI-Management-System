@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { bomApi, categoryApi, locationApi, materialApi, projectApi, userApi } from '@/api/master'
 import { depletionApi, inventoryApi, outboundApi, scrapApi } from '@/api/inventory'
-import type { BOM, BOMMaterial, Category, InventoryConsistencyCheck, InventoryItem, InventoryStats, Location, Material, Project } from '@/types'
+import type { BOM, BOMMaterial, Category, InventoryBatchTrace, InventoryConsistencyCheck, InventoryItem, InventoryStats, Location, Material, Project } from '@/types'
 import { getUserRole } from '@/lib/permissions'
 import { useUrlParams } from '@/hooks/useUrlParams'
 
@@ -55,6 +55,8 @@ type DepletedRecord = {
   spec: string
   batch: string
   depleteType: string
+  depleteReason: string
+  operator: string
   totalQty: number
   remainQty: number
   unit: string
@@ -148,42 +150,53 @@ function toOutboundMaterial(row: InventoryRow | Material | BOMMaterial, fallback
 }
 
 function mapDepletionItem(row: any): DepletionItem {
-  const totalQty = Number(row.totalQty ?? row.totalQuantity ?? row.quantity ?? 0)
-  const remaining = Number(row.remaining ?? row.remainQty ?? row.remainingQty ?? 0)
+  const totalQty = Number(row.totalQty ?? row.total_qty ?? row.totalQuantity ?? row.quantity ?? 0)
+  const remaining = Number(row.remaining ?? row.remain_qty ?? row.remainQty ?? row.remainingQty ?? 0)
   const progress = totalQty > 0 ? Math.min(100, Math.round(((totalQty - remaining) / totalQty) * 100)) : 0
   return {
     id: String(row.id ?? row.materialId ?? row.batchNo),
-    materialName: row.materialName ?? row.name ?? '-',
+    materialName: row.materialName ?? row.material_name ?? row.name ?? '-',
     spec: row.spec ?? '-',
     batch: row.batch ?? row.batchNo ?? '-',
     status: row.status ?? (progress > 90 ? 'warning' : 'active'),
     totalQty,
     remaining,
     unit: row.unit ?? '',
-    daysUsed: Number(row.daysUsed ?? row.usedDays ?? 0),
-    expectedDays: Number(row.expectedDays ?? row.planDays ?? row.daysUsed ?? 0),
+    daysUsed: Number(row.daysUsed ?? row.days_used ?? row.usedDays ?? 0),
+    expectedDays: Number(row.expectedDays ?? row.expected_days ?? row.planDays ?? row.daysUsed ?? row.days_used ?? 0),
     progress,
   }
+}
+
+function toDepleteTypeLabel(type: unknown) {
+  const value = String(type || '')
+  if (value === 'normal' || value === '正常用完') return '正常用完'
+  if (value === 'expired' || value === '过期耗尽') return '过期耗尽'
+  if (value === 'abnormal' || value === '异常耗尽') return '异常耗尽'
+  return value || '正常用完'
 }
 
 function mapDepletedRecord(row: any): DepletedRecord {
   return {
     id: String(row.id ?? row.materialId ?? row.batchNo),
-    materialName: row.materialName ?? row.name ?? '-',
+    materialName: row.materialName ?? row.material_name ?? row.name ?? '-',
     spec: row.spec ?? '-',
     batch: row.batch ?? row.batchNo ?? '-',
-    depleteType: row.depleteType ?? row.typeName ?? '正常用完',
-    totalQty: Number(row.totalQty ?? row.totalQuantity ?? row.quantity ?? 0),
-    remainQty: Number(row.remainQty ?? row.remaining ?? 0),
+    depleteType: toDepleteTypeLabel(row.depleteType ?? row.deplete_type ?? row.typeName),
+    depleteReason: row.depleteReason ?? row.deplete_reason ?? '-',
+    operator: row.operator ?? '-',
+    totalQty: Number(row.totalQty ?? row.total_qty ?? row.totalQuantity ?? row.quantity ?? 0),
+    remainQty: Number(row.remainQty ?? row.remain_qty ?? row.remaining ?? 0),
     unit: row.unit ?? '',
-    startDate: row.startDate ?? '-',
-    endDate: row.endDate ?? row.createdAt ?? '-',
-    actualDays: Number(row.actualDays ?? row.daysUsed ?? 0),
+    startDate: row.startDate ?? row.start_date ?? '-',
+    endDate: row.endDate ?? row.end_date ?? row.createdAt ?? row.created_at ?? '-',
+    actualDays: Number(row.actualDays ?? row.actual_days ?? row.daysUsed ?? row.days_used ?? 0),
   }
 }
 
 export function useInventoryPage() {
   const url = useUrlParams()
+  const initialKeyword = url.get('keyword', '')
   const filterMaterialId = url.get('materialId', '')
   const [activeTab, setActiveTab] = useState<ActiveTab>('in-stock')
   const [data, setData] = useState<InventoryRow[]>([])
@@ -191,8 +204,8 @@ export function useInventoryPage() {
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
-  const [keyword, setKeyword] = useState('')
-  const [searchKeyword, setSearchKeyword] = useState('')
+  const [keyword, setKeyword] = useState(initialKeyword)
+  const [searchKeyword, setSearchKeyword] = useState(initialKeyword)
   const [category, setCategory] = useState('')
   const [location, setLocation] = useState('')
   const [categoryOptions, setCategoryOptions] = useState<Array<{ value: string; label: string }>>([{ value: '', label: '全部分类' }])
@@ -205,6 +218,9 @@ export function useInventoryPage() {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
   const [selectedItem, setSelectedItem] = useState<InventoryRow | null>(null)
   const [detailModalOpen, setDetailModalOpen] = useState(false)
+  const [batchTrace, setBatchTrace] = useState<InventoryBatchTrace | null>(null)
+  const [batchTraceLoading, setBatchTraceLoading] = useState(false)
+  const batchTraceRequestRef = useRef(0)
   const [outboundModalOpen, setOutboundModalOpen] = useState(false)
   const [outboundMaterials, setOutboundMaterials] = useState<OutboundMaterial[]>([])
   const [outboundRemark, setOutboundRemark] = useState('')
@@ -225,6 +241,8 @@ export function useInventoryPage() {
   const [batchScrapModalOpen, setBatchScrapModalOpen] = useState(false)
   const [scrapReason, setScrapReason] = useState('')
   const [scrapRemark, setScrapRemark] = useState('')
+  const [scrapResponsiblePerson, setScrapResponsiblePerson] = useState('')
+  const [scrapResponsibleDepartment, setScrapResponsibleDepartment] = useState('')
   const [depletionTracking, setDepletionTracking] = useState<DepletionItem[]>([])
   const [depletedRecords, setDepletedRecords] = useState<DepletedRecord[]>([])
   const [selectedDepletionItem, setSelectedDepletionItem] = useState<DepletionItem | null>(null)
@@ -241,7 +259,11 @@ export function useInventoryPage() {
   const [consistencyResult, setConsistencyResult] = useState<InventoryConsistencyCheck | null>(null)
   const canAccessDepletion = useMemo(() => {
     const role = getUserRole()
-    return role === 'admin' || role === 'pathologist' || role === 'finance'
+    return role === 'admin' || role === 'warehouse_manager' || role === 'pathologist' || role === 'finance'
+  }, [])
+  const canManageDepletionActions = useMemo(() => {
+    const role = getUserRole()
+    return role === 'admin' || role === 'warehouse_manager'
   }, [])
   const canManageInventoryActions = useMemo(() => {
     const role = getUserRole()
@@ -503,9 +525,31 @@ export function useInventoryPage() {
     })
   }
 
-  const viewDetail = (item: InventoryRow) => {
+  const viewDetail = async (item: InventoryRow) => {
+    const requestId = batchTraceRequestRef.current + 1
+    batchTraceRequestRef.current = requestId
     setSelectedItem(item)
     setDetailModalOpen(true)
+    setBatchTrace(null)
+    if (!item.batchId) {
+      setBatchTraceLoading(false)
+      return
+    }
+    setBatchTraceLoading(true)
+    try {
+      const trace = await inventoryApi.getBatchTrace(item.batchId)
+      if (batchTraceRequestRef.current === requestId) {
+        setBatchTrace(trace)
+      }
+    } catch {
+      if (batchTraceRequestRef.current === requestId) {
+        toast.error('批次追溯加载失败')
+      }
+    } finally {
+      if (batchTraceRequestRef.current === requestId) {
+        setBatchTraceLoading(false)
+      }
+    }
   }
 
   const openOutboundModal = (item?: InventoryRow) => {
@@ -699,11 +743,15 @@ export function useInventoryPage() {
         quantity: item.stock,
         reason: scrapReason,
         remark: scrapRemark || undefined,
+        responsiblePerson: scrapResponsiblePerson.trim() || undefined,
+        responsibleDepartment: scrapResponsibleDepartment.trim() || undefined,
       })))
       toast.success('报废登记成功', { description: `已报废 ${result.createdCount} 项物料` })
       setBatchScrapModalOpen(false)
       setScrapReason('')
       setScrapRemark('')
+      setScrapResponsiblePerson('')
+      setScrapResponsibleDepartment('')
       clearSelection()
       loadInventory()
       loadInventoryStats()
@@ -784,6 +832,7 @@ export function useInventoryPage() {
     activeTab,
     setActiveTab,
     canAccessDepletion,
+    canManageDepletionActions,
     canManageInventoryActions,
     data,
     loading,
@@ -860,6 +909,8 @@ export function useInventoryPage() {
     detailModalOpen,
     setDetailModalOpen,
     selectedItem,
+    batchTrace,
+    batchTraceLoading,
     batchOutboundModalOpen,
     setBatchOutboundModalOpen,
     confirmBatchOutboundOnly,
@@ -869,6 +920,10 @@ export function useInventoryPage() {
     setScrapReason,
     scrapRemark,
     setScrapRemark,
+    scrapResponsiblePerson,
+    setScrapResponsiblePerson,
+    scrapResponsibleDepartment,
+    setScrapResponsibleDepartment,
     confirmBatchScrap,
     depletionTracking,
     setSelectedDepletionItem,

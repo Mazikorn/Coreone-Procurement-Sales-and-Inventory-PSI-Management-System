@@ -48,9 +48,14 @@ const STATUS_LABELS: Record<string, { label: string; className: string }> = {
 const TYPE_LABELS: Record<string, string> = {
   bom_material_skipped: 'BOM耗材跳过',
   abc_calculation_failed: 'ABC核算失败',
+  calculation_failed: '成本计算失败',
   cost_recalculation_failed: '重算失败',
+  missing_fee_mapping: '缺少收费映射',
+  missing_driver_rate: '缺少动因费率',
   missing_bom: '缺少BOM',
   missing_project: '缺少项目',
+  reconciliation_variance: '对账差异',
+  manual_review: '人工复核',
 }
 
 const listPayload = <T,>(data: any): T[] => data?.list || data?.items || data || []
@@ -95,6 +100,10 @@ export function getRetryToastMessage(result: any) {
     return { type: 'success' as const, message: '重试已完成，异常已解决' }
   }
   return { type: 'success' as const, message: '重试已完成' }
+}
+
+export function getExceptionTypeLabel(type: string) {
+  return TYPE_LABELS[type] || type
 }
 
 export default function CostAlerts() {
@@ -353,7 +362,7 @@ export default function CostAlerts() {
                   return (
                     <tr key={item.id} className="hover:bg-gray-50">
                       <td className="px-4 py-3 font-mono text-gray-700">{item.exceptionNo}</td>
-                      <td className="px-4 py-3 text-gray-700">{TYPE_LABELS[item.exceptionType] || item.exceptionType}</td>
+                      <td className="px-4 py-3 text-gray-700">{getExceptionTypeLabel(item.exceptionType)}</td>
                       <td className="px-4 py-3 text-gray-600">
                         <div>{item.outboundNo || item.sourceModule || '-'}</div>
                         <div className="text-xs text-gray-400">{item.projectName || item.bomName || item.yearMonth || '-'}</div>

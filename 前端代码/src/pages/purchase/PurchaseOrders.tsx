@@ -48,14 +48,31 @@ export function canReceivePurchaseOrders(role: string | null): boolean {
   return role === 'admin' || role === 'warehouse_manager'
 }
 
+export function canEditPurchaseOrder(role: string | null, order: Pick<PurchaseOrder, 'status' | 'receivedQty'>): boolean {
+  return canWritePurchaseOrders(role) && order.status === 'pending' && Number(order.receivedQty || 0) === 0
+}
+
+export function purchaseOrderToForm(order: PurchaseOrder): PurchaseOrderForm {
+  return {
+    materialId: order.materialId,
+    supplierId: order.supplierId || '',
+    orderedQty: order.orderedQty,
+    unitPrice: order.unitPrice,
+    unit: order.unit,
+    expectedDate: order.expectedDate || '',
+    remark: order.remark || '',
+  }
+}
+
 export default function PurchaseOrders() {
   const navigate = useNavigate()
   const role = getUserRole()
   const canWrite = canWritePurchaseOrders(role)
   const canReceive = canReceivePurchaseOrders(role)
+  const initialKeyword = new URLSearchParams(window.location.search).get('keyword') || ''
   const [materials, setMaterials] = useState<Material[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
-  const [searchText, setSearchText] = useState('')
+  const [searchText, setSearchText] = useState(initialKeyword)
   const [statusFilter, setStatusFilter] = useState('')
 
   const [modalOpen, setModalOpen] = useState(false)
@@ -64,6 +81,7 @@ export default function PurchaseOrders() {
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false)
   const [selectedOrder, setSelectedOrder] = useState<PurchaseOrder | null>(null)
   const [orderToCancel, setOrderToCancel] = useState<PurchaseOrder | null>(null)
+  const [editingOrder, setEditingOrder] = useState<PurchaseOrder | null>(null)
   const [receiveQty, setReceiveQty] = useState(0)
 
   const [form, setForm] = useState<PurchaseOrderForm>({
@@ -115,9 +133,36 @@ export default function PurchaseOrders() {
     deps: [statusFilter, searchText],
   })
 
-  const handleCreate = async () => {
+  const resetForm = () => {
+    setForm({ materialId: '', supplierId: '', orderedQty: 1, unitPrice: 0, unit: '个', expectedDate: '', remark: '' })
+    setEditingOrder(null)
+  }
+
+  const openCreateModal = () => {
+    fetchRefs()
+    resetForm()
+    setModalOpen(true)
+  }
+
+  const openEditModal = (order: PurchaseOrder) => {
+    if (!canEditPurchaseOrder(role, order)) {
+      toast.error('只有未收货的待收货订单可以编辑')
+      return
+    }
+    fetchRefs()
+    setEditingOrder(order)
+    setForm(purchaseOrderToForm(order))
+    setModalOpen(true)
+  }
+
+  const closeFormModal = () => {
+    setModalOpen(false)
+    resetForm()
+  }
+
+  const handleSave = async () => {
     if (!canWrite) {
-      toast.error('当前角色不能创建采购订单')
+      toast.error(editingOrder ? '当前角色不能编辑采购订单' : '当前角色不能创建采购订单')
       return
     }
     if (!form.materialId || !form.supplierId || form.orderedQty <= 0) {
@@ -126,17 +171,22 @@ export default function PurchaseOrders() {
     }
     const mat = materials.find(m => m.id === form.materialId)
     try {
-      await purchaseOrderApi.create({
+      const payload = {
         ...form,
         materialName: mat?.name || '',
         unitPrice: form.unitPrice,
-      })
-      toast.success('采购订单创建成功')
-      setModalOpen(false)
-      setForm({ materialId: '', supplierId: '', orderedQty: 1, unitPrice: 0, unit: '个', expectedDate: '', remark: '' })
+      }
+      if (editingOrder) {
+        await purchaseOrderApi.update(editingOrder.id, payload)
+        toast.success('采购订单已更新')
+      } else {
+        await purchaseOrderApi.create(payload)
+        toast.success('采购订单创建成功')
+      }
+      closeFormModal()
       refresh()
     } catch (e) {
-      toast.error('创建失败')
+      toast.error(editingOrder ? '编辑失败' : '创建失败')
     }
   }
 
@@ -196,7 +246,7 @@ export default function PurchaseOrders() {
         </div>
         {canWrite && (
           <button
-            onClick={() => { fetchRefs(); setModalOpen(true) }}
+            onClick={openCreateModal}
             className="inline-flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 text-sm font-medium transition-all duration-150"
           >
             <Plus className="w-4 h-4" />
@@ -295,6 +345,14 @@ export default function PurchaseOrders() {
                               收货
                             </button>
                           )}
+                          {canEditPurchaseOrder(role, row) && (
+                            <button
+                              onClick={() => openEditModal(row)}
+                              className="px-2 py-1 text-xs text-blue-600 hover:bg-blue-50 rounded transition-colors duration-150"
+                            >
+                              编辑
+                            </button>
+                          )}
                           {canWrite && row.status === 'pending' && (
                             <button
                               onClick={() => openCancelConfirm(row)}
@@ -319,10 +377,15 @@ export default function PurchaseOrders() {
         </div>
       </div>
 
-      {/* Create Modal */}
+      {/* Create/Edit Modal */}
       {modalOpen && (
-        <Modal onClose={() => setModalOpen(false)} title="新建采购订单" size="lg">
+        <Modal onClose={closeFormModal} title={editingOrder ? '编辑采购订单' : '新建采购订单'} size="lg">
           <div className="space-y-4">
+            {editingOrder && (
+              <div className="rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-700">
+                仅未收货订单可更正；保存后会记录前后值，仓管入库时使用更正后的数量、单价和供应商。
+              </div>
+            )}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">物料 <span className="text-red-500">*</span></label>
               <SearchableSelect
@@ -401,8 +464,8 @@ export default function PurchaseOrders() {
             </div>
           </div>
           <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-gray-200">
-            <button onClick={() => setModalOpen(false)} className="px-4 h-10 text-sm text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors">取消</button>
-            <button onClick={handleCreate} className="px-4 h-10 text-sm text-white bg-blue-500 rounded-md hover:bg-blue-600 transition-colors">确认创建</button>
+            <button onClick={closeFormModal} className="px-4 h-10 text-sm text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors">取消</button>
+            <button onClick={handleSave} className="px-4 h-10 text-sm text-white bg-blue-500 rounded-md hover:bg-blue-600 transition-colors">{editingOrder ? '保存更正' : '确认创建'}</button>
           </div>
         </Modal>
       )}

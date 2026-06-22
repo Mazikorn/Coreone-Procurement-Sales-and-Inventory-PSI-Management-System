@@ -69,6 +69,7 @@ export default function Stocktaking() {
         form={page.form}
         createStep={page.createStep}
         materials={page.materials}
+        inventoryRows={page.inventoryRows}
         isSubmitting={page.isSubmitting}
         onClose={() => page.setModalType(null)}
         onChange={page.setForm}

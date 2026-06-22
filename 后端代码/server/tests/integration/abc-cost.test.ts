@@ -18,6 +18,17 @@ function getItems(res: any): any[] {
   return []
 }
 
+function latestOperationLog(db: any, operation: string, entityId: string) {
+  return db.prepare(`
+    SELECT *
+    FROM operation_logs
+    WHERE operation = ?
+      AND (request_data LIKE ? OR response_data LIKE ?)
+    ORDER BY rowid DESC
+    LIMIT 1
+  `).get(operation, `%${entityId}%`, `%${entityId}%`) as any
+}
+
 describe('ABC 作业成本法', () => {
   let token: string
   let db: any
@@ -69,6 +80,29 @@ describe('ABC 作业成本法', () => {
       expect(res.body.success).toBe(true)
       const items = getItems(res)
       expect(items.length).toBeGreaterThan(0)
+    })
+
+    it('作业中心列表支持按审计回跳 ID 和业务编码精确承接', async () => {
+      const byId = await request(app)
+        .get('/api/v1/abc/activity-centers')
+        .query({ keyword: activityCenterId })
+        .set('Authorization', `Bearer ${token}`)
+
+      expect(byId.status).toBe(200)
+      expect(getItems(byId)).toHaveLength(1)
+      expect(getItems(byId)[0]).toMatchObject({
+        id: activityCenterId,
+        code: activityCenterCode,
+      })
+
+      const byCode = await request(app)
+        .get('/api/v1/abc/activity-centers')
+        .query({ keyword: activityCenterCode })
+        .set('Authorization', `Bearer ${token}`)
+
+      expect(byCode.status).toBe(200)
+      expect(getItems(byCode)).toHaveLength(1)
+      expect(getItems(byCode)[0].id).toBe(activityCenterId)
     })
 
     it('获取作业中心详情', async () => {
@@ -152,6 +186,70 @@ describe('ABC 作业成本法', () => {
       expect(deleteGuarded.status).toBe(409)
       expect(deleteGuarded.body.error.message).toBe('作业中心已有成本池记录，不能删除')
     })
+
+    it('作业中心父级和状态必须可治理且拒绝无效层级', async () => {
+      const suffix = Date.now()
+      const parentRes = await request(app)
+        .post('/api/v1/abc/activity-centers')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          code: `PARENT_${suffix}`,
+          name: '父级作业中心',
+          costDriverType: 'slide_count',
+        })
+      expect(parentRes.status).toBe(201)
+      const parentId = parentRes.body.data.id
+
+      const childRes = await request(app)
+        .post('/api/v1/abc/activity-centers')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          code: `CHILD_${suffix}`,
+          name: '子级作业中心',
+          costDriverType: 'slide_count',
+          parentId,
+          status: 'inactive',
+        })
+      expect(childRes.status).toBe(201)
+      const childId = childRes.body.data.id
+
+      const childDetail = await request(app)
+        .get(`/api/v1/abc/activity-centers/${childId}`)
+        .set('Authorization', `Bearer ${token}`)
+      expect(childDetail.status).toBe(200)
+      expect(childDetail.body.data).toMatchObject({
+        parentId,
+        status: 'inactive',
+      })
+
+      const selfParent = await request(app)
+        .put(`/api/v1/abc/activity-centers/${childId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ parentId: childId })
+      expect(selfParent.status).toBe(400)
+      expect(selfParent.body.error.message).toBe('作业中心不能选择自己或下级作为上级')
+
+      const missingParent = await request(app)
+        .put(`/api/v1/abc/activity-centers/${childId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ parentId: `missing-parent-${suffix}` })
+      expect(missingParent.status).toBe(400)
+      expect(missingParent.body.error.message).toBe('上级作业中心不存在')
+
+      const reactivate = await request(app)
+        .put(`/api/v1/abc/activity-centers/${childId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ status: 'active', parentId: '' })
+      expect(reactivate.status).toBe(200)
+
+      const updated = await request(app)
+        .get(`/api/v1/abc/activity-centers/${childId}`)
+        .set('Authorization', `Bearer ${token}`)
+      expect(updated.body.data).toMatchObject({
+        parentId: null,
+        status: 'active',
+      })
+    })
   })
 
   describe('成本动因管理', () => {
@@ -181,6 +279,78 @@ describe('ABC 作业成本法', () => {
       expect(res.body.success).toBe(true)
       const items = getItems(res)
       expect(items.length).toBeGreaterThan(0)
+    })
+
+    it('阶梯成本动因必须配置可解释的区间费率并可回看', async () => {
+      const suffix = Date.now()
+      const invalidRes = await request(app)
+        .post('/api/v1/abc/cost-drivers')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          code: `tier_invalid_${suffix}`,
+          name: '非法阶梯动因',
+          unit: '张',
+          calculationMethod: 'tiered',
+          tierRules: [
+            { from: 0, to: 100, rate: 2 },
+            { from: 90, to: 200, rate: 1.5 },
+          ],
+        })
+
+      expect(invalidRes.status).toBe(400)
+      expect(invalidRes.body.error.code).toBe('INVALID_TIER_RULES')
+
+      const createRes = await request(app)
+        .post('/api/v1/abc/cost-drivers')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          code: `tier_driver_${suffix}`,
+          name: '阶梯切片动因',
+          unit: '张',
+          calculationMethod: 'tiered',
+          tierRules: [
+            { from: 0, to: 100, rate: 2, label: '0-100张' },
+            { from: 100, to: null, rate: 1.5, label: '100张以上' },
+          ],
+          description: '阶梯费率回归',
+        })
+
+      expect(createRes.status).toBe(201)
+      const driverId = createRes.body.data.id
+      const row = db.prepare('SELECT calculation_method, tier_rules FROM abc_cost_drivers WHERE id = ?').get(driverId) as any
+      expect(row.calculation_method).toBe('tiered')
+      expect(JSON.parse(row.tier_rules)).toEqual([
+        { from: 0, to: 100, rate: 2, label: '0-100张' },
+        { from: 100, to: null, rate: 1.5, label: '100张以上' },
+      ])
+
+      const listRes = await request(app)
+        .get('/api/v1/abc/cost-drivers')
+        .set('Authorization', `Bearer ${token}`)
+      const listed = getItems(listRes).find((item: any) => item.id === driverId)
+      expect(listed.tierRules).toEqual([
+        { from: 0, to: 100, rate: 2, label: '0-100张' },
+        { from: 100, to: null, rate: 1.5, label: '100张以上' },
+      ])
+
+      const byId = await request(app)
+        .get('/api/v1/abc/cost-drivers')
+        .query({ keyword: driverId })
+        .set('Authorization', `Bearer ${token}`)
+      expect(byId.status).toBe(200)
+      expect(getItems(byId)).toHaveLength(1)
+      expect(getItems(byId)[0]).toMatchObject({
+        id: driverId,
+        code: `tier_driver_${suffix}`,
+        status: 'active',
+      })
+
+      const byTierLabel = await request(app)
+        .get('/api/v1/abc/cost-drivers')
+        .query({ keyword: '100张以上' })
+        .set('Authorization', `Bearer ${token}`)
+      expect(byTierLabel.status).toBe(200)
+      expect(getItems(byTierLabel).some((item: any) => item.id === driverId)).toBe(true)
     })
 
     it('成本动因被作业中心引用时不能删除', async () => {
@@ -241,6 +411,7 @@ describe('ABC 作业成本法', () => {
           directCost: 10000,
           indirectCost: 5000,
           driverQuantity: 100,
+          adjustmentReason: '集成测试手工录入成本池',
         })
 
       // 接受 200（更新）或 201（创建）
@@ -279,6 +450,7 @@ describe('ABC 作业成本法', () => {
           directCost: -1,
           indirectCost: 0,
           driverQuantity: 10,
+          adjustmentReason: '负数校验',
         })
       expect(negativeCost.status).toBe(400)
       expect(negativeCost.body.error.message).toBe('直接成本不能为负数')
@@ -292,6 +464,7 @@ describe('ABC 作业成本法', () => {
           directCost: 100,
           indirectCost: 0,
           driverQuantity: 0,
+          adjustmentReason: '动因校验',
         })
       expect(zeroDriver.status).toBe(400)
       expect(zeroDriver.body.error.message).toBe('动因数量必须大于0')
@@ -310,6 +483,7 @@ describe('ABC 作业成本法', () => {
           directCost: 100,
           indirectCost: 0,
           driverQuantity: 10,
+          adjustmentReason: '停用中心校验',
         })
       expect(inactiveCenter.status).toBe(400)
       expect(inactiveCenter.body.error.message).toBe('作业中心不存在或已停用')
@@ -342,10 +516,143 @@ describe('ABC 作业成本法', () => {
           directCost: 100,
           indirectCost: 50,
           driverQuantity: 10,
+          adjustmentReason: '关账保护校验',
         })
 
       expect(res.status).toBe(422)
       expect(res.body.error.code).toBe('PERIOD_CLOSED')
+    })
+
+    it('手工成本池录入必须沉淀调整原因和更新前后值', async () => {
+      const suffix = Date.now()
+      const yearMonth = '2099-04'
+      const centerRes = await request(app)
+        .post('/api/v1/abc/activity-centers')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          code: `POOL_MANUAL_${suffix}`,
+          name: '成本池手工调整作业中心',
+          costDriverType: 'slide_count',
+        })
+      expect(centerRes.status).toBe(201)
+      const centerId = centerRes.body.data.id
+
+      const missingReason = await request(app)
+        .post('/api/v1/abc/cost-pools')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          activityCenterId: centerId,
+          yearMonth,
+          directCost: 100,
+          indirectCost: 20,
+          driverQuantity: 10,
+        })
+
+      expect(missingReason.status).toBe(400)
+      expect(missingReason.body.error.code).toBe('COST_POOL_ADJUSTMENT_REASON_REQUIRED')
+
+      const createRes = await request(app)
+        .post('/api/v1/abc/cost-pools')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          activityCenterId: centerId,
+          yearMonth,
+          directCost: 100,
+          indirectCost: 20,
+          driverQuantity: 10,
+          adjustmentReason: '月末人工成本补录',
+          sourceDocumentNo: 'MANUAL-POOL-001',
+          attachmentUrl: 'https://example.test/manual-pool-001.pdf',
+        })
+
+      expect(createRes.status).toBe(201)
+      const poolId = createRes.body.data.id
+      let row = db.prepare(`
+        SELECT adjustment_reason, source_document_no, attachment_url, total_cost, driver_rate
+        FROM abc_cost_pools
+        WHERE id = ?
+      `).get(poolId) as any
+      expect(row).toMatchObject({
+        adjustment_reason: '月末人工成本补录',
+        source_document_no: 'MANUAL-POOL-001',
+        attachment_url: 'https://example.test/manual-pool-001.pdf',
+        total_cost: 120,
+        driver_rate: 12,
+      })
+
+      const createLog = latestOperationLog(db, 'POST /abc/cost-pools', poolId)
+      expect(createLog).toBeTruthy()
+      expect(JSON.parse(createLog.request_data)).toMatchObject({
+        module: 'abc_cost_pools',
+        id: poolId,
+        action: 'create',
+        before: null,
+        after: {
+          totalCost: 120,
+          driverRate: 12,
+          adjustmentReason: '月末人工成本补录',
+          sourceDocumentNo: 'MANUAL-POOL-001',
+        },
+      })
+
+      const listByPoolId = await request(app)
+        .get('/api/v1/abc/cost-pools')
+        .query({ keyword: poolId })
+        .set('Authorization', `Bearer ${token}`)
+      expect(listByPoolId.status).toBe(200)
+      expect(getItems(listByPoolId)).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: poolId }),
+      ]))
+
+      const listBySourceDocument = await request(app)
+        .get('/api/v1/abc/cost-pools')
+        .query({ keyword: 'MANUAL-POOL-001' })
+        .set('Authorization', `Bearer ${token}`)
+      expect(listBySourceDocument.status).toBe(200)
+      expect(getItems(listBySourceDocument)).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: poolId, sourceDocumentNo: 'MANUAL-POOL-001' }),
+      ]))
+
+      const updateRes = await request(app)
+        .post('/api/v1/abc/cost-pools')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          activityCenterId: centerId,
+          yearMonth,
+          directCost: 150,
+          indirectCost: 30,
+          driverQuantity: 12,
+          adjustmentReason: '复核后补录设备共用分摊',
+          sourceDocumentNo: 'MANUAL-POOL-002',
+        })
+
+      expect(updateRes.status).toBe(200)
+      row = db.prepare(`
+        SELECT adjustment_reason, source_document_no, total_cost, driver_rate
+        FROM abc_cost_pools
+        WHERE id = ?
+      `).get(poolId) as any
+      expect(row).toMatchObject({
+        adjustment_reason: '复核后补录设备共用分摊',
+        source_document_no: 'MANUAL-POOL-002',
+        total_cost: 180,
+        driver_rate: 15,
+      })
+
+      const updateLog = latestOperationLog(db, 'POST /abc/cost-pools', poolId)
+      expect(JSON.parse(updateLog.request_data)).toMatchObject({
+        module: 'abc_cost_pools',
+        id: poolId,
+        action: 'update',
+        before: {
+          totalCost: 120,
+          adjustmentReason: '月末人工成本补录',
+        },
+        after: {
+          totalCost: 180,
+          adjustmentReason: '复核后补录设备共用分摊',
+        },
+      })
     })
   })
 

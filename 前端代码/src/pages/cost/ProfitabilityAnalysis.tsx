@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Download, TrendingUp, TrendingDown, Minus } from 'lucide-react'
+import { AlertTriangle, Download, TrendingUp, TrendingDown, Minus } from 'lucide-react'
 import { toast } from 'sonner'
 import { abcApi } from '@/api/abc'
 import { downloadTextFile, formatCurrency } from '@/lib/utils'
@@ -16,6 +16,19 @@ interface ProfitabilityData {
   feeAmount: number
   profit: number
   profitRate: number
+}
+
+interface InsightQuality {
+  yearMonth: string
+  periodStatus: string
+  isClosed: boolean
+  isFinal: boolean
+  openExceptionCount: number
+  pendingCostCount: number
+  abcSnapshotCount: number
+  outboundCount: number
+  reliability: 'final' | 'attention' | 'draft'
+  message: string
 }
 
 const PROJECT_TYPE_OPTIONS = [
@@ -73,6 +86,7 @@ export function ProfitabilityAnalysis() {
   const [projectType, setProjectType] = useState<string>('all')
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7))
   const [exporting, setExporting] = useState(false)
+  const [insightQuality, setInsightQuality] = useState<InsightQuality | null>(null)
 
   useEffect(() => {
     loadProfitabilityData()
@@ -90,6 +104,7 @@ export function ProfitabilityAnalysis() {
       })
       const rows = Array.isArray(res) ? res : res?.list || res?.items || []
       setData(aggregateProfitabilityRows(rows, month, projectType))
+      setInsightQuality(Array.isArray(res) ? null : res?.insightQuality || null)
     } catch {
       toast.error('加载盈利性分析数据失败')
     } finally {
@@ -152,6 +167,21 @@ export function ProfitabilityAnalysis() {
           <Download className="h-4 w-4" /> 导出报表
         </button>
       </div>
+
+      {insightQuality && !insightQuality.isFinal && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>
+              <div className="font-medium">口径待确认</div>
+              <div className="mt-1">{insightQuality.message}</div>
+              <div className="mt-2 text-xs text-amber-700">
+                成本期间 {insightQuality.yearMonth}，成本快照 {insightQuality.abcSnapshotCount} 条，开放异常 {insightQuality.openExceptionCount} 条，未补算 {insightQuality.pendingCostCount} 单。
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 汇总卡片 */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

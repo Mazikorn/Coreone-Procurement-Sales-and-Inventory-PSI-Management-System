@@ -103,6 +103,22 @@ describe('useMaterialsPage', () => {
     }))
   })
 
+  it('keeps deleted material review context from audit links', async () => {
+    window.history.replaceState(null, '', '/materials?keyword=mat-deleted-001&includeDeleted=true')
+
+    renderHook(() => useMaterialsPage())
+
+    await waitFor(() => expect(materialApi.getList).toHaveBeenCalledWith(expect.objectContaining({
+      keyword: 'mat-deleted-001',
+      includeDeleted: true,
+    })))
+    expect(materialApi.getStats).toHaveBeenCalledWith(expect.objectContaining({
+      keyword: 'mat-deleted-001',
+      includeDeleted: true,
+    }))
+    expect(window.location.search).toContain('includeDeleted=true')
+  })
+
   it('resets pagination when the keyword filter changes', async () => {
     window.history.replaceState(null, '', '/materials?page=5')
     vi.mocked(materialApi.getList).mockImplementation(async (params: any) => ({

@@ -52,7 +52,7 @@ interface MenuGroup {
   items: MenuItem[]
 }
 
-const ALL_MENU_GROUPS: MenuGroup[] = [
+export const ALL_MENU_GROUPS: MenuGroup[] = [
   {
     title: '概览',
     items: [
@@ -76,30 +76,30 @@ const ALL_MENU_GROUPS: MenuGroup[] = [
   {
     title: '成本管理',
     items: [
+      { label: 'ABC配置', path: '/abc/activity-centers', icon: Settings },
+      { label: '成本池', path: '/abc/cost-pools', icon: Database },
+      { label: '收费映射', path: '/abc/fee-mappings', icon: Settings },
+      { label: '消耗对账', path: '/reconciliation', icon: Activity },
       { label: '成本看板', path: '/abc/dashboard', icon: BarChart3 },
       { label: '切片成本', path: '/abc/slide-cost', icon: Layers },
       { label: '盈利分析', path: '/abc/profitability', icon: TrendingUp },
       { label: '收费对照', path: '/abc/fee-comparison', icon: Receipt },
-      { label: '收费映射', path: '/abc/fee-mappings', icon: Settings },
       { label: '成本趋势', path: '/abc/trend', icon: LineChart },
-      { label: '成本池', path: '/abc/cost-pools', icon: Database },
-      { label: '消耗对账', path: '/reconciliation', icon: Activity },
-      { label: 'ABC配置', path: '/abc/activity-centers', icon: Settings },
     ],
   },
   {
     title: '采购管理',
     items: [
-      { label: '采购订单', path: '/purchase-orders', icon: ShoppingCart },
       { label: '供应商管理', path: '/suppliers', icon: Truck },
+      { label: '采购订单', path: '/purchase-orders', icon: ShoppingCart },
     ],
   },
   {
     title: '基础数据',
     items: [
-      { label: '物料管理', path: '/materials', icon: Boxes },
       { label: '物料分类', path: '/categories', icon: FolderTree },
       { label: '库位管理', path: '/locations', icon: MapPin },
+      { label: '物料管理', path: '/materials', icon: Boxes },
       { label: '检测项目', path: '/projects', icon: FlaskConical },
       { label: 'BOM清单', path: '/bom', icon: ClipboardList },
       { label: '设备管理', path: '/equipment', icon: Wrench },
@@ -109,12 +109,43 @@ const ALL_MENU_GROUPS: MenuGroup[] = [
   {
     title: '系统设置',
     items: [
-      { label: '用户管理', path: '/users', icon: Users },
       { label: '角色权限', path: '/roles', icon: Shield },
+      { label: '用户管理', path: '/users', icon: Users },
       { label: '操作日志', path: '/logs', icon: FileText },
     ],
   },
 ]
+
+const DEFAULT_GROUP_ORDER = ['概览', '库存作业', '成本管理', '采购管理', '基础数据', '系统设置']
+
+const ROLE_GROUP_ORDER: Record<string, string[]> = {
+  admin: ['系统设置', '基础数据', '采购管理', '库存作业', '成本管理', '概览'],
+  warehouse_manager: ['采购管理', '库存作业', '基础数据', '概览'],
+  procurement: ['采购管理', '库存作业', '基础数据', '概览'],
+  technician: ['基础数据', '成本管理', '库存作业', '概览'],
+  finance: ['基础数据', '成本管理', '系统设置', '概览'],
+  pathologist: ['基础数据', '成本管理', '库存作业', '概览'],
+  manager: ['概览', '库存作业', '成本管理'],
+}
+
+function orderMenuGroups(groups: MenuGroup[], role: string | null): MenuGroup[] {
+  const order = ROLE_GROUP_ORDER[role || ''] || DEFAULT_GROUP_ORDER
+  const orderIndex = new Map(order.map((title, index) => [title, index]))
+  return [...groups].sort((a, b) => {
+    const aIndex = orderIndex.get(a.title) ?? DEFAULT_GROUP_ORDER.length
+    const bIndex = orderIndex.get(b.title) ?? DEFAULT_GROUP_ORDER.length
+    return aIndex - bIndex
+  })
+}
+
+export function getVisibleMenuGroups(role: string | null, allowedPaths: string[]): MenuGroup[] {
+  return orderMenuGroups(ALL_MENU_GROUPS, role)
+    .map(group => ({
+      ...group,
+      items: group.items.filter(item => allowedPaths.includes(item.path)),
+    }))
+    .filter(group => group.items.length > 0)
+}
 
 function getRoleLabel(role: string | null): string {
   const labels: Record<string, string> = {
@@ -141,13 +172,8 @@ export default function AppSidebar() {
   }, [role])
 
   const visibleGroups = useMemo(() => {
-    return ALL_MENU_GROUPS
-      .map(group => ({
-        ...group,
-        items: group.items.filter(item => allowedPaths.includes(item.path)),
-      }))
-      .filter(group => group.items.length > 0)
-  }, [allowedPaths])
+    return getVisibleMenuGroups(role, allowedPaths)
+  }, [allowedPaths, role])
 
   // Close mobile sidebar on route change
   useEffect(() => {

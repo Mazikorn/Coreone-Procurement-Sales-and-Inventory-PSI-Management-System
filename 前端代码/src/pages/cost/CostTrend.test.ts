@@ -194,4 +194,43 @@ describe('CostTrend', () => {
     }))
     expect(await screen.findByText('2026-Q1')).toBeInTheDocument()
   })
+
+  it('shows month insight quality for draft or exception cost trend periods', async () => {
+    vi.mocked(abcApi.getSlideCostTrend).mockResolvedValue({
+      trend: [
+        {
+          month: '2026-06',
+          bomId: 'bom-he',
+          bomName: 'HE标准BOM',
+          projectType: 'he',
+          totalCost: 300,
+          materialCost: 210,
+          activityCost: 90,
+          sampleCount: 5,
+        },
+      ],
+      insightQuality: {
+        '2026-06': {
+          yearMonth: '2026-06',
+          periodStatus: 'calculated',
+          isClosed: false,
+          isFinal: false,
+          openExceptionCount: 1,
+          pendingCostCount: 1,
+          abcSnapshotCount: 1,
+          outboundCount: 2,
+          reliability: 'attention',
+          message: '成本期间未关账；1 条开放成本异常；1 单未补算或成本异常，当前数据仅适合作为过程观察，不能作为最终经营判断。',
+        },
+      },
+    } as any)
+
+    render(React.createElement(CostTrend))
+
+    expect(await screen.findByText('趋势口径待确认')).toBeInTheDocument()
+    expect(screen.getAllByText(/2026-06/).length).toBeGreaterThan(0)
+    expect(screen.getByText(/成本期间未关账/)).toBeInTheDocument()
+    expect(screen.getByText(/开放成本异常/)).toBeInTheDocument()
+    expect(screen.getAllByText(/未补算/).length).toBeGreaterThan(0)
+  })
 })

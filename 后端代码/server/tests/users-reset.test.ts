@@ -36,6 +36,7 @@ describe('用户创建与密码重置', () => {
         username,
         realName: '默认密码用户',
         role: 'technician',
+        department: '病理科',
       })
 
     expect(create.status).toBe(201)
@@ -59,6 +60,7 @@ describe('用户创建与密码重置', () => {
         password: 'Old@123456',
         realName: '重置密码用户',
         role: 'technician',
+        department: '病理科',
       })
     expect(create.status).toBe(201)
 
@@ -92,6 +94,7 @@ describe('用户创建与密码重置', () => {
         password: 'Old@123456',
         realName: '连续重置用户',
         role: 'technician',
+        department: '病理科',
       })
     expect(create.status).toBe(201)
 
@@ -161,6 +164,7 @@ describe('用户创建与密码重置', () => {
         password: 'Login@123456',
         realName: '最后登录用户',
         role: 'technician',
+        department: '病理科',
       })
     expect(create.status).toBe(201)
 
@@ -210,6 +214,7 @@ describe('用户创建与密码重置', () => {
         username,
         realName: '权限展示用户',
         role: roleCode,
+        department: '病理科',
       })
     expect(create.status).toBe(201)
 
@@ -265,6 +270,51 @@ describe('用户创建与密码重置', () => {
     })
   })
 
+  it('USER-SCOPE-002: 本部门数据角色创建用户时必须绑定部门', async () => {
+    const suffix = Date.now()
+    const roleCode = `user_dept_scope_${suffix}`
+    const role = await request(app)
+      .post('/api/v1/roles')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        code: roleCode,
+        name: '本部门数据角色',
+        permissions: ['inventory:view'],
+        status: 'active',
+        dataScope: 'dept',
+      })
+    expect(role.status).toBe(200)
+
+    const missingDepartment = await request(app)
+      .post('/api/v1/users')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        username: `user-dept-missing-${suffix}`,
+        realName: '缺少部门用户',
+        role: roleCode,
+      })
+    expect(missingDepartment.status).toBe(400)
+    expect(missingDepartment.body.error.code).toBe('DEPARTMENT_REQUIRED_FOR_DEPT_SCOPE')
+
+    const create = await request(app)
+      .post('/api/v1/users')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        username: `user-dept-bound-${suffix}`,
+        realName: '已绑定部门用户',
+        role: roleCode,
+        department: '病理科',
+      })
+    expect(create.status).toBe(201)
+
+    const clearDepartment = await request(app)
+      .put(`/api/v1/users/${create.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ department: '   ' })
+    expect(clearDepartment.status).toBe(400)
+    expect(clearDepartment.body.error.code).toBe('DEPARTMENT_REQUIRED_FOR_DEPT_SCOPE')
+  })
+
   it('USER-PERM-002: 默认系统角色用户返回默认权限', async () => {
     const listed = await request(app)
       .get('/api/v1/users')
@@ -313,6 +363,7 @@ describe('用户创建与密码重置', () => {
         username,
         realName: '角色编辑用户',
         role: 'technician',
+        department: '病理科',
       })
 
     expect(create.status).toBe(201)
@@ -335,6 +386,7 @@ describe('用户创建与密码重置', () => {
         username,
         realName: '批量删除用户',
         role: 'technician',
+        department: '病理科',
       })
     expect(create.status).toBe(201)
 
@@ -367,6 +419,7 @@ describe('用户创建与密码重置', () => {
         username,
         realName: '批量状态用户',
         role: 'technician',
+        department: '病理科',
         status: 'active',
       })
     expect(create.status).toBe(201)
@@ -508,6 +561,7 @@ describe('用户创建与密码重置', () => {
         password: 'Update@123456',
         realName: '编辑校验用户',
         role: 'technician',
+        department: '病理科',
       })
     expect(create.status).toBe(201)
 

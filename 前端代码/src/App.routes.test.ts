@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const appSource = readFileSync(resolve(process.cwd(), 'src/App.tsx'), 'utf8')
+const topBarSource = readFileSync(resolve(process.cwd(), 'src/components/layout/TopBar.tsx'), 'utf8')
 
 describe('App routes', () => {
   it('keeps the exposed material category entry routable', () => {
@@ -49,5 +50,12 @@ describe('App routes', () => {
     expect(appSource).toContain('<Route path="/abc/fee-mappings" element={<RoleRoute><FeeMappingConfig /></RoleRoute>} />')
     expect(appSource).toContain('<Route path="/abc/cost-pools" element={<RoleRoute><CostPoolList /></RoleRoute>} />')
     expect(appSource).toContain('<Route path="/indirect-costs" element={<RoleRoute><IndirectCostCenterList /></RoleRoute>} />')
+  })
+
+  it('does not advertise retired cost placeholder routes as routable pages', () => {
+    for (const path of ['/abc/forecast', '/abc/supplier-cost', '/abc/equipment-efficiency']) {
+      expect(appSource).not.toContain(`path="${path}"`)
+      expect(topBarSource).not.toContain(path)
+    }
   })
 })

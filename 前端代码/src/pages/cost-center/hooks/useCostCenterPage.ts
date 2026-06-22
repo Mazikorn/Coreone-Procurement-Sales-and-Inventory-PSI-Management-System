@@ -41,8 +41,9 @@ function getErrorMessage(err: any, fallback: string) {
 }
 
 export function useCostCenterPage() {
-  const [keyword, setKeyword] = useState('')
-  const [searchInput, setSearchInput] = useState('')
+  const initialKeyword = new URLSearchParams(window.location.search).get('keyword') || ''
+  const [keyword, setKeyword] = useState(initialKeyword)
+  const [searchInput, setSearchInput] = useState(initialKeyword)
   const [filterStatus, setFilterStatus] = useState('')
   const [stats, setStats] = useState({ total: 0, active: 0, totalMonthly: 0, allocationCount: 0 })
 

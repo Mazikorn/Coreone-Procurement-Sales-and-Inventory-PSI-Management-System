@@ -60,7 +60,7 @@ export const ROLE_MENU_MAP: Record<string, string[]> = {
     // ABC 高级页面（URL 直接访问）
     '/abc/cost-drivers', '/abc/cost-pools', '/abc/budgets', '/abc/quality-costs',
     '/abc/variance', '/abc/quarterly-adjustment', '/abc/alerts', '/abc/audit',
-    '/abc/forecast', '/abc/supplier-cost', '/abc/equipment-efficiency', '/abc/personnel-efficiency', '/abc/model-validation',
+    '/abc/personnel-efficiency', '/abc/model-validation',
     '/equipment/types', '/equipment/depreciation', '/indirect-costs',
   ],
   warehouse_manager: [
@@ -87,7 +87,7 @@ export const ROLE_MENU_MAP: Record<string, string[]> = {
     // ABC 高级页面
     '/abc/cost-drivers', '/abc/cost-pools', '/abc/budgets', '/abc/quality-costs',
     '/abc/variance', '/abc/quarterly-adjustment', '/abc/alerts', '/abc/audit',
-    '/abc/forecast', '/abc/supplier-cost', '/abc/equipment-efficiency', '/abc/personnel-efficiency', '/abc/model-validation',
+    '/abc/personnel-efficiency', '/abc/model-validation',
     '/indirect-costs',
   ],
   pathologist: [
@@ -95,7 +95,7 @@ export const ROLE_MENU_MAP: Record<string, string[]> = {
     '/inventory', '/projects', '/bom',
     '/categories', '/equipment', '/labor-times',
     '/abc/dashboard', '/abc/slide-cost', '/abc/profitability', '/abc/fee-comparison', '/abc/trend',
-    '/abc/forecast', '/abc/model-validation',
+    '/abc/model-validation',
   ],
   manager: [
     '/', '/alerts', '/inventory',
@@ -137,9 +137,25 @@ const PERMISSION_PATH_MAP: Record<string, string[]> = {
   logs: ['/logs'],
 }
 
+const PERMISSION_ACTION_PATH_MAP: Record<string, string[]> = {
+  'cost_analysis:view': [
+    '/abc/dashboard',
+    '/abc/slide-cost',
+    '/abc/profitability',
+    '/abc/fee-comparison',
+    '/abc/trend',
+  ],
+}
+
 function moduleFromPermission(permission: string) {
   if (permission === '*') return '*'
   return permission.split(':')[0]
+}
+
+function pathsFromPermission(permission: string) {
+  if (PERMISSION_PATH_MAP[permission]) return PERMISSION_PATH_MAP[permission]
+  if (PERMISSION_ACTION_PATH_MAP[permission]) return PERMISSION_ACTION_PATH_MAP[permission]
+  return PERMISSION_PATH_MAP[moduleFromPermission(permission)] || []
 }
 
 export function getAllowedPaths(role = getUserRole(), permissions = getUserPermissions()): string[] {
@@ -149,8 +165,8 @@ export function getAllowedPaths(role = getUserRole(), permissions = getUserPermi
   if (modules.has('*')) return ROLE_MENU_MAP.admin
 
   const paths = new Set<string>(['/'])
-  for (const module of modules) {
-    for (const path of PERMISSION_PATH_MAP[module] || []) {
+  for (const permission of permissions) {
+    for (const path of pathsFromPermission(permission)) {
       paths.add(path)
     }
   }

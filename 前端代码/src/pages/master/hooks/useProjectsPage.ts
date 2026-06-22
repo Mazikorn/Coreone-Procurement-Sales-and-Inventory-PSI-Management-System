@@ -79,6 +79,7 @@ export function useProjectsPage() {
   const [typeFilter, setTypeFilter] = useState(get('type') || '')
   const [statusFilter, setStatusFilter] = useState(getValidStatus(get('status')))
   const [bomFilter, setBomFilter] = useState(get('bom') === 'configured' || get('bom') === 'unconfigured' ? get('bom')! : '')
+  const includeDeleted = get('includeDeleted') === 'true'
 
   const [boms, setBoms] = useState<BOM[]>([])
   const [stats, setStats] = useState<ProjectStats>({
@@ -116,16 +117,17 @@ export function useProjectsPage() {
 
   const fetchFn = useCallback(
     async ({ page, pageSize }: { page: number; pageSize: number }) => {
-      const params: Record<string, string | number> = { page, pageSize }
+      const params: Record<string, string | number | boolean> = { page, pageSize }
       if (keyword.trim()) params.keyword = keyword.trim()
       if (typeFilter) params.type = typeFilter
       if (statusFilter) params.status = statusFilter
       if (bomFilter) params.bomFilter = bomFilter
+      if (includeDeleted) params.includeDeleted = true
 
       const res = await projectApi.getList(params)
       return { list: res.list || [], pagination: res.pagination }
     },
-    [keyword, typeFilter, statusFilter, bomFilter]
+    [keyword, typeFilter, statusFilter, bomFilter, includeDeleted]
   )
 
   const {
@@ -141,7 +143,7 @@ export function useProjectsPage() {
     fetchFn,
     initialPage: urlPage,
     initialPageSize: urlPageSize,
-    deps: [keyword, typeFilter, statusFilter, bomFilter],
+    deps: [keyword, typeFilter, statusFilter, bomFilter, includeDeleted],
   })
 
   useEffect(() => {
@@ -172,11 +174,12 @@ export function useProjectsPage() {
 
   const loadStats = useCallback(async () => {
     try {
-      const params: { keyword?: string; type?: string; status?: string; bomFilter?: string } = {}
+      const params: { keyword?: string; type?: string; status?: string; bomFilter?: string; includeDeleted?: boolean } = {}
       if (keyword.trim()) params.keyword = keyword.trim()
       if (typeFilter) params.type = typeFilter
       if (statusFilter) params.status = statusFilter
       if (bomFilter) params.bomFilter = bomFilter
+      if (includeDeleted) params.includeDeleted = true
       const res = await projectApi.getStats(params)
       setStats({
         total: Number(res.total || 0),
@@ -187,7 +190,7 @@ export function useProjectsPage() {
     } catch (e) {
       console.error(e)
     }
-  }, [keyword, typeFilter, statusFilter, bomFilter])
+  }, [keyword, typeFilter, statusFilter, bomFilter, includeDeleted])
 
   useEffect(() => {
     loadStats()

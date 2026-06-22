@@ -41,13 +41,16 @@ const avatarColors = [
 ]
 
 export function useSuppliersPage() {
+  const initialParams = new URLSearchParams(window.location.search)
+  const initialKeyword = initialParams.get('keyword') || ''
+  const initialIncludeDeleted = initialParams.get('includeDeleted') === 'true'
   const [data, setData] = useState<Supplier[]>([])
   const [loading, setLoading] = useState(false)
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [searchKeyword, setSearchKeyword] = useState('')
+  const [searchKeyword, setSearchKeyword] = useState(initialKeyword)
   const [searchStatus, setSearchStatus] = useState('all')
   const [stats, setStats] = useState({ total: 0, active: 0, inactive: 0, newThisMonth: 0 })
   const [modalType, setModalType] = useState<ModalType>(null)
@@ -70,6 +73,7 @@ export function useSuppliersPage() {
         pageSize,
         keyword: searchKeyword || undefined,
         status: searchStatus !== 'all' ? searchStatus : undefined,
+        includeDeleted: initialIncludeDeleted || undefined,
       } as any)
       setData(res?.list || [])
       setTotal(res?.pagination?.total || res?.total || 0)
@@ -78,7 +82,7 @@ export function useSuppliersPage() {
     } finally {
       setLoading(false)
     }
-  }, [page, pageSize, searchKeyword, searchStatus])
+  }, [initialIncludeDeleted, page, pageSize, searchKeyword, searchStatus])
 
   useEffect(() => {
     loadData()
@@ -92,6 +96,7 @@ export function useSuppliersPage() {
     supplierApi.getStats({
       keyword: searchKeyword || undefined,
       status: searchStatus !== 'all' ? searchStatus : undefined,
+      includeDeleted: initialIncludeDeleted || undefined,
     })
       .then((res: any) => setStats({
         total: Number(res?.total || 0),
@@ -100,7 +105,7 @@ export function useSuppliersPage() {
         newThisMonth: Number(res?.newThisMonth || 0),
       }))
       .catch(() => setStats({ total, active: 0, inactive: 0, newThisMonth: 0 }))
-  }, [searchKeyword, searchStatus, total])
+  }, [initialIncludeDeleted, searchKeyword, searchStatus, total])
 
   const getAvatarColor = (name: string) => {
     const code = Array.from(name || 'S').reduce((sum, char) => sum + char.charCodeAt(0), 0)

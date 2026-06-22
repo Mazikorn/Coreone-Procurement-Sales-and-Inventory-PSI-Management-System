@@ -96,6 +96,39 @@ describe('useProjectsPage', () => {
     expect(result.current.canWrite).toBe(true)
   })
 
+  it('keeps deleted project review context from audit links', async () => {
+    window.history.replaceState(null, '', '/projects?keyword=prj-deleted-001&includeDeleted=true')
+    vi.mocked(projectApi.getList).mockResolvedValue({
+      list: [{
+        id: 'prj-deleted-001',
+        code: 'PRJ-DEL-001',
+        name: '已删除检测项目',
+        type: 'ihc',
+        status: 'active',
+        isDeleted: true,
+        createdAt: '2026-06-22',
+      }],
+      pagination: { total: 1, page: 1, pageSize: 20 },
+    } as any)
+
+    const { result } = renderHook(() => useProjectsPage())
+
+    await waitFor(() => expect(projectApi.getList).toHaveBeenCalledWith(expect.objectContaining({
+      keyword: 'prj-deleted-001',
+      includeDeleted: true,
+    })))
+    expect(projectApi.getStats).toHaveBeenCalledWith(expect.objectContaining({
+      keyword: 'prj-deleted-001',
+      includeDeleted: true,
+    }))
+    expect(result.current.data).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'prj-deleted-001',
+        isDeleted: true,
+      }),
+    ]))
+  })
+
   it('uses the original readonly service code when editing even if local form state is mutated', async () => {
     vi.mocked(projectApi.update).mockResolvedValue({} as any)
 

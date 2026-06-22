@@ -1,3 +1,4 @@
+import React from 'react'
 import { X } from 'lucide-react'
 import type { StocktakingRecord } from '../hooks/useStocktakingPage'
 
@@ -12,6 +13,9 @@ export function StocktakingDetailModal({ open, row, onClose, onAdjust }: Props) 
   if (!open || !row) return null
   const statusText = row.status === 'confirmed' ? '已确认' : '已完成'
   const statusClass = row.status === 'confirmed' ? 'bg-blue-50 text-blue-600' : 'bg-green-50 text-green-600'
+  const scopeLabel = row.batchId ? '批次库位' : row.locationId ? '库位' : '整物料'
+  const locationText = row.locationName || row.locationId || '-'
+  const batchText = row.batchNo || row.batchId || '-'
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
@@ -29,8 +33,10 @@ export function StocktakingDetailModal({ open, row, onClose, onAdjust }: Props) 
               {[
                 { label: '盘点编号', value: row.stocktakingNo },
                 { label: '盘点名称', value: row.materialName ? `${row.materialName}盘点` : row.stocktakingNo },
-                { label: '盘点范围', value: '单物料' },
+                { label: '盘点范围', value: scopeLabel },
                 { label: '盘点方式', value: '实盘调整' },
+                { label: '库位', value: locationText },
+                { label: '批次', value: batchText },
                 { label: '负责人', value: row.operator || '-' },
                 { label: '创建时间', value: row.createdAt ? new Date(row.createdAt).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(/\//g, '-') : '-' },
                 { label: '盘点进度', value: '100%' },
@@ -51,6 +57,8 @@ export function StocktakingDetailModal({ open, row, onClose, onAdjust }: Props) 
                   <tr>
                     <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">物料编码</th>
                     <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">物料名称</th>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">库位</th>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">批次</th>
                     <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">账面数量</th>
                     <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">实盘数量</th>
                     <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">差异数量</th>
@@ -61,6 +69,8 @@ export function StocktakingDetailModal({ open, row, onClose, onAdjust }: Props) 
                   <tr className="hover:bg-gray-50">
                     <td className="px-3 py-2 font-mono text-gray-600 text-xs">{row.materialCode || row.materialId}</td>
                     <td className="px-3 py-2">{row.materialName}</td>
+                    <td className="px-3 py-2 text-gray-500">{locationText}</td>
+                    <td className="px-3 py-2 font-mono text-xs text-gray-600">{batchText}</td>
                     <td className="px-3 py-2">{row.systemStock}</td>
                     <td className="px-3 py-2">{row.actualStock}</td>
                     <td className="px-3 py-2">

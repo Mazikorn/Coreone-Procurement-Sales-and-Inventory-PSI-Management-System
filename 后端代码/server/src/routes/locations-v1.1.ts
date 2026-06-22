@@ -12,12 +12,13 @@ const requireLocationWrite = requireStrictRole('admin')
 
 function buildLocationWhere(query: any) {
   const { zone, status, type, keyword } = query
-  let where = 'is_deleted = 0'
+  const includeDeleted = query?.includeDeleted === true || query?.includeDeleted === 'true'
+  let where = includeDeleted ? '1 = 1' : 'is_deleted = 0'
   const params: any[] = []
   if (keyword) {
-    where += ' AND (code LIKE ? OR name LIKE ? OR zone LIKE ? OR COALESCE(shelf, \'\') LIKE ? OR COALESCE(position, \'\') LIKE ?)'
+    where += ' AND (id LIKE ? OR code LIKE ? OR name LIKE ? OR zone LIKE ? OR COALESCE(shelf, \'\') LIKE ? OR COALESCE(position, \'\') LIKE ?)'
     const like = `%${keyword}%`
-    params.push(like, like, like, like, like)
+    params.push(like, like, like, like, like, like)
   }
   if (zone) { where += ' AND zone = ?'; params.push(zone) }
   if (type) { where += ' AND type = ?'; params.push(type) }
@@ -40,6 +41,7 @@ router.get('/', authenticateToken, requireLocationRead, (req, res) => {
     successList(res, list.map((r: any) => ({
       id: r.id, code: r.code, name: r.name, type: r.type, parentId: r.parent_id, zone: r.zone, shelf: r.shelf, position: r.position,
       capacity: r.capacity, used: r.used, status: r.status === 1 ? 'active' : 'inactive',
+      isDeleted: Number(r.is_deleted || 0) !== 0,
     })), Number(page), Number(pageSize), count)
   } catch (err: any) { error(res, err.message) }
 })

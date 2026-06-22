@@ -84,11 +84,14 @@ export function getTypeLabel(type?: string) {
 export type ModalType = 'create' | 'edit' | 'levelConfig' | null
 
 export function useLocationsPage() {
+  const initialParams = new URLSearchParams(window.location.search)
+  const initialKeyword = initialParams.get('keyword') || ''
+  const includeDeleted = initialParams.get('includeDeleted') === 'true'
   const [data, setData] = useState<Location[]>([])
   const [allLocations, setAllLocations] = useState<Location[]>([])
   const [treeData, setTreeData] = useState<TreeNode[]>([])
   const [loading, setLoading] = useState(false)
-  const [keyword, setKeyword] = useState('')
+  const [keyword, setKeyword] = useState(initialKeyword)
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [stats, setStats] = useState({
     total: 0,
@@ -96,7 +99,7 @@ export function useLocationsPage() {
     inactive: 0,
     avgUtilization: 0,
   })
-  const [searchKeyword, setSearchKeyword] = useState('')
+  const [searchKeyword, setSearchKeyword] = useState(initialKeyword)
   const [searchStatus, setSearchStatus] = useState<string>('all')
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
@@ -136,13 +139,18 @@ export function useLocationsPage() {
         pageSize: 1000,
         keyword: keyword || undefined,
         status: statusFilter !== 'all' ? statusFilter : undefined,
+        includeDeleted: includeDeleted || undefined,
       }
       const needsUnfilteredList = Boolean(keyword || statusFilter !== 'all')
       const [listRes, allListRes, treeRes, statsRes] = await Promise.all([
         locationApi.getList(listParams),
         needsUnfilteredList ? locationApi.getList({ page: 1, pageSize: 1000 }) : Promise.resolve(null),
         locationApi.getTree(),
-        locationApi.getStats({ keyword: keyword || undefined, status: statusFilter !== 'all' ? statusFilter : undefined }),
+        locationApi.getStats({
+          keyword: keyword || undefined,
+          status: statusFilter !== 'all' ? statusFilter : undefined,
+          includeDeleted: includeDeleted || undefined,
+        }),
       ])
       const nextData = (listRes as any).list || []
       setData(nextData)
@@ -159,7 +167,7 @@ export function useLocationsPage() {
     } finally {
       setLoading(false)
     }
-  }, [keyword, statusFilter])
+  }, [keyword, statusFilter, includeDeleted])
 
   useEffect(() => {
     fetchData()

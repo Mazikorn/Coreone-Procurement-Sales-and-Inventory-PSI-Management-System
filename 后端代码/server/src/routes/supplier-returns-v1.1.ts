@@ -4,6 +4,7 @@ import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
 import { generateNo } from '../utils/generateNo.js'
 import { consumeInventoryLocationStock, restoreInventoryLocationStock } from '../utils/inventory-locations.js'
+import { consumeBatchLocationStockByLocations, getBatchLocationIds, restoreBatchLocationStock } from '../utils/batch-locations.js'
 import { checkStockAlerts } from '../utils/alertChecker.js'
 import { logOperation } from '../utils/operation-logger.js'
 
@@ -129,7 +130,7 @@ function validateSupplierReturnBatchSource(batch: any, effectiveSupplierId: stri
 }
 
 function handleSupplierReturnStockError(res: any, err: any): boolean {
-  if (err?.message !== 'LOCATION_STOCK_INSUFFICIENT') return false
+  if (!['LOCATION_STOCK_INSUFFICIENT', 'BATCH_LOCATION_STOCK_NEGATIVE', 'BATCH_LOCATION_STOCK_INSUFFICIENT'].includes(err?.message)) return false
   error(res, '库位库存不足，无法创建供应商退货', 'STOCK_INSUFFICIENT', 422)
   return true
 }
@@ -400,9 +401,23 @@ router.post('/', (req, res) => {
       const beforeStock = Number(inv.stock)
       const afterStock = beforeStock - qty
       db.prepare('UPDATE inventory SET stock = ?, update_time = CURRENT_TIMESTAMP WHERE material_id = ?').run(afterStock, materialId)
-      consumeInventoryLocationStock(db, materialId, qty, { relatedType: 'supplier_return', relatedId: id })
+      const batchLocationIds = batch ? getBatchLocationIds(db, batch.id, materialId) : []
+      const consumedLocations = consumeInventoryLocationStock(
+        db,
+        materialId,
+        qty,
+        { relatedType: 'supplier_return', relatedId: id },
+        { preferredLocationIds: batchLocationIds },
+      )
 
       if (batch) {
+        consumeBatchLocationStockByLocations(
+          db,
+          batch.id,
+          materialId,
+          consumedLocations,
+          { relatedType: 'supplier_return', relatedId: id, operator },
+        )
         const afterBatchRemaining = Number(batch.remaining) - qty
         db.prepare(`
           UPDATE batches
@@ -500,6 +515,11 @@ router.put('/:id/status', (req, res) => {
         restoreInventoryLocationStock(db, record.material_id, Number(record.quantity), { relatedType: 'supplier_return', relatedId: req.params.id })
 
         if (record.batch_id) {
+          restoreBatchLocationStock(db, record.batch_id, record.material_id, Number(record.quantity), {
+            relatedType: 'supplier_return',
+            relatedId: req.params.id,
+            operator,
+          })
           db.prepare(`
             UPDATE batches
             SET remaining = remaining + ?, status = 1, updated_at = CURRENT_TIMESTAMP
@@ -574,6 +594,11 @@ router.delete('/:id', (req, res) => {
       restoreInventoryLocationStock(db, record.material_id, Number(record.quantity), { relatedType: 'supplier_return', relatedId: req.params.id })
 
       if (record.batch_id) {
+        restoreBatchLocationStock(db, record.batch_id, record.material_id, Number(record.quantity), {
+          relatedType: 'supplier_return',
+          relatedId: req.params.id,
+          operator,
+        })
         db.prepare(`
           UPDATE batches
           SET remaining = remaining + ?, status = 1, updated_at = CURRENT_TIMESTAMP

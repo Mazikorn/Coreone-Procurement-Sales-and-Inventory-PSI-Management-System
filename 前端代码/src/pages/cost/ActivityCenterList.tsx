@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import React, { useEffect, useState } from 'react'
 import { Plus, Edit, Trash2, Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { Modal } from '@/components/ui/Modal'
@@ -11,6 +11,7 @@ interface ActivityCenter {
   description: string
   costDriverType: string
   parentId: string | null
+  parentName?: string | null
   sortOrder: number
   status: string
   createdAt: string
@@ -33,10 +34,11 @@ const DEFAULT_COST_DRIVER_TYPES = [
 ]
 
 export function ActivityCenterList() {
+  const initialKeyword = new URLSearchParams(window.location.search).get('keyword') || ''
   const [activityCenters, setActivityCenters] = useState<ActivityCenter[]>([])
   const [costDriverTypes, setCostDriverTypes] = useState<CostDriverOption[]>(DEFAULT_COST_DRIVER_TYPES)
   const [loading, setLoading] = useState(true)
-  const [searchKeyword, setSearchKeyword] = useState('')
+  const [searchKeyword, setSearchKeyword] = useState(initialKeyword)
   const [showDialog, setShowDialog] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
@@ -46,7 +48,9 @@ export function ActivityCenterList() {
     name: '',
     description: '',
     costDriverType: 'slide_count',
+    parentId: '',
     sortOrder: 0,
+    status: 'active',
   })
 
   useEffect(() => {
@@ -82,7 +86,11 @@ export function ActivityCenterList() {
   const loadActivityCenters = async () => {
     try {
       setLoading(true)
-      const response = await fetch('/api/v1/abc/activity-centers', {
+      const params = new URLSearchParams()
+      const keyword = searchKeyword.trim()
+      if (keyword) params.set('keyword', keyword)
+      const url = `/api/v1/abc/activity-centers${params.toString() ? `?${params.toString()}` : ''}`
+      const response = await fetch(url, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
         },
@@ -107,7 +115,9 @@ export function ActivityCenterList() {
       name: '',
       description: '',
       costDriverType: 'slide_count',
+      parentId: '',
       sortOrder: 0,
+      status: 'active',
     })
     setShowDialog(true)
   }
@@ -119,7 +129,9 @@ export function ActivityCenterList() {
       name: center.name,
       description: center.description || '',
       costDriverType: center.costDriverType,
+      parentId: center.parentId || '',
       sortOrder: center.sortOrder,
+      status: center.status || 'active',
     })
     setShowDialog(true)
   }
@@ -192,9 +204,21 @@ export function ActivityCenterList() {
     }
   }
 
+  const centerNameById = new Map(activityCenters.map(center => [center.id, center.name]))
+  const getParentName = (center: ActivityCenter) => {
+    if (!center.parentId) return '顶级作业中心'
+    return center.parentName || centerNameById.get(center.parentId) || center.parentId
+  }
+  const selectableParentCenters = activityCenters.filter(center =>
+    !editingCenter || center.id !== editingCenter.id
+  )
+
   const filteredCenters = activityCenters.filter(center =>
+    center.id.includes(searchKeyword) ||
     center.name.includes(searchKeyword) ||
     center.code.includes(searchKeyword) ||
+    center.costDriverType.includes(searchKeyword) ||
+    getParentName(center).includes(searchKeyword) ||
     center.description?.includes(searchKeyword)
   )
 
@@ -236,6 +260,7 @@ export function ActivityCenterList() {
             <tr>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">代码</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">名称</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">上级作业中心</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">描述</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">成本动因类型</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">排序</th>
@@ -246,13 +271,13 @@ export function ActivityCenterList() {
           <tbody className="divide-y divide-gray-200">
             {loading ? (
               <tr>
-                <td colSpan={7} className="px-4 py-12 text-center text-gray-400">
+                <td colSpan={8} className="px-4 py-12 text-center text-gray-400">
                   加载中...
                 </td>
               </tr>
             ) : filteredCenters.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-4 py-12 text-center text-gray-400">
+                <td colSpan={8} className="px-4 py-12 text-center text-gray-400">
                   暂无数据
                 </td>
               </tr>
@@ -261,6 +286,7 @@ export function ActivityCenterList() {
                 <tr key={center.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3 text-sm font-mono text-gray-900">{center.code}</td>
                   <td className="px-4 py-3 text-sm font-medium text-gray-900">{center.name}</td>
+                  <td className="px-4 py-3 text-sm text-gray-500">{getParentName(center)}</td>
                   <td className="px-4 py-3 text-sm text-gray-500">{center.description || '-'}</td>
                   <td className="px-4 py-3 text-sm text-gray-500">
                     {costDriverTypes.find(t => t.value === center.costDriverType)?.label || center.costDriverType}
@@ -278,6 +304,7 @@ export function ActivityCenterList() {
                   <td className="px-4 py-3 text-right">
                     <button
                       onClick={() => handleEdit(center)}
+                      aria-label={`编辑 ${center.name}`}
                       className="p-1 text-gray-400 hover:text-blue-600 transition-colors"
                       title="编辑"
                     >
@@ -285,6 +312,7 @@ export function ActivityCenterList() {
                     </button>
                     <button
                       onClick={() => handleDeleteClick(center.id)}
+                      aria-label={`删除 ${center.name}`}
                       className="p-1 text-gray-400 hover:text-red-600 transition-colors ml-1"
                       title="删除"
                     >
@@ -306,8 +334,9 @@ export function ActivityCenterList() {
         >
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">代码 *</label>
+              <label htmlFor="activity-center-code" className="block text-sm font-medium text-gray-700 mb-1">代码 *</label>
               <input
+                id="activity-center-code"
                 type="text"
                 value={formData.code}
                 onChange={(e) => setFormData({ ...formData, code: e.target.value })}
@@ -318,8 +347,9 @@ export function ActivityCenterList() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">名称 *</label>
+              <label htmlFor="activity-center-name" className="block text-sm font-medium text-gray-700 mb-1">名称 *</label>
               <input
+                id="activity-center-name"
                 type="text"
                 value={formData.name}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
@@ -329,8 +359,9 @@ export function ActivityCenterList() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">描述</label>
+              <label htmlFor="activity-center-description" className="block text-sm font-medium text-gray-700 mb-1">描述</label>
               <textarea
+                id="activity-center-description"
                 value={formData.description}
                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                 placeholder="作业中心的详细描述"
@@ -340,8 +371,9 @@ export function ActivityCenterList() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">成本动因类型 *</label>
+              <label htmlFor="activity-center-cost-driver" className="block text-sm font-medium text-gray-700 mb-1">成本动因类型 *</label>
               <select
+                id="activity-center-cost-driver"
                 value={formData.costDriverType}
                 onChange={(e) => setFormData({ ...formData, costDriverType: e.target.value })}
                 className="w-full h-10 px-3 border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
@@ -353,8 +385,37 @@ export function ActivityCenterList() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">排序</label>
+              <label htmlFor="activity-center-parent" className="block text-sm font-medium text-gray-700 mb-1">上级作业中心</label>
+              <select
+                id="activity-center-parent"
+                value={formData.parentId}
+                onChange={(e) => setFormData({ ...formData, parentId: e.target.value })}
+                className="w-full h-10 px-3 border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
+              >
+                <option value="">顶级作业中心</option>
+                {selectableParentCenters.map(center => (
+                  <option key={center.id} value={center.id}>{center.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label htmlFor="activity-center-status" className="block text-sm font-medium text-gray-700 mb-1">状态</label>
+              <select
+                id="activity-center-status"
+                value={formData.status}
+                onChange={(e) => setFormData({ ...formData, status: e.target.value })}
+                className="w-full h-10 px-3 border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
+              >
+                <option value="active">启用</option>
+                <option value="inactive">禁用</option>
+              </select>
+            </div>
+
+            <div>
+              <label htmlFor="activity-center-sort-order" className="block text-sm font-medium text-gray-700 mb-1">排序</label>
               <input
+                id="activity-center-sort-order"
                 type="number"
                 value={formData.sortOrder}
                 onChange={(e) => setFormData({ ...formData, sortOrder: parseInt(e.target.value) || 0 })}

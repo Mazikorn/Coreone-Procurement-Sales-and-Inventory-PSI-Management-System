@@ -674,4 +674,119 @@ describe('库存盘点 API', () => {
       .get(materialId) as any
     expect(records.count).toBe(0)
   })
+
+  it('ST-015: 批次库位盘亏确认和撤销必须原路更新四本库存账', async () => {
+    const suffix = `batch-location-loss-${Date.now()}`
+    const { materialId, batchId } = seedStocktakingFixtureWithBatch(db, suffix, 10)
+    const material = db.prepare('SELECT location_id FROM materials WHERE id = ?').get(materialId) as any
+
+    const createRes = await request(app)
+      .post('/api/v1/stocktaking')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        materialId,
+        locationId: material.location_id,
+        batchId,
+        actualStock: 7,
+        remark: '批次库位盘亏',
+      })
+    expect(createRes.status).toBe(200)
+    const recordId = createRes.body.data.id
+
+    const savedRecord = db.prepare('SELECT location_id, batch_id, system_stock, actual_stock, difference FROM stocktaking_records WHERE id = ?')
+      .get(recordId) as any
+    expect(savedRecord).toMatchObject({
+      location_id: material.location_id,
+      batch_id: batchId,
+      system_stock: 10,
+      actual_stock: 7,
+      difference: -3,
+    })
+
+    const confirmRes = await request(app)
+      .post(`/api/v1/stocktaking/${recordId}/confirm`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ reason: 'physical', remark: '批次库位盘亏确认' })
+    expect(confirmRes.status).toBe(200)
+
+    const inventoryAfterConfirm = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+    const locationAfterConfirm = db.prepare('SELECT stock FROM inventory_locations WHERE material_id = ? AND location_id = ?')
+      .get(materialId, material.location_id) as any
+    const batchAfterConfirm = db.prepare('SELECT remaining FROM batches WHERE id = ?').get(batchId) as any
+    const batchLocationAfterConfirm = db.prepare('SELECT remaining FROM batch_location_balances WHERE batch_id = ? AND location_id = ?')
+      .get(batchId, material.location_id) as any
+    expect(inventoryAfterConfirm.stock).toBe(7)
+    expect(locationAfterConfirm.stock).toBe(7)
+    expect(batchAfterConfirm.remaining).toBe(7)
+    expect(batchLocationAfterConfirm.remaining).toBe(7)
+
+    const deleteRes = await request(app)
+      .delete(`/api/v1/stocktaking/${recordId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+    expect(deleteRes.status).toBe(200)
+
+    const inventoryAfterDelete = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+    const locationAfterDelete = db.prepare('SELECT stock FROM inventory_locations WHERE material_id = ? AND location_id = ?')
+      .get(materialId, material.location_id) as any
+    const batchAfterDelete = db.prepare('SELECT remaining FROM batches WHERE id = ?').get(batchId) as any
+    const batchLocationAfterDelete = db.prepare('SELECT remaining FROM batch_location_balances WHERE batch_id = ? AND location_id = ?')
+      .get(batchId, material.location_id) as any
+    expect(inventoryAfterDelete.stock).toBe(10)
+    expect(locationAfterDelete.stock).toBe(10)
+    expect(batchAfterDelete.remaining).toBe(10)
+    expect(batchLocationAfterDelete.remaining).toBe(10)
+  })
+
+  it('ST-016: 批次库位盘盈确认和撤销必须解释新增余量落在哪个批次库位', async () => {
+    const suffix = `batch-location-surplus-${Date.now()}`
+    const { materialId, batchId } = seedStocktakingFixtureWithBatch(db, suffix, 10)
+    const material = db.prepare('SELECT location_id FROM materials WHERE id = ?').get(materialId) as any
+
+    const createRes = await request(app)
+      .post('/api/v1/stocktaking')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        materialId,
+        locationId: material.location_id,
+        batchId,
+        actualStock: 12,
+        remark: '批次库位盘盈',
+      })
+    expect(createRes.status).toBe(200)
+
+    const confirmRes = await request(app)
+      .post(`/api/v1/stocktaking/${createRes.body.data.id}/confirm`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ reason: 'physical', remark: '批次库位盘盈确认' })
+    expect(confirmRes.status).toBe(200)
+
+    const inventoryAfterConfirm = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+    const locationAfterConfirm = db.prepare('SELECT stock FROM inventory_locations WHERE material_id = ? AND location_id = ?')
+      .get(materialId, material.location_id) as any
+    const batchAfterConfirm = db.prepare('SELECT quantity, remaining FROM batches WHERE id = ?').get(batchId) as any
+    const batchLocationAfterConfirm = db.prepare('SELECT remaining FROM batch_location_balances WHERE batch_id = ? AND location_id = ?')
+      .get(batchId, material.location_id) as any
+    expect(inventoryAfterConfirm.stock).toBe(12)
+    expect(locationAfterConfirm.stock).toBe(12)
+    expect(batchAfterConfirm.quantity).toBe(12)
+    expect(batchAfterConfirm.remaining).toBe(12)
+    expect(batchLocationAfterConfirm.remaining).toBe(12)
+
+    const deleteRes = await request(app)
+      .delete(`/api/v1/stocktaking/${createRes.body.data.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+    expect(deleteRes.status).toBe(200)
+
+    const inventoryAfterDelete = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+    const locationAfterDelete = db.prepare('SELECT stock FROM inventory_locations WHERE material_id = ? AND location_id = ?')
+      .get(materialId, material.location_id) as any
+    const batchAfterDelete = db.prepare('SELECT quantity, remaining FROM batches WHERE id = ?').get(batchId) as any
+    const batchLocationAfterDelete = db.prepare('SELECT remaining FROM batch_location_balances WHERE batch_id = ? AND location_id = ?')
+      .get(batchId, material.location_id) as any
+    expect(inventoryAfterDelete.stock).toBe(10)
+    expect(locationAfterDelete.stock).toBe(10)
+    expect(batchAfterDelete.quantity).toBe(10)
+    expect(batchAfterDelete.remaining).toBe(10)
+    expect(batchLocationAfterDelete.remaining).toBe(10)
+  })
 })

@@ -56,8 +56,13 @@ describe('useUsersPage password handling', () => {
   })
 
   it('shows only the temporary password returned by the create API', async () => {
+    vi.mocked(rolesApi.getList).mockResolvedValue({
+      list: [{ id: 'role-tech', code: 'technician', name: '技术员', userCount: 0, permissions: [], dataScope: 'dept' }],
+      pagination: { total: 1 },
+    } as any)
     vi.mocked(usersApi.create).mockResolvedValue({ id: 'user-1', initialPassword: 'Core@Temp12345' } as any)
     const { result } = renderHook(() => useUsersPage())
+    await waitFor(() => expect(result.current.roles).toHaveLength(1))
 
     act(() => result.current.openCreate())
     act(() => result.current.setForm({
@@ -65,6 +70,7 @@ describe('useUsersPage password handling', () => {
       username: 'new-user',
       realName: '新用户',
       role: 'technician',
+      department: '病理科',
       password: '',
     }))
     await act(async () => {
@@ -76,8 +82,13 @@ describe('useUsersPage password handling', () => {
   })
 
   it('trims user identity fields before create and rejects short initial passwords', async () => {
+    vi.mocked(rolesApi.getList).mockResolvedValue({
+      list: [{ id: 'role-tech', code: 'technician', name: '技术员', userCount: 0, permissions: [], dataScope: 'dept' }],
+      pagination: { total: 1 },
+    } as any)
     vi.mocked(usersApi.create).mockResolvedValue({ id: 'user-trim', initialPassword: 'Core@Temp12345' } as any)
     const { result } = renderHook(() => useUsersPage())
+    await waitFor(() => expect(result.current.roles).toHaveLength(1))
 
     act(() => result.current.openCreate())
     act(() => result.current.setForm({
@@ -94,7 +105,7 @@ describe('useUsersPage password handling', () => {
       await result.current.handleSubmit()
     })
 
-    expect(toast.error).toHaveBeenCalledWith('初始密码至少 8 位')
+    expect(toast.error).toHaveBeenCalledWith('密码至少 8 位，且需包含大小写字母、数字和符号')
     expect(usersApi.create).not.toHaveBeenCalled()
 
     act(() => result.current.setForm({
@@ -122,7 +133,60 @@ describe('useUsersPage password handling', () => {
     expect(getTemporaryPasswordOrThrow({ temporaryPassword: 'Core@Temp12345' })).toBe('Core@Temp12345')
   })
 
-  it('keeps seeded business roles marked as system roles in user role selectors', async () => {
+  it('requires department before submitting a dept-scoped role user', async () => {
+    vi.mocked(rolesApi.getList).mockResolvedValue({
+      list: [{ id: 'role-tech', code: 'technician', name: '技术员', userCount: 0, permissions: [], dataScope: 'dept' }],
+      pagination: { total: 1 },
+    } as any)
+    const { result } = renderHook(() => useUsersPage())
+    await waitFor(() => expect(result.current.roles).toHaveLength(1))
+
+    act(() => result.current.openCreate())
+    act(() => result.current.setForm({
+      ...result.current.form,
+      username: 'dept-user',
+      realName: '本部门用户',
+      role: 'technician',
+      department: '',
+    }))
+
+    await act(async () => {
+      await result.current.handleSubmit()
+    })
+
+    expect(toast.error).toHaveBeenCalledWith('本部门数据角色必须选择部门')
+    expect(usersApi.create).not.toHaveBeenCalled()
+  })
+
+  it('does not allow clearing department when editing a dept-scoped role user', async () => {
+    vi.mocked(rolesApi.getList).mockResolvedValue({
+      list: [{ id: 'role-tech', code: 'technician', name: '技术员', userCount: 0, permissions: [], dataScope: 'dept' }],
+      pagination: { total: 1 },
+    } as any)
+    const { result } = renderHook(() => useUsersPage())
+    await waitFor(() => expect(result.current.roles).toHaveLength(1))
+
+    act(() => result.current.openEdit({
+      id: 'user-1',
+      username: 'dept-user',
+      realName: '本部门用户',
+      role: 'technician',
+      department: '病理科',
+      permissions: [],
+      status: 'active',
+      createdAt: '2026-06-20',
+    }))
+    act(() => result.current.setForm({ ...result.current.form, department: '' }))
+
+    await act(async () => {
+      await result.current.handleSubmit()
+    })
+
+    expect(toast.error).toHaveBeenCalledWith('本部门数据角色必须选择部门')
+    expect(usersApi.update).not.toHaveBeenCalled()
+  })
+
+  it('uses backend isSystem instead of guessing system roles by hardcoded role code', async () => {
     vi.mocked(rolesApi.getList).mockResolvedValue({
       list: [
         { id: 'role-admin', code: 'admin', name: '管理员', userCount: 1, permissions: [], isSystem: true },
@@ -135,7 +199,8 @@ describe('useUsersPage password handling', () => {
     const { result } = renderHook(() => useUsersPage())
 
     await waitFor(() => expect(result.current.roles).toHaveLength(3))
-    expect(result.current.roles.find(role => role.code === 'warehouse_manager')?.isSystem).toBe(true)
+    expect(result.current.roles.find(role => role.code === 'admin')?.isSystem).toBe(true)
+    expect(result.current.roles.find(role => role.code === 'warehouse_manager')?.isSystem).toBe(false)
     expect(result.current.roles.find(role => role.code === 'custom_auditor')?.isSystem).toBe(false)
   })
 

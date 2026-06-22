@@ -287,6 +287,35 @@ describe('集成测试：BOM 管理', () => {
       expect(detail.body.data.versionHistory[0].effectiveScope).toBe('retroactive')
       expect(detail.body.data.versionHistory[0].impactSummary.totalOutboundCount).toBeGreaterThanOrEqual(1)
       expect(detail.body.data.versionHistory[0].snapshot.materials[0].usagePerSample).toBe(3)
+
+      const auditLog = db.prepare(`
+        SELECT request_data, response_data
+        FROM operation_logs
+        WHERE description = '更新BOM版本并记录成本影响'
+          AND request_data LIKE ?
+          AND request_data LIKE '%"effectiveScope":"retroactive"%'
+        ORDER BY created_at DESC
+        LIMIT 1
+      `).get(`%"bomId":"${bomId}"%`) as any
+      expect(auditLog).toBeTruthy()
+      expect(JSON.parse(auditLog.request_data)).toMatchObject({
+        module: 'bom',
+        bomId,
+        previousVersion: 'v1.1',
+        nextVersion: 'v1.2',
+        effectiveScope: 'retroactive',
+      })
+      expect(JSON.parse(auditLog.response_data)).toMatchObject({
+        id: bomId,
+        version: 'v1.2',
+        changeLog: expect.stringContaining('物料用量'),
+        impactSummary: {
+          totalOutboundCount: expect.any(Number),
+          recalculableMonthCount: expect.any(Number),
+        },
+        retroactiveRunIds: [update.body.data.retroactiveRuns[0].id],
+        requiresRecalculation: false,
+      })
     })
 
     it('删除不存在的 BOM 返回 404', async () => {

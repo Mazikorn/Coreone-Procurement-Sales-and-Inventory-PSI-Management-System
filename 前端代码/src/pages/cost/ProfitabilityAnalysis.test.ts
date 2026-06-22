@@ -154,4 +154,41 @@ describe('ProfitabilityAnalysis', () => {
     expect(within(row!).getByText('HE染色')).toBeInTheDocument()
     expect(within(row!).queryByText('he')).not.toBeInTheDocument()
   })
+
+  it('shows insight quality so managers do not treat draft profitability as final', async () => {
+    vi.mocked(abcApi.getProfitability).mockResolvedValue({
+      list: [
+        {
+          outboundId: 'out-he-1',
+          projectId: 'proj-he',
+          projectName: 'HE检测',
+          projectType: 'he',
+          costMonth: new Date().toISOString().slice(0, 7),
+          sampleCount: 2,
+          totalCost: 60,
+          feeAmount: 120,
+          profit: 60,
+        },
+      ],
+      insightQuality: {
+        yearMonth: new Date().toISOString().slice(0, 7),
+        periodStatus: 'calculated',
+        isClosed: false,
+        isFinal: false,
+        openExceptionCount: 1,
+        pendingCostCount: 1,
+        abcSnapshotCount: 1,
+        outboundCount: 2,
+        reliability: 'attention',
+        message: '成本期间未关账；1 条开放成本异常；1 单未补算或成本异常，当前数据仅适合作为过程观察，不能作为最终经营判断。',
+      },
+    } as any)
+
+    render(React.createElement(ProfitabilityAnalysis))
+
+    expect(await screen.findByText('口径待确认')).toBeInTheDocument()
+    expect(screen.getByText(/成本期间未关账/)).toBeInTheDocument()
+    expect(screen.getByText(/开放成本异常/)).toBeInTheDocument()
+    expect(screen.getAllByText(/未补算/).length).toBeGreaterThan(0)
+  })
 })

@@ -4,6 +4,7 @@ import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
 import { requireStrictRole } from '../middleware/auth.js'
 import { normalizeDisplayText, requireValidText, type TextGuardResult } from '../utils/text-guard.js'
+import { logOperation } from '../utils/operation-logger.js'
 
 const router = Router()
 
@@ -12,12 +13,13 @@ const requireMaterialWrite = requireStrictRole('admin', 'warehouse_manager')
 
 function buildMaterialWhere(query: any) {
   const { keyword, categoryId, supplierId, status, lowStock } = query
-  let where = 'm.is_deleted = 0'
+  const includeDeleted = query?.includeDeleted === true || query?.includeDeleted === 'true'
+  let where = includeDeleted ? '1 = 1' : 'm.is_deleted = 0'
   const params: any[] = []
   if (keyword) {
-    where += ' AND (m.name LIKE ? OR m.code LIKE ? OR COALESCE(m.barcode, \'\') LIKE ?)'
+    where += ' AND (m.id LIKE ? OR m.name LIKE ? OR m.code LIKE ? OR COALESCE(m.barcode, \'\') LIKE ?)'
     const like = `%${keyword}%`
-    params.push(like, like, like)
+    params.push(like, like, like, like)
   }
   if (categoryId) { where += ' AND m.category_id = ?'; params.push(categoryId) }
   if (supplierId) { where += ' AND m.supplier_id = ?'; params.push(supplierId) }
@@ -26,6 +28,30 @@ function buildMaterialWhere(query: any) {
     where += ' AND COALESCE((SELECT stock FROM inventory WHERE material_id = m.id), 0) <= COALESCE(m.min_stock, 0)'
   }
   return { where, params }
+}
+
+function toMaterialAuditSnapshot(row: any) {
+  if (!row) return null
+  return {
+    id: row.id,
+    code: row.code,
+    barcode: row.barcode || null,
+    name: row.name,
+    spec: row.spec || null,
+    unit: row.unit,
+    specQty: Number(row.spec_qty || 0),
+    specUnit: row.spec_unit || null,
+    categoryId: row.category_id,
+    supplierId: row.supplier_id || null,
+    price: Number(row.price || 0),
+    minStock: Number(row.min_stock || 0),
+    maxStock: Number(row.max_stock || 0),
+    safetyStock: Number(row.safety_stock || 0),
+    locationId: row.location_id || null,
+    status: row.status === 1 ? 'active' : 'inactive',
+    remark: row.remark || null,
+    isDeleted: Number(row.is_deleted || 0) !== 0,
+  }
 }
 
 router.get('/', (req, res) => {
@@ -68,6 +94,7 @@ router.get('/', (req, res) => {
       safetyStock: row.safety_stock, locationId: row.current_location_id, locationName: row.current_location_name,
       categoryId: row.category_id, categoryPath: row.category_name, supplierId: row.supplier_id,
       supplierName: row.supplier_name, status: row.status === 1 ? 'active' : 'inactive',
+      isDeleted: Number(row.is_deleted || 0) !== 0,
       remark: row.remark, createdAt: row.created_at, updatedAt: row.updated_at,
     })), Number(page), Number(pageSize), count)
   } catch (err: any) { error(res, err.message) }
@@ -550,6 +577,24 @@ router.post('/', requireMaterialWrite, (req, res) => {
     db.prepare(`INSERT INTO inventory (id, material_id, stock, locked_stock, location_id) VALUES (?, ?, 0, 0, ?)`)
       .run(invId, id, locationId || null)
 
+    const created = db.prepare('SELECT * FROM materials WHERE id = ?').get(id)
+    const after = toMaterialAuditSnapshot(created)
+    logOperation(db, req as any, {
+      operation: 'POST /materials',
+      description: '创建物料成本库存口径',
+      requestData: {
+        module: 'materials',
+        businessId: id,
+        code: finalCode,
+        after,
+      },
+      responseData: {
+        id,
+        code: finalCode,
+        after,
+      },
+    })
+
     success(res, { id, code: finalCode, name: nameText.value }, 'Created', 201)
   } catch (err: any) {
     if (err.message.includes('UNIQUE')) { error(res, 'Code already exists', 'RESOURCE_CONFLICT', 409); return }
@@ -634,6 +679,7 @@ router.put('/:id', requireMaterialWrite, (req, res) => {
     const db = getDatabase()
     const existing = db.prepare('SELECT * FROM materials WHERE id = ? AND is_deleted = 0').get(id) as any
     if (!existing) { error(res, 'Not found', 'NOT_FOUND', 404); return }
+    const before = toMaterialAuditSnapshot(existing)
     if (data.status !== undefined && data.status !== 'active' && data.status !== 'inactive') {
       error(res, 'Invalid status', 'INVALID_PARAMETER', 400); return
     }
@@ -729,6 +775,24 @@ router.put('/:id', requireMaterialWrite, (req, res) => {
       db.prepare(`UPDATE materials SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND is_deleted = 0`).run(...params)
     }
 
+    const updated = db.prepare('SELECT * FROM materials WHERE id = ?').get(id)
+    const after = toMaterialAuditSnapshot(updated)
+    logOperation(db, req as any, {
+      operation: 'PUT /materials/:id',
+      description: '更新物料成本库存口径',
+      requestData: {
+        module: 'materials',
+        businessId: id,
+        before,
+        after,
+      },
+      responseData: {
+        id,
+        beforeStatus: before?.status,
+        afterStatus: after?.status,
+      },
+    })
+
     success(res, { id }, 'Updated')
   } catch (err: any) { error(res, err.message) }
 })
@@ -740,6 +804,7 @@ router.delete('/:id', requireMaterialWrite, (req, res) => {
 
     const existing = db.prepare('SELECT * FROM materials WHERE id = ? AND is_deleted = 0').get(id)
     if (!existing) { error(res, 'Not found', 'NOT_FOUND', 404); return }
+    const before = toMaterialAuditSnapshot(existing)
 
     const references = getMaterialReferences(db, id)
     if (references.length > 0) {
@@ -748,6 +813,20 @@ router.delete('/:id', requireMaterialWrite, (req, res) => {
     }
 
     db.prepare('UPDATE materials SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(id)
+    logOperation(db, req as any, {
+      operation: 'DELETE /materials/:id',
+      description: '删除物料成本库存口径',
+      requestData: {
+        module: 'materials',
+        businessId: id,
+        before,
+      },
+      responseData: {
+        id,
+        isDeleted: true,
+        beforeStatus: before?.status,
+      },
+    })
     success(res, null, 'Deleted')
   } catch (err: any) { error(res, err.message) }
 })

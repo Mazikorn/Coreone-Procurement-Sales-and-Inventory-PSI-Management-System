@@ -114,6 +114,7 @@ export default function InventoryList() {
       {page.activeTab === 'in-use' && (
         <DepletionTab
           items={page.depletionTracking}
+          canManage={page.canManageDepletionActions}
           onEditRemain={(dep) => {
             page.setSelectedDepletionItem(dep)
             page.setEditRemainValue(String(dep.remaining))
@@ -194,6 +195,8 @@ export default function InventoryList() {
       <InventoryDetailModal
         open={page.detailModalOpen}
         item={page.selectedItem}
+        batchTrace={page.batchTrace}
+        batchTraceLoading={page.batchTraceLoading}
         onClose={() => page.setDetailModalOpen(false)}
         onOutbound={() => page.selectedItem && page.openOutboundModal(page.selectedItem)}
         canManageInventoryActions={page.canManageInventoryActions}
@@ -211,10 +214,14 @@ export default function InventoryList() {
         items={page.data.filter(i => page.selectedIds.has(i.id))}
         scrapReason={page.scrapReason}
         scrapRemark={page.scrapRemark}
+        responsiblePerson={page.scrapResponsiblePerson}
+        responsibleDepartment={page.scrapResponsibleDepartment}
         onClose={() => page.setBatchScrapModalOpen(false)}
         onConfirm={page.confirmBatchScrap}
         onChangeReason={page.setScrapReason}
         onChangeRemark={page.setScrapRemark}
+        onChangeResponsiblePerson={page.setScrapResponsiblePerson}
+        onChangeResponsibleDepartment={page.setScrapResponsibleDepartment}
       />
 
       <EditRemainModal

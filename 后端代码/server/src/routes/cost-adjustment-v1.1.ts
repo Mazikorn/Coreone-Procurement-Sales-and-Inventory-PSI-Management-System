@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
 import { authenticateToken, requireRole } from '../middleware/auth.js'
+import { logOperation } from '../utils/operation-logger.js'
 
 const router = Router()
 
@@ -34,6 +35,34 @@ function parsePaginationParam(value: unknown, fallback: number, max = 200) {
 }
 
 const REVIEW_STATUSES = new Set(['pending', 'approved', 'rejected'])
+
+function adjustmentSnapshot(row: any) {
+  if (!row) return null
+  return {
+    id: row.id,
+    costCenterId: row.cost_center_id,
+    costCenterCode: row.cost_center_code,
+    costCenterName: row.cost_center_name,
+    yearQuarter: row.year_quarter,
+    preProvisionAmount: row.pre_provision_amount,
+    actualAmount: row.actual_amount,
+    adjustmentAmount: row.adjustment_amount,
+    adjustmentReason: row.adjustment_reason,
+    reviewStatus: row.review_status,
+    submittedBy: row.submitted_by,
+    reviewedBy: row.reviewed_by,
+    reviewReason: row.review_reason,
+  }
+}
+
+function getAdjustmentWithCenter(db: any, id: string) {
+  return db.prepare(`
+    SELECT ca.*, icc.code as cost_center_code, icc.name as cost_center_name
+    FROM cost_adjustments ca
+    LEFT JOIN indirect_cost_centers icc ON ca.cost_center_id = icc.id
+    WHERE ca.id = ?
+  `).get(id) as any
+}
 
 // 获取季度调整建议（自动计算）
 router.get('/suggestions', authenticateToken, requireRole('admin', 'finance'), (req, res) => {
@@ -149,6 +178,14 @@ router.post('/', authenticateToken, requireRole('admin', 'finance'), (req, res) 
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 'pending')
     `).run(id, normalizedCostCenterId, normalizedYearQuarter, preProvisionAmount, actualAmountValue, adjustmentAmount, adjustmentReason || null, userId)
 
+    const created = getAdjustmentWithCenter(db, id)
+    logOperation(db, req as any, {
+      operation: 'POST /cost-adjustments',
+      description: '创建季度成本调整单',
+      requestData: adjustmentSnapshot(created),
+      responseData: { adjustmentId: id, costCenterId: normalizedCostCenterId },
+    })
+
     success(res, { id, adjustmentAmount: Math.round(adjustmentAmount * 100) / 100 }, 'Created', 201)
   } catch (err: any) { error(res, err.message) }
 })
@@ -183,6 +220,17 @@ router.post('/:id/review', authenticateToken, requireRole('admin', 'finance'), (
     if (result.changes === 0) {
       error(res, '审核冲突，请刷新后重试', 'CONFLICT', 409); return
     }
+
+    const reviewed = getAdjustmentWithCenter(db, id)
+    logOperation(db, req as any, {
+      operation: 'POST /cost-adjustments/:id/review',
+      description: status === 'approved' ? '审核通过季度成本调整单' : '驳回季度成本调整单',
+      requestData: {
+        before: adjustmentSnapshot(existing),
+        after: adjustmentSnapshot(reviewed),
+      },
+      responseData: { adjustmentId: id, status },
+    })
 
     success(res, { id, status }, 'Reviewed')
   } catch (err: any) { error(res, err.message) }

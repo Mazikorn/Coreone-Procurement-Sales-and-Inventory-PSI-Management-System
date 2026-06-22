@@ -256,6 +256,21 @@ describe('role story 014 cross-role end-to-end fact chain', () => {
       .send({ yearMonth: new Date().toISOString().slice(0, 7), runType: 'recalculate' })
     expect(costRun.status).toBe(201)
     expect(costRun.body.data.summary.succeeded).toBeGreaterThanOrEqual(1)
+    const costRunLog = db.prepare(`
+      SELECT operation, description, request_data, response_data
+      FROM operation_logs
+      WHERE operation = 'POST /abc/cost-runs'
+        AND (request_data LIKE ? OR response_data LIKE ?)
+      ORDER BY created_at DESC, rowid DESC
+      LIMIT 1
+    `).get(`%${costRun.body.data.id}%`, `%${costRun.body.data.id}%`) as any
+    expect(costRunLog).toBeTruthy()
+    expect(costRunLog.description).toBe('执行ABC成本核算任务')
+    expect(JSON.parse(costRunLog.request_data)).toMatchObject({ runType: 'recalculate' })
+    expect(JSON.parse(costRunLog.response_data)).toMatchObject({
+      id: costRun.body.data.id,
+      runType: 'recalculate',
+    })
 
     const dashboard = await request(app)
       .get('/api/v1/abc/dashboard')

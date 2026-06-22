@@ -19,9 +19,10 @@ const reasonOptions = [
 ]
 
 export default function Returns() {
+  const initialKeyword = new URLSearchParams(window.location.search).get('keyword') || ''
   const [returnSources, setReturnSources] = useState<ReturnSource[]>([])
-  const [keywordInput, setKeywordInput] = useState('')
-  const [keyword, setKeyword] = useState('')
+  const [keywordInput, setKeywordInput] = useState(initialKeyword)
+  const [keyword, setKeyword] = useState(initialKeyword)
   const [modalOpen, setModalOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [cancelTarget, setCancelTarget] = useState<ReturnRecord | null>(null)

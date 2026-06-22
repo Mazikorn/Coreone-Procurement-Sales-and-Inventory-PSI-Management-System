@@ -40,13 +40,25 @@ function seedScrapMaterial(db: any, suffix: string, stock = 10) {
 
 function seedScrapMaterialWithBatch(db: any, suffix: string, stock = 10) {
   const materialId = seedScrapMaterial(db, suffix, stock)
+  const material = db.prepare('SELECT location_id FROM materials WHERE id = ?').get(materialId) as any
   const batchId = `batch-scrap-${suffix}`
   db.prepare(`
     INSERT INTO batches (id, material_id, batch_no, quantity, remaining, expiry_date, inbound_id, inbound_price, status)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
   `).run(batchId, materialId, `BATCH-SC-${suffix}`, stock, stock, '2028-12-31', `inbound-scrap-${suffix}`, 12)
 
-  return { materialId, batchId, batchNo: `BATCH-SC-${suffix}` }
+  return { materialId, batchId, batchNo: `BATCH-SC-${suffix}`, locationId: material.location_id }
+}
+
+function seedScrapBatchLocation(db: any, seed: { materialId: string; batchId: string; locationId: string }, stock = 10) {
+  db.prepare(`
+    INSERT INTO inventory_locations (id, material_id, location_id, stock, locked_stock)
+    VALUES (?, ?, ?, ?, 0)
+  `).run(`invloc-scrap-${seed.batchId}`, seed.materialId, seed.locationId, stock)
+  db.prepare(`
+    INSERT INTO batch_location_balances (id, batch_id, material_id, location_id, remaining)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(`blb-scrap-${seed.batchId}`, seed.batchId, seed.materialId, seed.locationId, stock)
 }
 
 describe('报废管理 API', () => {
@@ -54,12 +66,14 @@ describe('报废管理 API', () => {
   let db: any
   let adminToken: string
   let warehouseToken: string
+  let warehouseReviewerToken: string
   let technicianToken: string
 
   beforeAll(async () => {
     ;({ app, db } = await getApp())
     adminToken = await login(app, 'admin', 'admin123')
     warehouseToken = await login(app, 'wangkq', 'CoreOne2026!')
+    warehouseReviewerToken = await login(app, 'cangguan', 'CoreOne2026!')
     technicianToken = await login(app, 'zhangwei', 'CoreOne2026!')
   })
 
@@ -104,6 +118,63 @@ describe('报废管理 API', () => {
       expect(res.body.success, JSON.stringify(query)).toBe(false)
       expect(res.body.error.code, JSON.stringify(query)).toBe('INVALID_PARAMETER')
     }
+  })
+
+  it('SC-FILTER-001: 报废列表支持按审计链接 keyword 定位到具体报废事实', async () => {
+    const suffix = `keyword-${Date.now()}`
+    const matched = seedScrapMaterialWithBatch(db, `${suffix}-matched`, 10)
+    const other = seedScrapMaterialWithBatch(db, `${suffix}-other`, 10)
+    seedScrapBatchLocation(db, matched, 10)
+    seedScrapBatchLocation(db, other, 10)
+
+    db.prepare('UPDATE materials SET name = ?, code = ? WHERE id = ?')
+      .run('审计深链报废物料', `MAT-SCRAP-DEEP-${suffix}`, matched.materialId)
+    db.prepare('UPDATE materials SET name = ?, code = ? WHERE id = ?')
+      .run('其他报废物料', `MAT-SCRAP-OTHER-${suffix}`, other.materialId)
+
+    const matchedRes = await request(app)
+      .post('/api/v1/scraps')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        materialId: matched.materialId,
+        batchId: matched.batchId,
+        quantity: 1,
+        reason: 'damaged',
+        remark: 'SC-DEEP-FACT-001',
+      })
+    expect(matchedRes.status).toBe(200)
+
+    const otherRes = await request(app)
+      .post('/api/v1/scraps')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        materialId: other.materialId,
+        batchId: other.batchId,
+        quantity: 1,
+        reason: 'expired',
+        remark: 'SC-DEEP-FACT-OTHER',
+      })
+    expect(otherRes.status).toBe(200)
+
+    const matchedRecord = db.prepare('SELECT scrap_no FROM scrap_records WHERE id = ?')
+      .get(matchedRes.body.data.id) as any
+
+    const byScrapNo = await request(app)
+      .get('/api/v1/scraps')
+      .query({ page: 1, pageSize: 20, keyword: matchedRecord.scrap_no })
+      .set('Authorization', `Bearer ${adminToken}`)
+
+    expect(byScrapNo.status).toBe(200)
+    expect(byScrapNo.body.data.list.map((row: any) => row.id)).toEqual([matchedRes.body.data.id])
+    expect(byScrapNo.body.data.pagination.total).toBe(1)
+
+    const byBatch = await request(app)
+      .get('/api/v1/scraps')
+      .query({ page: 1, pageSize: 20, keyword: matched.batchNo })
+      .set('Authorization', `Bearer ${adminToken}`)
+
+    expect(byBatch.status).toBe(200)
+    expect(byBatch.body.data.list.map((row: any) => row.id)).toEqual([matchedRes.body.data.id])
   })
 
   it('SC-002: 创建报废会扣减库存并记录登录用户为操作人', async () => {
@@ -211,6 +282,267 @@ describe('报废管理 API', () => {
       materialId,
       quantity: 2,
       reason: 'damaged',
+    })
+  })
+
+  it('SC-REVIEW-001: 高价值报废必须记录责任人和责任部门，并进入待复核状态', async () => {
+    const materialId = seedScrapMaterial(db, `high-value-required-${Date.now()}`, 8)
+    db.prepare('UPDATE materials SET price = ? WHERE id = ?').run(600, materialId)
+
+    const missingResponsibility = await request(app)
+      .post('/api/v1/scraps')
+      .set('Authorization', `Bearer ${warehouseToken}`)
+      .send({
+        materialId,
+        quantity: 2,
+        reason: 'damaged',
+        remark: '高价值报废缺少责任字段',
+      })
+
+    expect(missingResponsibility.status).toBe(400)
+    expect(missingResponsibility.body.error.code).toBe('SCRAP_RESPONSIBILITY_REQUIRED')
+
+    const createRes = await request(app)
+      .post('/api/v1/scraps')
+      .set('Authorization', `Bearer ${warehouseToken}`)
+      .send({
+        materialId,
+        quantity: 2,
+        reason: 'damaged',
+        responsiblePerson: '张三',
+        responsibleDepartment: '病理科',
+        remark: '显微镜跌落导致高价值耗材报废',
+      })
+
+    expect(createRes.status).toBe(200)
+    expect(createRes.body.data).toMatchObject({
+      id: expect.any(String),
+      status: 'pending_review',
+      reviewStatus: 'pending',
+      requiresReview: true,
+      scrapAmount: 1200,
+    })
+
+    const record = db.prepare(`
+      SELECT quantity, status, requires_review, review_status, scrap_amount,
+             responsible_person, responsible_department
+      FROM scrap_records
+      WHERE id = ?
+    `).get(createRes.body.data.id) as any
+    const inventory = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+
+    expect(record).toMatchObject({
+      quantity: 2,
+      status: 'pending_review',
+      requires_review: 1,
+      review_status: 'pending',
+      scrap_amount: 1200,
+      responsible_person: '张三',
+      responsible_department: '病理科',
+    })
+    expect(inventory.stock).toBe(6)
+
+    const log = db.prepare(`
+      SELECT operation, request_data, response_data
+      FROM operation_logs
+      WHERE request_data LIKE ?
+      ORDER BY rowid DESC
+      LIMIT 1
+    `).get(`%${createRes.body.data.id}%`) as any
+
+    expect(log.operation).toBe('POST /scraps')
+    expect(JSON.parse(log.request_data)).toMatchObject({
+      module: 'scraps',
+      id: createRes.body.data.id,
+      scrapAmount: 1200,
+      requiresReview: true,
+      reviewStatus: 'pending',
+      responsiblePerson: '张三',
+      responsibleDepartment: '病理科',
+    })
+    expect(JSON.parse(log.response_data)).toMatchObject({
+      id: createRes.body.data.id,
+      status: 'pending_review',
+      reviewStatus: 'pending',
+    })
+  })
+
+  it('SC-REVIEW-002: 高价值报废不能自审，复核通过后沉淀审核人和审核原因', async () => {
+    const materialId = seedScrapMaterial(db, `high-value-approve-${Date.now()}`, 8)
+    db.prepare('UPDATE materials SET price = ? WHERE id = ?').run(700, materialId)
+
+    const createRes = await request(app)
+      .post('/api/v1/scraps')
+      .set('Authorization', `Bearer ${warehouseToken}`)
+      .send({
+        materialId,
+        quantity: 2,
+        reason: 'quality_issue',
+        responsiblePerson: '李四',
+        responsibleDepartment: '病理科',
+      })
+    expect(createRes.status).toBe(200)
+
+    const selfReview = await request(app)
+      .post(`/api/v1/scraps/${createRes.body.data.id}/review`)
+      .set('Authorization', `Bearer ${warehouseToken}`)
+      .send({ status: 'approved', reason: '自己审核自己' })
+    expect(selfReview.status).toBe(403)
+    expect(selfReview.body.error.code).toBe('SCRAP_SELF_REVIEW_FORBIDDEN')
+
+    const approveRes = await request(app)
+      .post(`/api/v1/scraps/${createRes.body.data.id}/review`)
+      .set('Authorization', `Bearer ${warehouseReviewerToken}`)
+      .send({ status: 'approved', reason: '科室负责人复核通过' })
+
+    expect(approveRes.status).toBe(200)
+    expect(approveRes.body.data).toMatchObject({
+      id: createRes.body.data.id,
+      status: 'completed',
+      reviewStatus: 'approved',
+    })
+
+    const record = db.prepare(`
+      SELECT status, review_status, reviewed_by, review_reason
+      FROM scrap_records
+      WHERE id = ?
+    `).get(createRes.body.data.id) as any
+    const inventory = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+
+    expect(record).toMatchObject({
+      status: 'completed',
+      review_status: 'approved',
+      reviewed_by: 'cangguan',
+      review_reason: '科室负责人复核通过',
+    })
+    expect(inventory.stock).toBe(6)
+
+    const log = db.prepare(`
+      SELECT username, operation, request_data, response_data
+      FROM operation_logs
+      WHERE operation = 'POST /scraps/:id/review'
+        AND request_data LIKE ?
+      ORDER BY rowid DESC
+      LIMIT 1
+    `).get(`%${createRes.body.data.id}%`) as any
+
+    expect(log.username).toBe('cangguan')
+    expect(JSON.parse(log.request_data)).toMatchObject({
+      module: 'scraps',
+      id: createRes.body.data.id,
+      before: { status: 'pending_review', reviewStatus: 'pending' },
+      after: { status: 'completed', reviewStatus: 'approved' },
+      reason: '科室负责人复核通过',
+    })
+    expect(JSON.parse(log.response_data)).toMatchObject({
+      id: createRes.body.data.id,
+      status: 'completed',
+      reviewStatus: 'approved',
+    })
+  })
+
+  it('SC-REVIEW-003: 高价值报废驳回复核会恢复库存并留下驳回流水', async () => {
+    const materialId = seedScrapMaterialWithBatch(db, `high-value-reject-${Date.now()}`, 8)
+    seedScrapBatchLocation(db, materialId, 8)
+    db.prepare('UPDATE materials SET price = ? WHERE id = ?').run(800, materialId.materialId)
+
+    const createRes = await request(app)
+      .post('/api/v1/scraps')
+      .set('Authorization', `Bearer ${warehouseToken}`)
+      .send({
+        materialId: materialId.materialId,
+        batchId: materialId.batchId,
+        quantity: 2,
+        reason: 'damaged',
+        responsiblePerson: '王五',
+        responsibleDepartment: '病理科',
+      })
+    expect(createRes.status).toBe(200)
+
+    const rejectRes = await request(app)
+      .post(`/api/v1/scraps/${createRes.body.data.id}/review`)
+      .set('Authorization', `Bearer ${warehouseReviewerToken}`)
+      .send({ status: 'rejected', reason: '责任说明不足，退回重填' })
+
+    expect(rejectRes.status).toBe(200)
+    expect(rejectRes.body.data).toMatchObject({
+      id: createRes.body.data.id,
+      status: 'rejected',
+      reviewStatus: 'rejected',
+    })
+
+    const record = db.prepare('SELECT status, review_status, reviewed_by, review_reason FROM scrap_records WHERE id = ?')
+      .get(createRes.body.data.id) as any
+    const inventory = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId.materialId) as any
+    const batch = db.prepare('SELECT remaining FROM batches WHERE id = ?').get(materialId.batchId) as any
+    const stockLog = db.prepare(`
+      SELECT type, quantity, before_stock, after_stock, operator, remark
+      FROM stock_logs
+      WHERE related_id = ? AND related_type = 'scrap_reject'
+    `).get(createRes.body.data.id) as any
+
+    expect(record).toMatchObject({
+      status: 'rejected',
+      review_status: 'rejected',
+      reviewed_by: 'cangguan',
+      review_reason: '责任说明不足，退回重填',
+    })
+    expect(inventory.stock).toBe(8)
+    expect(batch.remaining).toBe(8)
+    expect(stockLog).toMatchObject({
+      type: 'cancel',
+      quantity: 2,
+      before_stock: 6,
+      after_stock: 8,
+      operator: 'cangguan',
+      remark: '驳回高价值报废，恢复库存',
+    })
+  })
+
+  it('SC-REVIEW-004: 批量报废同样不能绕过高价值责任字段', async () => {
+    const materialId = seedScrapMaterial(db, `high-value-batch-${Date.now()}`, 8)
+    db.prepare('UPDATE materials SET price = ? WHERE id = ?').run(600, materialId)
+
+    const missingResponsibility = await request(app)
+      .post('/api/v1/scraps/batch')
+      .set('Authorization', `Bearer ${warehouseToken}`)
+      .send({
+        records: [
+          { materialId, quantity: 2, reason: 'damaged' },
+        ],
+      })
+
+    expect(missingResponsibility.status).toBe(400)
+    expect(missingResponsibility.body.error.code).toBe('SCRAP_RESPONSIBILITY_REQUIRED')
+
+    const createRes = await request(app)
+      .post('/api/v1/scraps/batch')
+      .set('Authorization', `Bearer ${warehouseToken}`)
+      .send({
+        records: [
+          {
+            materialId,
+            quantity: 2,
+            reason: 'damaged',
+            responsiblePerson: '张三',
+            responsibleDepartment: '病理科',
+          },
+        ],
+      })
+
+    expect(createRes.status).toBe(200)
+    const record = db.prepare(`
+      SELECT status, requires_review, review_status, responsible_person, responsible_department
+      FROM scrap_records
+      WHERE id = ?
+    `).get(createRes.body.data.ids[0]) as any
+
+    expect(record).toMatchObject({
+      status: 'pending_review',
+      requires_review: 1,
+      review_status: 'pending',
+      responsible_person: '张三',
+      responsible_department: '病理科',
     })
   })
 
@@ -356,7 +688,8 @@ describe('报废管理 API', () => {
 
   it('SC-007: 创建和撤销报废会同步扣减和恢复批次剩余量', async () => {
     const suffix = `batch-single-${Date.now()}`
-    const { materialId, batchId, batchNo } = seedScrapMaterialWithBatch(db, suffix, 10)
+    const { materialId, batchId, batchNo, locationId } = seedScrapMaterialWithBatch(db, suffix, 10)
+    seedScrapBatchLocation(db, { materialId, batchId, locationId }, 10)
 
     const res = await request(app)
       .post('/api/v1/scraps')
@@ -367,11 +700,16 @@ describe('报废管理 API', () => {
     const record = db.prepare('SELECT batch_id FROM scrap_records WHERE id = ?').get(res.body.data.id) as any
     const inventoryAfterCreate = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
     const batchAfterCreate = db.prepare('SELECT remaining, status FROM batches WHERE id = ?').get(batchId) as any
+    const batchLocationAfterCreate = db.prepare(`
+      SELECT remaining FROM batch_location_balances
+      WHERE batch_id = ? AND material_id = ? AND location_id = ?
+    `).get(batchId, materialId, locationId) as any
 
     expect(record.batch_id).toBe(batchId)
     expect(inventoryAfterCreate.stock).toBe(6)
     expect(batchAfterCreate.remaining).toBe(6)
     expect(batchAfterCreate.status).toBe(1)
+    expect(Number(batchLocationAfterCreate.remaining)).toBe(6)
 
     const listRes = await request(app)
       .get('/api/v1/scraps')
@@ -388,9 +726,14 @@ describe('报废管理 API', () => {
 
     const inventoryAfterCancel = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
     const batchAfterCancel = db.prepare('SELECT remaining, status FROM batches WHERE id = ?').get(batchId) as any
+    const batchLocationAfterCancel = db.prepare(`
+      SELECT remaining FROM batch_location_balances
+      WHERE batch_id = ? AND material_id = ? AND location_id = ?
+    `).get(batchId, materialId, locationId) as any
     expect(inventoryAfterCancel.stock).toBe(10)
     expect(batchAfterCancel.remaining).toBe(10)
     expect(batchAfterCancel.status).toBe(1)
+    expect(Number(batchLocationAfterCancel.remaining)).toBe(10)
   })
 
   it('SC-009: 批次数量后续下调后撤销旧报废必须拒绝，避免批次剩余量超过批次数量', async () => {

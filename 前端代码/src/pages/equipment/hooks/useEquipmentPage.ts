@@ -35,8 +35,11 @@ function canManageEquipment() {
 
 export function useEquipmentPage() {
   const canManageEquipmentAssets = canManageEquipment()
-  const [keyword, setKeyword] = useState('')
-  const [searchInput, setSearchInput] = useState('')
+  const initialParams = new URLSearchParams(window.location.search)
+  const initialKeyword = initialParams.get('keyword') || ''
+  const [includeDeleted, setIncludeDeleted] = useState(initialParams.get('includeDeleted') === 'true')
+  const [keyword, setKeyword] = useState(initialKeyword)
+  const [searchInput, setSearchInput] = useState(initialKeyword)
   const [filterStatus, setFilterStatus] = useState('')
   const [filterTypeId, setFilterTypeId] = useState('')
   const [typeOptions, setTypeOptions] = useState<Array<{ value: string; label: string }>>([])
@@ -78,20 +81,22 @@ export function useEquipmentPage() {
         keyword: keyword || undefined,
         status: filterStatus || undefined,
         typeId: filterTypeId || undefined,
+        includeDeleted: includeDeleted || undefined,
       })
       return { list: res?.list || [], pagination: res?.pagination }
     },
-    [keyword, filterStatus, filterTypeId]
+    [keyword, filterStatus, filterTypeId, includeDeleted]
   )
 
   const { data, loading, page, pageSize, total, setPage, setPageSize, refresh } =
-    usePagination<Equipment>({ fetchFn, initialPage: 1, initialPageSize: 20, deps: [keyword, filterStatus, filterTypeId] })
+    usePagination<Equipment>({ fetchFn, initialPage: 1, initialPageSize: 20, deps: [keyword, filterStatus, filterTypeId, includeDeleted] })
 
   useEffect(() => {
     equipmentApi.getStats({
       keyword: keyword || undefined,
       status: filterStatus || undefined,
       typeId: filterTypeId || undefined,
+      includeDeleted: includeDeleted || undefined,
     })
       .then((res: any) => setStats({
         total: Number(res?.total || 0),
@@ -101,7 +106,7 @@ export function useEquipmentPage() {
         totalValue: Number(res?.totalValue || 0),
       }))
       .catch(() => setStats({ total, active: 0, inactive: 0, scrapped: 0, totalValue: 0 }))
-  }, [keyword, filterStatus, filterTypeId, total])
+  }, [keyword, filterStatus, filterTypeId, includeDeleted, total])
 
   const handleSearch = () => {
     setKeyword(searchInput)
@@ -111,6 +116,7 @@ export function useEquipmentPage() {
   const handleReset = () => {
     setSearchInput('')
     setKeyword('')
+    setIncludeDeleted(false)
     setFilterStatus('')
     setFilterTypeId('')
     setPage(1)

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { ArrowRightLeft, Trash2 } from 'lucide-react'
+import { ArrowRightLeft, RotateCcw, Search, Trash2 } from 'lucide-react'
 import { usePagination } from '@/hooks/usePagination'
 import { Pagination } from '@/components/ui/Pagination'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
@@ -60,8 +60,11 @@ export function validateTransferForm(
 }
 
 export default function Transfers() {
+  const initialKeyword = new URLSearchParams(window.location.search).get('keyword') || ''
   const [materials, setMaterials] = useState<Material[]>([])
   const [locations, setLocations] = useState<Location[]>([])
+  const [keywordInput, setKeywordInput] = useState(initialKeyword)
+  const [keyword, setKeyword] = useState(initialKeyword)
   const [modalOpen, setModalOpen] = useState(false)
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [recordToDelete, setRecordToDelete] = useState<TransferRecord | null>(null)
@@ -93,10 +96,14 @@ export default function Transfers() {
 
   const fetchFn = useCallback(
     async ({ page, pageSize }: { page: number; pageSize: number }) => {
-      const res: any = await transferApi.getList({ page, pageSize })
+      const res: any = await transferApi.getList({
+        page,
+        pageSize,
+        keyword: keyword || undefined,
+      })
       return { list: res.list || [], pagination: res.pagination }
     },
-    []
+    [keyword]
   )
 
   const {
@@ -110,7 +117,7 @@ export default function Transfers() {
     refresh,
   } = usePagination<TransferRecord>({
     fetchFn,
-    deps: [],
+    deps: [keyword],
   })
 
   const selectedMaterial = materials.find(m => m.id === form.materialId)
@@ -218,6 +225,17 @@ export default function Transfers() {
     }
   }
 
+  const handleSearch = () => {
+    setPage(1)
+    setKeyword(keywordInput.trim())
+  }
+
+  const handleReset = () => {
+    setKeywordInput('')
+    setKeyword('')
+    setPage(1)
+  }
+
   const openDelete = (row: TransferRecord) => {
     setRecordToDelete(row)
     setDeleteConfirmOpen(true)
@@ -255,6 +273,40 @@ export default function Transfers() {
       </div>
 
       <div className="bg-white rounded-lg border border-gray-200 shadow-[0_1px_3px_rgba(0,0,0,0.1)] overflow-hidden">
+        <form
+          onSubmit={event => {
+            event.preventDefault()
+            handleSearch()
+          }}
+          className="flex flex-col sm:flex-row gap-3 px-4 py-4 border-b border-gray-200 bg-gray-50"
+        >
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input
+              value={keywordInput}
+              onChange={event => setKeywordInput(event.target.value)}
+              placeholder="搜索调拨单号/物料/批次/库位..."
+              className="w-full h-10 pl-9 pr-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="submit"
+              className="inline-flex items-center gap-2 h-10 px-4 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm font-medium transition-colors"
+            >
+              <Search className="w-4 h-4" />
+              查询
+            </button>
+            <button
+              type="button"
+              onClick={handleReset}
+              className="inline-flex items-center gap-2 h-10 px-4 bg-white text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 text-sm font-medium transition-colors"
+            >
+              <RotateCcw className="w-4 h-4" />
+              重置
+            </button>
+          </div>
+        </form>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-200">

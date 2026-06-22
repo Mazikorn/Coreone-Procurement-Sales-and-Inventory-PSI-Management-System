@@ -25,6 +25,7 @@ export interface RoleItem {
   userCount: number
   description: string
   permissions: string[]
+  dataScope?: 'all' | 'dept' | 'self'
   isSystem?: boolean
 }
 
@@ -40,6 +41,11 @@ export function getTemporaryPasswordOrThrow(res: { temporaryPassword?: string } 
 
 export function isProtectedAdminUser(user: Pick<User, 'id' | 'username' | 'role'>) {
   return user.id === 'USER-001' || user.username === 'admin' || user.role === 'admin'
+}
+
+export function requiresDepartmentForRole(roles: Pick<RoleItem, 'code' | 'dataScope'>[], roleCode: string) {
+  const role = roles.find(item => item.code === roleCode)
+  return role?.dataScope === 'dept'
 }
 
 export function useUsersPage() {
@@ -137,6 +143,7 @@ export function useUsersPage() {
       setRoles(list.map((r: any) => ({
         id: r.id, name: r.name, code: r.code, userCount: r.userCount || 0,
         description: r.description || '', permissions: r.permissions || [],
+        dataScope: r.dataScope || (r.code === 'admin' ? 'all' : 'dept'),
         isSystem: isSystemRole(r)
       })))
     } catch (e) { console.error(e) }
@@ -196,6 +203,10 @@ export function useUsersPage() {
     }
     if (!normalizedForm.username || !normalizedForm.realName || !normalizedForm.role) {
       toast.error('请填写必填字段')
+      return
+    }
+    if (requiresDepartmentForRole(roles, normalizedForm.role) && !normalizedForm.department) {
+      toast.error('本部门数据角色必须选择部门')
       return
     }
     if (normalizedForm.password && !PASSWORD_POLICY_PATTERN.test(normalizedForm.password.trim())) {

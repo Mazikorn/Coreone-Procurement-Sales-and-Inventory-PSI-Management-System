@@ -772,6 +772,76 @@ describe('集成测试：出库管理', () => {
       }
     })
 
+    it('OUT-BATCH-LOCATION-001: 多批次分布在不同库位时按被分配批次所在库位扣减', async () => {
+      const suffix = `batch-loc-${Date.now()}`
+      const alternateLocationId = `loc-out-alt-${suffix}`
+      db.prepare(`INSERT INTO locations (id, code, name, type, zone) VALUES (?, ?, ?, ?, ?)`).run(
+        alternateLocationId, `L-ALT-${suffix}`, 'B1-01', 'shelf', 'B区',
+      )
+
+      const materialIdForLocation = await createMaterial(app, token, `OB-BLOC-${suffix}`, 80)
+      const firstInbound = await request(app)
+        .post('/api/v1/inbound')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          type: 'direct',
+          materialId: materialIdForLocation,
+          batchNo: `B-BLOC-A-${suffix}`,
+          quantity: 5,
+          price: 80,
+          locationId: 'loc-out',
+          expiryDate: '2027-01-01',
+        })
+      expect(firstInbound.status).toBe(201)
+
+      const secondInbound = await request(app)
+        .post('/api/v1/inbound')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          type: 'direct',
+          materialId: materialIdForLocation,
+          batchNo: `B-BLOC-B-${suffix}`,
+          quantity: 5,
+          price: 100,
+          locationId: alternateLocationId,
+          expiryDate: '2028-01-01',
+        })
+      expect(secondInbound.status).toBe(201)
+
+      const outboundRes = await request(app)
+        .post('/api/v1/outbound')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          type: 'project',
+          items: [{ materialId: materialIdForLocation, quantity: 4 }],
+          remark: '多批次多库位出库',
+        })
+      expect(outboundRes.status).toBe(201)
+
+      const inventoryLocations = db.prepare(`
+        SELECT location_id, stock
+        FROM inventory_locations
+        WHERE material_id = ?
+        ORDER BY location_id
+      `).all(materialIdForLocation) as any[]
+      expect(inventoryLocations).toEqual(expect.arrayContaining([
+        expect.objectContaining({ location_id: 'loc-out', stock: 1 }),
+        expect.objectContaining({ location_id: alternateLocationId, stock: 5 }),
+      ]))
+
+      const batchLocations = db.prepare(`
+        SELECT b.batch_no, bl.location_id, bl.remaining
+        FROM batch_location_balances bl
+        JOIN batches b ON b.id = bl.batch_id
+        WHERE bl.material_id = ?
+        ORDER BY b.batch_no, bl.location_id
+      `).all(materialIdForLocation) as any[]
+      expect(batchLocations).toEqual(expect.arrayContaining([
+        expect.objectContaining({ batch_no: `B-BLOC-A-${suffix}`, location_id: 'loc-out', remaining: 1 }),
+        expect.objectContaining({ batch_no: `B-BLOC-B-${suffix}`, location_id: alternateLocationId, remaining: 5 }),
+      ]))
+    })
+
     it('出库后批次总剩余等于库存', async () => {
       const batches = db.prepare(
         'SELECT SUM(remaining) as total FROM batches WHERE material_id = ? AND remaining > 0'

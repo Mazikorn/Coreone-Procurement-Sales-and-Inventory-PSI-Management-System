@@ -59,6 +59,21 @@ function seedSupplierReturnMaterialWithBatch(db: any, suffix: string, batchRemai
   return { ...seeded, batchId, batchNo }
 }
 
+function seedSupplierReturnBatchLocation(
+  db: any,
+  seed: { materialId: string; batchId: string; locationId: string },
+  stock = 10,
+) {
+  db.prepare(`
+    INSERT INTO inventory_locations (id, material_id, location_id, stock, locked_stock)
+    VALUES (?, ?, ?, ?, 0)
+  `).run(`invloc-sr-${seed.batchId}`, seed.materialId, seed.locationId, stock)
+  db.prepare(`
+    INSERT INTO batch_location_balances (id, batch_id, material_id, location_id, remaining)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(`blb-sr-${seed.batchId}`, seed.batchId, seed.materialId, seed.locationId, stock)
+}
+
 describe('供应商退货', () => {
   let app: any
   let db: any
@@ -291,7 +306,8 @@ describe('供应商退货', () => {
   })
 
   it('SR-004: 创建供应商退货时扣减所选批次并保留批次线索', async () => {
-    const { materialId, supplierId, batchId, batchNo } = seedSupplierReturnMaterialWithBatch(db, `batch-${Date.now()}`)
+    const { materialId, supplierId, batchId, batchNo, locationId } = seedSupplierReturnMaterialWithBatch(db, `batch-${Date.now()}`)
+    seedSupplierReturnBatchLocation(db, { materialId, batchId, locationId }, 10)
 
     const res = await request(app)
       .post('/api/v1/supplier-returns')
@@ -309,6 +325,10 @@ describe('供应商退货', () => {
       .get(res.body.data.id) as any
     const batch = db.prepare('SELECT remaining, status FROM batches WHERE id = ?').get(batchId) as any
     const inv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+    const batchLocation = db.prepare(`
+      SELECT remaining FROM batch_location_balances
+      WHERE batch_id = ? AND material_id = ? AND location_id = ?
+    `).get(batchId, materialId, locationId) as any
 
     expect(record.batch_id).toBe(batchId)
     expect(record.batch_no).toBe(batchNo)
@@ -316,10 +336,12 @@ describe('供应商退货', () => {
     expect(Number(batch.remaining)).toBe(7)
     expect(Number(batch.status)).toBe(1)
     expect(Number(inv.stock)).toBe(7)
+    expect(Number(batchLocation.remaining)).toBe(7)
   })
 
   it('SR-005: 删除待发货供应商退货时恢复对应批次和库存', async () => {
-    const { materialId, supplierId, batchId } = seedSupplierReturnMaterialWithBatch(db, `restore-${Date.now()}`)
+    const { materialId, supplierId, batchId, locationId } = seedSupplierReturnMaterialWithBatch(db, `restore-${Date.now()}`)
+    seedSupplierReturnBatchLocation(db, { materialId, batchId, locationId }, 10)
     const createRes = await request(app)
       .post('/api/v1/supplier-returns')
       .set('Authorization', `Bearer ${token}`)
@@ -342,10 +364,15 @@ describe('供应商退货', () => {
     expect(deleteRes.status).toBe(200)
     const batch = db.prepare('SELECT remaining, status FROM batches WHERE id = ?').get(batchId) as any
     const inv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+    const batchLocation = db.prepare(`
+      SELECT remaining FROM batch_location_balances
+      WHERE batch_id = ? AND material_id = ? AND location_id = ?
+    `).get(batchId, materialId, locationId) as any
 
     expect(Number(batch.remaining)).toBe(10)
     expect(Number(batch.status)).toBe(1)
     expect(Number(inv.stock)).toBe(10)
+    expect(Number(batchLocation.remaining)).toBe(10)
   })
 
   it('SR-006: 所选批次库存不足时拒绝退货且不扣总库存', async () => {
@@ -508,7 +535,8 @@ describe('供应商退货', () => {
   })
 
   it('SR-007: 状态流转取消退货时恢复库存和批次', async () => {
-    const { materialId, supplierId, batchId } = seedSupplierReturnMaterialWithBatch(db, `status-cancel-${Date.now()}`)
+    const { materialId, supplierId, batchId, locationId } = seedSupplierReturnMaterialWithBatch(db, `status-cancel-${Date.now()}`)
+    seedSupplierReturnBatchLocation(db, { materialId, batchId, locationId }, 10)
     const createRes = await request(app)
       .post('/api/v1/supplier-returns')
       .set('Authorization', `Bearer ${token}`)
@@ -536,6 +564,10 @@ describe('供应商退货', () => {
     const record = db.prepare('SELECT status FROM supplier_returns WHERE id = ?').get(createRes.body.data.id) as any
     const batch = db.prepare('SELECT remaining, status FROM batches WHERE id = ?').get(batchId) as any
     const inv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+    const batchLocation = db.prepare(`
+      SELECT remaining FROM batch_location_balances
+      WHERE batch_id = ? AND material_id = ? AND location_id = ?
+    `).get(batchId, materialId, locationId) as any
     const cancelLog = db.prepare(`
       SELECT quantity, before_stock, after_stock, operator
       FROM stock_logs
@@ -548,6 +580,7 @@ describe('供应商退货', () => {
     expect(Number(batch.remaining)).toBe(10)
     expect(Number(batch.status)).toBe(1)
     expect(Number(inv.stock)).toBe(10)
+    expect(Number(batchLocation.remaining)).toBe(10)
     expect(Number(cancelLog.quantity)).toBe(4)
     expect(Number(cancelLog.before_stock)).toBe(6)
     expect(Number(cancelLog.after_stock)).toBe(10)

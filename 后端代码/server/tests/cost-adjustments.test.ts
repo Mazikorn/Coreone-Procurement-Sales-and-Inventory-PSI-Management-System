@@ -18,6 +18,17 @@ async function loginUser(app: any, username: string, password: string): Promise<
   return { token: res.body.data.token, userId: res.body.data.user.id }
 }
 
+function latestOperationLog(db: any, operation: string, entityId: string) {
+  return db.prepare(`
+    SELECT *
+    FROM operation_logs
+    WHERE operation = ?
+      AND (request_data LIKE ? OR response_data LIKE ?)
+    ORDER BY created_at DESC, rowid DESC
+    LIMIT 1
+  `).get(operation, `%${entityId}%`, `%${entityId}%`) as any
+}
+
 describe('季度成本调整', () => {
   let app: any
   let db: any
@@ -123,6 +134,23 @@ describe('季度成本调整', () => {
       submitted_by: adminUserId,
       review_status: 'pending',
     })
+
+    const opLog = latestOperationLog(db, 'POST /cost-adjustments', res.body.data.id)
+    expect(opLog).toBeTruthy()
+    expect(opLog.description).toBe('创建季度成本调整单')
+    expect(JSON.parse(opLog.request_data)).toMatchObject({
+      id: res.body.data.id,
+      costCenterId,
+      costCenterName: '合法调整单成本中心',
+      yearQuarter: '2026-Q2',
+      preProvisionAmount: 600,
+      actualAmount: 750,
+      adjustmentAmount: 150,
+      adjustmentReason: '季度发票核对',
+      reviewStatus: 'pending',
+      submittedBy: adminUserId,
+    })
+    expect(JSON.parse(opLog.response_data)).toMatchObject({ adjustmentId: res.body.data.id, costCenterId })
   })
 
   it('创建调整单必须拒绝停用成本中心和同季度重复调整', async () => {
@@ -226,6 +254,28 @@ describe('季度成本调整', () => {
       reviewed_by: financeUserId,
       review_reason: '财务复核通过',
     })
+
+    const opLog = latestOperationLog(db, 'POST /cost-adjustments/:id/review', adjustmentId)
+    expect(opLog).toBeTruthy()
+    expect(opLog.description).toBe('审核通过季度成本调整单')
+    expect(JSON.parse(opLog.request_data)).toMatchObject({
+      before: {
+        id: adjustmentId,
+        costCenterId,
+        yearQuarter: '2026-Q3',
+        reviewStatus: 'pending',
+        submittedBy: adminUserId,
+      },
+      after: {
+        id: adjustmentId,
+        costCenterId,
+        yearQuarter: '2026-Q3',
+        reviewStatus: 'approved',
+        reviewedBy: financeUserId,
+        reviewReason: '财务复核通过',
+      },
+    })
+    expect(JSON.parse(opLog.response_data)).toMatchObject({ adjustmentId, status: 'approved' })
   })
 
   it('调整单列表必须拒绝非法分页、季度、审核状态和不存在成本中心筛选', async () => {

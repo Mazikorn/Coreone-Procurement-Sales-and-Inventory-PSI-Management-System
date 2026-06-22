@@ -2,7 +2,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { reconciliationApi } from '@/api/reconciliation'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { toast } from 'sonner'
-import { buildLisImportPreview, buildLisImportTemplateCsv, buildLisImportValidation, buildReconciliationExportFilename, buildReconciliationExportParams, getLisImportRefreshTargets, parseLisImportData, useReconciliationPage, validateReconciliationDateRange } from './useReconciliationPage'
+import { buildLisImportPreview, buildLisImportTemplateCsv, buildLisImportValidation, buildReconciliationExportFilename, buildReconciliationExportParams, getLisImportRefreshTargets, getReconciliationPeriodRange, parseLisImportData, useReconciliationPage, validateReconciliationDateRange } from './useReconciliationPage'
 import { downloadBlobFile } from '@/lib/utils'
 
 vi.mock('@/api/reconciliation')
@@ -122,6 +122,13 @@ describe('parseLisImportData', () => {
     expect(buildReconciliationExportFilename({ type: 'case' }, 'xlsx')).toMatch(/^reconciliation-case-\d{4}-\d{2}-\d{2}\.xlsx$/)
   })
 
+  it('builds local date ranges without timezone day shifting', () => {
+    expect(getReconciliationPeriodRange('month', new Date(2026, 5, 21, 12))).toEqual({
+      startDate: '2026-06-01',
+      endDate: '2026-06-30',
+    })
+  })
+
   it('downloads the backend Excel export blob directly', async () => {
     const xlsxBlob = new Blob(['xlsx-binary'], {
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -144,6 +151,23 @@ describe('parseLisImportData', () => {
       xlsxBlob,
       expect.stringMatching(/^reconciliation-project-\d{4}-\d{2}-\d{2}\.xlsx$/)
     )
+  })
+
+  it('uses keyword from URL so audit links open a filtered case reconciliation list', async () => {
+    window.history.replaceState(null, '', '/reconciliation?keyword=CASE-DEEP-001')
+    const periodRange = getReconciliationPeriodRange('month')
+
+    const { result } = renderHook(() => useReconciliationPage())
+
+    await waitFor(() => expect(reconciliationApi.getCases).toHaveBeenCalledWith(expect.objectContaining({
+      page: 1,
+      pageSize: 20,
+      startDate: periodRange.startDate,
+      endDate: periodRange.endDate,
+      search: 'CASE-DEEP-001',
+    })))
+    expect(result.current.activeTab).toBe('case')
+    expect(result.current.caseSearch).toBe('CASE-DEEP-001')
   })
 
   it('rejects impossible and reversed reconciliation date ranges before requests', () => {

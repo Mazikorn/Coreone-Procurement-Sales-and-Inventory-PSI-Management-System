@@ -2,17 +2,17 @@ import request from './request'
 import type { ApiResponse, PaginationData, Category, Material, MaterialDeleteCheck, MaterialStatusCheck, Supplier, Location, LocationDeleteCheck, LocationStatusCheck, Project, ProjectDeleteCheck, ProjectStatusCheck, BOM, BOMDeleteCheck, BOMStatusCheck, Equipment, EquipmentType, EquipmentUsage, StandardLaborTime, IndirectCostCenter, IndirectCostAllocation, DepreciationStat, CostAdjustment, PageParams } from '@/types'
 
 export const categoryApi = {
-  getTree: () => request.get<Category[]>('/categories/tree'),
-  getList: (params?: PageParams & { status?: 'active' | 'inactive'; keyword?: string }) => request.get<PaginationData<Category>>('/categories', { params }),
+  getTree: (params?: { includeDeleted?: boolean }) => request.get<Category[]>('/categories/tree', { params }),
+  getList: (params?: PageParams & { status?: 'active' | 'inactive'; keyword?: string; includeDeleted?: boolean }) => request.get<PaginationData<Category>>('/categories', { params }),
   create: (data: Partial<Category>) => request.post('/categories', data),
   update: (id: string, data: Partial<Category>) => request.put(`/categories/${id}`, data),
   delete: (id: string, params?: { targetCategoryId?: string }) => request.delete(`/categories/${id}`, { params }),
 }
 
 export const materialApi = {
-  getList: (params?: PageParams & { categoryId?: string; supplierId?: string; status?: string; lowStock?: boolean | string }) =>
+  getList: (params?: PageParams & { keyword?: string; categoryId?: string; supplierId?: string; status?: string; lowStock?: boolean | string; includeDeleted?: boolean }) =>
     request.get<PaginationData<Material>>('/materials', { params }),
-  getStats: (params?: { keyword?: string; categoryId?: string; supplierId?: string }) =>
+  getStats: (params?: { keyword?: string; categoryId?: string; supplierId?: string; includeDeleted?: boolean }) =>
     request.get<{ total: number; active: number; inactive: number; lowStock: number }>('/materials/stats', { params }),
   getDetail: (id: string) => request.get<Material>(`/materials/${id}`),
   getByBarcode: (code: string) => request.get<Material>(`/materials/barcode/${encodeURIComponent(code)}`),
@@ -29,9 +29,9 @@ export const materialApi = {
 }
 
 export const supplierApi = {
-  getList: (params?: PageParams & { keyword?: string; status?: string }) =>
+  getList: (params?: PageParams & { keyword?: string; status?: string; includeDeleted?: boolean }) =>
     request.get<PaginationData<Supplier>>('/suppliers', { params }),
-  getStats: (params?: { keyword?: string; status?: string }) =>
+  getStats: (params?: { keyword?: string; status?: string; includeDeleted?: boolean }) =>
     request.get('/suppliers/stats', { params }),
   create: (data: Partial<Supplier>) => request.post('/suppliers', data),
   update: (id: string, data: Partial<Supplier>) => request.put(`/suppliers/${id}`, data),
@@ -43,9 +43,9 @@ export const supplierApi = {
 }
 
 export const locationApi = {
-  getList: (params?: PageParams & { zone?: string; status?: string; type?: string; keyword?: string }) =>
+  getList: (params?: PageParams & { zone?: string; status?: string; type?: string; keyword?: string; includeDeleted?: boolean }) =>
     request.get<PaginationData<Location>>('/locations', { params }),
-  getStats: (params?: { zone?: string; status?: string; type?: string; keyword?: string }) =>
+  getStats: (params?: { zone?: string; status?: string; type?: string; keyword?: string; includeDeleted?: boolean }) =>
     request.get<{ total: number; active: number; inactive: number; avgUtilization: number }>('/locations/stats', { params }),
   getTree: () => request.get<Location[]>('/locations/tree'),
   create: (data: Partial<Location>) => request.post('/locations', data),
@@ -57,9 +57,9 @@ export const locationApi = {
 }
 
 export const projectApi = {
-  getList: (params?: PageParams & { type?: string; status?: string; keyword?: string; bomFilter?: string }) =>
+  getList: (params?: PageParams & { type?: string; status?: string; keyword?: string; bomFilter?: string; includeDeleted?: boolean }) =>
     request.get<PaginationData<Project>>('/projects', { params }),
-  getStats: (params?: { keyword?: string; type?: string; status?: string; bomFilter?: string }) =>
+  getStats: (params?: { keyword?: string; type?: string; status?: string; bomFilter?: string; includeDeleted?: boolean }) =>
     request.get<{ total: number; active: number; inactive: number; noBom: number }>('/projects/stats', { params }),
   getDetail: (id: string) => request.get<Project>(`/projects/${id}`),
   create: (data: Partial<Project>) => request.post('/projects', data),
@@ -73,7 +73,7 @@ export const projectApi = {
 }
 
 export const bomApi = {
-  getList: (params?: PageParams & { type?: string; status?: string; keyword?: string }) =>
+  getList: (params?: PageParams & { type?: string; status?: string; keyword?: string; includeDeleted?: boolean }) =>
     request.get<PaginationData<BOM>>('/boms', { params }),
   getDetail: (id: string) => request.get<BOM>(`/boms/${id}`),
   create: (data: Partial<BOM>) => request.post('/boms', data),
@@ -92,9 +92,9 @@ export const bomApi = {
 }
 
 export const equipmentApi = {
-  getList: (params?: PageParams & { keyword?: string; status?: string; typeId?: string }) =>
+  getList: (params?: PageParams & { keyword?: string; status?: string; typeId?: string; includeDeleted?: boolean }) =>
     request.get<PaginationData<Equipment>>('/equipment', { params }),
-  getStats: (params?: { keyword?: string; status?: string; typeId?: string }) =>
+  getStats: (params?: { keyword?: string; status?: string; typeId?: string; includeDeleted?: boolean }) =>
     request.get('/equipment/stats', { params }),
   getDetail: (id: string) => request.get<Equipment>(`/equipment/${id}`),
   create: (data: Partial<Equipment>) => request.post('/equipment', data),
@@ -104,9 +104,9 @@ export const equipmentApi = {
     request.get<PaginationData<EquipmentUsage>>(`/equipment/${id}/usage`, { params }),
   recordUsage: (id: string, data: Partial<EquipmentUsage>) =>
     request.post(`/equipment/${id}/usage`, data),
-  getTypes: (params?: PageParams & { keyword?: string; status?: string }) =>
+  getTypes: (params?: PageParams & { keyword?: string; status?: string; includeDeleted?: boolean }) =>
     request.get<PaginationData<EquipmentType>>('/equipment-types', { params }),
-  getTypeStats: (params?: { keyword?: string; status?: string }) =>
+  getTypeStats: (params?: { keyword?: string; status?: string; includeDeleted?: boolean }) =>
     request.get<{ total: number; active: number; equipmentCount: number }>('/equipment-types/stats', { params }),
   getTypeDetail: (id: string) => request.get<EquipmentType>(`/equipment-types/${id}`),
   createType: (data: Partial<EquipmentType>) => request.post('/equipment-types', data),

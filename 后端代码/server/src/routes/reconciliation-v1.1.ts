@@ -6,6 +6,7 @@ import { getDatabase } from '../database/DatabaseManager.js'
 import { requireStrictRole } from '../middleware/auth.js'
 import { success, successList, error } from '../utils/response.js'
 import { recordCostException } from '../utils/cost-exceptions.js'
+import { logOperation } from '../utils/operation-logger.js'
 
 const router = Router()
 const upload = multer({
@@ -123,6 +124,30 @@ function validateCaseStatus(value?: string) {
 
 function hasText(value: unknown) {
   return typeof value === 'string' && value.trim().length > 0
+}
+
+function caseSnapshot(row: any) {
+  if (!row) return null
+  return {
+    id: row.id,
+    caseNo: row.case_no,
+    projectId: row.project_id || '',
+    projectName: row.project_name || '',
+    operator: row.operator || '',
+    operateTime: row.operate_time,
+    status: row.status,
+    importBatch: row.import_batch,
+  }
+}
+
+function bomItemSnapshot(row: any) {
+  if (!row) return null
+  return {
+    bomId: row.bom_id,
+    materialId: row.material_id,
+    usagePerSample: row.usage_per_sample,
+    unit: row.unit,
+  }
 }
 
 function validateBomFixLogPayload(payload: any) {
@@ -990,7 +1015,7 @@ router.post('/projects/:id/materials/audit', (req, res) => {
       throw innerErr
     }
 
-    success(res, {
+    const auditSummary = {
       total: rows.length,
       warningCount: rows.filter(row => row.status === 'warn').length,
       dangerCount: rows.filter(row => row.status === 'danger').length,
@@ -998,7 +1023,22 @@ router.post('/projects/:id/materials/audit', (req, res) => {
       updated,
       resolved,
       exceptions,
-    }, '对账差异审计完成')
+    }
+    logOperation(db, req as any, {
+      operation: 'POST /reconciliation/projects/:id/materials/audit',
+      description: '生成项目物料对账差异审计',
+      requestData: {
+        projectId,
+        projectCode: project.code,
+        projectName: project.name,
+        startDate: startDate || null,
+        endDate: endDate || null,
+        yearMonth,
+      },
+      responseData: auditSummary,
+    })
+
+    success(res, auditSummary, '对账差异审计完成')
   } catch (e: any) {
     if (e.message === 'Invalid date format') {
       error(res, 'Invalid date format', 'INVALID_PARAMETER', 400); return
@@ -1099,6 +1139,15 @@ router.post('/cases/import', (req, res) => {
     if (!result.ok) {
       return badImportResponse(res, result.message, result.errors)
     }
+    logOperation(getDatabase(), req as any, {
+      operation: 'POST /reconciliation/cases/import',
+      description: '导入LIS病例数据',
+      requestData: {
+        source: 'json',
+        submitted: items.length,
+      },
+      responseData: result.data,
+    })
     success(res, result.data, result.message)
   } catch (e: any) {
     error(res, e.message || '导入失败')
@@ -1122,6 +1171,16 @@ router.post('/import-lis', upload.single('file'), (req, res) => {
     if (!result.ok) {
       return badImportResponse(res, result.message, result.errors)
     }
+    logOperation(getDatabase(), req as any, {
+      operation: 'POST /reconciliation/import-lis',
+      description: '上传并导入LIS病例文件',
+      requestData: {
+        filename: req.file.originalname,
+        size: req.file.size,
+        parsedRows: items.length,
+      },
+      responseData: result.data,
+    })
     success(res, result.data, result.message)
   } catch (e: any) {
     error(res, e.message || '导入失败')
@@ -1168,25 +1227,29 @@ router.put('/cases/:id', (req, res) => {
     `).run(projectId, nextProjectName, normalizedStatus, id)
 
     const updated = db.prepare('SELECT * FROM lis_cases WHERE id = ?').get(id) as any
+    const reconciliationLogId = uuidv4()
+    const beforeCase = caseSnapshot(existing)
+    const afterCase = caseSnapshot(updated)
     db.prepare(`
       INSERT INTO reconciliation_logs (id, type, target_id, target_name, field, old_value, new_value, reason, operator, created_at)
       VALUES (?, 'case_edit', ?, ?, 'project_id,project_name,status', ?, ?, '病例对账信息更新', ?, CURRENT_TIMESTAMP)
     `).run(
-      uuidv4(),
+      reconciliationLogId,
       id,
       updated.case_no,
-      JSON.stringify({
-        projectId: existing.project_id || '',
-        projectName: existing.project_name || '',
-        status: existing.status || '',
-      }),
-      JSON.stringify({
-        projectId: updated.project_id || '',
-        projectName: updated.project_name || '',
-        status: updated.status || '',
-      }),
+      JSON.stringify(beforeCase),
+      JSON.stringify(afterCase),
       (req as any).user?.username || 'system',
     )
+    logOperation(db, req as any, {
+      operation: 'PUT /reconciliation/cases/:id',
+      description: '更新病例对账信息',
+      requestData: {
+        before: beforeCase,
+        after: afterCase,
+      },
+      responseData: { caseId: id, reconciliationLogId },
+    })
 
     success(res, null, '病例信息已更新')
   } catch (e: any) {
@@ -1245,12 +1308,13 @@ router.post('/logs', requireStrictRole('admin', 'technician'), (req, res) => {
       error(res, validationError, 'INVALID_PARAMETER', 400); return
     }
 
+    let operationPayload: any
     db.exec('BEGIN IMMEDIATE')
     try {
       // 如果提供了projectId、materialId和newUsage，先更新bom_items
       {
         const usage = Number(newUsage)
-        const project = db.prepare('SELECT bom_id FROM projects WHERE id = ? AND is_deleted = 0 AND status = 1').get(projectId) as any
+        const project = db.prepare('SELECT id, code, name, bom_id FROM projects WHERE id = ? AND is_deleted = 0 AND status = 1').get(projectId) as any
         if (!project) {
           db.exec('ROLLBACK')
           error(res, '项目不存在或已停用', 'INVALID_PARAMETER', 400); return
@@ -1259,6 +1323,8 @@ router.post('/logs', requireStrictRole('admin', 'technician'), (req, res) => {
           db.exec('ROLLBACK')
           error(res, '项目未关联BOM', 'INVALID_PARAMETER', 400); return
         }
+        const beforeItem = db.prepare('SELECT bom_id, material_id, usage_per_sample, unit FROM bom_items WHERE bom_id = ? AND material_id = ?')
+          .get(project.bom_id, materialId) as any
         const result = db.prepare(`
           UPDATE bom_items
           SET usage_per_sample = ?, unit = COALESCE(?, unit)
@@ -1267,6 +1333,18 @@ router.post('/logs', requireStrictRole('admin', 'technician'), (req, res) => {
         if (result.changes === 0) {
           db.exec('ROLLBACK')
           error(res, 'BOM物料不存在', 'NOT_FOUND', 404); return
+        }
+        const afterItem = db.prepare('SELECT bom_id, material_id, usage_per_sample, unit FROM bom_items WHERE bom_id = ? AND material_id = ?')
+          .get(project.bom_id, materialId) as any
+        operationPayload = {
+          project: {
+            id: project.id,
+            code: project.code,
+            name: project.name,
+            bomId: project.bom_id,
+          },
+          before: bomItemSnapshot(beforeItem),
+          after: bomItemSnapshot(afterItem),
         }
       }
 
@@ -1277,6 +1355,21 @@ router.post('/logs', requireStrictRole('admin', 'technician'), (req, res) => {
       `).run(id, type, targetId, targetName, field, oldValue, newValue, reason.trim(), (req as any).user?.username || 'system')
 
       db.exec('COMMIT')
+      logOperation(db, req as any, {
+        operation: 'POST /reconciliation/logs',
+        description: '记录BOM对账修正并更新标准用量',
+        requestData: {
+          type,
+          targetId,
+          targetName,
+          field,
+          oldValue,
+          newValue,
+          reason: reason.trim(),
+          ...operationPayload,
+        },
+        responseData: { reconciliationLogId: id, projectId, materialId },
+      })
       success(res, { id }, 'BOM修正已生效，日志已记录')
     } catch (innerErr: any) {
       db.exec('ROLLBACK')

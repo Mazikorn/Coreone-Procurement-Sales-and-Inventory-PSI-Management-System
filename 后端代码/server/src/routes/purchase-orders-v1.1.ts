@@ -79,6 +79,26 @@ function readActiveSupplier(db: any, supplierId: string | null) {
   return { ok: true, supplierId }
 }
 
+function purchaseOrderAuditSnapshot(row: any) {
+  return {
+    materialId: row.material_id,
+    materialName: row.material_name,
+    supplierId: row.supplier_id,
+    orderedQty: Number(row.ordered_qty || 0),
+    receivedQty: Number(row.received_qty || 0),
+    unit: row.unit,
+    unitPrice: Number(row.unit_price || 0),
+    totalAmount: Number(row.total_amount || 0),
+    expectedDate: row.expected_date || null,
+    remark: row.remark || '',
+    status: row.status,
+  }
+}
+
+function diffPurchaseOrderFields(before: any, after: any) {
+  return Object.keys(after).filter(key => before[key] !== after[key])
+}
+
 // 获取采购订单列表
 router.get('/', (req, res) => {
   try {
@@ -194,6 +214,100 @@ router.post('/', requirePurchaseOrderWrite, (req, res) => {
       responseData: { id, orderNo },
     })
     success(res, { id, orderNo }, '采购订单创建成功')
+  } catch (err: any) { error(res, err.message) }
+})
+
+// 编辑采购订单：仅允许未收货订单更正，避免已形成库存事实后改写采购源头。
+router.put('/:id', requirePurchaseOrderWrite, (req, res) => {
+  try {
+    const { materialId, supplierId, orderedQty, unitPrice, expectedDate, remark } = req.body
+    const normalizedMaterialId = normalizeOptionalId(materialId)
+    const normalizedSupplierId = normalizeOptionalId(supplierId)
+    const normalizedOrderedQty = Number(orderedQty)
+    if (!normalizedMaterialId || !normalizedSupplierId || orderedQty === undefined || orderedQty === null || !Number.isFinite(normalizedOrderedQty) || normalizedOrderedQty <= 0) {
+      error(res, '物料、供应商和采购数量必填', 'INVALID_PARAMETER', 400); return
+    }
+
+    const db = getDatabase()
+    const order = db.prepare('SELECT * FROM purchase_orders WHERE id = ? AND is_deleted = 0').get(req.params.id) as any
+    if (!order) { error(res, '订单不存在', 'NOT_FOUND', 404); return }
+    if (Number(order.received_qty || 0) > 0 || order.status === 'partial' || order.status === 'completed') {
+      error(res, '已收货的采购订单不能直接编辑，请通过入库修正或取消流程处理', 'PURCHASE_ORDER_ALREADY_RECEIVED', 409); return
+    }
+    if (order.status !== 'pending') {
+      error(res, '只有待收货采购订单可以编辑', 'PURCHASE_ORDER_NOT_EDITABLE', 409); return
+    }
+
+    const materialResult = readActiveMaterial(db, normalizedMaterialId)
+    if (!materialResult.ok) {
+      error(res, materialResult.message, materialResult.code, materialResult.status); return
+    }
+    const supplierResult = readActiveSupplier(db, normalizedSupplierId)
+    if (!supplierResult.ok) {
+      error(res, supplierResult.message, supplierResult.code, supplierResult.status); return
+    }
+
+    const material = materialResult.material
+    const normalizedUnitPrice = unitPrice === undefined || unitPrice === null || unitPrice === ''
+      ? Number(order.unit_price || material.price || 0)
+      : Number(unitPrice)
+    if (!Number.isFinite(normalizedUnitPrice) || normalizedUnitPrice < 0) {
+      error(res, '采购单价不能为负数', 'INVALID_PARAMETER', 400); return
+    }
+    const totalAmount = normalizedUnitPrice * normalizedOrderedQty
+    const before = purchaseOrderAuditSnapshot(order)
+
+    db.prepare(`
+      UPDATE purchase_orders
+      SET material_id = ?,
+          material_name = ?,
+          supplier_id = ?,
+          ordered_qty = ?,
+          unit = ?,
+          unit_price = ?,
+          total_amount = ?,
+          expected_date = ?,
+          remark = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND is_deleted = 0
+    `).run(
+      normalizedMaterialId,
+      material.name || '',
+      supplierResult.supplierId,
+      normalizedOrderedQty,
+      material.unit || '个',
+      normalizedUnitPrice,
+      totalAmount,
+      expectedDate || null,
+      remark || '',
+      req.params.id,
+    )
+
+    const updated = db.prepare(`
+      SELECT po.*, s.name as supplier_name
+      FROM purchase_orders po
+      LEFT JOIN suppliers s ON po.supplier_id = s.id AND s.is_deleted = 0
+      WHERE po.id = ? AND po.is_deleted = 0
+    `).get(req.params.id) as any
+    const after = purchaseOrderAuditSnapshot(updated)
+    logOperation(db, req, {
+      operation: 'PUT /purchase-orders/:id',
+      description: `更正采购订单 ${order.order_no || req.params.id}`,
+      requestData: {
+        module: 'purchase_orders',
+        id: req.params.id,
+        orderNo: order.order_no,
+        before,
+        after,
+      },
+      responseData: {
+        id: req.params.id,
+        status: updated.status,
+        changedFields: diffPurchaseOrderFields(before, after),
+      },
+    })
+
+    success(res, mapPurchaseOrder(updated), '采购订单已更新')
   } catch (err: any) { error(res, err.message) }
 })
 

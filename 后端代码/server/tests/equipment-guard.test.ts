@@ -107,8 +107,8 @@ describe('设备删除保护', () => {
       .set('Authorization', `Bearer ${technicianToken}`)
 
     expect(deleted.status).toBe(200)
-    const afterDelete = db.prepare('SELECT id FROM equipment_types WHERE id = ?').get(typeId) as any
-    expect(afterDelete).toBeUndefined()
+    const afterDelete = db.prepare('SELECT is_deleted FROM equipment_types WHERE id = ?').get(typeId) as any
+    expect(afterDelete).toMatchObject({ is_deleted: 1 })
   })
 
   it('EQ-TYPE-CODE-001: 编辑设备类型时不允许修改类型编码', async () => {

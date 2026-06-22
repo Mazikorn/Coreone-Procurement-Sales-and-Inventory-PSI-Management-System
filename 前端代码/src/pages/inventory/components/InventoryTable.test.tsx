@@ -3,7 +3,9 @@ import { fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 import { InventoryTable } from './InventoryTable'
+import { InventoryDetailModal } from './InventoryDetailModal'
 import type { InventoryItem } from '@/types'
+import type { InventoryBatchTrace } from '@/types'
 
 type InventoryRow = InventoryItem & {
   batch?: string
@@ -128,5 +130,58 @@ describe('InventoryTable', () => {
     expect(screen.queryByText('批量出库')).not.toBeInTheDocument()
     expect(screen.queryByText('批量报废')).not.toBeInTheDocument()
     expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
+  })
+})
+
+describe('InventoryDetailModal', () => {
+  it('shows batch formation facts, location balances, and movement reasons', () => {
+    const item = makeRow('mat-trace', 'INV-TRACE', 7)
+    const batchTrace: InventoryBatchTrace = {
+      batch: {
+        id: 'batch-mat-trace',
+        materialId: 'mat-trace',
+        batchNo: 'B-INV-TRACE',
+        quantity: 10,
+        remaining: 7,
+        inboundId: 'inbound-trace',
+        inboundNo: 'IN-TRACE-001',
+        inboundPrice: 12,
+        supplierName: '追溯供应商',
+        locationName: 'A1',
+        productionDate: '2026-01-01',
+        expiryDate: '2028-01-31',
+        operator: '王仓管',
+        createdAt: '2026-06-20 09:00:00',
+      },
+      locationBalances: [
+        { locationId: 'loc-a', locationName: 'A1', remaining: 4 },
+        { locationId: 'loc-b', locationName: 'B1', remaining: 3 },
+      ],
+      movements: [
+        { id: 'mv-in', type: 'inbound', label: '采购入库', quantityDelta: 10, documentNo: 'IN-TRACE-001', locationName: 'A1', operator: '王仓管', createdAt: '2026-06-20 09:00:00' },
+        { id: 'mv-transfer', type: 'transfer', label: '调拨转出', quantityDelta: -3, locationName: 'A1', createdAt: '2026-06-20 09:30:00' },
+      ],
+    }
+
+    render(
+      <InventoryDetailModal
+        open
+        item={item}
+        batchTrace={batchTrace}
+        batchTraceLoading={false}
+        onClose={vi.fn()}
+        onOutbound={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('批次形成与流转')).toBeInTheDocument()
+    expect(screen.getAllByText('IN-TRACE-001').length).toBeGreaterThanOrEqual(2)
+    expect(screen.getByText('追溯供应商')).toBeInTheDocument()
+    expect(screen.getByText((content, node) => node?.textContent === 'A1: 4瓶')).toBeInTheDocument()
+    expect(screen.getByText((content, node) => node?.textContent === 'B1: 3瓶')).toBeInTheDocument()
+    expect(screen.getByText('采购入库')).toBeInTheDocument()
+    expect(screen.getByText('+10瓶')).toBeInTheDocument()
+    expect(screen.getByText('调拨转出')).toBeInTheDocument()
+    expect(screen.getByText('-3瓶')).toBeInTheDocument()
   })
 })

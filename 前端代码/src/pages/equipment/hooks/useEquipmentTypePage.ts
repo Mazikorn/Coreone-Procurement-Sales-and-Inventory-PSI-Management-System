@@ -44,8 +44,11 @@ function canManageEquipmentTypeRecords() {
 
 export function useEquipmentTypePage() {
   const canManageEquipmentTypes = canManageEquipmentTypeRecords()
-  const [searchInput, setSearchInput] = useState('')
-  const [keyword, setKeyword] = useState('')
+  const initialParams = new URLSearchParams(window.location.search)
+  const initialKeyword = initialParams.get('keyword') || ''
+  const [includeDeleted, setIncludeDeleted] = useState(initialParams.get('includeDeleted') === 'true')
+  const [searchInput, setSearchInput] = useState(initialKeyword)
+  const [keyword, setKeyword] = useState(initialKeyword)
   const [statusFilter, setStatusFilter] = useState<string>('')
   const [stats, setStats] = useState({ total: 0, active: 0, equipmentCount: 0 })
   const [modalType, setModalType] = useState<null | 'create' | 'edit'>(null)
@@ -56,12 +59,17 @@ export function useEquipmentTypePage() {
 
   const { data, loading, page, pageSize, total, setPage, setPageSize, refresh } = usePagination<EquipmentType>({
     fetchFn: async (params) => {
-      const res = await equipmentApi.getTypes({ ...params, keyword, status: statusFilter || undefined })
+      const res = await equipmentApi.getTypes({
+        ...params,
+        keyword: keyword || undefined,
+        status: statusFilter || undefined,
+        includeDeleted: includeDeleted || undefined,
+      })
       return { list: res?.list || [], pagination: res?.pagination }
     },
     initialPage: 1,
     initialPageSize: 20,
-    deps: [keyword, statusFilter],
+    deps: [keyword, statusFilter, includeDeleted],
   })
 
   const loadStats = useCallback(async () => {
@@ -69,6 +77,7 @@ export function useEquipmentTypePage() {
       const res = await equipmentApi.getTypeStats({
         keyword: keyword || undefined,
         status: statusFilter || undefined,
+        includeDeleted: includeDeleted || undefined,
       })
       setStats({
         total: Number(res.total || 0),
@@ -78,7 +87,7 @@ export function useEquipmentTypePage() {
     } catch {
       setStats({ total, active: 0, equipmentCount: 0 })
     }
-  }, [keyword, statusFilter, total])
+  }, [keyword, statusFilter, includeDeleted, total])
 
   useEffect(() => {
     loadStats()
@@ -92,6 +101,7 @@ export function useEquipmentTypePage() {
   const handleReset = useCallback(() => {
     setSearchInput('')
     setKeyword('')
+    setIncludeDeleted(false)
     setStatusFilter('')
     setPage(1)
   }, [setPage])

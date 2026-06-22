@@ -160,6 +160,9 @@ export const abcApi = {
   createQualityCost: (data: any) =>
     request.post('/abc/quality-costs', data),
 
+  updateQualityCost: (id: string, data: any) =>
+    request.put(`/abc/quality-costs/${id}`, data),
+
   getQualityCostSummary: (yearMonth?: string) =>
     request.get('/abc/quality-costs/summary', { params: { yearMonth } }),
 

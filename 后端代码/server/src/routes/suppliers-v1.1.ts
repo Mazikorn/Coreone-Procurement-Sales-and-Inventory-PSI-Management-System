@@ -13,12 +13,13 @@ const requireSupplierWrite = requireRole('admin', 'procurement')
 
 function buildSupplierWhere(query: any) {
   const { keyword, status } = query
-  let where = 'is_deleted = 0'
+  const includeDeleted = query?.includeDeleted === true || query?.includeDeleted === 'true'
+  let where = includeDeleted ? '1=1' : 'is_deleted = 0'
   const params: any[] = []
   if (keyword) {
-    where += ' AND (name LIKE ? OR code LIKE ? OR contact LIKE ? OR phone LIKE ?)'
+    where += ' AND (id LIKE ? OR name LIKE ? OR code LIKE ? OR contact LIKE ? OR phone LIKE ?)'
     const like = `%${keyword}%`
-    params.push(like, like, like, like)
+    params.push(like, like, like, like, like)
   }
   if (status === 'active' || status === 'inactive') {
     where += ' AND status = ?'
@@ -43,6 +44,7 @@ router.get('/', authenticateToken, requireSupplierRead, (req, res) => {
       id: r.id, code: r.code, name: r.name, contact: r.contact, phone: r.phone,
       email: r.email, address: r.address, taxNo: r.tax_no, bankName: r.bank_name, bankAccount: r.bank_account,
       status: r.status === 1 ? 'active' : 'inactive',
+      isDeleted: Number(r.is_deleted || 0) !== 0,
       cooperationCount: r.cooperation_count, totalAmount: r.total_amount, rating: r.rating,
       createdAt: r.created_at, updatedAt: r.updated_at,
     })), Number(page), Number(pageSize), count)

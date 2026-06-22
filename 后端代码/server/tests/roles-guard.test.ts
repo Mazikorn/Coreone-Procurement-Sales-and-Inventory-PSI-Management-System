@@ -35,6 +35,7 @@ async function createUser(app: any, token: string, roleCode: string, suffix: str
       username: `role-user-${suffix}`,
       realName: '角色引用用户',
       role: roleCode,
+      department: '病理科',
     })
   expect(res.status).toBe(201)
   return res.body.data.id as string
@@ -51,6 +52,7 @@ async function createLoginUser(app: any, token: string, roleCode: string, suffix
       password,
       realName: '角色登录用户',
       role: roleCode,
+      department: '病理科',
     })
   expect(res.status).toBe(201)
   return { username, password }
@@ -158,6 +160,101 @@ describe('角色引用保护', () => {
       .set('Authorization', `Bearer ${login.body.data.token}`)
 
     expect(inventory.status).toBe(200)
+  })
+
+  it('ROLE-AUTH-002: 自定义成本只读角色不能读取财务配置工作台接口', async () => {
+    const suffix = `cost-view-${Date.now()}`
+    const roleCode = `role_cost_view_${suffix}`
+    const create = await request(app)
+      .post('/api/v1/roles')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        code: roleCode,
+        name: '成本只读观察者',
+        permissions: ['cost_analysis:view'],
+        status: 'active',
+      })
+    expect(create.status).toBe(200)
+    const user = await createLoginUser(app, token, roleCode, suffix)
+
+    const login = await request(app)
+      .post('/api/v1/auth/login')
+      .send({ username: user.username, password: user.password })
+
+    expect(login.status).toBe(200)
+    const customCostToken = login.body.data.token
+
+    const dashboard = await request(app)
+      .get('/api/v1/abc/dashboard')
+      .set('Authorization', `Bearer ${customCostToken}`)
+    expect(dashboard.status).toBe(200)
+
+    for (const path of [
+      '/api/v1/indirect-costs',
+      '/api/v1/abc/activity-centers',
+      '/api/v1/abc/cost-drivers',
+      '/api/v1/abc/cost-pools',
+      '/api/v1/abc/bom-fee-mappings/audit',
+      '/api/v1/abc/fee-standards',
+    ]) {
+      const res = await request(app)
+        .get(path)
+        .set('Authorization', `Bearer ${customCostToken}`)
+
+      expect(res.status).toBe(403)
+    }
+  })
+
+  it('ROLE-AUTH-003: 自定义成本模块角色可以承接财务成本工作台读写', async () => {
+    const suffix = `cost-worker-${Date.now()}`
+    const roleCode = `role_cost_worker_${suffix}`
+    const create = await request(app)
+      .post('/api/v1/roles')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        code: roleCode,
+        name: '自定义财务成本人员',
+        permissions: ['cost_analysis'],
+        status: 'active',
+      })
+    expect(create.status).toBe(200)
+    const user = await createLoginUser(app, token, roleCode, suffix)
+
+    const login = await request(app)
+      .post('/api/v1/auth/login')
+      .send({ username: user.username, password: user.password })
+
+    expect(login.status).toBe(200)
+    const customFinanceToken = login.body.data.token
+
+    for (const path of [
+      '/api/v1/abc/dashboard',
+      '/api/v1/indirect-costs',
+      '/api/v1/abc/activity-centers',
+      '/api/v1/abc/cost-drivers',
+      '/api/v1/abc/cost-pools',
+      '/api/v1/abc/bom-fee-mappings/audit',
+      '/api/v1/abc/fee-standards',
+      '/api/v1/cost-adjustments',
+    ]) {
+      const res = await request(app)
+        .get(path)
+        .set('Authorization', `Bearer ${customFinanceToken}`)
+
+      expect(res.status).toBe(200)
+    }
+
+    const createCenter = await request(app)
+      .post('/api/v1/abc/activity-centers')
+      .set('Authorization', `Bearer ${customFinanceToken}`)
+      .send({
+        code: `CUSTOM_COST_AC_${suffix}`,
+        name: '自定义财务成本角色作业中心',
+        costDriverType: 'slide_count',
+      })
+
+    expect(createCenter.status).toBe(201)
+    expect(createCenter.body.success).toBe(true)
   })
 
   it('ROLE-SCOPE-001: 角色数据权限范围会被创建、返回和编辑保存', async () => {
@@ -310,7 +407,7 @@ describe('角色引用保护', () => {
     expect(JSON.parse(stored.permissions)).toEqual(['inventory:view'])
   })
 
-  it('ROLE-AUTH-002: 停用角色后该角色用户不能继续登录', async () => {
+  it('ROLE-AUTH-004: 停用角色后该角色用户不能继续登录', async () => {
     const suffix = `inactive-auth-${Date.now()}`
     const role = await createRole(app, token, suffix)
     const user = await createLoginUser(app, token, role.code, suffix)

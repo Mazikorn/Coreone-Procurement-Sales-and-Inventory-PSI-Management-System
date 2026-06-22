@@ -30,6 +30,7 @@ describe('EquipmentTypeFormModal', () => {
       />
     )
 
+    expect(screen.getByRole('dialog', { name: '编辑设备类型' })).toBeInTheDocument()
     expect(screen.getByDisplayValue('EQT-LOCKED')).toHaveAttribute('readonly')
     expect(screen.getByText('禁用')).toBeInTheDocument()
   })

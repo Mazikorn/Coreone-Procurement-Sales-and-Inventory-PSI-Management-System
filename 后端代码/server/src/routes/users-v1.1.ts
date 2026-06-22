@@ -43,6 +43,25 @@ function isAssignableRole(db: any, role: string) {
   return Boolean(db.prepare('SELECT 1 FROM roles WHERE code = ? AND status = 1 AND is_deleted = 0').get(role))
 }
 
+function getAssignableRole(db: any, role: string) {
+  return db.prepare('SELECT code, data_scope FROM roles WHERE code = ? AND status = 1 AND is_deleted = 0').get(role) as any
+}
+
+function validateDepartmentForRole(db: any, role: string, department: string | null) {
+  const roleRow = getAssignableRole(db, role)
+  if (!roleRow) return { ok: false as const, message: 'Invalid role', code: 'INVALID_PARAMETER', status: 400 }
+  const dataScope = normalizeDataScope(roleRow.data_scope)
+  if (dataScope === 'dept' && !department) {
+    return {
+      ok: false as const,
+      message: '本部门数据角色必须绑定部门',
+      code: 'DEPARTMENT_REQUIRED_FOR_DEPT_SCOPE',
+      status: 400,
+    }
+  }
+  return { ok: true as const, dataScope }
+}
+
 function parsePermissions(value: unknown) {
   if (!value || typeof value !== 'string') return []
   try {
@@ -161,12 +180,14 @@ router.post('/', (req, res) => {
     if (!role) { error(res, 'Role required', 'INVALID_PARAMETER', 400); return }
     if (!validateStatus(status)) { error(res, 'Invalid status', 'INVALID_PARAMETER', 400); return }
     if (!validateProvidedPassword(password)) { error(res, PASSWORD_POLICY_MESSAGE, 'INVALID_PARAMETER', 400); return }
-    if (!isAssignableRole(db, role)) { error(res, 'Invalid role', 'INVALID_PARAMETER', 400); return }
+    const department = normalizeOptionalText(req.body.department)
+    const roleValidation = validateDepartmentForRole(db, role, department)
+    if (!roleValidation.ok) { error(res, roleValidation.message, roleValidation.code, roleValidation.status); return }
     const id = uuidv4()
     const initialPassword = password || generateTemporaryPassword()
     const hashedPassword = bcrypt.hashSync(initialPassword, 12)
     db.prepare('INSERT INTO users (id, username, password, real_name, role, department, phone, email, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(id, username, hashedPassword, realName, role, normalizeOptionalText(req.body.department), normalizeOptionalText(req.body.phone), normalizeOptionalText(req.body.email), status === 'inactive' ? 0 : 1)
+      .run(id, username, hashedPassword, realName, role, department, normalizeOptionalText(req.body.phone), normalizeOptionalText(req.body.email), status === 'inactive' ? 0 : 1)
     logOperation(db, req, {
       operation: 'create user',
       description: `创建用户 ${username}`,
@@ -297,6 +318,10 @@ router.put('/:id', (req, res) => {
     if (normalizedRole !== undefined && (!normalizedRole || !isAssignableRole(db, normalizedRole))) {
       error(res, 'Invalid role', 'INVALID_PARAMETER', 400); return
     }
+    const nextRole = normalizedRole !== undefined ? normalizedRole : existing.role
+    const nextDepartment = data.department !== undefined ? normalizeOptionalText(data.department) : normalizeOptionalText(existing.department)
+    const roleValidation = validateDepartmentForRole(db, nextRole, nextDepartment)
+    if (!roleValidation.ok) { error(res, roleValidation.message, roleValidation.code, roleValidation.status); return }
     const fields: string[] = []; const params: any[] = []
     if (data.realName !== undefined) {
       const realName = normalizeRequiredText(data.realName)

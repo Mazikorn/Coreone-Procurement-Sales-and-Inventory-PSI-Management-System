@@ -87,6 +87,7 @@ export function useMaterialsPage() {
   const canWrite = canManageMaterials(getUserRole())
 
   const initialQuickFilter = normalizeQuickFilter(get('quick', get('status', 'all')))
+  const includeDeleted = get('includeDeleted') === 'true'
 
   const [keyword, setKeywordState] = useState(get('keyword') || '')
   const [debouncedKeyword, setDebouncedKeyword] = useState(get('keyword') || '')
@@ -122,10 +123,11 @@ export function useMaterialsPage() {
       if (quickFilter === 'low-stock') {
         params.lowStock = true
       }
+      if (includeDeleted) params.includeDeleted = true
       const res: any = await materialApi.getList(params)
       return { list: res.list || [], pagination: res.pagination }
     },
-    [debouncedKeyword, categoryId, supplierId, quickFilter]
+    [debouncedKeyword, categoryId, supplierId, quickFilter, includeDeleted]
   )
 
   const {
@@ -135,7 +137,7 @@ export function useMaterialsPage() {
     fetchFn,
     initialPage: urlPage,
     initialPageSize: urlPageSize,
-    deps: [debouncedKeyword, categoryId, supplierId, quickFilter],
+    deps: [debouncedKeyword, categoryId, supplierId, quickFilter, includeDeleted],
   })
 
   useEffect(() => {
@@ -232,10 +234,11 @@ export function useMaterialsPage() {
 
   const loadStats = useCallback(async () => {
     try {
-      const params: { keyword?: string; categoryId?: string; supplierId?: string } = {}
+      const params: { keyword?: string; categoryId?: string; supplierId?: string; includeDeleted?: boolean } = {}
       if (debouncedKeyword) params.keyword = debouncedKeyword
       if (categoryId) params.categoryId = categoryId
       if (supplierId) params.supplierId = supplierId
+      if (includeDeleted) params.includeDeleted = true
       const res: any = await materialApi.getStats(params)
       setStats({
         total: Number(res?.total || 0),
@@ -244,7 +247,7 @@ export function useMaterialsPage() {
         lowStock: Number(res?.lowStock || 0),
       })
     } catch (e) { console.error(e) }
-  }, [debouncedKeyword, categoryId, supplierId])
+  }, [debouncedKeyword, categoryId, supplierId, includeDeleted])
 
   useEffect(() => { loadStats() }, [loadStats])
 

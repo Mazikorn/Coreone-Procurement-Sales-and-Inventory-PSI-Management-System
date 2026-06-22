@@ -109,6 +109,53 @@ export interface LisImportPreview {
   errors: LisImportError[]
 }
 
+function formatDateOnly(date: Date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+export function getReconciliationPeriodRange(period: PeriodType, baseDate = new Date()) {
+  const year = baseDate.getFullYear()
+  const month = baseDate.getMonth()
+  const day = baseDate.getDate()
+  let start: Date
+  let end: Date
+
+  switch (period) {
+    case 'week': {
+      const dayOfWeek = baseDate.getDay()
+      start = new Date(baseDate)
+      start.setDate(day - (dayOfWeek === 0 ? 6 : dayOfWeek - 1))
+      end = new Date(start)
+      end.setDate(start.getDate() + 6)
+      break
+    }
+    case 'quarter': {
+      const quarter = Math.floor(month / 3)
+      start = new Date(year, quarter * 3, 1)
+      end = new Date(year, quarter * 3 + 3, 0)
+      break
+    }
+    case 'year': {
+      start = new Date(year, 0, 1)
+      end = new Date(year, 11, 31)
+      break
+    }
+    case 'month':
+    default: {
+      start = new Date(year, month, 1)
+      end = new Date(year, month + 1, 0)
+    }
+  }
+
+  return {
+    startDate: formatDateOnly(start),
+    endDate: formatDateOnly(end),
+  }
+}
+
 const HEADER_ALIASES: Record<keyof LisImportItem, string[]> = {
   caseNo: ['病理号', '病例号', 'caseNo', 'case_no', 'case no'],
   projectName: ['检测项目', '项目名称', 'projectName', 'project_name', 'project name'],
@@ -338,61 +385,23 @@ export function getLisImportRefreshTargets(activeTab: TabType) {
 }
 
 export function useReconciliationPage() {
-  const [activeTab, setActiveTab] = useState<TabType>('reconcile')
-  const [period, setPeriod] = useState<PeriodType>('month')
-  const [startDate, setStartDate] = useState('')
-  const [endDate, setEndDate] = useState('')
+  const { get, getNumber, setMultiple } = useUrlParams()
+  const initialKeyword = get('keyword')
+  const initialPeriod: PeriodType = 'month'
+  const initialDateRange = getReconciliationPeriodRange(initialPeriod)
+  const [activeTab, setActiveTab] = useState<TabType>(initialKeyword ? 'case' : 'reconcile')
+  const [period, setPeriod] = useState<PeriodType>(initialPeriod)
+  const [startDate, setStartDate] = useState(initialDateRange.startDate)
+  const [endDate, setEndDate] = useState(initialDateRange.endDate)
   const [loading, setLoading] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [auditingProjectId, setAuditingProjectId] = useState<string | null>(null)
 
   // 根据 period 动态计算 startDate 和 endDate
   useEffect(() => {
-    const now = new Date()
-    const year = now.getFullYear()
-    const month = now.getMonth()
-    const day = now.getDate()
-
-    let start: Date
-    let end: Date
-
-    switch (period) {
-      case 'week': {
-        // 本周（周一到周日）
-        const dayOfWeek = now.getDay()
-        start = new Date(now)
-        start.setDate(day - (dayOfWeek === 0 ? 6 : dayOfWeek - 1))
-        end = new Date(start)
-        end.setDate(start.getDate() + 6)
-        break
-      }
-      case 'month': {
-        // 本月
-        start = new Date(year, month, 1)
-        end = new Date(year, month + 1, 0)
-        break
-      }
-      case 'quarter': {
-        // 本季度
-        const quarter = Math.floor(month / 3)
-        start = new Date(year, quarter * 3, 1)
-        end = new Date(year, quarter * 3 + 3, 0)
-        break
-      }
-      case 'year': {
-        // 本年
-        start = new Date(year, 0, 1)
-        end = new Date(year, 11, 31)
-        break
-      }
-      default: {
-        start = new Date(year, month, 1)
-        end = new Date(year, month + 1, 0)
-      }
-    }
-
-    setStartDate(start.toISOString().split('T')[0])
-    setEndDate(end.toISOString().split('T')[0])
+    const nextRange = getReconciliationPeriodRange(period)
+    setStartDate(nextRange.startDate)
+    setEndDate(nextRange.endDate)
   }, [period])
 
   const [summary, setSummary] = useState<SummaryData | null>(null)
@@ -401,7 +410,7 @@ export function useReconciliationPage() {
   const [projectMaterials, setProjectMaterials] = useState<Record<string, MaterialDiff[]>>({})
   const [materials, setMaterials] = useState<MaterialSummary[]>([])
 
-  const [caseSearch, setCaseSearch] = useState('')
+  const [caseSearch, setCaseSearch] = useState(initialKeyword || get('csearch'))
   const [caseFilterProject, setCaseFilterProject] = useState('')
   const [caseFilterStatus, setCaseFilterStatus] = useState('')
 
@@ -449,8 +458,6 @@ export function useReconciliationPage() {
     } catch (e) { console.error(e) } finally { setLoading(false) }
   }, [dateParams, dateValidation.valid])
 
-  const { get, getNumber, setMultiple } = useUrlParams()
-
   const caseFetchFn = useCallback(
     async ({ page, pageSize }: { page: number; pageSize: number }) => {
       if (activeTab !== 'case') return { list: [], pagination: { total: 0, page, pageSize } }
@@ -472,7 +479,7 @@ export function useReconciliationPage() {
     fetchFn: caseFetchFn,
     initialPage: Math.max(1, getNumber('cpage', 1)),
     initialPageSize: Math.max(1, Math.min(100, getNumber('cpageSize', 20))),
-    deps: [activeTab, caseSearch, caseFilterProject, caseFilterStatus],
+    deps: [activeTab, dateParams, dateValidation.valid, caseSearch, caseFilterProject, caseFilterStatus],
   })
 
   const logFetchFn = useCallback(

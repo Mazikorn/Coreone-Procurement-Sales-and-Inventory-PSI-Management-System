@@ -212,4 +212,115 @@ describe('CostDashboard adjustment refresh', () => {
     expect(row!).toHaveTextContent('2')
     expect(row!).toHaveTextContent('1')
   })
+
+  it('loads adjustment records from audit deep link month and keyword on first render', async () => {
+    vi.mocked(abcApi.getDashboard).mockResolvedValue({
+      ...dashboardResponse,
+      summary: {
+        ...dashboardResponse.summary,
+        pendingAdjustmentCount: 1,
+      },
+    })
+    vi.mocked(abcApi.getPeriods).mockResolvedValue({
+      list: [{ id: 'period-209903', yearMonth: '2099-03', status: 'closed' }],
+    })
+    vi.mocked(abcApi.getCostRuns).mockResolvedValue(emptyListResponse)
+    vi.mocked(abcApi.getAdjustments).mockResolvedValue({
+      list: [{
+        id: 'adjustment-deep-link-1',
+        adjustmentNo: 'ADJ-AUDIT-DEEP-001',
+        yearMonth: '2099-03',
+        adjustmentType: 'closed_period_adjustment',
+        amount: 368,
+        reason: '审计回跳验证调整单',
+        status: 'pending',
+        submittedBy: 'sunli',
+      }],
+    })
+    vi.mocked(reportsApi.getCostMonthlyComparison).mockResolvedValue(null)
+
+    render(
+      <MemoryRouter initialEntries={['/abc/dashboard?month=2099-03&keyword=ADJ-AUDIT-DEEP-001']}>
+        <CostDashboard />
+      </MemoryRouter>
+    )
+
+    await waitFor(() => {
+      expect(abcApi.getDashboard).toHaveBeenCalledWith('2099-03')
+      expect(abcApi.getAdjustments).toHaveBeenCalledWith(expect.objectContaining({
+        yearMonth: '2099-03',
+        keyword: 'ADJ-AUDIT-DEEP-001',
+        pageSize: 20,
+      }))
+    })
+    expect(await screen.findByText('ADJ-AUDIT-DEEP-001')).toBeInTheDocument()
+    expect(screen.getByText('审计回跳验证调整单')).toBeInTheDocument()
+  })
+
+  it('loads cost run records from audit deep link month and keyword on first render', async () => {
+    vi.mocked(abcApi.getDashboard).mockResolvedValue(dashboardResponse)
+    vi.mocked(abcApi.getPeriods).mockResolvedValue({
+      list: [{ id: 'period-209904', yearMonth: '2099-04', status: 'calculated' }],
+    })
+    vi.mocked(abcApi.getCostRuns).mockResolvedValue({
+      list: [{
+        id: 'RUN-AUDIT-DEEP-001',
+        yearMonth: '2099-04',
+        runType: 'recalculate',
+        status: 'completed',
+        summary: { processed: 7, succeeded: 6, failed: 1 },
+        startedAt: '2099-04-09 09:00:00',
+        finishedAt: '2099-04-09 09:05:00',
+      }],
+    })
+    vi.mocked(abcApi.getAdjustments).mockResolvedValue(emptyListResponse)
+    vi.mocked(reportsApi.getCostMonthlyComparison).mockResolvedValue(null)
+
+    render(
+      <MemoryRouter initialEntries={['/abc/dashboard?month=2099-04&keyword=RUN-AUDIT-DEEP-001']}>
+        <CostDashboard />
+      </MemoryRouter>
+    )
+
+    await waitFor(() => {
+      expect(abcApi.getDashboard).toHaveBeenCalledWith('2099-04')
+      expect(abcApi.getCostRuns).toHaveBeenCalledWith(expect.objectContaining({
+        yearMonth: '2099-04',
+        keyword: 'RUN-AUDIT-DEEP-001',
+        pageSize: 20,
+      }))
+    })
+    const row = (await screen.findByText('RUN-AUDIT-DEEP-001')).closest('tr')
+    expect(row).not.toBeNull()
+    expect(row!).toHaveTextContent('重算')
+    expect(row!).toHaveTextContent('7')
+    expect(row!).toHaveTextContent('6')
+    expect(row!).toHaveTextContent('1')
+  })
+
+  it('loads cost period status from audit month deep link on first render', async () => {
+    vi.mocked(abcApi.getDashboard).mockResolvedValue(dashboardResponse)
+    vi.mocked(abcApi.getPeriods).mockResolvedValue({
+      list: [{ id: 'period-209905', yearMonth: '2099-05', status: 'closed' }],
+    })
+    vi.mocked(abcApi.getCostRuns).mockResolvedValue(emptyListResponse)
+    vi.mocked(abcApi.getAdjustments).mockResolvedValue(emptyListResponse)
+    vi.mocked(reportsApi.getCostMonthlyComparison).mockResolvedValue(null)
+
+    render(
+      <MemoryRouter initialEntries={['/abc/dashboard?month=2099-05']}>
+        <CostDashboard />
+      </MemoryRouter>
+    )
+
+    await waitFor(() => {
+      expect(abcApi.getDashboard).toHaveBeenCalledWith('2099-05')
+      expect(abcApi.getPeriods).toHaveBeenCalledWith(expect.objectContaining({
+        yearMonth: '2099-05',
+        pageSize: 1,
+      }))
+    })
+    expect(screen.getByDisplayValue('2099-05')).toBeInTheDocument()
+    expect(await screen.findByText('已关账')).toBeInTheDocument()
+  })
 })

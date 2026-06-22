@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { logsApi } from '@/api/logs'
+import type { LogArchiveChainVerification, LogArchiveCredential, LogArchiveReportSignature } from '@/api/logs'
 import { usersApi } from '@/api/users'
 import type { OperationLog } from '@/types'
 import { toast } from 'sonner'
@@ -17,7 +18,7 @@ export interface LogFormData {
   includeDiff: boolean
 }
 
-export type LogCleanRange = '30' | '90' | '180' | 'all'
+export type LogCleanRange = '180'
 
 export const LOG_TYPES = [
   { value: 'login', label: '登录', className: 'bg-blue-50 text-blue-500' },
@@ -60,6 +61,15 @@ export const MODULES = [
   { value: 'system', label: '系统设置' },
 ]
 
+export const LOG_SOURCES = [
+  { value: 'all', label: '统一审计' },
+  { value: 'operation', label: '操作日志' },
+  { value: 'stock', label: '库存流水' },
+  { value: 'batch_location', label: '批次库位流水' },
+  { value: 'abc', label: '成本审计' },
+  { value: 'reconciliation', label: '对账修正' },
+]
+
 const ALL_USER_OPTION = { value: '', label: '全部用户' }
 const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/
 
@@ -82,11 +92,17 @@ export function useLogsPage() {
   const [keyword, setKeyword] = useState(get('keyword') || '')
   const [typeFilter, setTypeFilter] = useState(get('type') || '')
   const [moduleFilter, setModuleFilter] = useState(get('module') || '')
+  const [sourceFilter, setSourceFilter] = useState(get('sourceType') || 'all')
   const [userFilter, setUserFilter] = useState(get('user') || '')
   const [startDate, setStartDate] = useState(get('startDate') || '')
   const [endDate, setEndDate] = useState(get('endDate') || '')
   const [stats, setStats] = useState({ todayOps: 0, loginCount: 0, dataChanges: 0, activeUsers: 0 })
   const [userOptions, setUserOptions] = useState([ALL_USER_OPTION])
+  const [archiveCredentials, setArchiveCredentials] = useState<LogArchiveCredential[]>([])
+  const [archiveReportSignature, setArchiveReportSignature] = useState<LogArchiveReportSignature | null>(null)
+  const [archiveVerification, setArchiveVerification] = useState<LogArchiveChainVerification | null>(null)
+  const [verifyingArchiveChain, setVerifyingArchiveChain] = useState(false)
+  const [exportingArchiveReport, setExportingArchiveReport] = useState(false)
 
   const urlPage = Math.max(1, getNumber('page', 1))
   const urlPageSize = [10, 20, 50, 100].includes(getNumber('pageSize', 20))
@@ -98,18 +114,22 @@ export function useLogsPage() {
       if (getDateRangeError(startDate, endDate)) {
         return { list: [], pagination: { page, pageSize, total: 0 } }
       }
-      const res = await logsApi.getList({
+      const params = {
         page, pageSize,
         ...(keyword && { keyword }),
         ...(typeFilter && { type: typeFilter as any }),
         ...(moduleFilter && { module: moduleFilter as any }),
+        ...(sourceFilter && sourceFilter !== 'all' && { sourceType: sourceFilter as any }),
         ...(userFilter && { username: userFilter }),
         ...(startDate && { startDate }),
         ...(endDate && { endDate }),
-      })
+      }
+      const res = sourceFilter === 'operation'
+        ? await logsApi.getList(params)
+        : await logsApi.getUnifiedList(params)
       return { list: res?.list || [], pagination: res?.pagination }
     },
-    [keyword, typeFilter, moduleFilter, userFilter, startDate, endDate]
+    [keyword, typeFilter, moduleFilter, sourceFilter, userFilter, startDate, endDate]
   )
 
   const {
@@ -119,7 +139,7 @@ export function useLogsPage() {
     fetchFn,
     initialPage: urlPage,
     initialPageSize: urlPageSize,
-    deps: [keyword, typeFilter, moduleFilter, userFilter, startDate, endDate],
+    deps: [keyword, typeFilter, moduleFilter, sourceFilter, userFilter, startDate, endDate],
   })
 
   useEffect(() => {
@@ -129,11 +149,12 @@ export function useLogsPage() {
       keyword: keyword || null,
       type: typeFilter || null,
       module: moduleFilter || null,
+      sourceType: sourceFilter !== 'all' ? sourceFilter : null,
       user: userFilter || null,
       startDate: startDate || null,
       endDate: endDate || null,
     })
-  }, [page, pageSize, keyword, typeFilter, moduleFilter, userFilter, startDate, endDate, setMultiple])
+  }, [page, pageSize, keyword, typeFilter, moduleFilter, sourceFilter, userFilter, startDate, endDate, setMultiple])
 
   useEffect(() => {
     logsApi.getStats()
@@ -147,6 +168,22 @@ export function useLogsPage() {
         // 统计失败不阻断日志列表使用。
       })
   }, [])
+
+  const refreshArchiveCredentials = useCallback(() => {
+    return logsApi.getArchives({ page: 1, pageSize: 5 })
+      .then((res: any) => {
+        setArchiveCredentials(res?.list || [])
+        setArchiveReportSignature(res?.reportSignature || null)
+      })
+      .catch(() => {
+        setArchiveCredentials([])
+        setArchiveReportSignature(null)
+      })
+  }, [])
+
+  useEffect(() => {
+    refreshArchiveCredentials()
+  }, [refreshArchiveCredentials])
 
   useEffect(() => {
     usersApi.getList({ page: 1, pageSize: 1000 })
@@ -176,7 +213,7 @@ export function useLogsPage() {
   const [showDetail, setShowDetail] = useState(false)
   const [showExport, setShowExport] = useState(false)
   const [showClean, setShowClean] = useState(false)
-  const [cleanRange, setCleanRange] = useState<LogCleanRange>('90')
+  const [cleanRange, setCleanRange] = useState<LogCleanRange>('180')
 
   const [exportForm, setExportForm] = useState<LogFormData>({
     startDate: '', endDate: '', format: 'csv',
@@ -197,7 +234,7 @@ export function useLogsPage() {
     setPage(1)
   }
   const handleReset = () => {
-    setKeyword(''); setTypeFilter(''); setModuleFilter(''); setUserFilter('');
+    setKeyword(''); setTypeFilter(''); setModuleFilter(''); setSourceFilter('all'); setUserFilter('');
     setStartDate(''); setEndDate(''); setPage(1)
   }
 
@@ -233,17 +270,21 @@ export function useLogsPage() {
 
   const getAvatarChar = (name: string) => name ? name.charAt(0) : '?'
   const getModuleLabel = (moduleVal: string) => MODULES.find(m => m.value === moduleVal)?.label || moduleVal || '系统'
+  const getSourceLabel = (sourceVal?: string) => LOG_SOURCES.find(s => s.value === sourceVal)?.label || sourceVal || '操作日志'
 
   const buildExportFilename = () => {
+    return buildTimestampedFilename('logs', 'csv')
+  }
+
+  const buildTimestampedFilename = (prefix: string, extension: string) => {
     const now = new Date()
     const pad = (value: number) => String(value).padStart(2, '0')
     const date = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`
     const time = `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
-    return `logs_${date}_${time}.csv`
+    return `${prefix}_${date}_${time}.${extension}`
   }
 
   const getCleanBeforeDate = (range: LogCleanRange) => {
-    if (range === 'all') return '9999-12-31'
     const date = new Date()
     date.setDate(date.getDate() - Number(range))
     return date.toISOString().slice(0, 10)
@@ -263,6 +304,7 @@ export function useLogsPage() {
         ...(keyword && { keyword }),
         ...(typeFilter && { type: typeFilter }),
         ...(moduleFilter && { module: moduleFilter }),
+        sourceType: sourceFilter as any,
         ...(userFilter && { username: userFilter }),
         ...(exportForm.startDate && { startDate: exportForm.startDate }),
         ...(exportForm.endDate && { endDate: exportForm.endDate }),
@@ -282,9 +324,13 @@ export function useLogsPage() {
     try {
       const beforeDate = getCleanBeforeDate(cleanRange)
       const res = await logsApi.clean(beforeDate)
-      toast.success(`清理成功，共删除 ${res?.deletedCount || 0} 条日志`)
+      const archiveText = res?.archiveNo && res?.archiveHash
+        ? `；归档 ${res.archiveNo}，哈希 ${res.archiveHash.slice(0, 12)}${res.archiveChainHash ? `，链哈希 ${res.archiveChainHash.slice(0, 12)}` : ''}`
+        : ''
+      toast.success(`清理成功，共删除 ${res?.deletedCount || 0} 条日志${archiveText}`)
       setShowClean(false)
       refresh()
+      refreshArchiveCredentials()
       logsApi.getStats()
         .then((statsRes: any) => setStats({
           todayOps: Number(statsRes?.todayOps || 0),
@@ -298,10 +344,40 @@ export function useLogsPage() {
     }
   }
 
+  const handleVerifyArchiveChain = async () => {
+    setVerifyingArchiveChain(true)
+    try {
+      const result = await logsApi.verifyArchiveChain()
+      setArchiveVerification(result)
+      if (result?.valid) {
+        toast.success(`归档链验证通过，共检查 ${result.checkedCount || 0} 份归档`)
+      } else {
+        toast.error(`归档链验证异常：${result?.brokenArchiveNo || '未知归档'} ${result?.brokenReason || ''}`.trim())
+      }
+    } catch (e) {
+      toast.error('归档链验证失败')
+    } finally {
+      setVerifyingArchiveChain(false)
+    }
+  }
+
+  const handleExportArchiveVerificationReport = async () => {
+    setExportingArchiveReport(true)
+    try {
+      const blob = await logsApi.exportArchiveVerificationReport()
+      downloadBlobFile(blob, buildTimestampedFilename('archive_chain_verification', 'json'))
+      toast.success('归档链验证报告已导出')
+    } catch (e) {
+      toast.error('归档链验证报告导出失败')
+    } finally {
+      setExportingArchiveReport(false)
+    }
+  }
+
   return {
     data, loading, page, pageSize, total, setPage, setPageSize, refresh,
     keyword, setKeyword, typeFilter, setTypeFilter,
-    moduleFilter, setModuleFilter, userFilter, setUserFilter,
+    moduleFilter, setModuleFilter, sourceFilter, setSourceFilter, userFilter, setUserFilter,
     startDate, setStartDate, endDate, setEndDate,
     detailLog, setDetailLog,
     showDetail, setShowDetail,
@@ -310,13 +386,18 @@ export function useLogsPage() {
     showClean, setShowClean,
     cleanRange, setCleanRange,
     stats,
+    archiveCredentials,
+    archiveReportSignature,
+    archiveVerification,
+    verifyingArchiveChain,
+    exportingArchiveReport,
     userOptions,
     dateError,
     exportDateError,
     exportContentError,
     handleSearch, handleReset,
     openDetail, openExport,
-    getLogType, getAvatarChar, getModuleLabel,
-    handleExport, handleClean, getCleanBeforeDate,
+    getLogType, getAvatarChar, getModuleLabel, getSourceLabel,
+    handleExport, handleClean, getCleanBeforeDate, refreshArchiveCredentials, handleVerifyArchiveChain, handleExportArchiveVerificationReport,
   }
 }

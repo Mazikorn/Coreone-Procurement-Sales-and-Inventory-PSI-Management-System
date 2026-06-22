@@ -97,6 +97,63 @@ describe('调拨管理', () => {
     expect(afterCancel.location_id).toBe(fromLocationId)
   })
 
+  it('TR-FILTER-001: 调拨列表支持按审计链接 keyword 定位到具体调拨事实', async () => {
+    const suffix = `keyword-${Date.now()}`
+    const matched = seedTransferMaterial(db, `${suffix}-matched`)
+    const other = seedTransferMaterial(db, `${suffix}-other`)
+
+    db.prepare('UPDATE materials SET name = ?, code = ? WHERE id = ?')
+      .run('审计深链调拨物料', `MAT-TF-DEEP-${suffix}`, matched.materialId)
+    db.prepare('UPDATE materials SET name = ?, code = ? WHERE id = ?')
+      .run('其他调拨物料', `MAT-TF-OTHER-${suffix}`, other.materialId)
+
+    const matchedRes = await request(app)
+      .post('/api/v1/transfers/inbound')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId: matched.materialId,
+        batchNo: matched.batchNo,
+        quantity: 2,
+        fromLocationId: matched.fromLocationId,
+        toLocationId: matched.toLocationId,
+        remark: 'TF-DEEP-FACT-001',
+      })
+    expect(matchedRes.status).toBe(200)
+
+    const otherRes = await request(app)
+      .post('/api/v1/transfers/inbound')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId: other.materialId,
+        batchNo: other.batchNo,
+        quantity: 2,
+        fromLocationId: other.fromLocationId,
+        toLocationId: other.toLocationId,
+        remark: 'TF-DEEP-FACT-OTHER',
+      })
+    expect(otherRes.status).toBe(200)
+
+    const matchedRecord = db.prepare('SELECT inbound_no FROM inbound_records WHERE id = ?')
+      .get(matchedRes.body.data.id) as any
+
+    const byTransferNo = await request(app)
+      .get('/api/v1/transfers')
+      .query({ page: 1, pageSize: 20, keyword: matchedRecord.inbound_no })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(byTransferNo.status).toBe(200)
+    expect(byTransferNo.body.data.list.map((row: any) => row.id)).toEqual([matchedRes.body.data.id])
+    expect(byTransferNo.body.data.pagination.total).toBe(1)
+
+    const byBatchNo = await request(app)
+      .get('/api/v1/transfers')
+      .query({ page: 1, pageSize: 20, keyword: matched.batchNo })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(byBatchNo.status).toBe(200)
+    expect(byBatchNo.body.data.list.map((row: any) => row.id)).toEqual([matchedRes.body.data.id])
+  })
+
   it('TR-AUDIT-001: 创建和撤销调拨写入操作日志，支撑库存位置变更审计', async () => {
     const { materialId, fromLocationId, toLocationId, batchNo } = seedTransferMaterial(db, `audit-${Date.now()}`)
 
@@ -259,6 +316,16 @@ describe('调拨管理', () => {
     expect(targetList.status).toBe(200)
     const targetRow = targetList.body.data.list.find((row: any) => row.materialId === materialId)
     expect(targetRow).toMatchObject({ locationId: toLocationId, stock: 2, totalStock: 10 })
+    const batchAfterTransfer = db.prepare(`
+      SELECT location_id, remaining
+      FROM batch_location_balances
+      WHERE material_id = ?
+      ORDER BY location_id
+    `).all(materialId) as any[]
+    expect(batchAfterTransfer).toEqual(expect.arrayContaining([
+      expect.objectContaining({ location_id: fromLocationId, remaining: 8 }),
+      expect.objectContaining({ location_id: toLocationId, remaining: 2 }),
+    ]))
 
     const deleteRes = await request(app)
       .delete(`/api/v1/transfers/${res.body.data.id}`)
@@ -279,6 +346,14 @@ describe('调拨管理', () => {
       .query({ page: 1, pageSize: 20, locationId: toLocationId })
     expect(targetAfterCancel.status).toBe(200)
     expect(targetAfterCancel.body.data.list.some((row: any) => row.materialId === materialId)).toBe(false)
+    const batchAfterCancel = db.prepare(`
+      SELECT location_id, remaining
+      FROM batch_location_balances
+      WHERE material_id = ?
+    `).all(materialId) as any[]
+    expect(batchAfterCancel).toEqual([
+      expect.objectContaining({ location_id: fromLocationId, remaining: 10 }),
+    ])
   })
 
   it('TR-005: 拒绝缺少来源库位ID的调拨请求', async () => {
@@ -421,6 +496,15 @@ describe('调拨管理', () => {
     expect(targetAfterOutbound.status).toBe(200)
     const remainingTargetRow = targetAfterOutbound.body.data.list.find((row: any) => row.materialId === materialId)
     expect(remainingTargetRow).toMatchObject({ locationId: toLocationId, stock: 1, totalStock: 1 })
+    const batchAfterOutbound = db.prepare(`
+      SELECT location_id, remaining
+      FROM batch_location_balances
+      WHERE material_id = ?
+      ORDER BY location_id
+    `).all(materialId) as any[]
+    expect(batchAfterOutbound).toEqual([
+      expect.objectContaining({ location_id: toLocationId, remaining: 1 }),
+    ])
 
     const deleteRes = await request(app)
       .delete(`/api/v1/outbound/${outboundRes.body.data.id}`)
@@ -443,6 +527,16 @@ describe('调拨管理', () => {
     expect(targetAfterCancel.status).toBe(200)
     const restoredTargetRow = targetAfterCancel.body.data.list.find((row: any) => row.materialId === materialId)
     expect(restoredTargetRow).toMatchObject({ locationId: toLocationId, stock: 2, totalStock: 10 })
+    const batchAfterOutboundCancel = db.prepare(`
+      SELECT location_id, remaining
+      FROM batch_location_balances
+      WHERE material_id = ?
+      ORDER BY location_id
+    `).all(materialId) as any[]
+    expect(batchAfterOutboundCancel).toEqual(expect.arrayContaining([
+      expect.objectContaining({ location_id: fromLocationId, remaining: 8 }),
+      expect.objectContaining({ location_id: toLocationId, remaining: 2 }),
+    ]))
   })
 
   it('TR-REF-001: 创建调拨拒绝停用物料、来源库位和目标库位', async () => {

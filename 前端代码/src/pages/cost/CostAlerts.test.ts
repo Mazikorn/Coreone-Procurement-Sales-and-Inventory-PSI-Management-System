@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildInitialCostAlertFilters, getRetryToastMessage, normalizeExceptionSummary } from './CostAlerts'
+import { buildInitialCostAlertFilters, getExceptionTypeLabel, getRetryToastMessage, normalizeExceptionSummary } from './CostAlerts'
 
 describe('buildInitialCostAlertFilters', () => {
   it('普通打开异常中心时默认筛当前月份', () => {
@@ -71,6 +71,13 @@ describe('normalizeExceptionSummary', () => {
         info: 0,
       },
     })
+  })
+})
+
+describe('getExceptionTypeLabel', () => {
+  it('uses business wording for fee mapping exceptions instead of raw enum values', () => {
+    expect(getExceptionTypeLabel('missing_fee_mapping')).toBe('缺少收费映射')
+    expect(getExceptionTypeLabel('missing_driver_rate')).toBe('缺少动因费率')
   })
 })
 

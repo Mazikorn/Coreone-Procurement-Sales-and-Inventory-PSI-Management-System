@@ -2,6 +2,16 @@ import { describe, expect, it } from 'vitest'
 import { getAllowedPaths, ROLE_MENU_MAP } from './permissions'
 
 describe('ROLE_MENU_MAP', () => {
+  const retiredCostPaths = ['/abc/forecast', '/abc/supplier-cost', '/abc/equipment-efficiency']
+
+  it('does not expose retired cost placeholder routes without real pages', () => {
+    for (const paths of Object.values(ROLE_MENU_MAP)) {
+      for (const path of retiredCostPaths) {
+        expect(paths).not.toContain(path)
+      }
+    }
+  })
+
   it('allows finance to read operation logs without granting user or role management', () => {
     expect(ROLE_MENU_MAP.finance).toContain('/logs')
     expect(ROLE_MENU_MAP.finance).not.toContain('/users')
@@ -74,5 +84,37 @@ describe('ROLE_MENU_MAP', () => {
     expect(getAllowedPaths('custom_role_admin', ['roles:view', 'users:view'])).toEqual(['/', '/roles', '/users'])
     expect(getAllowedPaths('custom_model_reader', ['projects:view', 'bom:view', 'equipment:view', 'labor_times:view']))
       .toEqual(['/', '/projects', '/bom', '/equipment', '/equipment/types', '/equipment/depreciation', '/labor-times'])
+  })
+
+  it('keeps custom cost read-only roles on insight pages without finance execution or configuration entries', () => {
+    const costObserverPaths = getAllowedPaths('custom_cost_observer', ['cost_analysis:view'])
+
+    expect(costObserverPaths).toEqual([
+      '/',
+      '/abc/dashboard',
+      '/abc/slide-cost',
+      '/abc/profitability',
+      '/abc/fee-comparison',
+      '/abc/trend',
+    ])
+    expect(costObserverPaths).not.toContain('/reconciliation')
+    expect(costObserverPaths).not.toContain('/indirect-costs')
+    expect(costObserverPaths).not.toContain('/abc/fee-mappings')
+    expect(costObserverPaths).not.toContain('/abc/activity-centers')
+    expect(costObserverPaths).not.toContain('/abc/cost-pools')
+  })
+
+  it('keeps module-level custom cost roles broad enough for finance operations', () => {
+    expect(getAllowedPaths('custom_finance_worker', ['cost_analysis'])).toEqual([
+      '/',
+      '/reconciliation',
+      '/indirect-costs',
+      '/abc/dashboard',
+      '/abc/slide-cost',
+      '/abc/profitability',
+      '/abc/fee-comparison',
+      '/abc/fee-mappings',
+      '/abc/trend',
+    ])
   })
 })

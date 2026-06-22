@@ -3,13 +3,14 @@ import { X, CheckCircle, ArrowLeft, ArrowRight, Loader2, BarChart3 } from 'lucid
 import { toast } from 'sonner'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { Material } from '@/types'
-import type { FormData } from '../hooks/useStocktakingPage'
+import type { FormData, StocktakingScopeRow, StocktakingScopeType } from '../hooks/useStocktakingPage'
 
 interface Props {
   open: boolean
   form: FormData
   createStep: number
   materials: Material[]
+  inventoryRows: StocktakingScopeRow[]
   isSubmitting: boolean
   onClose: () => void
   onChange: (form: FormData) => void
@@ -18,20 +19,41 @@ interface Props {
 }
 
 export function StocktakingCreateModal({
-  open, form, createStep, materials, isSubmitting,
+  open, form, createStep, materials, inventoryRows, isSubmitting,
   onClose, onChange, onSetCreateStep, onSubmit,
 }: Props) {
   if (!open) return null
   const selectedMaterial = materials.find(m => m.id === form.materialId)
   const selectedRows = selectedMaterial ? [selectedMaterial] : []
+  const scopeType = form.scopeType || 'material'
+  const locationOptions = Array.from(inventoryRows.reduce((map, row) => {
+    if (!row.locationId) return map
+    const existing = map.get(row.locationId)
+    map.set(row.locationId, {
+      locationId: row.locationId,
+      locationName: row.locationName || row.locationId,
+      stock: (existing?.stock || 0) + Number(row.stock || 0),
+    })
+    return map
+  }, new Map<string, { locationId: string; locationName: string; stock: number }>()).values())
+  const batchRows = inventoryRows.filter(row =>
+    row.batchId && (!form.locationId || row.locationId === form.locationId)
+  )
+  const selectedLocation = locationOptions.find(item => item.locationId === form.locationId)
+  const selectedBatchRow = batchRows.find(row => row.batchId === form.batchId)
+  const scopeLabel = scopeType === 'batch' ? '批次库位盘点' : scopeType === 'location' ? '库位盘点' : '整物料盘点'
   const hasActualStock = form.actualStock !== ''
   const difference = hasActualStock ? Number(form.actualStock) - form.systemStock : 0
+  const setScopeType = (nextScopeType: StocktakingScopeType) => {
+    const nextStock = nextScopeType === 'material' ? Number(selectedMaterial?.stock || 0) : 0
+    onChange({ ...form, scopeType: nextScopeType, locationId: '', batchId: '', systemStock: nextStock })
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
       onClick={e => { if (e.target === e.currentTarget) onClose() }}
     >
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl mx-4 overflow-hidden flex flex-col max-h-[90vh]">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl mx-4 overflow-hidden flex flex-col max-h-[90vh]">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
           <h3 className="text-lg font-semibold text-gray-900">新建盘点</h3>
           <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-lg transition-colors"><X className="w-5 h-5 text-gray-500" /></button>
@@ -64,7 +86,7 @@ export function StocktakingCreateModal({
                     value={form.materialId}
                     onChange={val => {
                       const mat = materials.find(m => m.id === val)
-                      onChange({ ...form, materialId: val, systemStock: mat?.stock || 0 })
+                      onChange({ ...form, materialId: val, scopeType: 'material', locationId: '', batchId: '', systemStock: mat?.stock || 0 })
                     }}
                     options={materials.map(m => ({ value: m.id, label: `${m.name} (${m.code})` }))}
                     placeholder="请选择物料"
@@ -85,6 +107,83 @@ export function StocktakingCreateModal({
                 </div>
               </div>
               <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">盘点粒度</label>
+                <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="盘点粒度">
+                  {[
+                    { value: 'material' as const, label: '整物料', help: '按物料总库存盘点', testId: 'material-scope-btn' },
+                    { value: 'location' as const, label: '按库位', help: '盘某个库位的余量', testId: 'location-scope-btn' },
+                    { value: 'batch' as const, label: '按批次库位', help: '盘某库位某批次', testId: 'batch-scope-btn' },
+                  ].map(item => (
+                    <button
+                      key={item.value}
+                      type="button"
+                      data-testid={item.testId}
+                      onClick={() => setScopeType(item.value)}
+                      className={`text-left px-3 py-2 border rounded-md transition-colors ${
+                        scopeType === item.value
+                          ? 'border-blue-500 bg-blue-50 text-blue-700'
+                          : 'border-gray-200 hover:border-gray-300 text-gray-700'
+                      }`}
+                    >
+                      <div className="text-sm font-medium">{item.label}</div>
+                      <div className="text-xs mt-0.5 text-gray-500">{item.help}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {scopeType !== 'material' && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">盘点库位 <span className="text-red-500">*</span></label>
+                    <SearchableSelect
+                      value={form.locationId}
+                      onChange={val => {
+                        const location = locationOptions.find(item => item.locationId === val)
+                        onChange({ ...form, locationId: val, batchId: '', systemStock: scopeType === 'location' ? Number(location?.stock || 0) : 0 })
+                      }}
+                      options={locationOptions.map(item => ({
+                        value: item.locationId,
+                        label: `${item.locationName} · ${item.stock}${selectedMaterial?.unit || ''}`,
+                      }))}
+                      placeholder="请选择盘点库位"
+                      testId="location-select"
+                    />
+                  </div>
+                  <div>
+                    {scopeType === 'batch' ? (
+                      <>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">盘点批次 <span className="text-red-500">*</span></label>
+                        <SearchableSelect
+                          value={form.batchId}
+                          onChange={val => {
+                            const row = batchRows.find(item => item.batchId === val)
+                            onChange({
+                              ...form,
+                              locationId: row?.locationId || form.locationId,
+                              batchId: val,
+                              systemStock: Number(row?.stock || 0),
+                            })
+                          }}
+                          options={batchRows.map(row => ({
+                            value: row.batchId || '',
+                            label: `${row.batchNo || row.batchId} · ${row.locationName || row.locationId || '-'} · ${row.stock}${row.unit || selectedMaterial?.unit || ''}`,
+                          }))}
+                          placeholder={form.locationId ? '请选择盘点批次' : '先选库位或直接选批次'}
+                          testId="batch-select"
+                        />
+                      </>
+                    ) : (
+                      <>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">账面库位数量</label>
+                        <div className="h-10 px-3 py-2 border border-gray-200 rounded-md bg-gray-50 text-sm text-gray-700">
+                          {selectedLocation ? `${selectedLocation.stock}${selectedMaterial?.unit || ''}` : '-'}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+              <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">备注</label>
                 <textarea value={form.remark} onChange={e => onChange({ ...form, remark: e.target.value })} rows={3} placeholder="请输入备注" data-testid="remark-input" className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500" />
               </div>
@@ -96,7 +195,7 @@ export function StocktakingCreateModal({
                 <BarChart3 className="w-5 h-5 text-blue-500 mt-0.5" />
                 <div>
                   <div className="text-sm font-medium text-blue-900">盘点范围预览</div>
-                  <div className="text-xs text-blue-700 mt-0.5">单物料盘点，共 {selectedRows.length} 种</div>
+                  <div className="text-xs text-blue-700 mt-0.5">{scopeLabel}，共 {selectedRows.length} 种</div>
                 </div>
               </div>
               <div className="overflow-x-auto max-h-80 border border-gray-200 rounded-lg">
@@ -106,8 +205,9 @@ export function StocktakingCreateModal({
                       <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">物料编码</th>
                       <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">物料名称</th>
                       <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">分类</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">账面数量</th>
                       <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">库位</th>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">批次</th>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">账面数量</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
@@ -116,8 +216,9 @@ export function StocktakingCreateModal({
                         <td className="px-3 py-2 font-mono text-gray-600 text-xs">{m.code}</td>
                         <td className="px-3 py-2">{m.name}</td>
                         <td className="px-3 py-2 text-gray-500">{m.categoryPath || '-'}</td>
-                        <td className="px-3 py-2">{m.stock}</td>
-                        <td className="px-3 py-2 text-gray-500">{m.locationName || '-'}</td>
+                        <td className="px-3 py-2 text-gray-500">{selectedBatchRow?.locationName || selectedLocation?.locationName || m.locationName || '-'}</td>
+                        <td className="px-3 py-2 font-mono text-xs text-gray-600">{selectedBatchRow?.batchNo || '-'}</td>
+                        <td className="px-3 py-2">{form.systemStock}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -137,6 +238,9 @@ export function StocktakingCreateModal({
               <h3 className="text-lg font-semibold text-gray-900 mb-2">盘点任务创建成功</h3>
               <div className="bg-gray-50 rounded-lg p-4 text-left space-y-2 max-w-sm mx-auto mb-6">
                 <div className="flex justify-between text-sm"><span className="text-gray-500">盘点物料</span><span>{selectedMaterial?.name || '-'}</span></div>
+                <div className="flex justify-between text-sm"><span className="text-gray-500">盘点范围</span><span>{scopeLabel}</span></div>
+                <div className="flex justify-between text-sm"><span className="text-gray-500">库位</span><span>{selectedBatchRow?.locationName || selectedLocation?.locationName || selectedMaterial?.locationName || '-'}</span></div>
+                <div className="flex justify-between text-sm"><span className="text-gray-500">批次</span><span>{selectedBatchRow?.batchNo || '-'}</span></div>
                 <div className="flex justify-between text-sm"><span className="text-gray-500">账面数量</span><span>{form.systemStock}{selectedMaterial?.unit || ''}</span></div>
                 <div className="flex justify-between text-sm"><span className="text-gray-500">实盘数量</span><span>{hasActualStock ? `${form.actualStock}${selectedMaterial?.unit || ''}` : '-'}</span></div>
                 <div className="flex justify-between text-sm"><span className="text-gray-500">差异</span><span>{hasActualStock ? `${difference > 0 ? '+' : ''}${difference}${selectedMaterial?.unit || ''}` : '-'}</span></div>
@@ -155,6 +259,8 @@ export function StocktakingCreateModal({
             <button data-testid="next-step-btn" onClick={() => {
               if (createStep === 1) {
                 if (!form.materialId || form.actualStock === '') { toast.error('请选择物料并填写实盘数量'); return }
+                if (scopeType === 'location' && !form.locationId) { toast.error('请选择盘点库位'); return }
+                if (scopeType === 'batch' && !form.batchId) { toast.error('请选择盘点批次'); return }
                 onSetCreateStep(2)
               } else if (createStep === 2) {
                 onSubmit()

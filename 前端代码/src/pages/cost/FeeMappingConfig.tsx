@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useMemo, useState } from 'react'
+import React, { type ReactNode, useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, Calculator, CheckCircle2, Plus, RefreshCw, Search, Settings2, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { abcApi } from '@/api/abc'
@@ -52,7 +52,8 @@ function unwrapFeeStandards(payload: any): FeeStandard[] {
 }
 
 export default function FeeMappingConfig() {
-  const [keyword, setKeyword] = useState('')
+  const initialKeyword = new URLSearchParams(window.location.search).get('keyword') || ''
+  const [keyword, setKeyword] = useState(initialKeyword)
   const [status, setStatus] = useState('')
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)

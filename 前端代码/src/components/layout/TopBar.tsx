@@ -53,9 +53,6 @@ const breadcrumbMap: Record<string, string> = {
   '/abc/alerts': '成本预警',
   '/abc/audit': '审计追踪',
   '/abc/quarterly-adjustment': '季度调整',
-  '/abc/forecast': '成本预测',
-  '/abc/supplier-cost': '供应商成本',
-  '/abc/equipment-efficiency': '设备效率',
   '/abc/personnel-efficiency': '人员效率',
   '/abc/model-validation': '模型验证',
   // 设备与成本中心

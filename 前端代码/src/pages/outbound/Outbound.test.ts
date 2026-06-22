@@ -51,6 +51,7 @@ const mockMaterial: Material = {
 describe('Outbound page material candidates', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    localStorage.clear()
     vi.stubGlobal('React', React)
     window.history.replaceState(null, '', '/')
 
@@ -69,6 +70,23 @@ describe('Outbound page material candidates', () => {
     vi.mocked(materialApi.getList).mockResolvedValue({
       list: [mockMaterial],
       pagination: { total: 1 },
+    } as any)
+    vi.mocked(materialApi.getDetail).mockResolvedValue({
+      ...mockMaterial,
+      batches: [
+        {
+          id: 'batch-1',
+          materialId: mockMaterial.id,
+          batchNo: 'BATCH-001',
+          quantity: 10,
+          remaining: 6,
+          expiryDate: '2027-06-30',
+          inboundId: 'inbound-1',
+          inboundPrice: 12.5,
+          status: 'normal',
+          createdAt: '',
+        },
+      ],
     } as any)
     vi.mocked(projectApi.getList).mockResolvedValue({ list: [], pagination: { total: 0 } } as any)
     vi.mocked(bomApi.getList).mockResolvedValue({ list: [], pagination: { total: 0 } } as any)
@@ -170,6 +188,206 @@ describe('Outbound page material candidates', () => {
     await waitFor(() => expect(screen.getByTestId('option-project')).toBeInTheDocument())
     expect(screen.queryByTestId('option-transfer')).not.toBeInTheDocument()
     expect(screen.queryByTestId('option-scrap')).not.toBeInTheDocument()
+  })
+
+  it('does not request LIS cases when warehouse users open outbound registration', async () => {
+    localStorage.setItem('user', JSON.stringify({ role: 'warehouse_manager', username: 'wangkq' }))
+    render(React.createElement(MemoryRouter, null, React.createElement(Outbound)))
+
+    fireEvent.click(await screen.findByRole('button', { name: '出库登记' }))
+
+    await waitFor(() => expect(screen.getByTestId('project-select')).toBeInTheDocument())
+    expect(reconciliationApi.getCases).not.toHaveBeenCalled()
+  })
+
+  it('lets warehouse select an explicit batch for ordinary outbound and submits the batch fact', async () => {
+    render(React.createElement(MemoryRouter, null, React.createElement(Outbound)))
+
+    fireEvent.click(await screen.findByRole('button', { name: '出库登记' }))
+
+    await waitFor(() => expect(materialApi.getDetail).toHaveBeenCalledWith('material-1'))
+
+    fireEvent.click(screen.getByTestId('outbound-batch-select-0').firstElementChild as Element)
+    expect(await screen.findByTestId('option-batch-1')).toHaveTextContent('BATCH-001 (余6瓶 @¥12.50)')
+    fireEvent.click(await screen.findByTestId('option-batch-1'))
+
+    fireEvent.click(screen.getByTestId('submit-btn'))
+
+    await waitFor(() => expect(outboundApi.create).toHaveBeenCalled())
+    expect(outboundApi.create).toHaveBeenCalledWith(expect.objectContaining({
+      items: [expect.objectContaining({ materialId: 'material-1', batchId: 'batch-1', quantity: 1 })],
+    }))
+  })
+
+  it('disables ordinary outbound submit when selected batch remaining is insufficient', async () => {
+    render(React.createElement(MemoryRouter, null, React.createElement(Outbound)))
+
+    fireEvent.click(await screen.findByRole('button', { name: '出库登记' }))
+    await waitFor(() => expect(materialApi.getDetail).toHaveBeenCalledWith('material-1'))
+
+    fireEvent.click(screen.getByTestId('outbound-batch-select-0').firstElementChild as Element)
+    fireEvent.click(await screen.findByTestId('option-batch-1'))
+    fireEvent.change(screen.getByTestId('quantity-input-0'), { target: { value: '7' } })
+
+    expect(await screen.findByText('出库数量不能超过批次剩余 6瓶')).toBeInTheDocument()
+    expect(screen.getByTestId('submit-btn')).toBeDisabled()
+    fireEvent.click(screen.getByTestId('submit-btn'))
+    expect(outboundApi.create).not.toHaveBeenCalled()
+  })
+
+  it('shows BOM automatic batch allocation preview before submit', async () => {
+    vi.mocked(projectApi.getList).mockResolvedValue({
+      list: [{
+        id: 'project-1',
+        code: 'P001',
+        name: 'HE制片',
+        type: 'routine',
+        bomId: 'bom-1',
+        bomName: 'HE制片BOM',
+        bomVersion: 'v1',
+        status: 'active',
+        createdAt: '',
+      }],
+      pagination: { total: 1 },
+    } as any)
+    vi.mocked(bomApi.getList).mockResolvedValue({
+      list: [{
+        id: 'bom-1',
+        code: 'BOM-001',
+        name: 'HE制片BOM',
+        version: 'v1',
+        type: 'routine',
+        status: 'active',
+        materialCount: 1,
+        unitCost: 25,
+        materials: [],
+        versionHistory: [],
+        createdAt: '',
+        updatedAt: '',
+      }],
+      pagination: { total: 1 },
+    } as any)
+    vi.mocked(bomApi.getDetail).mockResolvedValue({
+      id: 'bom-1',
+      code: 'BOM-001',
+      name: 'HE制片BOM',
+      version: 'v1',
+      type: 'routine',
+      status: 'active',
+      materialCount: 1,
+      unitCost: 25,
+      materials: [{
+        id: 'material-1',
+        name: '苏木素',
+        spec: '10ml',
+        usagePerSample: 2,
+        unit: 'ml',
+        price: 12.5,
+        stock: 6,
+        costRatio: 1,
+      }],
+      versionHistory: [],
+      createdAt: '',
+      updatedAt: '',
+    } as any)
+
+    render(React.createElement(MemoryRouter, null, React.createElement(Outbound)))
+
+    fireEvent.click(await screen.findByRole('button', { name: '出库登记' }))
+    fireEvent.click((await screen.findByTestId('project-select')).firstElementChild as Element)
+    fireEvent.click(await screen.findByTestId('option-project-1'))
+    fireEvent.change(screen.getByTestId('sample-count-input'), { target: { value: '2' } })
+
+    expect(await screen.findByTestId('bom-batch-preview')).toBeInTheDocument()
+    expect(screen.getByText('预计批次扣减')).toBeInTheDocument()
+    expect(screen.getByText('BATCH-001 × 4ml')).toBeInTheDocument()
+    expect(screen.getByText('可出库')).toBeInTheDocument()
+  })
+
+  it('disables BOM outbound submit when automatic batch availability is insufficient', async () => {
+    vi.mocked(projectApi.getList).mockResolvedValue({
+      list: [{
+        id: 'project-1',
+        code: 'P001',
+        name: 'HE制片',
+        type: 'routine',
+        bomId: 'bom-1',
+        bomName: 'HE制片BOM',
+        bomVersion: 'v1',
+        status: 'active',
+        createdAt: '',
+      }],
+      pagination: { total: 1 },
+    } as any)
+    vi.mocked(bomApi.getList).mockResolvedValue({
+      list: [{
+        id: 'bom-1',
+        code: 'BOM-001',
+        name: 'HE制片BOM',
+        version: 'v1',
+        type: 'routine',
+        status: 'active',
+        materialCount: 1,
+        unitCost: 25,
+        materials: [],
+        versionHistory: [],
+        createdAt: '',
+        updatedAt: '',
+      }],
+      pagination: { total: 1 },
+    } as any)
+    vi.mocked(bomApi.getDetail).mockResolvedValue({
+      id: 'bom-1',
+      code: 'BOM-001',
+      name: 'HE制片BOM',
+      version: 'v1',
+      type: 'routine',
+      status: 'active',
+      materialCount: 1,
+      unitCost: 25,
+      materials: [{
+        id: 'material-1',
+        name: '苏木素',
+        spec: '10ml',
+        usagePerSample: 2,
+        unit: 'ml',
+        price: 12.5,
+        stock: 3,
+        costRatio: 1,
+      }],
+      versionHistory: [],
+      createdAt: '',
+      updatedAt: '',
+    } as any)
+    vi.mocked(materialApi.getDetail).mockResolvedValue({
+      ...mockMaterial,
+      batches: [
+        {
+          id: 'batch-1',
+          materialId: mockMaterial.id,
+          batchNo: 'BATCH-001',
+          quantity: 10,
+          remaining: 3,
+          expiryDate: '2027-06-30',
+          inboundId: 'inbound-1',
+          inboundPrice: 12.5,
+          status: 'normal',
+          createdAt: '',
+        },
+      ],
+    } as any)
+
+    render(React.createElement(MemoryRouter, null, React.createElement(Outbound)))
+
+    fireEvent.click(await screen.findByRole('button', { name: '出库登记' }))
+    fireEvent.click((await screen.findByTestId('project-select')).firstElementChild as Element)
+    fireEvent.click(await screen.findByTestId('option-project-1'))
+    fireEvent.change(screen.getByTestId('sample-count-input'), { target: { value: '2' } })
+
+    expect(await screen.findByText('批次库存不足：需要 4ml，可用 3ml')).toBeInTheDocument()
+    expect(screen.getByTestId('submit-btn')).toBeDisabled()
+    fireEvent.click(screen.getByTestId('submit-btn'))
+    expect(outboundApi.create).not.toHaveBeenCalled()
   })
 })
 

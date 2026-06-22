@@ -13,6 +13,7 @@ const warehouseRole: Role = {
   status: 'active',
   dataScope: 'dept',
   userCount: 2,
+  isSystem: true,
   associatedUsers: [],
   createdAt: '2026-06-20T08:00:00',
 }
@@ -31,7 +32,7 @@ const customRole: Role = {
 }
 
 describe('RolesGrid', () => {
-  it('treats seeded business roles as protected system roles', () => {
+  it('uses backend isSystem to protect system roles', () => {
     render(
       <RolesGrid
         data={[warehouseRole, customRole]}
@@ -52,5 +53,23 @@ describe('RolesGrid', () => {
     expect(within(customCard).getByText('自定义')).toBeInTheDocument()
     expect(within(customCard).getByText('编辑')).toBeInTheDocument()
     expect(within(customCard).getByText('删除')).toBeInTheDocument()
+  })
+
+  it('does not protect a role only because its code matches an old seeded role name', () => {
+    render(
+      <RolesGrid
+        data={[{ ...warehouseRole, isSystem: false }]}
+        loading={false}
+        onDetail={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        getDataScopeLabel={() => '本部门数据'}
+      />
+    )
+
+    const warehouseCard = screen.getByText('仓库管理员').closest('div[class*="bg-white"]')!
+    expect(within(warehouseCard).getByText('自定义')).toBeInTheDocument()
+    expect(within(warehouseCard).getByText('编辑')).toBeInTheDocument()
+    expect(within(warehouseCard).getByText('删除')).toBeInTheDocument()
   })
 })

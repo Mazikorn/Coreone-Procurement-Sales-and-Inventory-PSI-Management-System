@@ -105,6 +105,32 @@ export function initializeDatabase(): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS batches (id TEXT PRIMARY KEY, material_id TEXT NOT NULL, batch_no TEXT NOT NULL, quantity DECIMAL(18, 4) NOT NULL DEFAULT 0, remaining DECIMAL(18, 4) NOT NULL DEFAULT 0, production_date TEXT, expiry_date TEXT, inbound_id TEXT NOT NULL, inbound_price DECIMAL(18, 4) DEFAULT 0, supplier_id TEXT, status INTEGER NOT NULL DEFAULT 1, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(material_id, batch_no))
   `)
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS batch_location_balances (
+      id TEXT PRIMARY KEY,
+      batch_id TEXT NOT NULL,
+      material_id TEXT NOT NULL,
+      location_id TEXT NOT NULL,
+      remaining DECIMAL(18, 4) NOT NULL DEFAULT 0,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(batch_id, location_id)
+    )
+  `)
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS batch_location_adjustments (
+      id TEXT PRIMARY KEY,
+      related_type TEXT NOT NULL,
+      related_id TEXT NOT NULL,
+      batch_id TEXT NOT NULL,
+      material_id TEXT NOT NULL,
+      location_id TEXT NOT NULL,
+      quantity_delta DECIMAL(18, 4) NOT NULL,
+      operator TEXT,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+  ensureColumn('batch_location_adjustments', 'operator', 'TEXT')
 
   // 兼容旧数据库：移除 batches.expiry_date 的 NOT NULL 约束
   try {
@@ -133,6 +159,19 @@ export function initializeDatabase(): void {
   } catch (e: any) { console.error('Migration error for batches:', e.message) }
   database.exec(`
     CREATE TABLE IF NOT EXISTS inbound_records (id TEXT PRIMARY KEY, inbound_no TEXT NOT NULL UNIQUE, type TEXT NOT NULL, material_id TEXT NOT NULL, batch_id TEXT, batch_no TEXT, quantity DECIMAL(18, 4) NOT NULL, unit TEXT NOT NULL, price DECIMAL(18, 4) DEFAULT 0, amount DECIMAL(18, 4) DEFAULT 0, supplier_id TEXT, location_id TEXT NOT NULL, from_location_id TEXT, from_location_name TEXT, production_date TEXT, expiry_date TEXT, operator TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'completed', remark TEXT, cancel_reason TEXT, purchase_order_id TEXT, purchase_order_no TEXT, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, created_by TEXT, updated_by TEXT, is_deleted INTEGER NOT NULL DEFAULT 0)
+  `)
+  database.exec(`
+    INSERT OR IGNORE INTO batch_location_balances (id, batch_id, material_id, location_id, remaining)
+    SELECT 'blb-' || b.id || '-' || COALESCE(ir.location_id, inv.location_id),
+           b.id,
+           b.material_id,
+           COALESCE(ir.location_id, inv.location_id),
+           b.remaining
+    FROM batches b
+    LEFT JOIN inbound_records ir ON ir.id = b.inbound_id AND ir.is_deleted = 0
+    LEFT JOIN inventory inv ON inv.material_id = b.material_id
+    WHERE COALESCE(b.remaining, 0) > 0
+      AND COALESCE(ir.location_id, inv.location_id) IS NOT NULL
   `)
 
   // 兼容旧数据库：添加 purchase_order_id / purchase_order_no 字段
@@ -245,7 +284,27 @@ export function initializeDatabase(): void {
     CREATE TABLE IF NOT EXISTS operation_logs (id TEXT PRIMARY KEY, user_id TEXT, username TEXT, operation TEXT NOT NULL, description TEXT NOT NULL, request_data TEXT, response_data TEXT, ip TEXT, user_agent TEXT, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)
   `)
   database.exec(`
-    CREATE TABLE IF NOT EXISTS stocktaking_records (id TEXT PRIMARY KEY, stocktaking_no TEXT NOT NULL UNIQUE, material_id TEXT NOT NULL, system_stock DECIMAL(18, 4) NOT NULL, actual_stock DECIMAL(18, 4) NOT NULL, difference DECIMAL(18, 4) NOT NULL, operator TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'completed', remark TEXT, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, is_deleted INTEGER NOT NULL DEFAULT 0)
+    CREATE TABLE IF NOT EXISTS audit_log_archives (
+      id TEXT PRIMARY KEY,
+      archive_no TEXT NOT NULL UNIQUE,
+      source_type TEXT NOT NULL DEFAULT 'operation',
+      before_date TEXT NOT NULL,
+      retention_days INTEGER NOT NULL DEFAULT 180,
+      row_count INTEGER NOT NULL DEFAULT 0,
+      content_sha256 TEXT NOT NULL,
+      previous_chain_hash TEXT,
+      chain_hash TEXT,
+      content_json TEXT NOT NULL,
+      protected_counts TEXT,
+      created_by TEXT,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+  ensureColumn('audit_log_archives', 'previous_chain_hash', 'TEXT')
+  ensureColumn('audit_log_archives', 'chain_hash', 'TEXT')
+  ensureColumn('audit_log_archives', 'external_archive_json', 'TEXT')
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS stocktaking_records (id TEXT PRIMARY KEY, stocktaking_no TEXT NOT NULL UNIQUE, material_id TEXT NOT NULL, location_id TEXT, batch_id TEXT, system_stock DECIMAL(18, 4) NOT NULL, actual_stock DECIMAL(18, 4) NOT NULL, difference DECIMAL(18, 4) NOT NULL, operator TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'completed', remark TEXT, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, is_deleted INTEGER NOT NULL DEFAULT 0)
   `)
   database.exec(`
     CREATE TABLE IF NOT EXISTS stocktaking_batch_adjustments (
@@ -253,6 +312,7 @@ export function initializeDatabase(): void {
       stocktaking_id TEXT NOT NULL,
       material_id TEXT NOT NULL,
       batch_id TEXT NOT NULL,
+      location_id TEXT,
       quantity_delta DECIMAL(18, 4) NOT NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
@@ -283,7 +343,7 @@ export function initializeDatabase(): void {
     )
   `)
   database.exec(`
-    CREATE TABLE IF NOT EXISTS scrap_records (id TEXT PRIMARY KEY, scrap_no TEXT NOT NULL UNIQUE, material_id TEXT NOT NULL, batch_id TEXT, quantity DECIMAL(18, 4) NOT NULL, reason TEXT NOT NULL, operator TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'completed', remark TEXT, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, is_deleted INTEGER NOT NULL DEFAULT 0)
+    CREATE TABLE IF NOT EXISTS scrap_records (id TEXT PRIMARY KEY, scrap_no TEXT NOT NULL UNIQUE, material_id TEXT NOT NULL, batch_id TEXT, quantity DECIMAL(18, 4) NOT NULL, reason TEXT NOT NULL, operator TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'completed', remark TEXT, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, is_deleted INTEGER NOT NULL DEFAULT 0, responsible_person TEXT, responsible_department TEXT, scrap_amount DECIMAL(18, 4) DEFAULT 0, requires_review INTEGER NOT NULL DEFAULT 0, review_status TEXT NOT NULL DEFAULT 'not_required', reviewed_by TEXT, reviewed_at DATETIME, review_reason TEXT)
   `)
   database.exec(`
     CREATE TABLE IF NOT EXISTS purchase_orders (
@@ -394,6 +454,7 @@ export function initializeDatabase(): void {
       default_total_capacity DECIMAL(18, 4) DEFAULT 0,
       default_capacity_unit TEXT DEFAULT 'minutes',
       status INTEGER NOT NULL DEFAULT 1,
+      is_deleted INTEGER NOT NULL DEFAULT 0,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
@@ -415,6 +476,7 @@ export function initializeDatabase(): void {
       status INTEGER NOT NULL DEFAULT 1,
       location_id TEXT,
       type_id TEXT,
+      is_deleted INTEGER NOT NULL DEFAULT 0,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
@@ -451,6 +513,8 @@ export function initializeDatabase(): void {
       UNIQUE(step_code, project_type)
     )
   `)
+  ensureColumn('equipment_types', 'is_deleted', 'INTEGER NOT NULL DEFAULT 0')
+  ensureColumn('equipment', 'is_deleted', 'INTEGER NOT NULL DEFAULT 0')
   ensureColumn('standard_labor_times', 'is_deleted', 'INTEGER NOT NULL DEFAULT 0')
 
   // 间接成本与季度调整
@@ -570,6 +634,9 @@ export function initializeDatabase(): void {
   ensureColumn('materials', 'barcode', 'TEXT')
   ensureColumn('stocktaking_records', 'is_deleted', 'INTEGER NOT NULL DEFAULT 0')
   ensureColumn('stocktaking_records', 'updated_at', 'DATETIME')
+  ensureColumn('stocktaking_records', 'location_id', 'TEXT')
+  ensureColumn('stocktaking_records', 'batch_id', 'TEXT')
+  ensureColumn('stocktaking_batch_adjustments', 'location_id', 'TEXT')
   ensureColumn('lis_cases', 'updated_at', 'DATETIME')
   ensureColumn('return_records', 'is_deleted', 'INTEGER NOT NULL DEFAULT 0')
   ensureColumn('return_records', 'batch_id', 'TEXT')
@@ -578,6 +645,14 @@ export function initializeDatabase(): void {
   ensureColumn('return_records', 'total_cost', 'DECIMAL(18, 4) DEFAULT 0')
   ensureColumn('scrap_records', 'is_deleted', 'INTEGER NOT NULL DEFAULT 0')
   ensureColumn('scrap_records', 'batch_id', 'TEXT')
+  ensureColumn('scrap_records', 'responsible_person', 'TEXT')
+  ensureColumn('scrap_records', 'responsible_department', 'TEXT')
+  ensureColumn('scrap_records', 'scrap_amount', 'DECIMAL(18, 4) DEFAULT 0')
+  ensureColumn('scrap_records', 'requires_review', 'INTEGER NOT NULL DEFAULT 0')
+  ensureColumn('scrap_records', 'review_status', "TEXT NOT NULL DEFAULT 'not_required'")
+  ensureColumn('scrap_records', 'reviewed_by', 'TEXT')
+  ensureColumn('scrap_records', 'reviewed_at', 'DATETIME')
+  ensureColumn('scrap_records', 'review_reason', 'TEXT')
   ensureColumn('outbound_records', 'sample_count', 'INTEGER DEFAULT 1')
   ensureColumn('outbound_records', 'abc_total_cost', 'DECIMAL(18, 4) DEFAULT 0')
   ensureColumn('outbound_records', 'abc_activity_cost', 'DECIMAL(18, 4) DEFAULT 0')
@@ -628,6 +703,10 @@ export function initializeDatabase(): void {
       amount DECIMAL(18, 4) DEFAULT 0,
       source TEXT DEFAULT 'manual',
       description TEXT,
+      adjustment_reason TEXT,
+      source_document_no TEXT,
+      attachment_url TEXT,
+      linked_adjustment_id TEXT,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `)
@@ -863,6 +942,11 @@ export function initializeDatabase(): void {
   ensureColumn('abc_cost_pools', 'amount', 'DECIMAL(18, 4) DEFAULT 0')
   ensureColumn('abc_cost_pools', 'source', "TEXT DEFAULT 'manual'")
   ensureColumn('abc_cost_pools', 'description', 'TEXT')
+  ensureColumn('abc_cost_pools', 'adjustment_reason', 'TEXT')
+  ensureColumn('abc_cost_pools', 'source_document_no', 'TEXT')
+  ensureColumn('abc_cost_pools', 'attachment_url', 'TEXT')
+  ensureColumn('abc_cost_pools', 'linked_adjustment_id', 'TEXT')
+  ensureColumn('abc_cost_pools', 'updated_at', 'DATETIME')
   ensureColumn('outbound_abc_details', 'cost_status', "TEXT NOT NULL DEFAULT 'costed'")
   ensureColumn('outbound_abc_details', 'cost_run_id', 'TEXT')
   ensureColumn('outbound_abc_details', 'case_no', 'TEXT')

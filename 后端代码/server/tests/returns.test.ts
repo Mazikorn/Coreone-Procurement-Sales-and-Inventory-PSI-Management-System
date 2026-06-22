@@ -47,6 +47,10 @@ function seedReturnSource(db: any, suffix: string, options: { outboundQty?: numb
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
   `).run(batchId, materialId, `BATCH-RT-${suffix}`, originalQty, currentStock, '2028-12-31', `inbound-return-${suffix}`, 13.5)
   db.prepare(`
+    INSERT INTO batch_location_balances (id, batch_id, material_id, location_id, remaining)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(`blb-return-${suffix}`, batchId, materialId, locationId, currentStock)
+  db.prepare(`
     INSERT INTO outbound_records (id, outbound_no, type, total_cost, operator, status, is_deleted)
     VALUES (?, ?, 'project', ?, 'admin', 'completed', 0)
   `).run(outboundId, `OB-RT-${suffix}`, outboundQty * 13.5)
@@ -90,6 +94,10 @@ describe('退库管理', () => {
     const locationStock = db.prepare('SELECT stock FROM inventory_locations WHERE material_id = ? AND location_id = ?')
       .get(source.materialId, source.locationId) as any
     const batch = db.prepare('SELECT remaining, status FROM batches WHERE id = ?').get(source.batchId) as any
+    const batchLocation = db.prepare(`
+      SELECT remaining FROM batch_location_balances
+      WHERE batch_id = ? AND material_id = ? AND location_id = ?
+    `).get(source.batchId, source.materialId, source.locationId) as any
     const log = db.prepare('SELECT quantity, before_stock, after_stock, operator FROM stock_logs WHERE related_id = ? AND related_type = ?')
       .get(res.body.data.id, 'return') as any
 
@@ -106,6 +114,7 @@ describe('退库管理', () => {
     expect(locationStock.stock).toBe(9)
     expect(batch.remaining).toBe(9)
     expect(batch.status).toBe(1)
+    expect(Number(batchLocation.remaining)).toBe(9)
     expect(log).toMatchObject({ quantity: 2, before_stock: 7, after_stock: 9, operator: 'admin' })
   })
 
@@ -158,6 +167,10 @@ describe('退库管理', () => {
     const locationStock = db.prepare('SELECT stock FROM inventory_locations WHERE material_id = ? AND location_id = ?')
       .get(source.materialId, source.locationId) as any
     const batch = db.prepare('SELECT remaining FROM batches WHERE id = ?').get(source.batchId) as any
+    const batchLocation = db.prepare(`
+      SELECT remaining FROM batch_location_balances
+      WHERE batch_id = ? AND material_id = ? AND location_id = ?
+    `).get(source.batchId, source.materialId, source.locationId) as any
     const log = db.prepare('SELECT quantity, before_stock, after_stock, operator FROM stock_logs WHERE related_id = ? AND related_type = ?')
       .get(createRes.body.data.id, 'return_cancel') as any
 
@@ -165,6 +178,7 @@ describe('退库管理', () => {
     expect(inventory.stock).toBe(7)
     expect(locationStock.stock).toBe(7)
     expect(batch.remaining).toBe(7)
+    expect(Number(batchLocation.remaining)).toBe(7)
     expect(log).toMatchObject({ quantity: -2, before_stock: 9, after_stock: 7, operator: 'admin' })
   })
 

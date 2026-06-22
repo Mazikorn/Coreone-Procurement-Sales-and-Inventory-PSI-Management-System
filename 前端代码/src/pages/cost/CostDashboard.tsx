@@ -18,7 +18,7 @@ import {
 } from 'lucide-react'
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 import { toast } from 'sonner'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { abcApi } from '@/api/abc'
 import { reportsApi } from '@/api/reports'
 import { getUserRole } from '@/lib/permissions'
@@ -92,7 +92,7 @@ interface CostRun {
   id: string
   yearMonth: string
   runType: string
-  status: 'running' | 'success' | 'failed'
+  status: 'running' | 'success' | 'completed' | 'failed'
   summary?: {
     total?: number
     success?: number
@@ -292,8 +292,20 @@ export function buildDashboardComparisonParams(month: string) {
   return { month, source: 'abc' as const }
 }
 
+export function buildInitialCostDashboardFilters(searchParams: URLSearchParams, defaultMonth: string) {
+  return {
+    month: searchParams.get('month') || searchParams.get('yearMonth') || defaultMonth,
+    keyword: searchParams.get('keyword') || '',
+  }
+}
+
 export default function CostDashboard() {
-  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7))
+  const [searchParams] = useSearchParams()
+  const [initialFilters] = useState(() =>
+    buildInitialCostDashboardFilters(searchParams, new Date().toISOString().slice(0, 7))
+  )
+  const [month, setMonth] = useState(initialFilters.month)
+  const [dashboardKeyword, setDashboardKeyword] = useState(initialFilters.keyword)
   const [role] = useState(() => getUserRole())
   const [loading, setLoading] = useState(true)
   const [summary, setSummary] = useState<DashboardSummary | null>(null)
@@ -314,7 +326,7 @@ export default function CostDashboard() {
   useEffect(() => {
     loadDashboard()
     loadComparison()
-  }, [month])
+  }, [month, dashboardKeyword])
 
   const loadDashboard = async () => {
     try {
@@ -326,8 +338,16 @@ export default function CostDashboard() {
       setAlerts(data.alerts || [])
       const [periodData, runData, adjustmentData] = await Promise.all([
         abcApi.getPeriods({ yearMonth: month, pageSize: 1 }),
-        abcApi.getCostRuns({ yearMonth: month, pageSize: 5 }),
-        abcApi.getAdjustments({ yearMonth: month, pageSize: 5 }),
+        abcApi.getCostRuns({
+          yearMonth: month,
+          pageSize: dashboardKeyword ? 20 : 5,
+          keyword: dashboardKeyword || undefined,
+        }),
+        abcApi.getAdjustments({
+          yearMonth: month,
+          pageSize: dashboardKeyword ? 20 : 5,
+          keyword: dashboardKeyword || undefined,
+        }),
       ])
       setCurrentPeriod(listPayload<CostPeriod>(periodData)[0] || null)
       setCostRuns(listPayload<CostRun>(runData))
@@ -505,7 +525,10 @@ export default function CostDashboard() {
           <input
             type="month"
             value={month}
-            onChange={e => setMonth(e.target.value)}
+            onChange={e => {
+              setMonth(e.target.value)
+              setDashboardKeyword('')
+            }}
             className="h-10 px-3 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
           />
           <button
@@ -658,7 +681,10 @@ export default function CostDashboard() {
                   const runStatus = RUN_STATUS[run.status] || RUN_STATUS.running
                   return (
                     <tr key={run.id}>
-                      <td className="py-2 text-gray-900">{run.runType === 'recalculate' ? '重算' : run.runType}</td>
+                      <td className="py-2 text-gray-900">
+                        <div>{run.runType === 'recalculate' ? '重算' : run.runType}</div>
+                        <div className="mt-0.5 font-mono text-xs text-gray-400">{run.id}</div>
+                      </td>
                       <td className="py-2">
                         <span className={`px-2 py-0.5 rounded-full text-xs ${runStatus.className}`}>
                           {runStatus.label}

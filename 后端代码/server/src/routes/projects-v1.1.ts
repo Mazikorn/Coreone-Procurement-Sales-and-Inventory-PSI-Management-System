@@ -50,15 +50,16 @@ function validateProjectBom(db: any, bomId: unknown, projectType: string) {
 
 function buildProjectWhere(query: any, alias = '') {
   const { type, status, keyword, bomFilter } = query
+  const includeDeleted = query?.includeDeleted === true || query?.includeDeleted === 'true'
   const col = (name: string) => alias ? `${alias}.${name}` : name
-  let where = `${col('is_deleted')} = 0`
+  let where = includeDeleted ? '1 = 1' : `${col('is_deleted')} = 0`
   const params: any[] = []
   if (type) { where += ` AND ${col('type')} = ?`; params.push(type) }
   if (status === 'active' || status === 'inactive') { where += ` AND ${col('status')} = ?`; params.push(status === 'active' ? 1 : 0) }
   if (keyword) {
-    where += ` AND (${col('name')} LIKE ? OR ${col('code')} LIKE ? OR COALESCE(${col('manager')}, '') LIKE ?)`
+    where += ` AND (${col('id')} LIKE ? OR ${col('name')} LIKE ? OR ${col('code')} LIKE ? OR COALESCE(${col('manager')}, '') LIKE ?)`
     const like = `%${keyword}%`
-    params.push(like, like, like)
+    params.push(like, like, like, like)
   }
   if (bomFilter === 'configured') { where += ` AND ${col('bom_id')} IS NOT NULL` }
   if (bomFilter === 'unconfigured') { where += ` AND ${col('bom_id')} IS NULL` }
@@ -222,6 +223,7 @@ router.get('/', (req, res) => {
       bomId: r.bom_id, bomName: r.bom_name || null, bomVersion: r.bom_version || null,
       supportableSamples: calculateBomSupportableSamples(db, r.bom_id),
       status: r.status === 1 ? 'active' : 'inactive', manager: r.manager,
+      isDeleted: Number(r.is_deleted || 0) !== 0,
       description: r.description, createdAt: r.created_at,
     })), Number(page), Number(pageSize), count)
   } catch (err: any) { error(res, err.message) }

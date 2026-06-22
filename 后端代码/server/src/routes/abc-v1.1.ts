@@ -5,10 +5,12 @@ import { success, successList, error } from '../utils/response.js'
 import { calculateSlideCostWithFee } from '../utils/cost-calculator.js'
 import { recordCostException } from '../utils/cost-exceptions.js'
 import { ensurePeriodOpen, getOrCreatePeriod, normalizeMonth, runCostRecalculation, writeAuditLog } from '../utils/cost-runs.js'
-import { requireRole, requireStrictRole } from '../middleware/auth.js'
+import { requireCostWorkbenchAccess } from '../middleware/auth.js'
+import { logOperation } from '../utils/operation-logger.js'
 
 const router = Router()
-const requireCostWrite = requireStrictRole('admin', 'finance')
+const requireCostWrite = requireCostWorkbenchAccess
+const requireCostWorkbenchRead = requireCostWorkbenchAccess
 
 const pageParams = (query: any) => {
   const page = Math.max(1, Number(query.page) || 1)
@@ -30,6 +32,99 @@ const previousMonth = (month: string) => {
 const changeRate = (current: number, previous: number) => {
   if (previous > 0) return (current - previous) / previous
   return current > 0 ? 1 : 0
+}
+
+const getCostInsightQuality = (db: any, yearMonth: string) => {
+  const period = db.prepare('SELECT * FROM abc_periods WHERE year_month = ?').get(yearMonth) as any
+  const outboundCount = Number((db.prepare(`
+    SELECT COUNT(*) as total
+    FROM outbound_records
+    WHERE is_deleted = 0 AND status = 'completed' AND substr(created_at, 1, 7) = ?
+  `).get(yearMonth) as any)?.total || 0)
+  const abcSnapshotCount = Number((db.prepare(`
+    SELECT COUNT(*) as total
+    FROM outbound_abc_details
+    WHERE cost_month = ?
+  `).get(yearMonth) as any)?.total || 0)
+  const pendingCostCount = Number((db.prepare(`
+    SELECT COUNT(*) as total
+    FROM outbound_records
+    WHERE is_deleted = 0 AND status = 'completed'
+      AND substr(created_at, 1, 7) = ?
+      AND COALESCE(cost_status, 'pending_cost') IN ('pending_cost', 'cost_exception')
+  `).get(yearMonth) as any)?.total || 0)
+  const openExceptionCount = Number((db.prepare(`
+    SELECT COUNT(*) as total
+    FROM cost_exceptions
+    WHERE status = 'open' AND (year_month = ? OR year_month IS NULL)
+  `).get(yearMonth) as any)?.total || 0)
+  const periodStatus = period?.status || 'not_started'
+  const isClosed = periodStatus === 'closed'
+  const isFinal = isClosed && openExceptionCount === 0 && pendingCostCount === 0
+  const reasons: string[] = []
+
+  if (!period) reasons.push('成本期间未开启')
+  if (period && !isClosed) reasons.push('成本期间未关账')
+  if (openExceptionCount > 0) reasons.push(`${openExceptionCount} 条开放成本异常`)
+  if (pendingCostCount > 0) reasons.push(`${pendingCostCount} 单未补算或成本异常`)
+  if (outboundCount > abcSnapshotCount) reasons.push(`出库单 ${outboundCount} 单，成本快照 ${abcSnapshotCount} 条`)
+
+  return {
+    yearMonth,
+    periodStatus,
+    isClosed,
+    isFinal,
+    openExceptionCount,
+    pendingCostCount,
+    abcSnapshotCount,
+    outboundCount,
+    reliability: isFinal ? 'final' : period ? 'attention' : 'draft',
+    message: isFinal
+      ? '本期间已关账，且没有开放成本异常或未补算单据，可作为经营判断口径。'
+      : `${reasons.join('；')}，当前数据仅适合作为过程观察，不能作为最终经营判断。`,
+  }
+}
+
+const getCostInsightQualityMap = (db: any, months: string[]) => {
+  const uniqueMonths = [...new Set(months.map(month => String(month || '').slice(0, 7)).filter(Boolean))]
+  return uniqueMonths.reduce((acc: Record<string, ReturnType<typeof getCostInsightQuality>>, month) => {
+    acc[month] = getCostInsightQuality(db, month)
+    return acc
+  }, {})
+}
+
+const getMonthRange = (startMonth: string, endMonth: string) => {
+  const start = String(startMonth || endMonth || currentMonth()).slice(0, 7)
+  const end = String(endMonth || start || currentMonth()).slice(0, 7)
+  if (!/^\d{4}-\d{2}$/.test(start) || !/^\d{4}-\d{2}$/.test(end)) return [start]
+
+  const months: string[] = []
+  let year = Number(start.slice(0, 4))
+  let month = Number(start.slice(5, 7))
+  const endYear = Number(end.slice(0, 4))
+  const endMonthNumber = Number(end.slice(5, 7))
+
+  for (let guard = 0; guard < 60 && (year < endYear || (year === endYear && month <= endMonthNumber)); guard += 1) {
+    months.push(`${year}-${String(month).padStart(2, '0')}`)
+    month += 1
+    if (month > 12) {
+      month = 1
+      year += 1
+    }
+  }
+
+  return months.length > 0 ? months : [start]
+}
+
+const getProfitabilityInsightExtra = (db: any, startMonth: string, endMonth: string) => {
+  const months = getMonthRange(startMonth, endMonth)
+  const insightQualityByMonth = getCostInsightQualityMap(db, months)
+  const primaryMonth = months[0] || currentMonth()
+
+  return {
+    insightQuality: insightQualityByMonth[primaryMonth] || getCostInsightQuality(db, primaryMonth),
+    insightQualityByMonth,
+  }
 }
 
 const periodPayload = (row: any) => ({
@@ -57,6 +152,12 @@ const parseJsonOrNull = (value: string | null | undefined) => {
 
 const activeStatusSql = (column: string, allowBlank = false) =>
   `(${column} = 'active' OR ${column} = 1 OR ${column} = '1'${allowBlank ? ` OR ${column} IS NULL OR ${column} = ''` : ''})`
+
+const activeStatusPayload = (status: any) => (
+  status === 'active' || status === 1 || status === '1' || status === null || status === undefined || status === ''
+    ? 'active'
+    : 'inactive'
+)
 
 const feeMappingAuditSelect = `
   SELECT
@@ -205,6 +306,11 @@ const costAdjustmentPayload = (row: any) => ({
   createdAt: row.created_at,
   updatedAt: row.updated_at,
 })
+
+const costAdjustmentSnapshot = (row: any) => {
+  if (!row) return null
+  return costAdjustmentPayload(row)
+}
 
 const approvedAdjustmentTotal = (db: any, yearMonth: string) => Number((db.prepare(`
   SELECT COALESCE(SUM(amount), 0) as total
@@ -409,6 +515,32 @@ const qualityCostPayload = (row: any) => ({
   createdAt: row.created_at,
 })
 
+const budgetAuditSnapshot = (row: any) => {
+  if (!row) return null
+  const payload = budgetPayload(row)
+  return {
+    yearMonth: payload.yearMonth,
+    category: payload.category,
+    budgetAmount: payload.budgetAmount,
+    actualAmount: payload.actualAmount,
+    executionRate: payload.executionRate,
+    status: payload.status,
+    description: payload.description,
+  }
+}
+
+const qualityCostAuditSnapshot = (row: any) => {
+  if (!row) return null
+  const payload = qualityCostPayload(row)
+  return {
+    yearMonth: payload.yearMonth,
+    costType: payload.costType,
+    subType: payload.subType,
+    amount: payload.amount,
+    description: payload.description,
+  }
+}
+
 const activityCenterPayload = (row: any) => ({
   id: row.id,
   code: row.code,
@@ -416,11 +548,36 @@ const activityCenterPayload = (row: any) => ({
   description: row.description || '',
   costDriverType: row.cost_driver_type || 'slide_count',
   parentId: row.parent_id || null,
+  parentName: row.parent_name || null,
   sortOrder: row.sort_order || 0,
-  status: row.status || 'active',
+  status: activeStatusPayload(row.status),
   createdAt: row.created_at,
   updatedAt: row.updated_at,
 })
+
+function normalizeActivityCenterStatus(value: unknown, fallback = 'active') {
+  const status = value === undefined || value === null || value === '' ? fallback : String(value)
+  if (status === 'active' || status === '1' || status === 'true') return { ok: true as const, value: 'active' }
+  if (status === 'inactive' || status === '0' || status === 'false') return { ok: true as const, value: 'inactive' }
+  return { ok: false as const, message: '作业中心状态无效' }
+}
+
+function normalizeActivityCenterParent(db: any, parentId: unknown, selfId?: string) {
+  if (parentId === undefined) return { ok: true as const, value: undefined }
+  const normalizedParentId = String(parentId || '').trim()
+  if (!normalizedParentId) return { ok: true as const, value: null }
+  const parent = db.prepare('SELECT id, parent_id FROM abc_activity_centers WHERE id = ?').get(normalizedParentId) as any
+  if (!parent) return { ok: false as const, message: '上级作业中心不存在' }
+  if (selfId) {
+    let current: any = parent
+    while (current) {
+      if (current.id === selfId) return { ok: false as const, message: '作业中心不能选择自己或下级作为上级' }
+      if (!current.parent_id) break
+      current = db.prepare('SELECT id, parent_id FROM abc_activity_centers WHERE id = ?').get(current.parent_id) as any
+    }
+  }
+  return { ok: true as const, value: normalizedParentId }
+}
 
 const costDriverPayload = (row: any) => ({
   id: row.id,
@@ -428,11 +585,83 @@ const costDriverPayload = (row: any) => ({
   name: row.name,
   unit: row.unit || '',
   calculationMethod: row.calculation_method || 'linear',
-  tierRules: row.tier_rules ? JSON.parse(row.tier_rules) : null,
+  tierRules: parseJsonOrNull(row.tier_rules),
   description: row.description || '',
-  status: row.status || 'active',
+  status: activeStatusPayload(row.status),
   createdAt: row.created_at,
 })
+
+const COST_DRIVER_METHODS = new Set(['linear', 'tiered', 'fixed'])
+
+function normalizeCostDriverPayload(body: any, existing?: any) {
+  const method = String(body?.calculationMethod || existing?.calculation_method || 'linear').trim()
+  if (!COST_DRIVER_METHODS.has(method)) {
+    return { ok: false as const, message: '成本动因计算方法不支持', code: 'INVALID_PARAMETER', status: 400 }
+  }
+
+  let tierRules: Array<{ from: number; to: number | null; rate: number; label: string }> | null = null
+
+  if (method === 'tiered') {
+    const rawRules = body?.tierRules !== undefined ? body.tierRules : parseJsonOrNull(existing?.tier_rules)
+    if (!Array.isArray(rawRules) || rawRules.length === 0) {
+      return { ok: false as const, message: '阶梯成本动因必须配置区间费率', code: 'INVALID_TIER_RULES', status: 400 }
+    }
+
+    const normalized = rawRules.map((rule: any, index: number) => {
+      const from = Number(rule?.from)
+      const hasOpenEnd = rule?.to === null || rule?.to === undefined || String(rule?.to).trim() === ''
+      const to = hasOpenEnd ? null : Number(rule?.to)
+      const rate = Number(rule?.rate)
+      const label = String(rule?.label || '').trim()
+
+      if (!Number.isFinite(from) || from < 0) {
+        return { error: `第${index + 1}阶梯起始数量必须大于等于0` }
+      }
+      if (to !== null && (!Number.isFinite(to) || to <= from)) {
+        return { error: `第${index + 1}阶梯结束数量必须大于起始数量` }
+      }
+      if (!Number.isFinite(rate) || rate < 0) {
+        return { error: `第${index + 1}阶梯费率必须大于等于0` }
+      }
+
+      return {
+        from,
+        to,
+        rate,
+        label: label || `${from}${to === null ? '以上' : `-${to}`}`,
+      }
+    })
+
+    const invalid = normalized.find((rule: any) => rule.error) as any
+    if (invalid) {
+      return { ok: false as const, message: invalid.error, code: 'INVALID_TIER_RULES', status: 400 }
+    }
+
+    const sorted = normalized as Array<{ from: number; to: number | null; rate: number; label: string }>
+    for (let index = 0; index < sorted.length; index += 1) {
+      const rule = sorted[index]
+      if (index === 0 && rule.from !== 0) {
+        return { ok: false as const, message: '阶梯费率必须从0开始', code: 'INVALID_TIER_RULES', status: 400 }
+      }
+      if (index > 0) {
+        const previous = sorted[index - 1]
+        if (previous.to === null) {
+          return { ok: false as const, message: '开口阶梯只能放在最后一行', code: 'INVALID_TIER_RULES', status: 400 }
+        }
+        if (rule.from !== previous.to) {
+          return { ok: false as const, message: '阶梯区间必须连续且不能重叠', code: 'INVALID_TIER_RULES', status: 400 }
+        }
+      }
+      if (rule.to === null && index !== sorted.length - 1) {
+        return { ok: false as const, message: '开口阶梯只能放在最后一行', code: 'INVALID_TIER_RULES', status: 400 }
+      }
+    }
+
+    tierRules = sorted
+  }
+
+  return { ok: true as const, method, tierRules }
+}
 
 function validateCostDriverType(db: any, code: string) {
   const driverCode = String(code || '').trim()
@@ -466,6 +695,11 @@ function validateCostPoolInput(db: any, body: any) {
   const indirect = body?.indirectCost === undefined || body?.indirectCost === null ? 0 : Number(body.indirectCost)
   const total = body?.amount === undefined || body?.amount === null ? direct + indirect : Number(body.amount)
   const driverQty = Number(body?.driverQuantity)
+  const source = String(body?.source || 'manual').trim() || 'manual'
+  const adjustmentReason = trimmedText(body?.adjustmentReason || body?.manualAdjustmentReason || body?.reason)
+  const sourceDocumentNo = trimmedText(body?.sourceDocumentNo || body?.sourceDocument || body?.documentNo)
+  const attachmentUrl = trimmedText(body?.attachmentUrl || body?.attachment)
+  const linkedAdjustmentId = trimmedText(body?.adjustmentId || body?.linkedAdjustmentId)
 
   if (!Number.isFinite(direct) || direct < 0) {
     return { ok: false as const, message: '直接成本不能为负数', code: 'INVALID_PARAMETER', status: 400 }
@@ -479,6 +713,22 @@ function validateCostPoolInput(db: any, body: any) {
   if (!Number.isFinite(driverQty) || driverQty <= 0) {
     return { ok: false as const, message: '动因数量必须大于0', code: 'INVALID_PARAMETER', status: 400 }
   }
+  if (source === 'manual' && !adjustmentReason) {
+    return { ok: false as const, message: '手工成本池调整原因不能为空', code: 'COST_POOL_ADJUSTMENT_REASON_REQUIRED', status: 400 }
+  }
+  if (linkedAdjustmentId) {
+    const linkedAdjustment = db.prepare(`
+      SELECT id, status
+      FROM abc_cost_adjustments
+      WHERE id = ?
+    `).get(linkedAdjustmentId) as any
+    if (!linkedAdjustment) {
+      return { ok: false as const, message: '关联调整单不存在', code: 'INVALID_PARAMETER', status: 400 }
+    }
+    if (linkedAdjustment.status !== 'approved') {
+      return { ok: false as const, message: '关联调整单必须已通过审核', code: 'INVALID_PARAMETER', status: 400 }
+    }
+  }
 
   return {
     ok: true as const,
@@ -489,8 +739,32 @@ function validateCostPoolInput(db: any, body: any) {
     total,
     driverQty,
     driverRate: total / driverQty,
-    source: body?.source || 'manual',
+    source,
     description: body?.description || null,
+    adjustmentReason: adjustmentReason || null,
+    sourceDocumentNo: sourceDocumentNo || null,
+    attachmentUrl: attachmentUrl || null,
+    linkedAdjustmentId: linkedAdjustmentId || null,
+  }
+}
+
+function costPoolSnapshot(row: any) {
+  if (!row) return null
+  return {
+    id: row.id,
+    activityCenterId: row.activity_center_id,
+    yearMonth: row.year_month,
+    directCost: Number(row.direct_cost || 0),
+    indirectCost: Number(row.indirect_cost || 0),
+    totalCost: Number(row.total_cost || row.amount || 0),
+    driverQuantity: Number(row.driver_quantity || 0),
+    driverRate: Number(row.driver_rate || 0),
+    source: row.source || 'manual',
+    description: row.description || null,
+    adjustmentReason: row.adjustment_reason || null,
+    sourceDocumentNo: row.source_document_no || null,
+    attachmentUrl: row.attachment_url || null,
+    linkedAdjustmentId: row.linked_adjustment_id || null,
   }
 }
 
@@ -650,17 +924,43 @@ router.post('/periods/:id/close', requireCostWrite, (req, res) => {
   } catch (err: any) { error(res, err.message) }
 })
 
-router.get('/activity-centers', (_req, res) => {
+router.get('/activity-centers', requireCostWorkbenchRead, (req, res) => {
   try {
     const db = getDatabase()
-    const rows = db.prepare('SELECT * FROM abc_activity_centers ORDER BY sort_order ASC, created_at DESC').all() as any[]
+    const keyword = String(req.query.keyword || '').trim()
+    const params: any[] = []
+    let where = ''
+    if (keyword) {
+      const kw = `%${keyword}%`
+      where = `
+        WHERE ac.id LIKE ?
+           OR ac.code LIKE ?
+           OR ac.name LIKE ?
+           OR ac.description LIKE ?
+           OR ac.cost_driver_type LIKE ?
+           OR ac.status LIKE ?
+      `
+      params.push(kw, kw, kw, kw, kw, kw)
+    }
+    const rows = db.prepare(`
+      SELECT ac.*, parent.name as parent_name
+      FROM abc_activity_centers ac
+      LEFT JOIN abc_activity_centers parent ON parent.id = ac.parent_id
+      ${where}
+      ORDER BY ac.sort_order ASC, ac.created_at DESC
+    `).all(...params) as any[]
     success(res, rows.map(activityCenterPayload))
   } catch (err: any) { error(res, err.message) }
 })
 
-router.get('/activity-centers/:id', (req, res) => {
+router.get('/activity-centers/:id', requireCostWorkbenchRead, (req, res) => {
   try {
-    const row = getDatabase().prepare('SELECT * FROM abc_activity_centers WHERE id = ?').get(req.params.id) as any
+    const row = getDatabase().prepare(`
+      SELECT ac.*, parent.name as parent_name
+      FROM abc_activity_centers ac
+      LEFT JOIN abc_activity_centers parent ON parent.id = ac.parent_id
+      WHERE ac.id = ?
+    `).get(req.params.id) as any
     if (!row) { error(res, '作业中心不存在', 'NOT_FOUND', 404); return }
     success(res, activityCenterPayload(row))
   } catch (err: any) { error(res, err.message) }
@@ -668,18 +968,22 @@ router.get('/activity-centers/:id', (req, res) => {
 
 router.post('/activity-centers', requireCostWrite, (req, res) => {
   try {
-    const { code, name, description, costDriverType, parentId, sortOrder } = req.body
+    const { code, name, description, costDriverType, parentId, sortOrder, status } = req.body
     if (!code || !name) { error(res, '缺少必填字段', 'INVALID_PARAMETER', 400); return }
     const db = getDatabase()
     const operator = getOperator(req)
     const driverValidation = validateCostDriverType(db, costDriverType || 'slide_count')
     if (!driverValidation.ok) { error(res, driverValidation.message, 'INVALID_PARAMETER', 400); return }
+    const parentValidation = normalizeActivityCenterParent(db, parentId)
+    if (!parentValidation.ok) { error(res, parentValidation.message, 'INVALID_PARAMETER', 400); return }
+    const statusValidation = normalizeActivityCenterStatus(status)
+    if (!statusValidation.ok) { error(res, statusValidation.message, 'INVALID_PARAMETER', 400); return }
     const id = uuidv4()
     db.prepare(`
       INSERT INTO abc_activity_centers (id, code, name, description, cost_driver_type, parent_id, sort_order, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'active')
-    `).run(id, code, name, description || null, driverValidation.code, parentId || null, sortOrder || 0)
-    writeAuditLog(db, 'activity_center', 'create', id, { code, name, costDriverType: driverValidation.code }, operator)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, code, name, description || null, driverValidation.code, parentValidation.value ?? null, sortOrder || 0, statusValidation.value)
+    writeAuditLog(db, 'activity_center', 'create', id, { code, name, costDriverType: driverValidation.code, parentId: parentValidation.value ?? null, status: statusValidation.value }, operator)
     success(res, { id }, 'Created', 201)
   } catch (err: any) { error(res, err.message) }
 })
@@ -694,6 +998,11 @@ router.put('/activity-centers/:id', requireCostWrite, (req, res) => {
     const nextCostDriverType = costDriverType || existing.cost_driver_type
     const driverValidation = validateCostDriverType(db, nextCostDriverType)
     if (!driverValidation.ok) { error(res, driverValidation.message, 'INVALID_PARAMETER', 400); return }
+    const parentValidation = normalizeActivityCenterParent(db, parentId, req.params.id)
+    if (!parentValidation.ok) { error(res, parentValidation.message, 'INVALID_PARAMETER', 400); return }
+    const statusValidation = normalizeActivityCenterStatus(status, existing.status)
+    if (!statusValidation.ok) { error(res, statusValidation.message, 'INVALID_PARAMETER', 400); return }
+    const nextParentId = parentValidation.value === undefined ? existing.parent_id : parentValidation.value
     db.prepare(`
       UPDATE abc_activity_centers
       SET name = ?, description = ?, cost_driver_type = ?, parent_id = ?, sort_order = ?, status = ?, updated_at = CURRENT_TIMESTAMP
@@ -702,15 +1011,16 @@ router.put('/activity-centers/:id', requireCostWrite, (req, res) => {
       name || existing.name,
       description !== undefined ? description : existing.description,
       driverValidation.code,
-      parentId !== undefined ? parentId : existing.parent_id,
+      nextParentId,
       sortOrder !== undefined ? sortOrder : existing.sort_order,
-      status || existing.status,
+      statusValidation.value,
       req.params.id
     )
     writeAuditLog(db, 'activity_center', 'update', req.params.id, {
       name: name || existing.name,
       costDriverType: driverValidation.code,
-      status: status || existing.status,
+      parentId: nextParentId,
+      status: statusValidation.value,
     }, operator)
     success(res, { id: req.params.id }, 'Updated')
   } catch (err: any) { error(res, err.message) }
@@ -734,9 +1044,31 @@ router.delete('/activity-centers/:id', requireCostWrite, (req, res) => {
   } catch (err: any) { error(res, err.message) }
 })
 
-router.get('/cost-drivers', (_req, res) => {
+router.get('/cost-drivers', requireCostWorkbenchRead, (req, res) => {
   try {
-    const rows = getDatabase().prepare('SELECT * FROM abc_cost_drivers ORDER BY created_at DESC').all() as any[]
+    const keyword = String(req.query.keyword || '').trim()
+    const params: any[] = []
+    let where = ''
+    if (keyword) {
+      const kw = `%${keyword}%`
+      where = `
+        WHERE id LIKE ?
+           OR code LIKE ?
+           OR name LIKE ?
+           OR unit LIKE ?
+           OR calculation_method LIKE ?
+           OR tier_rules LIKE ?
+           OR description LIKE ?
+           OR status LIKE ?
+      `
+      params.push(kw, kw, kw, kw, kw, kw, kw, kw)
+    }
+    const rows = getDatabase().prepare(`
+      SELECT *
+      FROM abc_cost_drivers
+      ${where}
+      ORDER BY created_at DESC
+    `).all(...params) as any[]
     success(res, rows.map(costDriverPayload))
   } catch (err: any) { error(res, err.message) }
 })
@@ -747,23 +1079,41 @@ router.post('/cost-drivers', requireCostWrite, (req, res) => {
     if (!code || !name) { error(res, '缺少必填字段', 'INVALID_PARAMETER', 400); return }
     const db = getDatabase()
     const operator = getOperator(req)
+    const normalized = normalizeCostDriverPayload({ calculationMethod, tierRules })
+    if (!normalized.ok) { error(res, normalized.message, normalized.code, normalized.status); return }
     const id = uuidv4()
     db.prepare(`
-      INSERT INTO abc_cost_drivers (id, code, name, unit, calculation_method, tier_rules, description)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(id, code, name, unit || '', calculationMethod || 'linear', tierRules ? JSON.stringify(tierRules) : null, description || null)
-    writeAuditLog(db, 'cost_driver', 'create', id, { code, name, unit, calculationMethod: calculationMethod || 'linear' }, operator)
+      INSERT INTO abc_cost_drivers (id, code, name, unit, calculation_method, tier_rules, description, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'active')
+    `).run(
+      id,
+      code,
+      name,
+      unit || '',
+      normalized.method,
+      normalized.tierRules ? JSON.stringify(normalized.tierRules) : null,
+      description || null
+    )
+    writeAuditLog(db, 'cost_driver', 'create', id, {
+      code,
+      name,
+      unit,
+      calculationMethod: normalized.method,
+      tierRules: normalized.tierRules,
+    }, operator)
     success(res, { id }, 'Created', 201)
   } catch (err: any) { error(res, err.message) }
 })
 
 router.put('/cost-drivers/:id', requireCostWrite, (req, res) => {
   try {
-    const { name, unit, calculationMethod, tierRules, description, status } = req.body
+    const { name, unit, description, status } = req.body
     const db = getDatabase()
     const operator = getOperator(req)
     const existing = db.prepare('SELECT * FROM abc_cost_drivers WHERE id = ?').get(req.params.id) as any
     if (!existing) { error(res, '成本动因不存在', 'NOT_FOUND', 404); return }
+    const normalized = normalizeCostDriverPayload(req.body, existing)
+    if (!normalized.ok) { error(res, normalized.message, normalized.code, normalized.status); return }
     db.prepare(`
       UPDATE abc_cost_drivers
       SET name = ?, unit = ?, calculation_method = ?, tier_rules = ?, description = ?, status = ?, updated_at = CURRENT_TIMESTAMP
@@ -771,8 +1121,8 @@ router.put('/cost-drivers/:id', requireCostWrite, (req, res) => {
     `).run(
       name || existing.name,
       unit !== undefined ? unit : existing.unit,
-      calculationMethod || existing.calculation_method,
-      tierRules !== undefined ? JSON.stringify(tierRules) : existing.tier_rules,
+      normalized.method,
+      normalized.tierRules ? JSON.stringify(normalized.tierRules) : null,
       description !== undefined ? description : existing.description,
       status || existing.status,
       req.params.id
@@ -780,7 +1130,8 @@ router.put('/cost-drivers/:id', requireCostWrite, (req, res) => {
     writeAuditLog(db, 'cost_driver', 'update', req.params.id, {
       name: name || existing.name,
       unit: unit !== undefined ? unit : existing.unit,
-      calculationMethod: calculationMethod || existing.calculation_method,
+      calculationMethod: normalized.method,
+      tierRules: normalized.tierRules,
       status: status || existing.status,
     }, operator)
     success(res, { id: req.params.id }, 'Updated')
@@ -801,7 +1152,7 @@ router.delete('/cost-drivers/:id', requireCostWrite, (req, res) => {
   } catch (err: any) { error(res, err.message) }
 })
 
-router.get('/cost-pools', (req, res) => {
+router.get('/cost-pools', requireCostWorkbenchRead, (req, res) => {
   try {
     const { page, pageSize, offset } = pageParams(req.query)
     const db = getDatabase()
@@ -813,9 +1164,9 @@ router.get('/cost-pools', (req, res) => {
     if (activityCenterId) { where += ' AND p.activity_center_id = ?'; params.push(activityCenterId) }
     if (source) { where += ' AND p.source = ?'; params.push(source) }
     if (keyword) {
-      where += ' AND (ac.name LIKE ? OR ac.code LIKE ? OR p.description LIKE ? OR p.source LIKE ?)'
+      where += ' AND (p.id LIKE ? OR ac.name LIKE ? OR ac.code LIKE ? OR p.description LIKE ? OR p.source LIKE ? OR p.adjustment_reason LIKE ? OR p.source_document_no LIKE ?)'
       const kw = `%${String(keyword).trim()}%`
-      params.push(kw, kw, kw, kw)
+      params.push(kw, kw, kw, kw, kw, kw, kw)
     }
 
     const total = (db.prepare(`
@@ -847,7 +1198,12 @@ router.get('/cost-pools', (req, res) => {
       amount: row.amount || row.total_cost || 0,
       source: row.source,
       description: row.description,
+      adjustmentReason: row.adjustment_reason,
+      sourceDocumentNo: row.source_document_no,
+      attachmentUrl: row.attachment_url,
+      linkedAdjustmentId: row.linked_adjustment_id,
       createdAt: row.created_at,
+      updatedAt: row.updated_at,
     })), page, pageSize, total)
   } catch (err: any) { error(res, err.message) }
 })
@@ -860,16 +1216,32 @@ router.post('/cost-pools', requireCostWrite, (req, res) => {
     if (!input.ok) { error(res, input.message, input.code, input.status); return }
     ensurePeriodOpen(db, input.yearMonth)
 
-    const existing = db.prepare('SELECT id FROM abc_cost_pools WHERE activity_center_id = ? AND year_month = ?')
+    const existing = db.prepare('SELECT * FROM abc_cost_pools WHERE activity_center_id = ? AND year_month = ?')
       .get(input.activityCenterId, input.yearMonth) as any
 
     if (existing) {
       db.prepare(`
         UPDATE abc_cost_pools
         SET direct_cost = ?, indirect_cost = ?, total_cost = ?, driver_quantity = ?,
-            driver_rate = ?, amount = ?, source = ?, description = ?
+            driver_rate = ?, amount = ?, source = ?, description = ?,
+            adjustment_reason = ?, source_document_no = ?, attachment_url = ?,
+            linked_adjustment_id = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
-      `).run(input.direct, input.indirect, input.total, input.driverQty, input.driverRate, input.total, input.source, input.description, existing.id)
+      `).run(
+        input.direct,
+        input.indirect,
+        input.total,
+        input.driverQty,
+        input.driverRate,
+        input.total,
+        input.source,
+        input.description,
+        input.adjustmentReason,
+        input.sourceDocumentNo,
+        input.attachmentUrl,
+        input.linkedAdjustmentId,
+        existing.id,
+      )
       writeAuditLog(db, 'cost_pool', 'update', existing.id, {
         yearMonth: input.yearMonth,
         activityCenterId: input.activityCenterId,
@@ -877,7 +1249,22 @@ router.post('/cost-pools', requireCostWrite, (req, res) => {
         driverQuantity: input.driverQty,
         driverRate: input.driverRate,
         source: input.source,
+        adjustmentReason: input.adjustmentReason,
+        sourceDocumentNo: input.sourceDocumentNo,
       }, operator)
+      const updated = db.prepare('SELECT * FROM abc_cost_pools WHERE id = ?').get(existing.id) as any
+      logOperation(db, req as any, {
+        operation: 'POST /abc/cost-pools',
+        description: `更新手工成本池 ${input.yearMonth}`,
+        requestData: {
+          module: 'abc_cost_pools',
+          id: existing.id,
+          action: 'update',
+          before: costPoolSnapshot(existing),
+          after: costPoolSnapshot(updated),
+        },
+        responseData: { id: existing.id, status: 'updated' },
+      })
       success(res, { id: existing.id }, 'Updated')
       return
     }
@@ -887,9 +1274,10 @@ router.post('/cost-pools', requireCostWrite, (req, res) => {
       INSERT INTO abc_cost_pools (
         id, activity_center_id, year_month,
         direct_cost, indirect_cost, total_cost, driver_quantity, driver_rate,
-        amount, source, description
+        amount, source, description, adjustment_reason, source_document_no,
+        attachment_url, linked_adjustment_id, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     `).run(
       id,
       input.activityCenterId,
@@ -902,6 +1290,10 @@ router.post('/cost-pools', requireCostWrite, (req, res) => {
       input.total,
       input.source,
       input.description,
+      input.adjustmentReason,
+      input.sourceDocumentNo,
+      input.attachmentUrl,
+      input.linkedAdjustmentId,
     )
     writeAuditLog(db, 'cost_pool', 'create', id, {
       yearMonth: input.yearMonth,
@@ -910,7 +1302,22 @@ router.post('/cost-pools', requireCostWrite, (req, res) => {
       driverQuantity: input.driverQty,
       driverRate: input.driverRate,
       source: input.source,
+      adjustmentReason: input.adjustmentReason,
+      sourceDocumentNo: input.sourceDocumentNo,
     }, operator)
+    const created = db.prepare('SELECT * FROM abc_cost_pools WHERE id = ?').get(id) as any
+    logOperation(db, req as any, {
+      operation: 'POST /abc/cost-pools',
+      description: `创建手工成本池 ${input.yearMonth}`,
+      requestData: {
+        module: 'abc_cost_pools',
+        id,
+        action: 'create',
+        before: null,
+        after: costPoolSnapshot(created),
+      },
+      responseData: { id, status: 'created' },
+    })
     success(res, { id }, 'Created', 201)
   } catch (err: any) {
     const code = err.message?.includes('已关账') ? 'PERIOD_CLOSED' : 'INTERNAL_ERROR'
@@ -935,7 +1342,14 @@ router.post('/cost-pools/:action(sync|auto-collect|recalculate)', requireCostWri
         WHERE id = ?
       `).run(period.id)
       writeAuditLog(db, 'cost_pool', 'sync', period.id, { yearMonth, sourceTotals }, operator)
-      success(res, { yearMonth, periodId: period.id, sourceTotals }, 'Synced')
+      const payload = { yearMonth, periodId: period.id, sourceTotals }
+      logOperation(db, req as any, {
+        operation: 'POST /abc/cost-pools/:action',
+        description: '同步ABC成本池来源数据',
+        requestData: { action, yearMonth },
+        responseData: payload,
+      })
+      success(res, payload, 'Synced')
       return
     }
 
@@ -947,13 +1361,27 @@ router.post('/cost-pools/:action(sync|auto-collect|recalculate)', requireCostWri
         WHERE id = ?
       `).run(period.id)
       writeAuditLog(db, 'cost_pool', 'auto_collect', period.id, { yearMonth, ...result }, operator)
-      success(res, { yearMonth, periodId: period.id, ...result }, 'Collected')
+      const payload = { yearMonth, periodId: period.id, ...result }
+      logOperation(db, req as any, {
+        operation: 'POST /abc/cost-pools/:action',
+        description: '自动归集ABC成本池',
+        requestData: { action, yearMonth },
+        responseData: payload,
+      })
+      success(res, payload, 'Collected')
       return
     }
 
     const collectResult = autoCollectCostPools(db, yearMonth)
     const run = runCostRecalculation(db, yearMonth, operator, 'recalculate')
-    success(res, { yearMonth, periodId: period.id, collectResult, run }, 'Recalculated')
+    const payload = { yearMonth, periodId: period.id, collectResult, run }
+    logOperation(db, req as any, {
+      operation: 'POST /abc/cost-pools/:action',
+      description: '重新计算ABC成本池与出库成本',
+      requestData: { action, yearMonth },
+      responseData: payload,
+    })
+    success(res, payload, 'Recalculated')
   } catch (err: any) {
     const code = err.message?.includes('已关账') ? 'PERIOD_CLOSED' : 'INTERNAL_ERROR'
     error(res, err.message, code, code === 'PERIOD_CLOSED' ? 422 : 500)
@@ -1005,7 +1433,7 @@ router.put('/bom-links/:bomId', requireCostWrite, (req, res) => {
   } catch (err: any) { error(res, err.message) }
 })
 
-router.get('/bom-fee-mappings/audit', (req, res) => {
+router.get('/bom-fee-mappings/audit', requireCostWorkbenchRead, (req, res) => {
   try {
     const db = getDatabase()
     const { page, pageSize, offset } = pageParams(req.query)
@@ -1018,8 +1446,26 @@ router.get('/bom-fee-mappings/audit', (req, res) => {
     let whereExtra = ''
 
     if (keyword) {
-      whereExtra += ' AND (b.name LIKE ? OR b.code LIKE ?)'
-      params.push(`%${keyword}%`, `%${keyword}%`)
+      whereExtra += `
+        AND (
+          b.id LIKE ?
+          OR b.name LIKE ?
+          OR b.code LIKE ?
+          OR b.type LIKE ?
+          OR legacy_fs.name LIKE ?
+          OR legacy_fs.code LIKE ?
+          OR open_ex.exception_no LIKE ?
+        )
+      `
+      params.push(
+        `%${keyword}%`,
+        `%${keyword}%`,
+        `%${keyword}%`,
+        `%${keyword}%`,
+        `%${keyword}%`,
+        `%${keyword}%`,
+        `%${keyword}%`,
+      )
     }
     if (type) {
       whereExtra += ' AND b.type = ?'
@@ -1134,7 +1580,7 @@ router.post('/bom-fee-mappings/audit', requireCostWrite, (req, res) => {
   } catch (err: any) { error(res, err.message) }
 })
 
-router.get('/bom-fee-mappings/:bomId', (req, res) => {
+router.get('/bom-fee-mappings/:bomId', requireCostWorkbenchRead, (req, res) => {
   try {
     const bomCheck = assertActiveBom(getDatabase(), req.params.bomId)
     if (!bomCheck.ok) { error(res, bomCheck.message, bomCheck.code, bomCheck.status); return }
@@ -1165,7 +1611,7 @@ router.get('/bom-fee-mappings/:bomId', (req, res) => {
   } catch (err: any) { error(res, err.message) }
 })
 
-router.post('/bom-fee-mappings/:bomId/preview', (req, res) => {
+router.post('/bom-fee-mappings/:bomId/preview', requireCostWorkbenchRead, (req, res) => {
   try {
     const db = getDatabase()
     const bomCheck = assertActiveBom(db, req.params.bomId)
@@ -1255,7 +1701,7 @@ router.put('/bom-fee-mappings/:bomId', requireCostWrite, (req, res) => {
   } catch (err: any) { error(res, err.message) }
 })
 
-router.get('/fee-standards', (req, res) => {
+router.get('/fee-standards', requireCostWorkbenchRead, (req, res) => {
   try {
     listTable(res, 'fee_standards', row => ({
       id: row.id,
@@ -1271,7 +1717,7 @@ router.get('/fee-standards', (req, res) => {
   } catch (err: any) { error(res, err.message) }
 })
 
-router.get('/fee-standards/:id', (req, res) => {
+router.get('/fee-standards/:id', requireCostWorkbenchRead, (req, res) => {
   try {
     const row = getDatabase().prepare('SELECT * FROM fee_standards WHERE id = ?').get(req.params.id) as any
     if (!row) { error(res, '收费标准不存在', 'NOT_FOUND', 404); return }
@@ -1423,6 +1869,7 @@ router.get('/dashboard', (req, res) => {
       })),
       alerts: openExceptions.map(costExceptionPayload),
       adjustments: latestAdjustments.map(costAdjustmentPayload),
+      insightQuality: getCostInsightQuality(db, month),
     })
   } catch (err: any) { error(res, err.message) }
 })
@@ -1449,9 +1896,20 @@ router.get('/exceptions', (req, res) => {
     if (outboundId) { where += ' AND e.outbound_id = ?'; params.push(outboundId) }
     if (projectId) { where += ' AND e.project_id = ?'; params.push(projectId) }
     if (keyword) {
-      where += ' AND (e.exception_no LIKE ? OR e.message LIKE ? OR o.outbound_no LIKE ? OR p.name LIKE ? OR b.name LIKE ?)'
+      where += ` AND (
+        e.id LIKE ?
+        OR e.exception_no LIKE ?
+        OR e.message LIKE ?
+        OR e.source_id LIKE ?
+        OR e.outbound_id LIKE ?
+        OR e.project_id LIKE ?
+        OR e.bom_id LIKE ?
+        OR o.outbound_no LIKE ?
+        OR p.name LIKE ?
+        OR b.name LIKE ?
+      )`
       const kw = `%${keyword}%`
-      params.push(kw, kw, kw, kw, kw)
+      params.push(kw, kw, kw, kw, kw, kw, kw, kw, kw, kw)
     }
 
     const total = (db.prepare(`
@@ -1612,13 +2070,21 @@ router.get('/cost-runs', (req, res) => {
   try {
     const { page, pageSize, offset } = pageParams(req.query)
     const db = getDatabase()
-    const { yearMonth, status, runType } = req.query
+    const { yearMonth, status, runType, keyword } = req.query
+    const keywordText = String(keyword || '').trim()
     let where = '1 = 1'
     const params: any[] = []
 
     if (yearMonth) { where += ' AND year_month = ?'; params.push(yearMonth) }
     if (status) { where += ' AND status = ?'; params.push(status) }
     if (runType) { where += ' AND run_type = ?'; params.push(runType) }
+    if (keywordText) {
+      const kw = `%${keywordText}%`
+      where += ` AND (
+        id LIKE ? OR year_month LIKE ? OR run_type LIKE ? OR status LIKE ? OR started_by LIKE ? OR summary LIKE ?
+      )`
+      params.push(kw, kw, kw, kw, kw, kw)
+    }
 
     const total = (db.prepare(`SELECT COUNT(*) as total FROM cost_runs WHERE ${where}`).get(...params) as any)?.total || 0
     const rows = db.prepare(`
@@ -1656,6 +2122,12 @@ router.post('/cost-runs', requireCostWrite, (req, res) => {
     const yearMonth = normalizeMonth(req.body?.yearMonth)
     const runType = req.body?.runType || 'recalculate'
     const run = runCostRecalculation(db, yearMonth, operator, runType)
+    logOperation(db, req as any, {
+      operation: 'POST /abc/cost-runs',
+      description: '执行ABC成本核算任务',
+      requestData: { yearMonth, runType },
+      responseData: run,
+    })
     success(res, run, 'Created', 201)
   } catch (err: any) {
     const code = err.message?.includes('已关账') ? 'PERIOD_CLOSED' : 'INTERNAL_ERROR'
@@ -1667,13 +2139,28 @@ router.get('/adjustments', (req, res) => {
   try {
     const { page, pageSize, offset } = pageParams(req.query)
     const db = getDatabase()
-    const { yearMonth, status, adjustmentType } = req.query
+    const { yearMonth, status, adjustmentType, keyword } = req.query
     let where = '1 = 1'
     const params: any[] = []
 
     if (yearMonth) { where += ' AND year_month = ?'; params.push(String(yearMonth).slice(0, 7)) }
     if (status) { where += ' AND status = ?'; params.push(status) }
     if (adjustmentType) { where += ' AND adjustment_type = ?'; params.push(adjustmentType) }
+    if (keyword) {
+      where += ` AND (
+        id LIKE ?
+        OR adjustment_no LIKE ?
+        OR adjustment_type LIKE ?
+        OR reason LIKE ?
+        OR source_module LIKE ?
+        OR source_id LIKE ?
+        OR submitted_by LIKE ?
+        OR reviewed_by LIKE ?
+        OR review_remark LIKE ?
+      )`
+      const kw = `%${keyword}%`
+      params.push(kw, kw, kw, kw, kw, kw, kw, kw, kw)
+    }
 
     const total = (db.prepare(`SELECT COUNT(*) as total FROM abc_cost_adjustments WHERE ${where}`).get(...params) as any)?.total || 0
     const rows = db.prepare(`
@@ -1728,7 +2215,14 @@ router.post('/adjustments', requireCostWrite, (req, res) => {
       operator,
     )
     writeAuditLog(db, 'cost_adjustment', 'create', id, { adjustmentNo, yearMonth, amount, reason }, operator)
-    success(res, costAdjustmentPayload(db.prepare('SELECT * FROM abc_cost_adjustments WHERE id = ?').get(id) as any), 'Created', 201)
+    const created = db.prepare('SELECT * FROM abc_cost_adjustments WHERE id = ?').get(id) as any
+    logOperation(db, req as any, {
+      operation: 'POST /abc/adjustments',
+      description: '创建ABC闭账后成本调整单',
+      requestData: costAdjustmentSnapshot(created),
+      responseData: { adjustmentId: id, adjustmentNo },
+    })
+    success(res, costAdjustmentPayload(created), 'Created', 201)
   } catch (err: any) { error(res, err.message) }
 })
 
@@ -1753,7 +2247,17 @@ router.post('/adjustments/:id/approve', requireCostWrite, (req, res) => {
       amount: row.amount,
       remark: req.body?.remark || null,
     }, operator)
-    success(res, costAdjustmentPayload(db.prepare('SELECT * FROM abc_cost_adjustments WHERE id = ?').get(req.params.id) as any), 'Approved')
+    const approved = db.prepare('SELECT * FROM abc_cost_adjustments WHERE id = ?').get(req.params.id) as any
+    logOperation(db, req as any, {
+      operation: 'POST /abc/adjustments/:id/approve',
+      description: '审核通过ABC闭账后成本调整单',
+      requestData: {
+        before: costAdjustmentSnapshot(row),
+        after: costAdjustmentSnapshot(approved),
+      },
+      responseData: { adjustmentId: req.params.id, status: 'approved' },
+    })
+    success(res, costAdjustmentPayload(approved), 'Approved')
   } catch (err: any) { error(res, err.message) }
 })
 
@@ -1778,7 +2282,17 @@ router.post('/adjustments/:id/reject', requireCostWrite, (req, res) => {
       amount: row.amount,
       remark: req.body?.remark || null,
     }, operator)
-    success(res, costAdjustmentPayload(db.prepare('SELECT * FROM abc_cost_adjustments WHERE id = ?').get(req.params.id) as any), 'Rejected')
+    const rejected = db.prepare('SELECT * FROM abc_cost_adjustments WHERE id = ?').get(req.params.id) as any
+    logOperation(db, req as any, {
+      operation: 'POST /abc/adjustments/:id/reject',
+      description: '驳回ABC闭账后成本调整单',
+      requestData: {
+        before: costAdjustmentSnapshot(row),
+        after: costAdjustmentSnapshot(rejected),
+      },
+      responseData: { adjustmentId: req.params.id, status: 'rejected' },
+    })
+    success(res, costAdjustmentPayload(rejected), 'Rejected')
   } catch (err: any) { error(res, err.message) }
 })
 
@@ -1834,7 +2348,9 @@ router.get('/profitability', (req, res) => {
         profit: row.profit || 0,
         profitRate: row.fee_amount > 0 ? row.profit / row.fee_amount : 0,
         costMonth: row.cost_month,
-      })), page, pageSize, total)
+      })), page, pageSize, total, {
+        ...getProfitabilityInsightExtra(db, startMonth, endMonth),
+      })
       return
     }
 
@@ -1877,7 +2393,9 @@ router.get('/profitability', (req, res) => {
         profit: row.profit || 0,
         profitRate: row.fee_amount > 0 ? row.profit / row.fee_amount : 0,
         costMonth: row.cost_month,
-      })), page, pageSize, total)
+      })), page, pageSize, total, {
+        ...getProfitabilityInsightExtra(db, startMonth, endMonth),
+      })
       return
     }
 
@@ -1908,7 +2426,9 @@ router.get('/profitability', (req, res) => {
       profit: row.profit || 0,
       profitRate: row.profit_rate || 0,
       costMonth: row.cost_month,
-    })), page, pageSize, total)
+    })), page, pageSize, total, {
+      ...getProfitabilityInsightExtra(db, startMonth, endMonth),
+    })
   } catch (err: any) { error(res, err.message) }
 })
 
@@ -2073,6 +2593,7 @@ router.get('/slide-cost-trend', (req, res) => {
           sampleCount: row.sample_count || 0,
           isComplete: row.period !== currentPeriod,
         })),
+        insightQuality: {},
       })
       return
     }
@@ -2095,20 +2616,23 @@ router.get('/slide-cost-trend', (req, res) => {
       GROUP BY d.cost_month, COALESCE(d.bom_id, d.project_id, d.outbound_id), COALESCE(b.name, p.name, '未关联项目'), COALESCE(p.type, b.type, '')
       ORDER BY d.cost_month ASC, total_cost DESC
     `).all(...params) as any[]
-    success(res, rows.map(row => ({
-      month: row.month,
-      bomId: row.bom_id,
-      bomName: row.bom_name,
-      projectType: row.project_type || '',
-      totalCost: row.total_cost || 0,
-      activityCost: row.activity_cost || 0,
-      materialCost: row.material_cost || 0,
-      feeAmount: row.fee_amount || 0,
-      profit: row.profit || 0,
-      sampleCount: row.sample_count || 0,
-      costPerSlide: row.sample_count > 0 ? row.total_cost / row.sample_count : 0,
-      marginRate: row.fee_amount > 0 ? row.profit / row.fee_amount : 0,
-    })))
+    success(res, {
+      trend: rows.map(row => ({
+        month: row.month,
+        bomId: row.bom_id,
+        bomName: row.bom_name,
+        projectType: row.project_type || '',
+        totalCost: row.total_cost || 0,
+        activityCost: row.activity_cost || 0,
+        materialCost: row.material_cost || 0,
+        feeAmount: row.fee_amount || 0,
+        profit: row.profit || 0,
+        sampleCount: row.sample_count || 0,
+        costPerSlide: row.sample_count > 0 ? row.total_cost / row.sample_count : 0,
+        marginRate: row.fee_amount > 0 ? row.profit / row.fee_amount : 0,
+      })),
+      insightQuality: getCostInsightQualityMap(db, rows.map(row => row.month)),
+    })
   } catch (err: any) { error(res, err.message) }
 })
 
@@ -2455,9 +2979,15 @@ router.get('/budgets', (req, res) => {
     const filters: string[] = []
     const params: any[] = []
     const yearMonth = String(req.query.yearMonth || '').trim()
+    const keyword = String(req.query.keyword || '').trim()
     if (yearMonth) {
       filters.push('year_month = ?')
       params.push(yearMonth)
+    }
+    if (keyword) {
+      const kw = `%${keyword}%`
+      filters.push('(id LIKE ? OR year_month LIKE ? OR COALESCE(category, \'\') LIKE ? OR COALESCE(description, \'\') LIKE ?)')
+      params.push(kw, kw, kw, kw)
     }
     const whereClause = filters.length ? `WHERE ${filters.join(' AND ')}` : ''
     const total = (db.prepare(`SELECT COUNT(*) as total FROM abc_budgets ${whereClause}`).get(...params) as any)?.total || 0
@@ -2474,6 +3004,8 @@ router.get('/budgets', (req, res) => {
 
 router.post('/budgets', requireCostWrite, (req, res) => {
   try {
+    const db = getDatabase()
+    const operator = getOperator(req)
     const id = uuidv4()
     const { yearMonth, category, budgetAmount, actualAmount, description } = req.body
     const budgetValue = Number(budgetAmount) || 0
@@ -2482,10 +3014,12 @@ router.post('/budgets', requireCostWrite, (req, res) => {
       error(res, '预算金额和实际金额必须为非负数', 'VALIDATION_ERROR', 422)
       return
     }
-    getDatabase().prepare(`
+    db.prepare(`
       INSERT INTO abc_budgets (id, year_month, category, budget_amount, actual_amount, description)
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(id, yearMonth || new Date().toISOString().slice(0, 7), category || null, budgetValue, actualValue, description || null)
+    const created = db.prepare('SELECT * FROM abc_budgets WHERE id = ?').get(id) as any
+    writeAuditLog(db, 'budget', 'create', id, { after: budgetAuditSnapshot(created) }, operator)
     success(res, { id }, 'Created', 201)
   } catch (err: any) { error(res, err.message) }
 })
@@ -2498,6 +3032,7 @@ router.put('/budgets/:id', requireCostWrite, (req, res) => {
       error(res, '预算不存在', 'NOT_FOUND', 404)
       return
     }
+    const before = budgetAuditSnapshot(existing)
     const budgetValue = req.body.budgetAmount !== undefined ? Number(req.body.budgetAmount) : Number(existing.budget_amount) || 0
     const actualValue = req.body.actualAmount !== undefined ? Number(req.body.actualAmount) : Number(existing.actual_amount) || 0
     if (budgetValue < 0 || actualValue < 0) {
@@ -2517,6 +3052,10 @@ router.put('/budgets/:id', requireCostWrite, (req, res) => {
       req.params.id,
     )
     const updated = db.prepare('SELECT * FROM abc_budgets WHERE id = ?').get(req.params.id) as any
+    writeAuditLog(db, 'budget', 'update', req.params.id, {
+      before,
+      after: budgetAuditSnapshot(updated),
+    }, getOperator(req))
     success(res, budgetPayload(updated), 'Updated')
   } catch (err: any) { error(res, err.message) }
 })
@@ -2553,9 +3092,22 @@ router.get('/quality-costs', (req, res) => {
     const filters: string[] = []
     const params: any[] = []
     const yearMonth = String(req.query.yearMonth || '').trim()
+    const keyword = String(req.query.keyword || '').trim()
     if (yearMonth) {
       filters.push('year_month = ?')
       params.push(yearMonth)
+    }
+    if (keyword) {
+      const kw = `%${keyword}%`
+      filters.push(`(
+        id LIKE ?
+        OR year_month LIKE ?
+        OR COALESCE(category, '') LIKE ?
+        OR COALESCE(cost_type, '') LIKE ?
+        OR COALESCE(sub_type, '') LIKE ?
+        OR COALESCE(description, '') LIKE ?
+      )`)
+      params.push(kw, kw, kw, kw, kw, kw)
     }
     const whereClause = filters.length ? `WHERE ${filters.join(' AND ')}` : ''
     const total = (db.prepare(`SELECT COUNT(*) as total FROM quality_costs ${whereClause}`).get(...params) as any)?.total || 0
@@ -2572,6 +3124,8 @@ router.get('/quality-costs', (req, res) => {
 
 router.post('/quality-costs', requireCostWrite, (req, res) => {
   try {
+    const db = getDatabase()
+    const operator = getOperator(req)
     const id = uuidv4()
     const { yearMonth, category, costType, subType, amount, description } = req.body
     const amountValue = Number(amount) || 0
@@ -2580,7 +3134,7 @@ router.post('/quality-costs', requireCostWrite, (req, res) => {
       return
     }
     const finalCostType = costType || category || null
-    getDatabase().prepare(`
+    db.prepare(`
       INSERT INTO quality_costs (id, year_month, category, cost_type, sub_type, amount, description)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(
@@ -2592,7 +3146,47 @@ router.post('/quality-costs', requireCostWrite, (req, res) => {
       amountValue,
       description || null,
     )
+    const created = db.prepare('SELECT * FROM quality_costs WHERE id = ?').get(id) as any
+    writeAuditLog(db, 'quality_cost', 'create', id, { after: qualityCostAuditSnapshot(created) }, operator)
     success(res, { id }, 'Created', 201)
+  } catch (err: any) { error(res, err.message) }
+})
+
+router.put('/quality-costs/:id', requireCostWrite, (req, res) => {
+  try {
+    const db = getDatabase()
+    const existing = db.prepare('SELECT * FROM quality_costs WHERE id = ?').get(req.params.id) as any
+    if (!existing) {
+      error(res, '质量成本不存在', 'NOT_FOUND', 404)
+      return
+    }
+    const before = qualityCostAuditSnapshot(existing)
+    const amountValue = req.body.amount !== undefined ? Number(req.body.amount) : Number(existing.amount) || 0
+    if (amountValue < 0) {
+      error(res, '质量成本金额必须为非负数', 'VALIDATION_ERROR', 422)
+      return
+    }
+    const finalCostType = req.body.costType || req.body.category || existing.cost_type || existing.category || null
+    const finalSubType = req.body.subType !== undefined ? req.body.subType : existing.sub_type
+    db.prepare(`
+      UPDATE quality_costs
+      SET year_month = ?, category = ?, cost_type = ?, sub_type = ?, amount = ?, description = ?
+      WHERE id = ?
+    `).run(
+      req.body.yearMonth || existing.year_month,
+      finalCostType,
+      finalCostType,
+      finalSubType || null,
+      amountValue,
+      req.body.description !== undefined ? req.body.description : existing.description,
+      req.params.id,
+    )
+    const updated = db.prepare('SELECT * FROM quality_costs WHERE id = ?').get(req.params.id) as any
+    writeAuditLog(db, 'quality_cost', 'update', req.params.id, {
+      before,
+      after: qualityCostAuditSnapshot(updated),
+    }, getOperator(req))
+    success(res, qualityCostPayload(updated), 'Updated')
   } catch (err: any) { error(res, err.message) }
 })
 

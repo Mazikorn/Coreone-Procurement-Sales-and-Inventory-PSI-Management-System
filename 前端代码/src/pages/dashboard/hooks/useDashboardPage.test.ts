@@ -61,6 +61,19 @@ describe('useDashboardPage', () => {
     expect(outboundApi.getList).toHaveBeenCalled()
   })
 
+  it('keeps pathologist dashboard on read-only cost insight without outbound execution calls', async () => {
+    setRole('pathologist')
+
+    const { result } = renderHook(() => useDashboardPage())
+
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    expect(abcApi.getDashboard).toHaveBeenCalled()
+    expect(outboundApi.getStats).not.toHaveBeenCalled()
+    expect(outboundApi.getList).not.toHaveBeenCalled()
+    expect(result.current.config.quickActions.map(action => action.navigateTo)).not.toContain('/outbound')
+  })
+
   it('does not make outbound dashboard calls for procurement users', async () => {
     setRole('procurement')
 

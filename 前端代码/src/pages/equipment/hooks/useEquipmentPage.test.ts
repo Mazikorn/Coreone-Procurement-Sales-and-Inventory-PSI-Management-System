@@ -48,6 +48,7 @@ const equipment = {
 describe('useEquipmentPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    window.history.replaceState(null, '', '/')
     localStorage.clear()
     localStorage.setItem('user', JSON.stringify({ role: 'admin' }))
     vi.mocked(equipmentApi.getTypes).mockResolvedValue({ list: [], pagination: { total: 0 } } as any)
@@ -93,5 +94,31 @@ describe('useEquipmentPage', () => {
       code: 'EQ-001',
       name: '更新后的染色机',
     }))
+  })
+
+  it('keeps deleted equipment review context from audit links', async () => {
+    window.history.replaceState(null, '', '/equipment?keyword=EQ-DEEP-001&includeDeleted=true')
+    vi.mocked(equipmentApi.getList).mockResolvedValue({
+      list: [{ ...equipment, id: 'eq-deleted-001', isDeleted: true }],
+      pagination: { total: 1 },
+    } as any)
+
+    const { result } = renderHook(() => useEquipmentPage())
+
+    await waitFor(() => expect(equipmentApi.getList).toHaveBeenCalledWith(expect.objectContaining({
+      page: 1,
+      pageSize: 20,
+      keyword: 'EQ-DEEP-001',
+      includeDeleted: true,
+    })))
+    await waitFor(() => expect(equipmentApi.getStats).toHaveBeenCalledWith(expect.objectContaining({
+      keyword: 'EQ-DEEP-001',
+      includeDeleted: true,
+    })))
+    expect(result.current.keyword).toBe('EQ-DEEP-001')
+    expect(result.current.searchInput).toBe('EQ-DEEP-001')
+    expect(result.current.data).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'eq-deleted-001', isDeleted: true }),
+    ]))
   })
 })

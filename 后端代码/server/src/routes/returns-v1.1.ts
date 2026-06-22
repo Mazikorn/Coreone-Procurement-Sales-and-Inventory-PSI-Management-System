@@ -4,6 +4,7 @@ import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
 import { generateNo } from '../utils/generateNo.js'
 import { consumeInventoryLocationStock, restoreInventoryLocationStock } from '../utils/inventory-locations.js'
+import { restoreBatchLocationStock, reverseBatchLocationRestore } from '../utils/batch-locations.js'
 import { checkStockAlerts } from '../utils/alertChecker.js'
 import { logOperation } from '../utils/operation-logger.js'
 
@@ -46,7 +47,7 @@ function hasActiveBatch(db: any, materialId: string): boolean {
 }
 
 function handleReturnStockError(res: any, err: any): boolean {
-  if (err?.message !== 'LOCATION_STOCK_INSUFFICIENT') return false
+  if (!['LOCATION_STOCK_INSUFFICIENT', 'BATCH_LOCATION_STOCK_NEGATIVE', 'BATCH_LOCATION_STOCK_INSUFFICIENT'].includes(err?.message)) return false
   error(res, '库位库存不足，无法撤销退库记录', 'RETURN_CANCEL_CONFLICT', 409)
   return true
 }
@@ -279,6 +280,7 @@ router.post('/', (req, res) => {
       restoreInventoryLocationStock(db, source.material_id, returnQuantity, { relatedType: 'return', relatedId: id })
 
       if (batch) {
+        restoreBatchLocationStock(db, batch.id, source.material_id, returnQuantity, { relatedType: 'return', relatedId: id, operator })
         const remaining = Number(batch.remaining || 0) + returnQuantity
         db.prepare(`
           UPDATE batches
@@ -367,6 +369,14 @@ router.delete('/:id', (req, res) => {
       consumeInventoryLocationStock(db, record.material_id, Number(record.quantity), { relatedType: 'return_cancel', relatedId: id })
 
       if (record.batch_id) {
+        reverseBatchLocationRestore(
+          db,
+          record.batch_id,
+          record.material_id,
+          Number(record.quantity),
+          { relatedType: 'return', relatedId: id, operator: record.operator },
+          { relatedType: 'return_cancel', relatedId: id, operator },
+        )
         const nextRemaining = Number(restoreBatch.remaining || 0) - Number(record.quantity || 0)
         db.prepare(`
           UPDATE batches

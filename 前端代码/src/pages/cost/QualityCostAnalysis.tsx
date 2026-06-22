@@ -93,12 +93,19 @@ const normalizeQualitySummary = (response: any): QualitySummary | null =>
   response?.data || response || null
 
 export default function QualityCostAnalysis() {
+  const urlParams = new URLSearchParams(window.location.search)
+  const [deepLinkKeyword] = useState(() => urlParams.get('keyword')?.trim() || '')
   const [costs, setCosts] = useState<QualityCost[]>([])
   const [summary, setSummary] = useState<QualitySummary | null>(null)
   const [loading, setLoading] = useState(true)
-  const [filterMonth, setFilterMonth] = useState(() => new Date().toISOString().slice(0, 7))
-  const [searchKeyword, setSearchKeyword] = useState('')
+  const [filterMonth, setFilterMonth] = useState(() => (
+    urlParams.get('month')?.trim() ||
+    urlParams.get('yearMonth')?.trim() ||
+    (deepLinkKeyword ? '' : new Date().toISOString().slice(0, 7))
+  ))
+  const [searchKeyword, setSearchKeyword] = useState(deepLinkKeyword)
   const [showDialog, setShowDialog] = useState(false)
+  const [editingCost, setEditingCost] = useState<QualityCost | null>(null)
   const [formData, setFormData] = useState({
     yearMonth: new Date().toISOString().slice(0, 7),
     costType: 'prevention',
@@ -114,9 +121,12 @@ export default function QualityCostAnalysis() {
   const loadData = async () => {
     try {
       setLoading(true)
+      const params: Record<string, string> = {}
+      if (filterMonth) params.yearMonth = filterMonth
+      if (deepLinkKeyword) params.keyword = deepLinkKeyword
       const [costsRes, summaryRes] = await Promise.all([
-        abcApi.getQualityCosts({ yearMonth: filterMonth }),
-        abcApi.getQualityCostSummary(filterMonth),
+        abcApi.getQualityCosts(params),
+        abcApi.getQualityCostSummary(filterMonth || undefined),
       ])
       setCosts(normalizeQualityCosts(costsRes))
       setSummary(normalizeQualitySummary(summaryRes))
@@ -125,6 +135,34 @@ export default function QualityCostAnalysis() {
     } finally {
       setLoading(false)
     }
+  }
+
+  const resetForm = () => {
+    setEditingCost(null)
+    setFormData({
+      yearMonth: new Date().toISOString().slice(0, 7),
+      costType: 'prevention',
+      subType: 'training',
+      amount: '',
+      description: '',
+    })
+  }
+
+  const handleAdd = () => {
+    resetForm()
+    setShowDialog(true)
+  }
+
+  const handleEdit = (cost: QualityCost) => {
+    setEditingCost(cost)
+    setFormData({
+      yearMonth: cost.yearMonth,
+      costType: cost.costType,
+      subType: cost.subType,
+      amount: String(cost.amount),
+      description: cost.description || '',
+    })
+    setShowDialog(true)
   }
 
   const handleSave = async () => {
@@ -138,18 +176,24 @@ export default function QualityCostAnalysis() {
       return
     }
     try {
-      await abcApi.createQualityCost({
+      const payload = {
         yearMonth: formData.yearMonth,
         costType: formData.costType,
         subType: formData.subType,
         amount,
         description: formData.description,
-      })
-      toast.success('录入成功')
+      }
+      if (editingCost) {
+        await abcApi.updateQualityCost(editingCost.id, payload)
+      } else {
+        await abcApi.createQualityCost(payload)
+      }
+      toast.success(editingCost ? '更新成功' : '录入成功')
       setShowDialog(false)
+      setEditingCost(null)
       loadData()
     } catch {
-      toast.error('录入失败')
+      toast.error(editingCost ? '更新失败' : '录入失败')
     }
   }
 
@@ -179,6 +223,9 @@ export default function QualityCostAnalysis() {
     return (
       typeLabel.includes(searchKeyword) ||
       subTypeLabel.includes(searchKeyword) ||
+      c.id.includes(searchKeyword) ||
+      c.yearMonth.includes(searchKeyword) ||
+      c.costType.includes(searchKeyword) ||
       c.subType.includes(searchKeyword) ||
       c.description?.includes(searchKeyword)
     )
@@ -200,7 +247,7 @@ export default function QualityCostAnalysis() {
             className="h-10 px-3 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
           />
           <button
-            onClick={() => setShowDialog(true)}
+            onClick={handleAdd}
             className="h-10 px-4 bg-[#3b82f6] text-white rounded-md hover:bg-blue-600 transition-colors flex items-center gap-2"
           >
             <Plus className="h-4 w-4" />
@@ -268,16 +315,17 @@ export default function QualityCostAnalysis() {
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">子类型</th>
               <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">金额</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">描述</th>
+              <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">操作</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200">
             {loading ? (
               <tr>
-                <td colSpan={5} className="px-4 py-12 text-center text-gray-400">加载中...</td>
+                <td colSpan={6} className="px-4 py-12 text-center text-gray-400">加载中...</td>
               </tr>
             ) : filteredCosts.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-4 py-12 text-center text-gray-400">暂无质量成本数据</td>
+                <td colSpan={6} className="px-4 py-12 text-center text-gray-400">暂无质量成本数据</td>
               </tr>
             ) : (
               filteredCosts.map(cost => {
@@ -293,6 +341,14 @@ export default function QualityCostAnalysis() {
                     <td className="px-4 py-3 text-sm text-gray-500">{getSubTypeLabel(cost.costType, cost.subType)}</td>
                     <td className="px-4 py-3 text-sm text-gray-900 text-right font-mono">{formatCurrency(cost.amount)}</td>
                     <td className="px-4 py-3 text-sm text-gray-500">{cost.description || '-'}</td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        onClick={() => handleEdit(cost)}
+                        className="text-sm text-blue-600 hover:text-blue-800 transition-colors"
+                      >
+                        编辑
+                      </button>
+                    </td>
                   </tr>
                 )
               })
@@ -303,11 +359,12 @@ export default function QualityCostAnalysis() {
 
       {/* 录入弹窗 */}
       {showDialog && (
-        <Modal onClose={() => setShowDialog(false)} title="录入质量成本">
+        <Modal onClose={() => setShowDialog(false)} title={editingCost ? '编辑质量成本' : '录入质量成本'}>
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">月份 *</label>
+              <label htmlFor="quality-cost-year-month" className="block text-sm font-medium text-gray-700 mb-1">月份 *</label>
               <input
+                id="quality-cost-year-month"
                 type="month"
                 value={formData.yearMonth}
                 onChange={(e) => setFormData({ ...formData, yearMonth: e.target.value })}
@@ -315,8 +372,9 @@ export default function QualityCostAnalysis() {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">成本类型 *</label>
+              <label htmlFor="quality-cost-type" className="block text-sm font-medium text-gray-700 mb-1">成本类型 *</label>
               <select
+                id="quality-cost-type"
                 value={formData.costType}
                 onChange={(e) => handleCostTypeChange(e.target.value)}
                 className="w-full h-10 px-3 border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
@@ -327,8 +385,9 @@ export default function QualityCostAnalysis() {
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">子类型 *</label>
+              <label htmlFor="quality-cost-sub-type" className="block text-sm font-medium text-gray-700 mb-1">子类型 *</label>
               <select
+                id="quality-cost-sub-type"
                 value={formData.subType}
                 onChange={(e) => setFormData({ ...formData, subType: e.target.value })}
                 className="w-full h-10 px-3 border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
@@ -339,8 +398,9 @@ export default function QualityCostAnalysis() {
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">金额 (元) *</label>
+              <label htmlFor="quality-cost-amount" className="block text-sm font-medium text-gray-700 mb-1">金额 (元) *</label>
               <input
+                id="quality-cost-amount"
                 type="number"
                 min="0"
                 step="0.01"
@@ -351,8 +411,9 @@ export default function QualityCostAnalysis() {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">描述</label>
+              <label htmlFor="quality-cost-description" className="block text-sm font-medium text-gray-700 mb-1">描述</label>
               <textarea
+                id="quality-cost-description"
                 value={formData.description}
                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                 placeholder="成本描述说明"
@@ -372,7 +433,7 @@ export default function QualityCostAnalysis() {
               onClick={handleSave}
               className="h-10 px-4 text-sm text-white bg-[#3b82f6] rounded-md hover:bg-blue-600 transition-colors"
             >
-              录入
+              {editingCost ? '更新' : '录入'}
             </button>
           </div>
         </Modal>

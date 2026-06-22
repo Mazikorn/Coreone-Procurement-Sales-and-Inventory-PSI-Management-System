@@ -80,4 +80,17 @@ describe('Returns page', () => {
       remark: '',
     }))
   })
+
+  it('uses keyword from URL so audit links open a filtered returns list', async () => {
+    window.history.replaceState(null, '', '/returns?keyword=RT-DEEP-001')
+
+    render(React.createElement(Returns))
+
+    await waitFor(() => {
+      expect(returnApi.getList).toHaveBeenCalledWith(expect.objectContaining({
+        keyword: 'RT-DEEP-001',
+      }))
+    })
+    expect(screen.getByPlaceholderText('搜索退库单号/物料/原因...')).toHaveValue('RT-DEEP-001')
+  })
 })

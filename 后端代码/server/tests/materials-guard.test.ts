@@ -55,6 +55,18 @@ async function createMaterial(app: any, token: string, refs: any, suffix: string
   return res.body.data.id as string
 }
 
+function latestMaterialOperationLog(db: any, operation: string, materialId: string) {
+  const rows = db.prepare(`
+    SELECT operation, description, username, request_data, response_data
+    FROM operation_logs
+    WHERE operation = ?
+      AND (request_data LIKE ? OR response_data LIKE ?)
+    ORDER BY CASE WHEN request_data LIKE '%"businessId"%' THEN 0 ELSE 1 END, created_at DESC
+    LIMIT 10
+  `).all(operation, `%${materialId}%`, `%${materialId}%`) as any[]
+  return rows[0]
+}
+
 describe('物料删除与批量状态保护', () => {
   let app: any
   let db: any
@@ -65,6 +77,76 @@ describe('物料删除与批量状态保护', () => {
     ;({ app, db } = await getApp())
     token = await loginAdmin(app)
     warehouseToken = await loginWarehouseManager(app)
+  })
+
+  it('MAT-AUDIT-001: 更新物料成本和预警口径写入前后值操作审计', async () => {
+    const suffix = `audit-${Date.now()}`
+    const refs = seedRefs(db, suffix)
+    const nextLocationId = `loc-mat-guard-next-${suffix}`
+    db.prepare('INSERT INTO locations (id, code, name, type, zone) VALUES (?, ?, ?, ?, ?)')
+      .run(nextLocationId, `LOC-MAT-GUARD-NEXT-${suffix}`, '物料审计新库位', 'shelf', 'B区')
+
+    const created = await request(app)
+      .post('/api/v1/materials')
+      .set('Authorization', `Bearer ${warehouseToken}`)
+      .send({
+        code: `MAT-AUDIT-${suffix}`,
+        name: `物料审计-${suffix}`,
+        spec: '1ml',
+        unit: '瓶',
+        categoryId: refs.categoryId,
+        supplierId: refs.supplierId,
+        locationId: refs.locationId,
+        price: 12,
+        minStock: 2,
+        maxStock: 50,
+        safetyStock: 6,
+      })
+    expect(created.status).toBe(201)
+    const materialId = created.body.data.id
+
+    const updated = await request(app)
+      .put(`/api/v1/materials/${materialId}`)
+      .set('Authorization', `Bearer ${warehouseToken}`)
+      .send({
+        name: `物料审计已更新-${suffix}`,
+        price: 15.5,
+        minStock: 3,
+        maxStock: 80,
+        safetyStock: 9,
+        locationId: nextLocationId,
+      })
+    expect(updated.status).toBe(200)
+
+    const opLog = latestMaterialOperationLog(db, 'PUT /materials/:id', materialId)
+    expect(opLog).toMatchObject({ username: 'wangkq', description: '更新物料成本库存口径' })
+    expect(JSON.parse(opLog.request_data)).toMatchObject({
+      module: 'materials',
+      businessId: materialId,
+      before: expect.objectContaining({
+        code: `MAT-AUDIT-${suffix}`,
+        name: `物料审计-${suffix}`,
+        price: 12,
+        minStock: 2,
+        maxStock: 50,
+        safetyStock: 6,
+        locationId: refs.locationId,
+      }),
+      after: expect.objectContaining({
+        code: `MAT-AUDIT-${suffix}`,
+        name: `物料审计已更新-${suffix}`,
+        price: 15.5,
+        minStock: 3,
+        maxStock: 80,
+        safetyStock: 9,
+        locationId: nextLocationId,
+      }),
+    })
+    expect(JSON.parse(opLog.response_data)).toMatchObject({
+      id: materialId,
+      beforeStatus: 'active',
+      afterStatus: 'active',
+    })
   })
 
   it('MAT-GUARD-001: 物料当前库存为0但被BOM引用时不可删除', async () => {

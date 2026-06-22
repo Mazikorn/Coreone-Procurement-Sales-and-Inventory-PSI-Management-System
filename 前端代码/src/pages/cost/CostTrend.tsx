@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react'
-import { Download } from 'lucide-react'
+import { AlertTriangle, Download } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -26,6 +26,19 @@ interface ReportsTrendItem {
   recordCount: number
   sampleCount?: number
   isComplete?: boolean
+}
+
+interface InsightQuality {
+  yearMonth: string
+  periodStatus: string
+  isClosed: boolean
+  isFinal: boolean
+  openExceptionCount: number
+  pendingCostCount: number
+  abcSnapshotCount: number
+  outboundCount: number
+  reliability: 'final' | 'attention' | 'draft'
+  message: string
 }
 
 const PROJECT_TYPE_OPTIONS = [
@@ -125,6 +138,7 @@ export default function CostTrend() {
   const [months, setMonths] = useState(12)
   const [dimension, setDimension] = useState<'monthly' | 'quarterly'>('monthly')
   const [quarterlyData, setQuarterlyData] = useState<ReportsTrendItem[]>([])
+  const [insightQuality, setInsightQuality] = useState<Record<string, InsightQuality>>({})
   const [exporting, setExporting] = useState(false)
 
   useEffect(() => {
@@ -147,6 +161,7 @@ export default function CostTrend() {
       const res = await abcApi.getSlideCostTrend(params)
       const rows = Array.isArray(res) ? res : res?.trend || []
       setTrend(normalizeSlideCostTrendRows(rows))
+      setInsightQuality(Array.isArray(res) ? {} : res?.insightQuality || {})
     } catch {
       toast.error('加载趋势数据失败')
     } finally {
@@ -163,6 +178,7 @@ export default function CostTrend() {
       if (projectType !== 'all') params.projectType = projectType
       const res = await abcApi.getSlideCostTrend(params)
       setQuarterlyData(res?.trend || [])
+      setInsightQuality(res?.insightQuality || {})
     } catch {
       toast.error('加载季度数据失败')
     }
@@ -225,6 +241,10 @@ export default function CostTrend() {
   }, [quarterlyData])
 
   const bomKeys = useMemo(() => [...bomGroups.keys()], [bomGroups])
+  const attentionQuality = useMemo(() =>
+    Object.values(insightQuality).filter(item => item && !item.isFinal),
+    [insightQuality]
+  )
 
   const handleExport = async () => {
     try {
@@ -260,6 +280,25 @@ export default function CostTrend() {
           <Download className="h-4 w-4" /> 导出
         </button>
       </div>
+
+      {attentionQuality.length > 0 && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>
+              <div className="font-medium">趋势口径待确认</div>
+              <div className="mt-1">
+                {attentionQuality.slice(0, 3).map(item => `${item.yearMonth}: ${item.message}`).join('；')}
+              </div>
+              <div className="mt-2 text-xs text-amber-700">
+                {attentionQuality.slice(0, 3).map(item => (
+                  `${item.yearMonth} 开放异常 ${item.openExceptionCount} 条，未补算 ${item.pendingCostCount} 单`
+                )).join('；')}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 筛选栏 */}
       <div data-testid="filter-bar" className="bg-white rounded-lg border border-gray-200 p-4">

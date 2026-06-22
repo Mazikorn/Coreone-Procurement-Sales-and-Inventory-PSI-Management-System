@@ -43,6 +43,17 @@ async function loginFinance(app: any): Promise<string> {
   return res.body.data.token
 }
 
+function latestOperationLog(db: any, operation: string, entityId: string) {
+  return db.prepare(`
+    SELECT *
+    FROM operation_logs
+    WHERE operation = ?
+      AND (request_data LIKE ? OR response_data LIKE ?)
+    ORDER BY created_at DESC, rowid DESC
+    LIMIT 1
+  `).get(operation, `%${entityId}%`, `%${entityId}%`) as any
+}
+
 function seedBase(db: any, suffix: string) {
   const categoryId = `cat-${suffix}`
   const supplierId = `sup-${suffix}`
@@ -336,13 +347,14 @@ describe('成本异常台账', () => {
     `).run(periodRes.body.data.id)
 
     const exceptionId = `ex-${Date.now()}`
+    const exceptionNo = `CE-${Date.now()}`
     db.prepare(`
       INSERT INTO cost_exceptions (
         id, exception_no, source_module, source_type, year_month,
         exception_type, severity, status, message
       )
       VALUES (?, ?, 'abc', 'period_close_test', ?, 'calculation_failed', 'error', 'open', '测试开放异常')
-    `).run(exceptionId, `CE-${Date.now()}`, yearMonth)
+    `).run(exceptionId, exceptionNo, yearMonth)
     const nullMonthExceptionId = `ex-null-${Date.now()}`
     db.prepare(`
       INSERT INTO cost_exceptions (
@@ -371,6 +383,22 @@ describe('成本异常台账', () => {
     expect(listRes.body.data.summary.status.open).toBeGreaterThanOrEqual(2)
     expect(listRes.body.data.summary.severity.error).toBeGreaterThanOrEqual(1)
     expect(listRes.body.data.summary.severity.warning).toBeGreaterThanOrEqual(1)
+
+    const keywordByIdRes = await request(app)
+      .get('/api/v1/abc/exceptions')
+      .query({ keyword: exceptionId, status: 'open', pageSize: 10 })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(keywordByIdRes.status).toBe(200)
+    expect(keywordByIdRes.body.data.list).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: exceptionId,
+          exceptionNo,
+          status: 'open',
+        }),
+      ]),
+    )
 
     const listWithUnassigned = await request(app)
       .get(`/api/v1/abc/exceptions?yearMonth=${yearMonth}&includeUnassigned=1&pageSize=100`)
@@ -570,6 +598,19 @@ describe('成本异常台账', () => {
     expect(adjustmentRes.status).toBe(201)
     expect(adjustmentRes.body.data.status).toBe('pending')
     expect(adjustmentRes.body.data.amount).toBe(128.5)
+    const createAdjustmentLog = latestOperationLog(db, 'POST /abc/adjustments', adjustmentRes.body.data.id)
+    expect(createAdjustmentLog).toBeTruthy()
+    expect(createAdjustmentLog.description).toBe('创建ABC闭账后成本调整单')
+    expect(JSON.parse(createAdjustmentLog.request_data)).toMatchObject({
+      id: adjustmentRes.body.data.id,
+      adjustmentNo: adjustmentRes.body.data.adjustmentNo,
+      yearMonth,
+      adjustmentType: 'closed_period_adjustment',
+      amount: 128.5,
+      reason: '关账后发现设备折旧差异，按财务复核结果调增成本',
+      status: 'pending',
+      submittedBy: 'admin',
+    })
 
     const listRes = await request(app)
       .get(`/api/v1/abc/adjustments?yearMonth=${yearMonth}`)
@@ -577,6 +618,45 @@ describe('成本异常台账', () => {
 
     expect(listRes.status).toBe(200)
     expect(listRes.body.data.list).toHaveLength(1)
+
+    const keywordListRes = await request(app)
+      .get('/api/v1/abc/adjustments')
+      .query({
+        yearMonth,
+        keyword: adjustmentRes.body.data.adjustmentNo,
+        pageSize: 10,
+      })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(keywordListRes.status).toBe(200)
+    expect(keywordListRes.body.data.list).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: adjustmentRes.body.data.id,
+          adjustmentNo: adjustmentRes.body.data.adjustmentNo,
+          yearMonth,
+        }),
+      ]),
+    )
+
+    const keywordByIdRes = await request(app)
+      .get('/api/v1/abc/adjustments')
+      .query({
+        yearMonth,
+        keyword: adjustmentRes.body.data.id,
+        pageSize: 10,
+      })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(keywordByIdRes.status).toBe(200)
+    expect(keywordByIdRes.body.data.list).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: adjustmentRes.body.data.id,
+          adjustmentNo: adjustmentRes.body.data.adjustmentNo,
+        }),
+      ]),
+    )
 
     const selfApproveRes = await request(app)
       .post(`/api/v1/abc/adjustments/${adjustmentRes.body.data.id}/approve`)
@@ -595,6 +675,24 @@ describe('成本异常台账', () => {
     expect(approveRes.body.data.status).toBe('approved')
     expect(approveRes.body.data.submittedBy).toBe('admin')
     expect(approveRes.body.data.reviewedBy).toBe('sunli')
+    const approveAdjustmentLog = latestOperationLog(db, 'POST /abc/adjustments/:id/approve', adjustmentRes.body.data.id)
+    expect(approveAdjustmentLog).toBeTruthy()
+    expect(approveAdjustmentLog.description).toBe('审核通过ABC闭账后成本调整单')
+    expect(JSON.parse(approveAdjustmentLog.request_data)).toMatchObject({
+      before: {
+        id: adjustmentRes.body.data.id,
+        yearMonth,
+        status: 'pending',
+        submittedBy: 'admin',
+      },
+      after: {
+        id: adjustmentRes.body.data.id,
+        yearMonth,
+        status: 'approved',
+        reviewedBy: 'sunli',
+        reviewRemark: '财务复核通过',
+      },
+    })
 
     const dashboardRes = await request(app)
       .get(`/api/v1/abc/dashboard?month=${yearMonth}`)
@@ -851,6 +949,18 @@ describe('成本异常台账', () => {
     expect(missingList.body.data.list.some((item: any) => item.bomId === bomId)).toBe(true)
     expect(missingList.body.data.summary.missing).toBeGreaterThanOrEqual(1)
 
+    const missingByBomId = await request(app)
+      .get(`/api/v1/abc/bom-fee-mappings/audit?keyword=${encodeURIComponent(bomId)}&status=missing`)
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(missingByBomId.status).toBe(200)
+    expect(missingByBomId.body.data.list).toHaveLength(1)
+    expect(missingByBomId.body.data.list[0]).toMatchObject({
+      bomId,
+      bomCode: `BOM-${suffix}`,
+      status: 'missing',
+    })
+
     const audit = await request(app)
       .post('/api/v1/abc/bom-fee-mappings/audit')
       .set('Authorization', `Bearer ${token}`)
@@ -1042,6 +1152,37 @@ describe('成本异常台账', () => {
 
     expect(recalc.status).toBe(200)
     expect(recalc.body.data.run.summary.processed).toBeGreaterThanOrEqual(1)
+    const recalcLog = latestOperationLog(db, 'POST /abc/cost-pools/:action', recalc.body.data.run.id)
+    expect(recalcLog).toBeTruthy()
+    expect(recalcLog.description).toBe('重新计算ABC成本池与出库成本')
+    expect(JSON.parse(recalcLog.request_data)).toMatchObject({
+      action: 'recalculate',
+      yearMonth,
+    })
+    expect(JSON.parse(recalcLog.response_data)).toMatchObject({
+      yearMonth,
+      periodId: recalc.body.data.periodId,
+      run: {
+        id: recalc.body.data.run.id,
+        yearMonth,
+        runType: 'recalculate',
+      },
+    })
+
+    const noiseRunId = `run-noise-${suffix}`
+    db.prepare(`
+      INSERT INTO cost_runs (id, year_month, run_type, status, started_by, started_at, finished_at, summary)
+      VALUES (?, ?, 'recalculate', 'completed', 'tester', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?)
+    `).run(noiseRunId, yearMonth, JSON.stringify({ processed: 0, succeeded: 0, failed: 0 }))
+
+    const keywordRun = await request(app)
+      .get('/api/v1/abc/cost-runs')
+      .query({ yearMonth, keyword: recalc.body.data.run.id, pageSize: 20 })
+      .set('Authorization', `Bearer ${token}`)
+    expect(keywordRun.status).toBe(200)
+    const keywordRunIds = keywordRun.body.data.list.map((item: any) => item.id)
+    expect(keywordRunIds).toContain(recalc.body.data.run.id)
+    expect(keywordRunIds).not.toContain(noiseRunId)
 
     const detail = db.prepare(`
       SELECT * FROM outbound_abc_details WHERE outbound_id = ?

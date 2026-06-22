@@ -12,6 +12,7 @@ interface Budget {
   actualAmount: number
   executionRate?: number
   status?: string
+  description?: string
 }
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -61,16 +62,20 @@ const normalizeBudgetResponse = (response: any): Budget[] => {
 }
 
 export default function BudgetManagement() {
+  const urlParams = new URLSearchParams(window.location.search)
+  const [deepLinkKeyword] = useState(() => urlParams.get('keyword')?.trim() || '')
   const [budgets, setBudgets] = useState<Budget[]>([])
   const [loading, setLoading] = useState(true)
-  const [searchKeyword, setSearchKeyword] = useState('')
-  const [filterMonth, setFilterMonth] = useState('')
+  const [searchKeyword, setSearchKeyword] = useState(deepLinkKeyword)
+  const [filterMonth, setFilterMonth] = useState(() => urlParams.get('month')?.trim() || urlParams.get('yearMonth')?.trim() || '')
   const [showDialog, setShowDialog] = useState(false)
   const [editingBudget, setEditingBudget] = useState<Budget | null>(null)
   const [formData, setFormData] = useState({
     yearMonth: new Date().toISOString().slice(0, 7),
     category: 'total',
     budgetAmount: '',
+    actualAmount: '',
+    description: '',
   })
 
   useEffect(() => {
@@ -82,6 +87,7 @@ export default function BudgetManagement() {
       setLoading(true)
       const params: Record<string, string> = {}
       if (filterMonth) params.yearMonth = filterMonth
+      if (deepLinkKeyword) params.keyword = deepLinkKeyword
       const data = await abcApi.getBudgets(params)
       setBudgets(normalizeBudgetResponse(data))
     } catch {
@@ -97,6 +103,8 @@ export default function BudgetManagement() {
       yearMonth: new Date().toISOString().slice(0, 7),
       category: 'total',
       budgetAmount: '',
+      actualAmount: '',
+      description: '',
     })
     setShowDialog(true)
   }
@@ -107,6 +115,8 @@ export default function BudgetManagement() {
       yearMonth: budget.yearMonth,
       category: budget.category,
       budgetAmount: String(budget.budgetAmount),
+      actualAmount: String(budget.actualAmount ?? 0),
+      description: budget.description || '',
     })
     setShowDialog(true)
   }
@@ -121,11 +131,18 @@ export default function BudgetManagement() {
       toast.error('预算金额必须为非负数')
       return
     }
+    const actualAmount = formData.actualAmount.trim() ? parseFloat(formData.actualAmount) : 0
+    if (isNaN(actualAmount) || actualAmount < 0) {
+      toast.error('实际金额必须为非负数')
+      return
+    }
     try {
       const payload = {
         yearMonth: formData.yearMonth,
         category: formData.category,
         budgetAmount: amount,
+        actualAmount,
+        description: formData.description.trim(),
       }
       if (editingBudget) {
         await abcApi.updateBudget(editingBudget.id, payload)
@@ -158,7 +175,13 @@ export default function BudgetManagement() {
   const filteredBudgets = budgets.filter(b => {
     if (!searchKeyword) return true
     const label = CATEGORY_LABELS[b.category] || b.category
-    return label.includes(searchKeyword) || b.yearMonth.includes(searchKeyword)
+    return (
+      b.id.includes(searchKeyword) ||
+      label.includes(searchKeyword) ||
+      b.category.includes(searchKeyword) ||
+      b.yearMonth.includes(searchKeyword) ||
+      Boolean(b.description?.includes(searchKeyword))
+    )
   })
 
   return (
@@ -217,6 +240,7 @@ export default function BudgetManagement() {
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">成本类型</th>
               <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">预算金额</th>
               <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">实际金额</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">口径说明</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase" style={{ minWidth: 200 }}>执行进度</th>
               <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">操作</th>
             </tr>
@@ -224,11 +248,11 @@ export default function BudgetManagement() {
           <tbody className="divide-y divide-gray-200">
             {loading ? (
               <tr>
-                <td colSpan={6} className="px-4 py-12 text-center text-gray-400">加载中...</td>
+                <td colSpan={7} className="px-4 py-12 text-center text-gray-400">加载中...</td>
               </tr>
             ) : filteredBudgets.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-4 py-12 text-center text-gray-400">暂无预算数据</td>
+                <td colSpan={7} className="px-4 py-12 text-center text-gray-400">暂无预算数据</td>
               </tr>
             ) : (
               filteredBudgets.map(budget => (
@@ -241,6 +265,9 @@ export default function BudgetManagement() {
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-900 text-right font-mono">{formatCurrency(budget.budgetAmount)}</td>
                   <td className="px-4 py-3 text-sm text-gray-900 text-right font-mono">{formatCurrency(budget.actualAmount)}</td>
+                  <td className="px-4 py-3 text-sm text-gray-600 max-w-xs">
+                    <span className="line-clamp-2">{budget.description || '-'}</span>
+                  </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
                       <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
@@ -274,8 +301,9 @@ export default function BudgetManagement() {
         <Modal onClose={() => setShowDialog(false)} title={editingBudget ? '编辑预算' : '新增预算'}>
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">月份 *</label>
+              <label htmlFor="budget-year-month" className="block text-sm font-medium text-gray-700 mb-1">月份 *</label>
               <input
+                id="budget-year-month"
                 type="month"
                 value={formData.yearMonth}
                 onChange={(e) => setFormData({ ...formData, yearMonth: e.target.value })}
@@ -283,8 +311,9 @@ export default function BudgetManagement() {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">成本类型 *</label>
+              <label htmlFor="budget-category" className="block text-sm font-medium text-gray-700 mb-1">成本类型 *</label>
               <select
+                id="budget-category"
                 value={formData.category}
                 onChange={(e) => setFormData({ ...formData, category: e.target.value })}
                 className="w-full h-10 px-3 border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
@@ -295,10 +324,11 @@ export default function BudgetManagement() {
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">预算金额 (元) *</label>
+              <label htmlFor="budget-amount" className="block text-sm font-medium text-gray-700 mb-1">预算金额 (元) *</label>
               <div className="relative">
                 <DollarSign className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
                 <input
+                  id="budget-amount"
                   type="number"
                   min="0"
                   step="0.01"
@@ -308,6 +338,33 @@ export default function BudgetManagement() {
                   className="w-full h-10 pl-10 pr-3 border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
                 />
               </div>
+            </div>
+            <div>
+              <label htmlFor="budget-actual-amount" className="block text-sm font-medium text-gray-700 mb-1">实际金额 (元)</label>
+              <div className="relative">
+                <DollarSign className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+                <input
+                  id="budget-actual-amount"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={formData.actualAmount}
+                  onChange={(e) => setFormData({ ...formData, actualAmount: e.target.value })}
+                  placeholder="0.00"
+                  className="w-full h-10 pl-10 pr-3 border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
+                />
+              </div>
+            </div>
+            <div>
+              <label htmlFor="budget-description" className="block text-sm font-medium text-gray-700 mb-1">口径说明</label>
+              <textarea
+                id="budget-description"
+                value={formData.description}
+                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                rows={3}
+                placeholder="说明预算口径、实际金额来源或本月特殊调整"
+                className="w-full px-3 py-2 border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500 resize-none"
+              />
             </div>
           </div>
           <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-gray-200">

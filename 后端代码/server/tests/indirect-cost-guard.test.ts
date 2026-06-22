@@ -33,6 +33,17 @@ async function createCostCenter(app: any, token: string, suffix: string) {
   return res.body.data.id as string
 }
 
+function latestOperationLog(db: any, operation: string, entityId: string) {
+  return db.prepare(`
+    SELECT *
+    FROM operation_logs
+    WHERE operation = ?
+      AND (request_data LIKE ? OR response_data LIKE ?)
+    ORDER BY created_at DESC, rowid DESC
+    LIMIT 1
+  `).get(operation, `%${entityId}%`, `%${entityId}%`) as any
+}
+
 describe('间接成本中心删除保护', () => {
   let app: any
   let db: any
@@ -73,6 +84,115 @@ describe('间接成本中心删除保护', () => {
     expect(res.status).toBe(200)
     const center = db.prepare('SELECT id FROM indirect_cost_centers WHERE id = ?').get(costCenterId) as any
     expect(center).toBeUndefined()
+  })
+
+  it('IDC-AUDIT-001: 创建、更新和删除间接成本中心必须写入可回看操作日志', async () => {
+    const suffix = `audit-center-${Date.now()}`
+    const costCenterId = await createCostCenter(app, token, suffix)
+
+    const createLog = latestOperationLog(db, 'POST /indirect-costs', costCenterId)
+    expect(createLog).toBeTruthy()
+    expect(createLog.description).toBe('创建间接成本中心')
+    expect(JSON.parse(createLog.request_data)).toMatchObject({
+      id: costCenterId,
+      code: `IDC-GUARD-${suffix}`,
+      name: `间接成本保护-${suffix}`,
+      costType: 'rent',
+      allocationBase: 'sample_count',
+      status: 'active',
+    })
+    expect(JSON.parse(createLog.response_data)).toMatchObject({ costCenterId })
+
+    const update = await request(app)
+      .put(`/api/v1/indirect-costs/${costCenterId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: `间接成本保护-${suffix}-更新`, monthlyAmount: 1288, status: 'inactive' })
+    expect(update.status).toBe(200)
+
+    const updateLog = latestOperationLog(db, 'PUT /indirect-costs/:id', costCenterId)
+    expect(updateLog).toBeTruthy()
+    expect(updateLog.description).toBe('更新间接成本中心')
+    expect(JSON.parse(updateLog.request_data)).toMatchObject({
+      before: {
+        id: costCenterId,
+        monthlyAmount: 1000,
+        status: 'active',
+      },
+      after: {
+        id: costCenterId,
+        name: `间接成本保护-${suffix}-更新`,
+        monthlyAmount: 1288,
+        status: 'inactive',
+      },
+    })
+
+    const del = await request(app)
+      .delete(`/api/v1/indirect-costs/${costCenterId}`)
+      .set('Authorization', `Bearer ${token}`)
+    expect(del.status).toBe(200)
+
+    const deleteLog = latestOperationLog(db, 'DELETE /indirect-costs/:id', costCenterId)
+    expect(deleteLog).toBeTruthy()
+    expect(deleteLog.description).toBe('删除间接成本中心')
+    expect(JSON.parse(deleteLog.request_data)).toMatchObject({
+      id: costCenterId,
+      name: `间接成本保护-${suffix}-更新`,
+      monthlyAmount: 1288,
+      status: 'inactive',
+    })
+  })
+
+  it('IDC-AUDIT-002: 录入和更新月度分摊必须写入成本事实操作日志', async () => {
+    const suffix = `audit-alloc-${Date.now()}`
+    const costCenterId = await createCostCenter(app, token, suffix)
+
+    const createAllocation = await request(app)
+      .post(`/api/v1/indirect-costs/${costCenterId}/allocations`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ yearMonth: '2026-07', totalAmount: 1600, allocationBaseValue: 80 })
+    expect(createAllocation.status).toBe(201)
+    const allocationId = createAllocation.body.data.id as string
+
+    const createLog = latestOperationLog(db, 'POST /indirect-costs/:id/allocations', allocationId)
+    expect(createLog).toBeTruthy()
+    expect(createLog.description).toBe('录入间接成本分摊')
+    expect(JSON.parse(createLog.request_data)).toMatchObject({
+      costCenter: { id: costCenterId },
+      allocation: {
+        id: allocationId,
+        costCenterId,
+        yearMonth: '2026-07',
+        totalAmount: 1600,
+        allocationBaseValue: 80,
+        allocationRate: 20,
+      },
+    })
+
+    const updateAllocation = await request(app)
+      .post(`/api/v1/indirect-costs/${costCenterId}/allocations`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ yearMonth: '2026-07', totalAmount: 2400, allocationBaseValue: 120 })
+    expect(updateAllocation.status).toBe(200)
+
+    const updateLog = latestOperationLog(db, 'POST /indirect-costs/:id/allocations', allocationId)
+    expect(updateLog).toBeTruthy()
+    expect(updateLog.description).toBe('更新间接成本分摊')
+    expect(JSON.parse(updateLog.request_data)).toMatchObject({
+      costCenter: { id: costCenterId },
+      before: {
+        id: allocationId,
+        totalAmount: 1600,
+        allocationBaseValue: 80,
+        allocationRate: 20,
+      },
+      after: {
+        id: allocationId,
+        totalAmount: 2400,
+        allocationBaseValue: 120,
+        allocationRate: 20,
+      },
+    })
+    expect(JSON.parse(updateLog.response_data)).toMatchObject({ costCenterId, allocationId })
   })
 
   it('IDC-STATS-001: 成本中心统计接口按筛选条件返回全量口径', async () => {

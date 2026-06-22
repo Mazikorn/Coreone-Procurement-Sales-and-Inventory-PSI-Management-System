@@ -19,19 +19,31 @@
 
 2026-06-20 角色故事 013 复核结论：新增 `manager` 管理者只读经营洞察角色和标准账号 `guanli`。manager 仅可进入 `/`, `/alerts`, `/inventory`, `/abc/dashboard`, `/abc/trend`, `/abc/profitability`，后端只授予 `inventory:view`, `alerts:view`, `cost_analysis:view`，不能处理预警、执行出入库、维护系统用户/角色、消耗对账或写 ABC 配置。
 
+2026-06-21 自定义成本只读角色复核结论：前后端已区分 `cost_analysis:view` 和 `cost_analysis`。`cost_analysis:view` 只承接成本看板、切片成本、盈利分析、收费对照和成本趋势等只读洞察；不会显示或读取消耗对账、间接成本中心、作业中心、成本动因、成本池、收费映射或收费标准等财务执行/配置工作台。裸 `cost_analysis` 仍保留完整财务成本作业入口，用于真正承担对账、配置和成本归集的自定义财务岗位。
+
+2026-06-22 病理医生只读洞察复核结论：pathologist 不再直接读取 `/api/v1/materials` 物料主数据接口；医生继续通过项目、BOM、设备、工时、库存和成本洞察页接收必要上下文，避免医生角色绕过页面进入仓储/主数据事实维护面。finance 仍保留 `materials:view` 后端只读能力，用于收费映射和成本口径解释。
+
+2026-06-22 使用中批次/耗尽复核结论：`/api/v1/depletion` 已明确为 admin、warehouse_manager、pathologist、finance 可读；写入动作（创建使用中记录、调整剩余量、确认耗尽）仅 admin、warehouse_manager 可执行。前端库存页中 warehouse_manager 可在“使用中/已耗尽”完成批次余量调整和耗尽确认，pathologist/finance 只读回看，不显示执行按钮。
+
+2026-06-22 管理者成本洞察口径复核结论：manager 仍保持只读经营洞察边界，不读取财务配置工作台；`/api/v1/abc/dashboard`、`/api/v1/abc/profitability` 和 `/api/v1/abc/slide-cost-trend` 已返回 `insightQuality`，盈利性分析额外返回 `insightQualityByMonth` 支撑跨月口径审阅，页面会提示未关账、开放异常、未补算和成本快照覆盖情况，避免管理者把过程数据当最终经营口径。
+
+2026-06-22 管理员归档治理复核结论：admin 清理操作日志前生成的外部归档包会记录外部存储治理状态；未配置、配置无效、已声明、留存期限不足会被区分展示。若 `retentionUntil` 已过期，后端返回 `storageGovernance.status=insufficient_retention`，日志页显示“留存期限不足”，避免管理员把过期留存锁/WORM 声明当作合格审计证据。
+
 ## 0.1 权限控制架构
 
 COREONE 采用 **后端双层 + 前端三层** 的权限控制架构：
 
 ```
-后端第一层: app.ts 路由注册时 requireRole(...roles) 角色白名单
-后端第二层: 路由文件内部端点级 requireRole() 取交集
+后端第一层: app.ts 路由注册时 requireRole(...roles) 做角色白名单或模块权限兜底；requireStrictRole(...) 做严格角色白名单
+后端第二层: 路由文件内部端点级 requireRole()/requireStrictRole() 控制读写边界
 前端第一层: AppLayout.tsx 路由守卫 — ROLE_MENU_MAP 路径白名单精确匹配
 前端第二层: AppSidebar.tsx 侧边栏菜单过滤 — 只显示有权限的菜单
 前端第三层: permissions.ts ROLE_MENU_MAP 角色-路径映射表
 ```
 
 **admin 特殊规则**：admin 角色在后端 `auth.ts` 中直接放行（`user.role === 'admin'` 时跳过权限检查并记录审计日志）。
+
+**自定义角色成本权限规则**：`cost_analysis:view` 表示“查看成本结果与洞察”，不表示“执行财务成本作业”。因此前端只给 `/abc/dashboard`、`/abc/slide-cost`、`/abc/profitability`、`/abc/fee-comparison`、`/abc/trend`；后端也拒绝其读取间接成本中心、作业中心、成本动因、成本池、收费映射和收费标准等配置工作台。需要消耗对账、间接成本、收费映射或 ABC 配置入口时，应授予模块级 `cost_analysis` 或使用标准 `finance` 角色。
 
 ---
 
@@ -55,51 +67,53 @@ COREONE 采用 **后端双层 + 前端三层** 的权限控制架构：
 
 ### 2.1 ROLE_MENU_MAP 路径映射
 
-| 功能模块 | 路径 | admin | warehouse_manager | technician | procurement | finance | pathologist |
-|----------|------|:-----:|:-----------------:|:----------:|:-----------:|:-------:|:-----------:|
-| 仪表盘 | `/` | Y | Y | Y | Y | Y | Y |
-| 预警中心 | `/alerts` | Y | Y | Y | Y | Y | Y |
-| 入库管理 | `/inbound` | Y | Y | - | - | - | - |
-| 库存列表 | `/inventory` | Y | Y | Y | Y | Y | Y |
-| 出库管理 | `/outbound` | Y | Y | - | - | - | - |
-| 退库管理 | `/returns` | Y | Y | - | - | - | - |
-| 退货给供应商 | `/supplier-returns` | Y | Y | - | Y | - | - |
-| 调拨管理 | `/transfers` | Y | Y | - | - | - | - |
-| 报废管理 | `/scraps` | Y | Y | - | - | - | - |
-| 库存盘点 | `/stocktaking` | Y | Y | - | - | - | - |
-| 成本看板 | `/abc/dashboard` | Y | - | - | - | Y | Y |
-| 切片成本 | `/abc/slide-cost` | Y | - | Y | - | Y | Y |
-| 盈利分析 | `/abc/profitability` | Y | - | - | - | Y | Y |
-| 收费对照 | `/abc/fee-comparison` | Y | - | - | - | Y | Y |
-| 成本趋势 | `/abc/trend` | Y | - | - | - | Y | Y |
-| 消耗对账 | `/reconciliation` | Y | - | Y | - | Y | Y |
-| 物料成本分析 | `/cost-analysis` | - | - | - | - | - | - |
-| ABC 配置 | `/abc/activity-centers` | Y | - | - | - | Y | - |
-| 采购订单 | `/purchase-orders` | Y | Y | - | Y | - | - |
-| 供应商管理 | `/suppliers` | Y | Y | - | Y | - | - |
-| 物料管理 | `/materials` | Y | Y | Y | Y | - | - |
-| 物料分类 | `/categories` | Y | Y | Y | Y | Y | Y |
-| 库位管理 | `/locations` | Y | Y | - | - | - | - |
-| 检测项目 | `/projects` | Y | - | Y | - | Y | Y |
-| BOM 清单 | `/bom` | Y | - | Y | - | Y | Y |
-| 设备管理 | `/equipment` | Y | - | Y | - | - | Y |
-| 标准工时库 | `/labor-times` | Y | - | Y | - | - | Y |
-| 用户管理 | `/users` | Y | - | - | - | - | - |
-| 角色权限 | `/roles` | Y | - | - | - | - | - |
-| 操作日志 | `/logs` | Y | - | - | - | - | - |
+| 功能模块 | 路径 | admin | warehouse_manager | technician | procurement | finance | pathologist | manager |
+|----------|------|:-----:|:-----------------:|:----------:|:-----------:|:-------:|:-----------:|:-------:|
+| 仪表盘 | `/` | Y | Y | Y | Y | Y | Y | Y |
+| 预警中心 | `/alerts` | Y | Y | Y | Y | Y | Y | Y |
+| 入库管理 | `/inbound` | Y | Y | - | - | - | - | - |
+| 库存列表 | `/inventory` | Y | Y | Y | Y | - | Y | Y |
+| 出库管理 | `/outbound` | Y | Y | - | - | - | - | - |
+| 退库管理 | `/returns` | Y | Y | - | - | - | - | - |
+| 退货给供应商 | `/supplier-returns` | Y | Y | - | Y | - | - | - |
+| 调拨管理 | `/transfers` | Y | Y | - | - | - | - | - |
+| 报废管理 | `/scraps` | Y | Y | - | - | - | - | - |
+| 库存盘点 | `/stocktaking` | Y | Y | - | - | - | - | - |
+| 成本看板 | `/abc/dashboard` | Y | - | - | - | Y | Y | Y |
+| 切片成本 | `/abc/slide-cost` | Y | - | Y | - | Y | Y | - |
+| 盈利分析 | `/abc/profitability` | Y | - | - | - | Y | Y | Y |
+| 收费对照 | `/abc/fee-comparison` | Y | - | - | - | Y | Y | - |
+| 收费映射 | `/abc/fee-mappings` | Y | - | - | - | Y | - | - |
+| 成本趋势 | `/abc/trend` | Y | - | - | - | Y | Y | Y |
+| 成本池 | `/abc/cost-pools` | Y | - | - | - | Y | - | - |
+| 消耗对账 | `/reconciliation` | Y | - | Y | - | Y | - | - |
+| 物料成本分析 | `/cost-analysis` | - | - | - | - | - | - | - |
+| ABC 配置 | `/abc/activity-centers` | Y | - | - | - | Y | - | - |
+| 采购订单 | `/purchase-orders` | Y | Y | - | Y | - | - | - |
+| 供应商管理 | `/suppliers` | Y | Y | - | Y | - | - | - |
+| 物料管理 | `/materials` | Y | Y | Y | Y | - | - | - |
+| 物料分类 | `/categories` | Y | Y | Y | Y | Y | Y | - |
+| 库位管理 | `/locations` | Y | Y | - | - | - | - | - |
+| 检测项目 | `/projects` | Y | - | Y | - | Y | Y | - |
+| BOM 清单 | `/bom` | Y | - | Y | - | Y | Y | - |
+| 设备管理 | `/equipment` | Y | - | Y | - | - | Y | - |
+| 标准工时库 | `/labor-times` | Y | - | Y | - | Y | Y | - |
+| 用户管理 | `/users` | Y | - | - | - | - | - | - |
+| 角色权限 | `/roles` | Y | - | - | - | - | - | - |
+| 操作日志 | `/logs` | Y | - | - | - | Y | - | - |
 
 ### 2.1.1 manager 只读经营洞察增量
 
-`manager` 是 2026-06-20 角色故事 013 新增的只读管理者角色。为了不重排历史六角色矩阵，单独记录如下:
+`manager` 是 2026-06-20 角色故事 013 新增的只读管理者角色。上表已纳入 manager，本节补充其职责边界:
 
 | 路径 | manager | 说明 |
 |------|:-------:|------|
 | `/` | Y | 首页经营风险概览 |
 | `/alerts` | Y | 只读查看预警，不处理/忽略/生成预警 |
 | `/inventory` | Y | 只读查看库存和批次风险 |
-| `/abc/dashboard` | Y | 只读查看可信 ABC 成本看板 |
-| `/abc/trend` | Y | 只读查看成本趋势 |
-| `/abc/profitability` | Y | 只读查看盈利分析 |
+| `/abc/dashboard` | Y | 只读查看 ABC 成本看板，并回看期间状态、异常、未补算和快照覆盖情况 |
+| `/abc/trend` | Y | 只读查看成本趋势，页面提示未关账或异常月份的过程口径 |
+| `/abc/profitability` | Y | 只读查看盈利分析，页面提示当前月份是否可作为最终经营判断 |
 | `/users`, `/roles`, `/logs`, `/inbound`, `/outbound`, `/stocktaking`, `/reconciliation`, `/abc/fee-mappings`, `/abc/activity-centers`, `/abc/cost-pools` | - | 不承担系统管理、仓储执行、消耗对账或财务配置职责 |
 
 ### 2.2 隐藏页面（URL 直接访问，不在侧边栏显示）
@@ -107,21 +121,19 @@ COREONE 采用 **后端双层 + 前端三层** 的权限控制架构：
 | 路径 | admin | finance | pathologist | 说明 |
 |------|:-----:|:-------:|:-----------:|------|
 | `/abc/cost-drivers` | Y | Y | - | 成本动因 |
-| `/abc/cost-pools` | Y | Y | - | 成本池 |
 | `/abc/budgets` | Y | Y | - | 预算管理 |
 | `/abc/quality-costs` | Y | Y | - | 质量成本 |
 | `/abc/variance` | Y | Y | - | 差异分析 |
 | `/abc/quarterly-adjustment` | Y | Y | - | 季度调整 |
 | `/abc/alerts` | Y | Y | - | 成本预警 |
 | `/abc/audit` | Y | Y | - | 审计日志 |
-| `/abc/forecast` | Y | Y | Y | 成本预测 |
-| `/abc/supplier-cost` | Y | Y | - | 供应商成本 |
-| `/abc/equipment-efficiency` | Y | Y | - | 设备效率 |
 | `/abc/personnel-efficiency` | Y | Y | - | 人员效率 |
 | `/abc/model-validation` | Y | Y | Y | 模型验证 |
 | `/equipment/types` | Y | - | - | 设备类型 |
 | `/equipment/depreciation` | Y | - | - | 折旧统计 |
 | `/indirect-costs` | Y | Y | - | 间接成本中心 |
+
+> 说明: `/abc/forecast`、`/abc/supplier-cost`、`/abc/equipment-efficiency` 已从 `ROLE_MENU_MAP`、`TopBar` 标题映射、成本页导出和操作手册中清理。当前 `App.tsx` 没有这些路由，且 `src/pages/cost/` 下没有对应页面文件；后续如需恢复，必须先补齐真实页面和路由再纳入权限矩阵。
 
 ---
 
@@ -139,7 +151,7 @@ COREONE 采用 **后端双层 + 前端三层** 的权限控制架构：
 |----------|----------|------|------|
 | `users-v1.1.ts` | `/api/v1/users` | 待目标分支核对 | admin |
 | `roles-v1.1.ts` | `/api/v1/roles` | GET /, POST /, PUT /:id, DELETE /:id | admin |
-| `logs-v1.1.ts` | `/api/v1/logs` | GET /, GET /operation | admin |
+| `logs-v1.1.ts` | `/api/v1/logs` | GET /, GET /operation；清理端点二次限制 admin | admin, finance(读) |
 
 ### 3.3 分模块权限明细
 
@@ -191,10 +203,10 @@ COREONE 采用 **后端双层 + 前端三层** 的权限控制架构：
 | 路由文件 | 路径前缀 | 权限 |
 |----------|----------|------|
 | `reports-v1.1.ts` | `/api/v1/reports` | admin, pathologist, finance |
-| `depletion-v1.1.ts` | `/api/v1/depletion` | 待目标分支核对 |
-| `reconciliation-v1.1.ts` | `/api/v1/reconciliation` | admin, technician, pathologist, finance |
-| `indirect-cost-v1.1.ts` | `/api/v1/indirect-costs` | admin, finance |
-| `cost-adjustment-v1.1.ts` | `/api/v1/cost-adjustments` | admin, finance |
+| `depletion-v1.1.ts` | `/api/v1/depletion` | 读: admin, warehouse_manager, pathologist, finance；写: admin, warehouse_manager |
+| `reconciliation-v1.1.ts` | `/api/v1/reconciliation` | admin, technician, finance |
+| `indirect-cost-v1.1.ts` | `/api/v1/indirect-costs` | admin, finance；自定义角色需模块级 `cost_analysis` |
+| `cost-adjustment-v1.1.ts` | `/api/v1/cost-adjustments` | admin, finance；自定义角色需模块级 `cost_analysis` |
 | `abc-v1.1.ts` | `/api/v1/abc` | 待目标分支核对 |
 
 #### 预警
@@ -209,8 +221,9 @@ COREONE 采用 **后端双层 + 前端三层** 的权限控制架构：
 
 | 端点类型 | 权限 | 端点列表 |
 |----------|------|----------|
-| 读取类 | admin, finance, pathologist, technician, manager(部分结果页) | GET /activity-centers, /cost-drivers, /cost-pools, /bom-links/:bomId, /fee-standards, /profitability, /dashboard, /fee-comparison, /slide-cost-trend, /batch-trace/:batchId, /budgets, /quality-costs, /audit-logs, /alert-rules, /variance-analysis；技术员前端默认仅暴露 `/abc/slide-cost`；manager 前端默认仅暴露 `/abc/dashboard`, `/abc/trend`, `/abc/profitability` |
-| 写入类 | admin, finance | POST/PUT/DELETE activity-centers, cost-drivers, cost-pools (含 sync/auto-collect/recalculate), bom-links, budgets, quality-costs, alert-rules |
+| 结果读取类 | admin, finance, pathologist, technician, manager(部分结果页), 自定义 `cost_analysis:view` | GET /dashboard, /profitability, /fee-comparison, /slide-cost-trend 等成本结果接口；成本看板可读取 periods/cost-runs/adjustments 作为本期口径解释；技术员前端默认仅暴露 `/abc/slide-cost`；manager 前端默认仅暴露 `/abc/dashboard`, `/abc/trend`, `/abc/profitability` |
+| 财务配置读取类 | admin, finance；自定义角色需模块级 `cost_analysis` | GET /activity-centers, /cost-drivers, /cost-pools, /bom-fee-mappings/audit, /bom-fee-mappings/:bomId, /fee-standards；`cost_analysis:view`、technician、pathologist、manager 均不读取这些配置工作台 |
+| 写入类 | admin, finance；自定义角色需模块级 `cost_analysis` | POST/PUT/DELETE activity-centers, cost-drivers, cost-pools (含 sync/auto-collect/recalculate), bom-links, budgets, quality-costs, alert-rules；`cost_analysis:view`、technician、pathologist、manager 均不可写 |
 | 导出 | admin, finance | GET /export |
 
 ---
@@ -221,14 +234,14 @@ COREONE 采用 **后端双层 + 前端三层** 的权限控制架构：
 |------|-----|----------------------|
 | 用户管理 | admin | admin |
 | 角色管理 | admin | admin |
-| 操作日志 | admin | — (只读) |
+| 操作日志 | admin, finance | — (只读；清理仅 admin) |
 | 物料分类 | 所有已认证 | admin |
 | 物料管理 | admin, wm, tech, path, proc | admin |
 | 供应商 | admin, wm, proc | admin, proc |
 | 库位 | admin, wm | admin |
 | 入库 | admin, wm, proc | admin, wm |
 | 采购订单 | admin, proc | admin, proc |
-| 库存查询 | admin, wm, tech, path, proc | — (只读) |
+| 库存查询 | admin, wm, tech, path, proc, manager | — (只读) |
 | 出库 | admin, wm | admin, wm |
 | 盘点 | admin, wm | admin, wm |
 | 退库 | admin, wm | admin, wm |
@@ -239,14 +252,13 @@ COREONE 采用 **后端双层 + 前端三层** 的权限控制架构：
 | BOM | admin, wm, tech, path, finance | admin, tech |
 | 设备 | admin, tech, path | admin (类型); admin, tech, path (设备/工时) |
 | 成本报表 | admin, path, finance | — (只读) |
-| 消耗追踪 | admin, path, finance | admin, path, finance |
-| 对账 | admin, path, finance | admin, path, finance |
-| 间接成本 | admin, finance | admin, finance |
+| 消耗追踪/对账 | admin, tech, finance | admin, tech, finance（BOM 修正仅 admin/tech） |
+| 间接成本 | admin, finance；自定义角色需模块级 `cost_analysis` | admin, finance；自定义角色需模块级 `cost_analysis` |
 | ABC 读取 | admin, finance, path, tech(部分) | — |
-| ABC 写入 | admin, finance | admin, finance |
+| ABC 写入 | admin, finance；自定义角色需模块级 `cost_analysis` | admin, finance；自定义角色需模块级 `cost_analysis` |
 | ABC 导出 | admin, finance | — |
 | 成本调整 | admin, finance | admin, finance |
-| 预警 | 全部角色 | 全部角色 |
+| 预警 | 全部角色 | admin, warehouse_manager 可处理；manager 只读 |
 
 > 缩写: wm=warehouse_manager, tech=technician, path=pathologist, proc=procurement
 
@@ -258,15 +270,16 @@ COREONE 采用 **后端双层 + 前端三层** 的权限控制架构：
 
 | 模块 | 前端 | 后端 | 一致 |
 |------|------|------|:----:|
-| 用户/角色/日志 | 仅 admin 可见 | 仅 admin 可访问 | ✅ |
+| 用户/角色 | 仅 admin 可见 | 仅 admin 可访问 | ✅ |
+| 操作日志 | admin、finance 可见 | admin、finance 可读；清理仅 admin | ✅ |
 | 入库 | admin, wm, proc 可见 | admin, wm, proc 可读 | ✅ |
 | 出库 | admin, wm 可见 | admin, wm | ✅ |
 | 盘点/退库/报废/调拨 | admin, wm 可见 | admin, wm | ✅ |
 | 采购订单 | admin, proc 可见 | admin, proc | ✅ |
 | 供应商 | admin, wm, proc 可见 | admin, wm, proc | ✅ |
 | 库位 | admin, wm 可见 | admin, wm | ✅ |
-| 成本管理 | admin, tech, path, finance 可见 | admin, path, finance + tech(部分) | ⚠️ |
-| 物料管理 | admin, wm, tech, proc 可见 | admin, wm, tech, path, proc | ⚠️ |
+| 成本管理 | admin, tech, path, finance, manager(部分) 可见 | 结果页 admin/finance/path/tech/manager 可按职责读取；财务配置工作台仅 admin/finance/模块级自定义成本角色 | ✅ |
+| 物料管理 | admin, wm, tech, proc 可见 | admin, wm, tech, proc；finance 可通过 `materials:view` 只读承接收费映射上下文；pathologist 403 | ✅ |
 | 财务项目/BOM上下文 | finance 可见 `/projects`, `/bom` 且隐藏写按钮 | finance 可读项目/BOM/物料，写项目/BOM/物料返回 403 | ✅ |
 | 预警 | 全部角色可见 | 全部角色 | ✅ |
 
@@ -276,10 +289,11 @@ COREONE 采用 **后端双层 + 前端三层** 的权限控制架构：
 
 | 差异点 | 前端 | 后端 | 需 PM 确认 |
 |--------|------|------|:----------:|
-| 物料管理 | path 不可见 | path 可读 | 是 |
-| 成本管理 tech 可见 | tech 可见成本看板等 | tech 不在 reports/abc 权限中 | 是 |
-| 检测项目 path | path 可见 | path 可读 | ✅ 一致 |
-| BOM path | path 可见 | path 可读 | ✅ 一致 |
+| 物料管理 pathologist | pathologist 不可见 | pathologist 不能直接读 `/api/v1/materials` | 已按只读洞察边界收敛 |
+| 物料管理 finance | finance 不可见 | finance 可读，用于 ABC 收费映射上下文 | 已按角色故事 009 确认 |
+| 成本预测/供应商成本/设备效率 | 已从前端权限、标题和操作手册清理 | `App.tsx` 无路由且页面文件不存在 | 后续如需恢复，需先补真实页面 |
+| 检测项目 pathologist/finance | 前端可见 | 后端可读 | ✅ 一致 |
+| BOM pathologist/finance | 前端可见 | 后端可读 | ✅ 一致 |
 
 > **说明**：前端 `ROLE_MENU_MAP` 和后端 API 权限可能存在有意的差异化设计，但出库读权限已按 PM 确认的最小权限原则收敛，不再作为待确认差异。
 
@@ -304,10 +318,10 @@ COREONE 采用 **后端双层 + 前端三层** 的权限控制架构：
 - 不可见采购管理、仓库出库执行和系统设置
 
 ### 6.4 pathologist（病理医生）
-- **成本分析角色**，17 条前端路径
-- 查看项目、BOM、设备、工时
+- **成本分析角色**，13 条前端路径
+- 查看项目、BOM、设备、工时、库存和成本洞察
 - 可查看成本报表和 ABC 分析（只读）
-- 不可见采购管理和系统设置
+- 不直接读取物料主数据 API，不进入采购、仓储执行、消耗对账、财务配置和系统设置
 
 ### 6.5 procurement（采购员）
 - **采购执行角色**，9 条前端路径
@@ -316,11 +330,16 @@ COREONE 采用 **后端双层 + 前端三层** 的权限控制架构：
 - 不可见成本管理和系统设置
 
 ### 6.6 finance（财务人员）
-- **成本核算角色**，约 26 条前端路径（含 14 个隐藏 ABC 页面）
+- **成本核算角色**，约 29 条前端路径（含隐藏 ABC/间接成本页面和操作日志）
 - 成本报表、ABC 分析、间接成本、成本对账的全权访问
 - 可只读查看项目、BOM、物料上下文，用于配置收费映射和解释成本口径
 - 可写 ABC 财务配置；不可写项目、BOM、物料等技术/主数据
-- 不可见采购管理和系统设置
+- 不可见采购管理、用户管理和角色权限；可读操作日志用于成本/审计追溯
+
+### 6.7 manager（管理者）
+- **只读经营洞察角色**，6 条前端路径
+- 查看首页、预警、库存、成本看板、成本趋势和盈利分析
+- 不可执行仓储作业、消耗对账、系统管理或 ABC 配置
 
 ---
 
@@ -341,7 +360,7 @@ COREONE 采用 **后端双层 + 前端三层** 的权限控制架构：
 |------|------|
 | 跨模块 API 权限测试 | 当前仅覆盖 `/roles` 模块的 API 权限，其他模块（入库、成本等）仍缺少跨角色 API 权限测试；出库已补 technician/pathologist 后端拒绝测试 |
 | 端点级写权限测试 | 后端有读写分离的模块（如 inbound）缺少非写角色尝试写入的测试；outbound 已覆盖 procurement 写入拒绝 |
-| 隐藏页面访问测试 | admin 和 finance 的隐藏 ABC 页面路由已补回，仍缺少 E2E 验证 |
+| 隐藏页面访问测试 | admin 和 finance 的隐藏 ABC 页面仍缺少完整 E2E 验证；`/abc/forecast`、`/abc/supplier-cost`、`/abc/equipment-efficiency` 已清理，当前不作为可访问页面 |
 | technician/pathologist 出库 API 只读权限收敛 | 已于 2026-06-20 收敛，`outbound.test.ts` 覆盖 technician/pathologist 读取 `/api/v1/outbound` 返回 403 |
 
 ---
@@ -350,9 +369,10 @@ COREONE 采用 **后端双层 + 前端三层** 的权限控制架构：
 
 | 确认项 | PM 判断 |
 |--------|---------|
-| 6 种角色定义是否符合实际业务 | 待确认 |
+| 7 种角色定义是否符合实际业务 | 待确认 |
 | 出库页面 technician/pathologist 不可见、后端出库 API 后续不保留只读权限 | PM 已确认按建议处理 |
-| 物料管理 pathologist 是否应可见 | 待确认 |
+| 物料管理 pathologist 是否应可见 | 已按只读洞察边界处理：前端不可见，后端 `/api/v1/materials` 返回 403 |
 | 成本管理 technician 可见是否符合业务意图 | 待确认 |
-| finance 的隐藏 ABC 页面是否需要在侧边栏显示 | PM 已确认暂不放入侧边栏，保留 URL 直接访问 |
+| finance 的隐藏 ABC 页面是否需要在侧边栏显示 | PM 已确认多数高级 ABC 页面暂不放入侧边栏；成本池已作为当前可见导航入口 |
 | 是否需要新增角色或合并角色 | 待确认 |
+| 自定义成本只读角色是否只看洞察页、不承接财务执行/配置入口 | 已按前后端最小权限处理 |

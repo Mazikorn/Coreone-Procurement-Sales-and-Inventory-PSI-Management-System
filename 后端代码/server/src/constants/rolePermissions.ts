@@ -11,7 +11,7 @@ export const ROLE_PERMISSIONS: Record<string, string[]> = {
     'equipment', 'labor_times', 'cost_analysis',
   ],
   pathologist: [
-    'dashboard', 'inventory', 'projects:view', 'bom:view', 'materials',
+    'dashboard', 'inventory', 'projects:view', 'bom:view',
     'cost_analysis', 'alerts', 'equipment:view', 'labor_times:view',
   ],
   procurement: [
@@ -29,3 +29,5 @@ export const ROLE_PERMISSIONS: Record<string, string[]> = {
     'cost_analysis:view',
   ],
 }
+
+export const SYSTEM_ROLE_CODES = Object.keys(ROLE_PERMISSIONS)

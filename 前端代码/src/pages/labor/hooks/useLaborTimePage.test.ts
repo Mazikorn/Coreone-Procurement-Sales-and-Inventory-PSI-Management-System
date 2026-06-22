@@ -39,6 +39,7 @@ const laborTime = {
 describe('useLaborTimePage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    window.history.replaceState(null, '', '/')
     localStorage.clear()
     localStorage.setItem('user', JSON.stringify({ role: 'admin' }))
     vi.mocked(laborTimeApi.getList).mockResolvedValue({ list: [laborTime], pagination: { total: 1 } } as any)
@@ -98,5 +99,21 @@ describe('useLaborTimePage', () => {
       projectType: 'ihc',
       stepName: '更新后的抗体孵育',
     }))
+  })
+
+  it('uses keyword from URL so audit links open a filtered labor time list', async () => {
+    window.history.replaceState(null, '', '/labor-times?keyword=LAB-DEEP-001')
+
+    const { result } = renderHook(() => useLaborTimePage())
+
+    await waitFor(() => expect(laborTimeApi.getList).toHaveBeenCalledWith(expect.objectContaining({
+      page: 1,
+      pageSize: 20,
+      keyword: 'LAB-DEEP-001',
+    })))
+    await waitFor(() => expect(laborTimeApi.getStats).toHaveBeenCalledWith(expect.objectContaining({
+      keyword: 'LAB-DEEP-001',
+    })))
+    expect(result.current.searchInput).toBe('LAB-DEEP-001')
   })
 })

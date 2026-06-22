@@ -3,9 +3,9 @@ import { getDatabase } from '../database/DatabaseManager.js'
 import { success, successList, error } from '../utils/response.js'
 import { v4 as uuidv4 } from 'uuid'
 import { logOperation } from '../utils/operation-logger.js'
+import { SYSTEM_ROLE_CODES } from '../constants/rolePermissions.js'
 
 const router = Router()
-const SYSTEM_ROLE_CODES = ['admin', 'warehouse_manager', 'technician', 'pathologist', 'procurement', 'finance', 'manager'] as const
 const SYSTEM_ROLE_CODES_SQL = SYSTEM_ROLE_CODES.map(code => `'${code}'`).join(', ')
 const VALID_PERMISSION_MODULES = new Set([
   'dashboard',
@@ -35,7 +35,7 @@ const VALID_PERMISSION_MODULES = new Set([
 const VALID_PERMISSION_ACTIONS = new Set(['view', 'add', 'edit', 'delete'])
 
 function isSystemRoleCode(code: unknown) {
-  return typeof code === 'string' && (SYSTEM_ROLE_CODES as readonly string[]).includes(code)
+  return typeof code === 'string' && SYSTEM_ROLE_CODES.includes(code)
 }
 
 function buildRoleWhere(query: any) {

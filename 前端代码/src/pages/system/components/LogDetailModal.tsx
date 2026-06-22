@@ -1,3 +1,4 @@
+import React from 'react'
 import { X } from 'lucide-react'
 import type { OperationLog } from '@/types'
 
@@ -16,9 +17,14 @@ export function LogDetailModal({ open, log, getLogType, getModuleLabel, onClose 
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
       onClick={e => { if (e.target === e.currentTarget) onClose() }}
     >
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-hidden flex flex-col">
+      <div
+        className="bg-white rounded-xl shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-hidden flex flex-col"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="log-detail-title"
+      >
         <div className="flex items-center justify-between px-6 py-5 border-b border-gray-200">
-          <h3 className="text-lg font-semibold text-gray-900">操作详情</h3>
+          <h3 id="log-detail-title" className="text-lg font-semibold text-gray-900">操作详情</h3>
           <button onClick={onClose} className="w-9 h-9 flex items-center justify-center text-gray-500 hover:bg-gray-100 hover:text-gray-900 rounded-md transition-all">
             <X className="w-5 h-5" />
           </button>
@@ -26,6 +32,7 @@ export function LogDetailModal({ open, log, getLogType, getModuleLabel, onClose 
         <div className="p-6 overflow-y-auto">
           <div className="grid grid-cols-2 gap-5 mb-6">
             <Info label="操作时间" value={new Date(log.createdAt).toLocaleString()} mono />
+            <Info label="审计来源" value={log.sourceLabel || '操作日志'} />
             <Info label="操作类型" value={
               <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getLogType(log.operation, log.operationType).className}`}>
                 {getLogType(log.operation, log.operationType).label}
@@ -33,6 +40,16 @@ export function LogDetailModal({ open, log, getLogType, getModuleLabel, onClose 
             } />
             <Info label="操作用户" value={log.username} />
             <Info label="操作模块" value={getModuleLabel(log.module || (log.requestData?.module as string) || '')} />
+            <Info label="业务单据" value={
+              log.businessId && log.businessUrl ? (
+                <a
+                  href={log.businessUrl}
+                  className="font-mono text-blue-600 hover:text-blue-700 hover:underline"
+                >
+                  {log.businessId}
+                </a>
+              ) : log.businessId || '-'
+            } mono />
             <Info label="IP地址" value={log.ip} mono />
             <Info label="浏览器" value={log.userAgent || '-'} />
           </div>
@@ -46,6 +63,33 @@ export function LogDetailModal({ open, log, getLogType, getModuleLabel, onClose 
               )}
             </div>
           </div>
+
+          {log.auditEvent && (
+            <div className="mb-6">
+              <h4 className="text-sm font-semibold text-gray-900 mb-3">标准审计事件</h4>
+              <div className="border border-gray-200 rounded-lg overflow-hidden">
+                <table className="w-full text-sm">
+                  <tbody className="divide-y divide-gray-200">
+                    <EventRow label="事件编码" value={log.auditEvent.eventCode} mono />
+                    <EventRow label="事件对象" value={`${log.auditEvent.subjectType}:${log.auditEvent.subjectId || '-'}`} mono />
+                    <EventRow label="责任人" value={log.auditEvent.actor || '-'} />
+                    <EventRow label="证据来源" value={log.auditEvent.evidenceSource} mono />
+                    <EventRow
+                      label="标准回跳"
+                      value={log.auditEvent.businessUrl ? (
+                        <a
+                          href={log.auditEvent.businessUrl}
+                          className="font-mono text-blue-600 hover:text-blue-700 hover:underline"
+                        >
+                          {log.auditEvent.businessUrl}
+                        </a>
+                      ) : '-'}
+                    />
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
           {log.requestData && (
             <div>
@@ -71,6 +115,15 @@ export function LogDetailModal({ open, log, getLogType, getModuleLabel, onClose 
         </div>
       </div>
     </div>
+  )
+}
+
+function EventRow({ label, value, mono }: { label: string; value: React.ReactNode; mono?: boolean }) {
+  return (
+    <tr>
+      <td className="px-4 py-2.5 w-[140px] bg-gray-50 font-medium text-gray-700">{label}</td>
+      <td className={`px-4 py-2.5 text-gray-900 ${mono ? 'font-mono' : ''}`}>{value}</td>
+    </tr>
   )
 }
 

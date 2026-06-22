@@ -10,9 +10,15 @@ const router = Router()
 // 物料分类写入权限：仅 admin 可操作（与 E2E 权限矩阵一致）
 const requireCategoryWrite = requireStrictRole('admin')
 
-router.get('/tree', (_req, res) => {
+function isIncludeDeleted(query: any): boolean {
+  return query?.includeDeleted === true || query?.includeDeleted === 'true'
+}
+
+router.get('/tree', (req, res) => {
   try {
     const db = getDatabase()
+    const includeDeleted = isIncludeDeleted(req.query)
+    const categoryWhere = includeDeleted ? '1 = 1' : 'is_deleted = 0'
     const rows = db.prepare(`
       SELECT
         id,
@@ -22,10 +28,11 @@ router.get('/tree', (_req, res) => {
         level,
         sort_order as sortOrder,
         status,
+        is_deleted as isDeleted,
         created_at as createdAt,
         updated_at as updatedAt
       FROM material_categories
-      WHERE is_deleted = 0
+      WHERE ${categoryWhere}
       ORDER BY level, sort_order, created_at
     `).all() as any[]
 
@@ -54,6 +61,7 @@ router.get('/tree', (_req, res) => {
           level: r.level,
           sortOrder: r.sortOrder,
           status: r.status === 1 ? 'active' : 'inactive',
+          isDeleted: Number(r.isDeleted || 0) !== 0,
           children,
           isLeaf: children.length === 0,
           count: countMap.get(r.id) || 0,
@@ -73,29 +81,24 @@ router.get('/', (req, res) => {
   try {
     const { page = 1, pageSize = 20, keyword, status } = req.query
     const db = getDatabase()
-    let sql = 'SELECT * FROM material_categories WHERE is_deleted = 0'
+    const includeDeleted = isIncludeDeleted(req.query)
+    const whereParts = [includeDeleted ? '1 = 1' : 'is_deleted = 0']
     const params: any[] = []
-    const countParams: any[] = []
 
     if (keyword) {
-      sql += ' AND (name LIKE ? OR code LIKE ?)'
-      params.push(`%${keyword}%`, `%${keyword}%`)
-      countParams.push(`%${keyword}%`, `%${keyword}%`)
+      whereParts.push('(id LIKE ? OR name LIKE ? OR code LIKE ?)')
+      params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`)
     }
     if (status === 'active' || status === 'inactive') {
-      sql += ' AND status = ?'
+      whereParts.push('status = ?')
       params.push(status === 'active' ? 1 : 0)
-      countParams.push(status === 'active' ? 1 : 0)
     }
 
+    const countWhere = whereParts.join(' AND ')
+    let sql = `SELECT * FROM material_categories WHERE ${countWhere}`
     sql += ' ORDER BY level, sort_order, created_at'
 
-    const countWhere = [
-      'is_deleted = 0',
-      keyword ? '(name LIKE ? OR code LIKE ?)' : '',
-      status === 'active' || status === 'inactive' ? 'status = ?' : '',
-    ].filter(Boolean).join(' AND ')
-    const count = (db.prepare(`SELECT COUNT(*) as total FROM material_categories WHERE ${countWhere}`).get(...countParams) as any)?.total || 0
+    const count = (db.prepare(`SELECT COUNT(*) as total FROM material_categories WHERE ${countWhere}`).get(...params) as any)?.total || 0
 
     const offset = (Number(page) - 1) * Number(pageSize)
     sql += ' LIMIT ? OFFSET ?'
@@ -111,6 +114,7 @@ router.get('/', (req, res) => {
       level: row.level,
       sortOrder: row.sort_order,
       status: row.status === 1 ? 'active' : 'inactive',
+      isDeleted: Number(row.is_deleted || 0) !== 0,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     })), Number(page), Number(pageSize), count)

@@ -67,4 +67,45 @@ describe('useLocationsPage', () => {
     expect(result.current.allLocations).toEqual([parent, child])
     expect(result.current.flatLocations.get('parent')?.name).toBe('可选父级')
   })
+
+  it('uses keyword from URL so audit links open a filtered location list', async () => {
+    window.history.replaceState(null, '', '/locations?keyword=LOC-DEEP-001')
+    vi.mocked(locationApi.getList).mockResolvedValue({ list: [], pagination: { total: 0, page: 1, pageSize: 1000 } } as any)
+
+    const { result } = renderHook(() => useLocationsPage())
+
+    await waitFor(() => expect(locationApi.getStats).toHaveBeenCalledWith({
+      keyword: 'LOC-DEEP-001',
+      status: undefined,
+    }))
+    expect(locationApi.getList).toHaveBeenCalledWith({
+      page: 1,
+      pageSize: 1000,
+      keyword: 'LOC-DEEP-001',
+      status: undefined,
+    })
+    expect(result.current.keyword).toBe('LOC-DEEP-001')
+    expect(result.current.searchKeyword).toBe('LOC-DEEP-001')
+  })
+
+  it('keeps deleted location review context from audit links', async () => {
+    window.history.replaceState(null, '', '/locations?keyword=loc-deleted-001&includeDeleted=true')
+    vi.mocked(locationApi.getList).mockResolvedValue({ list: [], pagination: { total: 0, page: 1, pageSize: 1000 } } as any)
+
+    renderHook(() => useLocationsPage())
+
+    await waitFor(() => expect(locationApi.getStats).toHaveBeenCalledWith({
+      keyword: 'loc-deleted-001',
+      status: undefined,
+      includeDeleted: true,
+    }))
+    expect(locationApi.getList).toHaveBeenCalledWith({
+      page: 1,
+      pageSize: 1000,
+      keyword: 'loc-deleted-001',
+      status: undefined,
+      includeDeleted: true,
+    })
+    expect(window.location.search).toContain('includeDeleted=true')
+  })
 })

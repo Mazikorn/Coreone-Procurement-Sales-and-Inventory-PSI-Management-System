@@ -4,6 +4,8 @@ interface DepletedRecord {
   spec: string
   batch: string
   depleteType: string
+  depleteReason: string
+  operator: string
   totalQty: number
   remainQty: number
   unit: string
@@ -29,8 +31,10 @@ export function DepletedTab({ records }: Props) {
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">物料名称</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">批次号</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">耗尽类型</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">原因</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">总用量</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">实际剩余</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">操作人</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">使用周期</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">实际天数</th>
             </tr>
@@ -50,8 +54,10 @@ export function DepletedTab({ records }: Props) {
                     {rec.depleteType}
                   </span>
                 </td>
+                <td className="px-4 py-3 text-gray-600">{rec.depleteReason || '-'}</td>
                 <td className="px-4 py-3 text-gray-900">{rec.totalQty} {rec.unit}</td>
                 <td className="px-4 py-3 text-gray-900">{rec.remainQty} {rec.unit}</td>
+                <td className="px-4 py-3 text-gray-600">{rec.operator || '-'}</td>
                 <td className="px-4 py-3 text-gray-600">{rec.startDate} ~ {rec.endDate}</td>
                 <td className="px-4 py-3 text-gray-900">{rec.actualDays} 天</td>
               </tr>

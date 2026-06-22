@@ -61,4 +61,20 @@ describe('role story 008 technician reconciliation boundaries', () => {
       .send({})
     expect(runMappingAudit.status).toBe(403)
   })
+
+  it('blocks technicians from reading finance-owned ABC configuration workbench data', async () => {
+    for (const path of [
+      '/api/v1/abc/activity-centers',
+      '/api/v1/abc/cost-drivers',
+      '/api/v1/abc/cost-pools',
+      '/api/v1/abc/bom-fee-mappings/audit',
+      '/api/v1/abc/fee-standards',
+    ]) {
+      const res = await request(app)
+        .get(path)
+        .set('Authorization', `Bearer ${technicianToken}`)
+
+      expect(res.status).toBe(403)
+    }
+  })
 })

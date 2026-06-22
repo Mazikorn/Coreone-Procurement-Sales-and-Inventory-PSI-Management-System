@@ -1,5 +1,5 @@
 import request from './request'
-import type { PaginationData, InventoryItem, InventoryStats, InventoryConsistencyCheck, InboundRecord, InboundFormData, OutboundRecord, OutboundFormData, PageParams, SupplierReturnRecord, SupplierReturnFormData, ReturnRecord, ReturnSource } from '@/types'
+import type { PaginationData, InventoryItem, InventoryStats, InventoryConsistencyCheck, InventoryBatchTrace, InboundRecord, InboundFormData, OutboundRecord, OutboundFormData, PageParams, SupplierReturnRecord, SupplierReturnFormData, ReturnRecord, ReturnSource } from '@/types'
 
 export const inventoryApi = {
   getList: (params?: PageParams & { status?: string; categoryId?: string; locationId?: string; keyword?: string; materialId?: string }) =>
@@ -10,6 +10,9 @@ export const inventoryApi = {
 
   getConsistencyCheck: () =>
     request.get<InventoryConsistencyCheck>('/inventory/consistency-check'),
+
+  getBatchTrace: (batchId: string) =>
+    request.get<InventoryBatchTrace>(`/inventory/batches/${batchId}/trace`),
 }
 
 export const inboundApi = {
@@ -57,6 +60,8 @@ export const purchaseOrderApi = {
     request.get<Record<string, unknown>>(`/purchase-orders/${id}`),
   create: (data: Record<string, unknown>) =>
     request.post<Record<string, unknown>>('/purchase-orders', data),
+  update: (id: string, data: Record<string, unknown>) =>
+    request.put<Record<string, unknown>>(`/purchase-orders/${id}`, data),
   receive: (id: string, data: { quantity: number }) =>
     request.put<Record<string, unknown>>(`/purchase-orders/${id}/receive`, data),
   cancel: (id: string) =>
@@ -94,10 +99,12 @@ export const outboundApi = {
 export const scrapApi = {
   getList: (params?: PageParams) =>
     request.get<PaginationData<Record<string, unknown>>>('/scraps', { params }),
-  create: (data: { materialId: string; batchId?: string; quantity: number; reason: string; operator?: string; remark?: string }) =>
+  create: (data: { materialId: string; batchId?: string; quantity: number; reason: string; operator?: string; remark?: string; responsiblePerson?: string; responsibleDepartment?: string }) =>
     request.post<Record<string, unknown>>('/scraps', data),
-  batchCreate: (records: Array<{ materialId: string; batchId?: string; quantity: number; reason: string; remark?: string }>) =>
+  batchCreate: (records: Array<{ materialId: string; batchId?: string; quantity: number; reason: string; remark?: string; responsiblePerson?: string; responsibleDepartment?: string }>) =>
     request.post<{ createdCount: number; ids: string[] }>('/scraps/batch', { records }),
+  review: (id: string, data: { status: 'approved' | 'rejected'; reason?: string }) =>
+    request.post<Record<string, unknown>>(`/scraps/${id}/review`, data),
   delete: (id: string) =>
     request.delete(`/scraps/${id}`),
 }

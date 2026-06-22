@@ -39,6 +39,9 @@ function flattenCategories(nodes: Category[]): Category[] {
 }
 
 export function useCategoriesPage() {
+  const initialParams = new URLSearchParams(window.location.search)
+  const initialKeyword = initialParams.get('keyword') || ''
+  const includeDeleted = initialParams.get('includeDeleted') === 'true'
   const [tree, setTree] = useState<Category[]>([])
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
@@ -47,7 +50,7 @@ export function useCategoriesPage() {
   const [flatList, setFlatList] = useState<Category[]>([])
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [searchKeyword, setSearchKeyword] = useState('')
+  const [searchKeyword, setSearchKeyword] = useState(initialKeyword)
   const [deleteModalOpen, setDeleteModalOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<Category | null>(null)
   const [categoryMaterials, setCategoryMaterials] = useState<Material[]>([])
@@ -88,7 +91,7 @@ export function useCategoriesPage() {
   const fetchData = useCallback(async () => {
     setLoading(true)
     try {
-      const res: any = await categoryApi.getTree()
+      const res: any = await categoryApi.getTree(includeDeleted ? { includeDeleted: true } : undefined)
       const t = res || []
       setTree(t)
       const firstLevelIds = new Set<string>()
@@ -96,7 +99,7 @@ export function useCategoriesPage() {
       setExpandedIds(firstLevelIds)
       setFlatList(flattenCategories(t))
     } catch (e) { console.error(e) } finally { setLoading(false) }
-  }, [])
+  }, [includeDeleted])
 
   useEffect(() => { fetchData() }, [fetchData])
 
@@ -243,7 +246,11 @@ export function useCategoriesPage() {
   const filterMatch = (node: Category): boolean => {
     if (!searchKeyword.trim()) return true
     const kw = searchKeyword.toLowerCase()
-    if (node.name.toLowerCase().includes(kw) || node.code.toLowerCase().includes(kw)) return true
+    if (
+      node.id.toLowerCase().includes(kw) ||
+      node.name.toLowerCase().includes(kw) ||
+      node.code.toLowerCase().includes(kw)
+    ) return true
     if (node.children) {
       return node.children.some(child => filterMatch(child))
     }

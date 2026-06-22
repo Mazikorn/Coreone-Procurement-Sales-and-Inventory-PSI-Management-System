@@ -7,6 +7,7 @@ import { calculateLaborCost, calculateEquipmentCost, calculateQCCost, calculateI
 import { runCostRecalculation } from '../utils/cost-runs.js'
 import { calculateBomSupportableSamples } from '../utils/bom-support.js'
 import { normalizeDisplayText, requireValidText, type TextGuardResult } from '../utils/text-guard.js'
+import { logOperation } from '../utils/operation-logger.js'
 
 const router = Router()
 const requireBomWrite = requireRole()
@@ -832,8 +833,9 @@ function updateBomStandardCost(db: any, bomId: string): void {
 router.get('/', (req, res) => {
   try {
     const { page = 1, pageSize = 20, type, status, keyword } = req.query
+    const includeDeleted = req.query?.includeDeleted === 'true'
     const db = getDatabase()
-    let where = 'b.is_deleted = 0'
+    let where = includeDeleted ? '1=1' : 'b.is_deleted = 0'
     const params: any[] = []
     if (type) { where += ' AND b.type = ?'; params.push(type) }
     if (status === 'active' || status === 'inactive') {
@@ -841,8 +843,8 @@ router.get('/', (req, res) => {
       params.push(status === 'active' ? 1 : 0)
     }
     if (keyword) {
-      where += ' AND (b.code LIKE ? OR b.name LIKE ?)'
-      params.push(`%${keyword}%`, `%${keyword}%`)
+      where += ' AND (b.id LIKE ? OR b.code LIKE ? OR b.name LIKE ?)'
+      params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`)
     }
 
     const count = (db.prepare(`SELECT COUNT(*) as total FROM boms b WHERE ${where}`).get(...params) as any)?.total || 0
@@ -865,6 +867,7 @@ router.get('/', (req, res) => {
       serviceId: r.service_id, serviceName: r.service_name || null,
       materialCount: countMap.get(r.id) || 0, supportableSamples: calculateBomSupportableSamples(db, r.id),
       unitCost: r.unit_cost, status: r.status === 1 ? 'active' : 'inactive',
+      isDeleted: Number(r.is_deleted || 0) !== 0,
       feeStandardId: r.fee_standard_id, feeCategory: r.fee_category,
       standardSlideCost: r.standard_slide_cost, standardFeePerSlide: r.standard_fee_per_slide,
       standardMarginRate: r.standard_margin_rate,
@@ -1224,6 +1227,7 @@ router.put('/:id', authenticateToken, requireBomWrite, (req, res) => {
     const previousSnapshot = getLatestBomVersionSnapshot(db, id) || buildBomVersionSnapshot(db, id)
     const normalizedEffectiveScope = normalizeEffectiveScope(effectiveScope)
     const impactSummary = buildBomChangeImpact(db, id)
+    let versionAudit: any = null
 
     const versionParts = existing.version.replace('v', '').split('.').map(Number)
     versionParts[1] = (versionParts[1] || 0) + 1
@@ -1292,7 +1296,7 @@ router.put('/:id', authenticateToken, requireBomWrite, (req, res) => {
 
       // 计算并写入标准成本（在事务内）
       updateBomStandardCost(db, id)
-      writeBomVersionSnapshot(db, id, previousSnapshot, (req as any).user?.username || 'system', {
+      versionAudit = writeBomVersionSnapshot(db, id, previousSnapshot, (req as any).user?.username || 'system', {
         effectiveScope: normalizedEffectiveScope,
         impactSummary,
       })
@@ -1306,6 +1310,33 @@ router.put('/:id', authenticateToken, requireBomWrite, (req, res) => {
     const retroactiveRuns = normalizedEffectiveScope === 'retroactive'
       ? runRetroactiveBomRecalculation(db, impactSummary, (req as any).user?.username || 'system')
       : []
+    const requiresRecalculation = normalizedEffectiveScope === 'retroactive'
+      && impactSummary.recalculableMonthCount > 0
+      && retroactiveRuns.some((run: any) => run.status !== 'completed')
+
+    logOperation(db, req as any, {
+      operation: 'PUT /boms/:id/version-impact',
+      description: '更新BOM版本并记录成本影响',
+      requestData: {
+        module: 'bom',
+        bomId: id,
+        previousVersion: existing.version,
+        nextVersion: newVersion,
+        effectiveScope: normalizedEffectiveScope,
+        changedFields: versionAudit?.diff?.changedFields || [],
+        addedMaterialCount: versionAudit?.diff?.addedMaterials?.length || 0,
+        removedMaterialCount: versionAudit?.diff?.removedMaterials?.length || 0,
+        changedMaterialCount: versionAudit?.diff?.changedMaterials?.length || 0,
+      },
+      responseData: {
+        id,
+        version: newVersion,
+        changeLog: versionAudit?.changeLog || '版本更新',
+        impactSummary,
+        retroactiveRunIds: retroactiveRuns.map((run: any) => run.id),
+        requiresRecalculation,
+      },
+    })
 
     success(res, {
       id,
@@ -1313,9 +1344,7 @@ router.put('/:id', authenticateToken, requireBomWrite, (req, res) => {
       effectiveScope: normalizedEffectiveScope,
       impactSummary,
       retroactiveRuns,
-      requiresRecalculation: normalizedEffectiveScope === 'retroactive'
-        && impactSummary.recalculableMonthCount > 0
-        && retroactiveRuns.some((run: any) => run.status !== 'completed'),
+      requiresRecalculation,
     }, 'Updated')
   } catch (err: any) { error(res, err.message) }
 })

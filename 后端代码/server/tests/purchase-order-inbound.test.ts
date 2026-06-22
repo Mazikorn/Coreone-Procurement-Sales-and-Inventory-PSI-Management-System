@@ -243,6 +243,144 @@ describe('采购订单入库联动', () => {
     ])
   })
 
+  it('PO-EDIT-001: 未收货采购订单可更正数量单价并写入前后值审计', async () => {
+    const suffix = `edit-${Date.now()}`
+    const fixture = seedPurchaseFixture(db, suffix)
+
+    const poRes = await request(app)
+      .post('/api/v1/purchase-orders')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId: fixture.materialId,
+        supplierId: fixture.supplierId,
+        orderedQty: 3,
+        unitPrice: 8,
+        expectedDate: '2026-07-01',
+        remark: '录入时数量偏小',
+      })
+
+    expect(poRes.status).toBe(200)
+
+    const updateRes = await request(app)
+      .put(`/api/v1/purchase-orders/${poRes.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId: fixture.materialId,
+        supplierId: fixture.supplierId,
+        orderedQty: 5,
+        unitPrice: 9,
+        expectedDate: '2026-07-03',
+        remark: '更正采购数量和单价',
+      })
+
+    expect(updateRes.status).toBe(200)
+    expect(updateRes.body.data).toMatchObject({
+      id: poRes.body.data.id,
+      orderedQty: 5,
+      receivedQty: 0,
+      remainingQty: 5,
+      unitPrice: 9,
+      totalAmount: 45,
+      expectedDate: '2026-07-03',
+      remark: '更正采购数量和单价',
+      status: 'pending',
+    })
+
+    const order = db.prepare(`
+      SELECT ordered_qty, received_qty, unit_price, total_amount, expected_date, remark, status
+      FROM purchase_orders
+      WHERE id = ?
+    `).get(poRes.body.data.id) as any
+    expect(order).toMatchObject({
+      ordered_qty: 5,
+      received_qty: 0,
+      unit_price: 9,
+      total_amount: 45,
+      expected_date: '2026-07-03',
+      remark: '更正采购数量和单价',
+      status: 'pending',
+    })
+
+    const auditLog = db.prepare(`
+      SELECT operation, request_data, response_data
+      FROM operation_logs
+      WHERE operation = 'PUT /purchase-orders/:id'
+        AND request_data LIKE ?
+      ORDER BY rowid DESC
+      LIMIT 1
+    `).get(`%"id":"${poRes.body.data.id}"%`) as any
+    expect(auditLog).toBeTruthy()
+    expect(JSON.parse(auditLog.request_data)).toMatchObject({
+      module: 'purchase_orders',
+      id: poRes.body.data.id,
+      before: {
+        orderedQty: 3,
+        unitPrice: 8,
+        totalAmount: 24,
+      },
+      after: {
+        orderedQty: 5,
+        unitPrice: 9,
+        totalAmount: 45,
+      },
+    })
+    expect(JSON.parse(auditLog.response_data)).toMatchObject({
+      id: poRes.body.data.id,
+      status: 'pending',
+      changedFields: expect.arrayContaining(['orderedQty', 'unitPrice', 'totalAmount', 'expectedDate', 'remark']),
+    })
+  })
+
+  it('PO-EDIT-002: 已产生收货事实的采购订单不可编辑，避免采购事实和库存事实不一致', async () => {
+    const suffix = `edit-received-${Date.now()}`
+    const fixture = seedPurchaseFixture(db, suffix)
+
+    const poRes = await request(app)
+      .post('/api/v1/purchase-orders')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId: fixture.materialId,
+        supplierId: fixture.supplierId,
+        orderedQty: 6,
+        unitPrice: 12,
+      })
+
+    expect(poRes.status).toBe(200)
+
+    const inboundRes = await request(app)
+      .post('/api/v1/inbound')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        type: 'purchase',
+        materialId: fixture.materialId,
+        batchNo: `B-POEDIT-${suffix}`,
+        quantity: 2,
+        supplierId: fixture.supplierId,
+        locationId: fixture.locationId,
+        expiryDate: '2027-12-31',
+        purchaseOrderId: poRes.body.data.id,
+      })
+    expect(inboundRes.status).toBe(201)
+
+    const updateRes = await request(app)
+      .put(`/api/v1/purchase-orders/${poRes.body.data.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId: fixture.materialId,
+        supplierId: fixture.supplierId,
+        orderedQty: 8,
+        unitPrice: 12,
+      })
+
+    expect(updateRes.status).toBe(409)
+    expect(updateRes.body.error.code).toBe('PURCHASE_ORDER_ALREADY_RECEIVED')
+    expect(updateRes.body.error.message).toContain('已收货')
+
+    const order = db.prepare('SELECT ordered_qty, received_qty, status FROM purchase_orders WHERE id = ?')
+      .get(poRes.body.data.id) as any
+    expect(order).toMatchObject({ ordered_qty: 6, received_qty: 2, status: 'partial' })
+  })
+
   it('PO-VALIDATION-001: 创建采购订单拒绝非有限数量和单价，避免订单金额污染', async () => {
     const suffix = `finite-number-${Date.now()}`
     const fixture = seedPurchaseFixture(db, suffix)

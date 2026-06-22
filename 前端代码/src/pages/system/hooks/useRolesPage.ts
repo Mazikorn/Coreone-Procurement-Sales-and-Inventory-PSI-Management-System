@@ -51,10 +51,8 @@ export const DATA_SCOPE_OPTIONS = [
   { value: 'self' as const, label: '仅本人数据', desc: '仅查看自己操作的数据' },
 ]
 
-export const SYSTEM_ROLE_CODES = ['admin', 'warehouse_manager', 'technician', 'pathologist', 'procurement', 'finance', 'manager']
-
 export function isSystemRole(role: Pick<Role, 'code' | 'isSystem'>) {
-  return Boolean(role.isSystem) || SYSTEM_ROLE_CODES.includes(role.code)
+  return role.isSystem === true
 }
 
 export function useRolesPage() {

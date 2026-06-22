@@ -25,6 +25,17 @@ async function loginUser(app: any, username: string): Promise<string> {
   return res.body.data.token
 }
 
+function latestOperationLog(db: any, operation: string, entityId: string) {
+  return db.prepare(`
+    SELECT *
+    FROM operation_logs
+    WHERE operation = ?
+      AND (request_data LIKE ? OR response_data LIKE ?)
+    ORDER BY created_at DESC, rowid DESC
+    LIMIT 1
+  `).get(operation, `%${entityId}%`, `%${entityId}%`) as any
+}
+
 describe('成本对账异常闭环', () => {
   let app: any
   let db: any
@@ -106,6 +117,21 @@ describe('成本对账异常闭环', () => {
     expect(openException.status).toBe('open')
     expect(openException.severity).toBe('error')
     expect(openException.year_month).toBe('2026-06')
+    const auditLog = latestOperationLog(db, 'POST /reconciliation/projects/:id/materials/audit', projectId)
+    expect(auditLog).toBeTruthy()
+    expect(auditLog.description).toBe('生成项目物料对账差异审计')
+    expect(JSON.parse(auditLog.request_data)).toMatchObject({
+      projectId,
+      projectName: '对账项目',
+      startDate: '2026-06-01',
+      endDate: '2026-06-30',
+      yearMonth: '2026-06',
+    })
+    expect(JSON.parse(auditLog.response_data)).toMatchObject({
+      total: 1,
+      dangerCount: 1,
+      created: 1,
+    })
 
     db.prepare('UPDATE outbound_items SET quantity = ?, total_cost = ? WHERE outbound_id = ? AND material_id = ?')
       .run(2, 20, outboundId, materialId)
@@ -162,6 +188,15 @@ describe('成本对账异常闭环', () => {
     expect(importRes.status).toBe(200)
     expect(importRes.body.data.count).toBe(2)
     expect(importRes.body.data.unmatched).toBe(1)
+    const importLog = latestOperationLog(db, 'POST /reconciliation/cases/import', importRes.body.data.importBatch)
+    expect(importLog).toBeTruthy()
+    expect(importLog.description).toBe('导入LIS病例数据')
+    expect(JSON.parse(importLog.request_data)).toMatchObject({ source: 'json', submitted: 2 })
+    expect(JSON.parse(importLog.response_data)).toMatchObject({
+      importBatch: importRes.body.data.importBatch,
+      count: 2,
+      unmatched: 1,
+    })
 
     const imported = db.prepare('SELECT id, project_id, project_name FROM lis_cases WHERE case_no = ?').get(caseNo) as any
     expect(imported.project_id).toBe(sourceProjectId)
@@ -198,6 +233,24 @@ describe('成本对账异常闭环', () => {
     expect(editLog.operator).toBe('admin')
     expect(JSON.parse(editLog.old_value)).toMatchObject({ projectId: sourceProjectId, projectName: '导入匹配项目' })
     expect(JSON.parse(editLog.new_value)).toMatchObject({ projectId: targetProjectId, projectName: '编辑后项目', status: 'modified' })
+    const opLog = latestOperationLog(db, 'PUT /reconciliation/cases/:id', imported.id)
+    expect(opLog).toBeTruthy()
+    expect(opLog.description).toBe('更新病例对账信息')
+    expect(JSON.parse(opLog.request_data)).toMatchObject({
+      before: {
+        id: imported.id,
+        caseNo,
+        projectId: sourceProjectId,
+        projectName: '导入匹配项目',
+      },
+      after: {
+        id: imported.id,
+        caseNo,
+        projectId: targetProjectId,
+        projectName: '编辑后项目',
+        status: 'modified',
+      },
+    })
   })
 
   it('病例编辑、列表筛选和导出必须拒绝非法病例状态', async () => {
@@ -555,6 +608,18 @@ describe('成本对账异常闭环', () => {
     expect(imported.project_id).toBe(projectId)
     expect(imported.project_name).toBe('文件导入项目')
     expect(db.prepare('SELECT COUNT(*) as count FROM lis_cases WHERE case_no = ?').get(invalidCaseNo).count).toBe(0)
+    const importLog = latestOperationLog(db, 'POST /reconciliation/import-lis', importRes.body.data.importBatch)
+    expect(importLog).toBeTruthy()
+    expect(importLog.description).toBe('上传并导入LIS病例文件')
+    expect(JSON.parse(importLog.request_data)).toMatchObject({
+      filename: 'lis-import.csv',
+      parsedRows: 2,
+    })
+    expect(JSON.parse(importLog.response_data)).toMatchObject({
+      importBatch: importRes.body.data.importBatch,
+      imported: 1,
+      failed: 1,
+    })
   })
 
   it('病例列表和病例导出必须使用同一套日期、项目、状态和搜索筛选', async () => {
@@ -908,6 +973,36 @@ describe('成本对账异常闭环', () => {
       .get(bomId, materialId) as any
     expect(item.usage_per_sample).toBe(2)
     expect(item.unit).toBe('ml')
+    const opLog = latestOperationLog(db, 'POST /reconciliation/logs', fixRes.body.data.id)
+    expect(opLog).toBeTruthy()
+    expect(opLog.description).toBe('记录BOM对账修正并更新标准用量')
+    expect(JSON.parse(opLog.request_data)).toMatchObject({
+      type: 'bom_fix',
+      targetId: materialId,
+      targetName: '修正物料',
+      reason: '回归测试修正',
+      project: {
+        id: projectId,
+        bomId,
+      },
+      before: {
+        bomId,
+        materialId,
+        usagePerSample: 1,
+        unit: '支',
+      },
+      after: {
+        bomId,
+        materialId,
+        usagePerSample: 2,
+        unit: 'ml',
+      },
+    })
+    expect(JSON.parse(opLog.response_data)).toMatchObject({
+      reconciliationLogId: fixRes.body.data.id,
+      projectId,
+      materialId,
+    })
 
     const beforeLogCount = (db.prepare('SELECT COUNT(*) as count FROM reconciliation_logs').get() as any).count
     const missingRes = await request(app)
