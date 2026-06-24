@@ -1483,6 +1483,108 @@ describe('操作日志 API', () => {
     ]))
   })
 
+  it('LOG-014B: 入库操作日志使用入库单号作为可回看业务标识', async () => {
+    const suffix = Date.now()
+    const operationId = `unified-inbound-operation-${suffix}`
+    const inboundId = `inbound-internal-${suffix}`
+    const inboundNo = `IB-UNIT-${suffix}`
+
+    seedLog(db, {
+      id: operationId,
+      username: 'admin',
+      operation: 'POST /inbound',
+      description: '创建入库记录',
+      requestData: {
+        module: 'inbound_records',
+        id: inboundId,
+        inboundNo,
+        type: 'direct',
+        materialId: `mat-${suffix}`,
+        quantity: 7,
+      },
+    })
+
+    const res = await request(app)
+      .get('/api/v1/logs/unified')
+      .query({ sourceType: 'operation', keyword: inboundNo, pageSize: 20 })
+      .set('Authorization', `Bearer ${adminToken}`)
+
+    expect(res.status).toBe(200)
+    expect(res.body.data.list).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: operationId,
+        module: 'inbound',
+        businessId: inboundNo,
+        businessUrl: `/inbound?keyword=${encodeURIComponent(inboundNo)}`,
+        affectedBusinessIds: [inboundNo],
+        affectedBusinessUrls: [`/inbound?keyword=${encodeURIComponent(inboundNo)}`],
+        auditEvent: expect.objectContaining({
+          eventCode: 'operation.inbound.create',
+          subjectType: 'inbound',
+          subjectId: inboundNo,
+          businessId: inboundNo,
+          businessUrl: `/inbound?keyword=${encodeURIComponent(inboundNo)}`,
+        }),
+      }),
+    ]))
+  })
+
+  it('LOG-014C: 入库库存流水使用入库单号作为可回看业务标识', async () => {
+    const suffix = Date.now()
+    const inboundId = `inbound-stock-internal-${suffix}`
+    const inboundNo = `IB-STOCK-UNIT-${suffix}`
+    const stockId = `unified-inbound-stock-${suffix}`
+
+    db.prepare(`
+      INSERT INTO inbound_records (
+        id, inbound_no, type, material_id, batch_no, quantity, unit, price, amount,
+        location_id, expiry_date, operator, status
+      )
+      VALUES (?, ?, 'direct', ?, ?, 9, '盒', 11, 99, ?, '2027-01-01', 'admin', 'completed')
+    `).run(inboundId, inboundNo, `mat-${suffix}`, `B-STOCK-${suffix}`, `loc-${suffix}`)
+
+    seedStockLog(db, {
+      id: stockId,
+      type: 'inbound',
+      materialId: `mat-${suffix}`,
+      quantity: 9,
+      beforeStock: 0,
+      afterStock: 9,
+      relatedId: inboundId,
+      relatedType: 'inbound',
+      operator: 'admin',
+      remark: '入库库存流水回看',
+    })
+
+    const res = await request(app)
+      .get('/api/v1/logs/unified')
+      .query({ sourceType: 'stock', keyword: inboundNo, pageSize: 20 })
+      .set('Authorization', `Bearer ${adminToken}`)
+
+    expect(res.status).toBe(200)
+    expect(res.body.data.list).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: stockId,
+        module: 'inbound',
+        businessId: inboundNo,
+        businessUrl: `/inbound?keyword=${encodeURIComponent(inboundNo)}`,
+        requestData: expect.objectContaining({
+          relatedId: inboundId,
+          relatedDocumentNo: inboundNo,
+          quantity: 9,
+          afterStock: 9,
+        }),
+        auditEvent: expect.objectContaining({
+          eventCode: 'stock.inbound.create',
+          subjectType: 'inbound',
+          subjectId: inboundNo,
+          businessId: inboundNo,
+          businessUrl: `/inbound?keyword=${encodeURIComponent(inboundNo)}`,
+        }),
+      }),
+    ]))
+  })
+
   it('LOG-015: 统一审计视图支持来源、模块、用户和类型筛选', async () => {
     const suffix = Date.now()
     const keepId = `unified-filter-keep-${suffix}`

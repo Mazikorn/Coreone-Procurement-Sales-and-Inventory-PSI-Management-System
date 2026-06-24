@@ -420,6 +420,7 @@ router.post('/', (req, res) => {
       return
     }
     const id = uuidv4()
+    const scrapNo = generateScrapNo()
     let selectedBatchId: string | null = null
 
     // 库存检查移入事务内（防止 TOCTOU 竞态条件）
@@ -447,7 +448,7 @@ router.post('/', (req, res) => {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         id,
-        generateScrapNo(),
+        scrapNo,
         materialId,
         batchResult.batch?.id || null,
         scrapQuantity,
@@ -506,10 +507,11 @@ router.post('/', (req, res) => {
       checkStockAlerts(db, [materialId])
       logOperation(db, req as any, {
         operation: 'POST /scraps',
-        description: '创建报废记录',
+        description: `创建报废记录 ${scrapNo}`,
         requestData: {
           module: 'scraps',
           id,
+          scrapNo,
           materialId,
           batchId: selectedBatchId,
           quantity: scrapQuantity,
@@ -520,10 +522,11 @@ router.post('/', (req, res) => {
           requiresReview: reviewFacts.requiresReview,
           reviewStatus: reviewFacts.reviewStatus,
         },
-        responseData: { id, status: reviewFacts.status, reviewStatus: reviewFacts.reviewStatus },
+        responseData: { id, scrapNo, status: reviewFacts.status, reviewStatus: reviewFacts.reviewStatus },
       })
       success(res, {
         id,
+        scrapNo,
         status: reviewFacts.status,
         reviewStatus: reviewFacts.reviewStatus,
         requiresReview: reviewFacts.requiresReview,

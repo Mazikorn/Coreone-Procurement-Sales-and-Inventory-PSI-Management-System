@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import { toast } from 'sonner'
 import { equipmentApi } from '@/api/master'
 import { usePagination } from '@/hooks/usePagination'
@@ -42,6 +42,29 @@ function canManageEquipmentTypeRecords() {
     || permissions.some(permission => ['equipment:add', 'equipment:edit', 'equipment:delete'].includes(permission))
 }
 
+function buildCreatedEquipmentType(payload: Partial<EquipmentType>, form: EquipmentTypeForm): EquipmentType | null {
+  const code = String(payload.code || form.code || '').trim()
+  if (!payload.id || !code) return null
+
+  const now = new Date().toISOString()
+  return {
+    id: String(payload.id),
+    code,
+    name: String(payload.name || form.name),
+    description: payload.description ?? form.description,
+    status: (payload.status || form.status) as EquipmentType['status'],
+    defaultPurchasePrice: Number(payload.defaultPurchasePrice ?? form.defaultPurchasePrice),
+    defaultDepreciableLifeYears: Number(payload.defaultDepreciableLifeYears ?? form.defaultDepreciableLifeYears),
+    defaultValue: Number(payload.defaultValue ?? form.defaultValue),
+    defaultDepreciationMethod: payload.defaultDepreciationMethod ?? form.defaultDepreciationMethod,
+    defaultTotalCapacity: Number(payload.defaultTotalCapacity ?? form.defaultTotalCapacity),
+    defaultCapacityUnit: payload.defaultCapacityUnit ?? form.defaultCapacityUnit,
+    equipmentCount: Number(payload.equipmentCount ?? 0),
+    createdAt: payload.createdAt || now,
+    updatedAt: payload.updatedAt || now,
+  }
+}
+
 export function useEquipmentTypePage() {
   const canManageEquipmentTypes = canManageEquipmentTypeRecords()
   const initialParams = new URLSearchParams(window.location.search)
@@ -56,6 +79,7 @@ export function useEquipmentTypePage() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<EquipmentType | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [createdTypeFallback, setCreatedTypeFallback] = useState<EquipmentType | null>(null)
 
   const { data, loading, page, pageSize, total, setPage, setPageSize, refresh } = usePagination<EquipmentType>({
     fetchFn: async (params) => {
@@ -71,6 +95,22 @@ export function useEquipmentTypePage() {
     initialPageSize: 20,
     deps: [keyword, statusFilter, includeDeleted],
   })
+
+  const displayedPage = useMemo(() => {
+    if (
+      createdTypeFallback &&
+      keyword === createdTypeFallback.code &&
+      !statusFilter &&
+      !includeDeleted &&
+      page === 1 &&
+      !data.some(row => row.id === createdTypeFallback.id || row.code === createdTypeFallback.code)
+    ) {
+      const rows = [createdTypeFallback, ...data]
+      return { data: rows, total: Math.max(total + 1, rows.length) }
+    }
+
+    return { data, total }
+  }, [createdTypeFallback, data, includeDeleted, keyword, page, statusFilter, total])
 
   const loadStats = useCallback(async () => {
     try {
@@ -108,6 +148,15 @@ export function useEquipmentTypePage() {
 
   const handleStatusChange = useCallback((value: string) => {
     setStatusFilter(value)
+    setPage(1)
+  }, [setPage])
+
+  const focusTypeList = useCallback((value: string) => {
+    const nextKeyword = value.trim()
+    setSearchInput(nextKeyword)
+    setKeyword(nextKeyword)
+    setStatusFilter('')
+    setIncludeDeleted(false)
     setPage(1)
   }, [setPage])
 
@@ -172,10 +221,12 @@ export function useEquipmentTypePage() {
     setSubmitting(true)
     try {
       if (modalType === 'create') {
-        await equipmentApi.createType(form)
+        const created: any = await equipmentApi.createType(form)
+        setCreatedTypeFallback(buildCreatedEquipmentType(created, form))
+        focusTypeList(String(created?.code || form.code || form.name || ''))
         toast.success('设备类型创建成功')
       } else if (editingId) {
-        const current = data.find(item => item.id === editingId)
+        const current = displayedPage.data.find(item => item.id === editingId)
         await equipmentApi.updateType(editingId, {
           ...form,
           code: current?.code || form.code,
@@ -190,7 +241,7 @@ export function useEquipmentTypePage() {
     } finally {
       setSubmitting(false)
     }
-  }, [form, modalType, editingId, closeModal, refresh])
+  }, [form, modalType, editingId, closeModal, refresh, focusTypeList, displayedPage.data, loadStats])
 
   const handleDelete = useCallback(async () => {
     if (!deleteTarget) return
@@ -207,7 +258,7 @@ export function useEquipmentTypePage() {
 
   return {
     canManageEquipmentTypes,
-    data, loading, page, pageSize, total, setPage, setPageSize, refresh,
+    data: displayedPage.data, loading, page, pageSize, total: displayedPage.total, setPage, setPageSize, refresh,
     stats,
     searchInput, setSearchInput, keyword, statusFilter, setStatusFilter,
     handleStatusChange,

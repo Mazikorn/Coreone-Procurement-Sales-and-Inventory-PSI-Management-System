@@ -52,6 +52,14 @@ interface SourceTotals {
   outboundCount?: number
 }
 
+interface CostPoolQueryOverrides {
+  month?: string
+  source?: string
+  keyword?: string
+  page?: number
+  pageSize?: number
+}
+
 const sourceLabels: Record<string, string> = {
   auto_collect: '自动归集',
   manual: '手工录入',
@@ -76,20 +84,30 @@ function getTotal(payload: any, list: CostPool[]) {
   return payload?.pagination?.total ?? payload?.total ?? list.length
 }
 
-export function isManualCostPoolFormReady(form: ManualCostPoolForm) {
+export function getManualCostPoolValidationMessage(form: ManualCostPoolForm) {
   const directCost = Number(form.directCost)
   const indirectCost = Number(form.indirectCost)
   const driverQuantity = Number(form.driverQuantity)
-  return Boolean(
-    form.activityCenterId &&
-    Number.isFinite(directCost) &&
-    directCost >= 0 &&
-    Number.isFinite(indirectCost) &&
-    indirectCost >= 0 &&
-    Number.isFinite(driverQuantity) &&
-    driverQuantity > 0 &&
-    form.adjustmentReason.trim()
-  )
+  if (!form.activityCenterId) {
+    return '请选择作业中心，系统才能把手工成本归入正确作业中心和动因费率。'
+  }
+  if (!Number.isFinite(directCost) || directCost < 0) {
+    return '请填写大于等于 0 的直接成本，系统才能计算本期成本池总额。'
+  }
+  if (!Number.isFinite(indirectCost) || indirectCost < 0) {
+    return '请填写大于等于 0 的间接成本，系统才能计算本期成本池总额。'
+  }
+  if (!Number.isFinite(driverQuantity) || driverQuantity <= 0) {
+    return '请填写大于 0 的动因量，系统才能计算动因费率并分摊到项目成本。'
+  }
+  if (!form.adjustmentReason.trim()) {
+    return '请填写调整原因，系统才能留下成本结账和审计依据。'
+  }
+  return ''
+}
+
+export function isManualCostPoolFormReady(form: ManualCostPoolForm) {
+  return getManualCostPoolValidationMessage(form) === ''
 }
 
 const initialManualForm: ManualCostPoolForm = {
@@ -146,16 +164,29 @@ export function CostPoolList() {
       { totalCost: 0, driverQuantity: 0, directCost: 0, indirectCost: 0 }
     )
   }, [pools])
+  const manualSelectedActivityCenter = activityCenters.find(center => center.id === manualForm.activityCenterId)
+  const manualDirectCost = Number(manualForm.directCost || 0)
+  const manualIndirectCost = Number(manualForm.indirectCost || 0)
+  const manualDriverQuantity = Number(manualForm.driverQuantity || 0)
+  const manualTotalCost = (
+    Number.isFinite(manualDirectCost) ? manualDirectCost : 0
+  ) + (
+    Number.isFinite(manualIndirectCost) ? manualIndirectCost : 0
+  )
+  const manualDriverRate = manualDriverQuantity > 0 ? manualTotalCost / manualDriverQuantity : 0
+  const manualCostPoolDownstreamFacts = '成本池、动因费率、项目成本、成本结账、审计记录'
+  const manualValidationMessage = getManualCostPoolValidationMessage(manualForm)
+  const canSubmitManualCostPool = manualValidationMessage === '' && !manualSubmitting
 
-  const loadPools = async () => {
+  const loadPools = async (overrides: CostPoolQueryOverrides = {}) => {
     setLoading(true)
     try {
       const payload = await abcApi.getCostPools({
-        yearMonth: month,
-        source: source || undefined,
-        keyword: keyword.trim() || undefined,
-        page,
-        pageSize,
+        yearMonth: overrides.month ?? month,
+        source: (overrides.source ?? source) || undefined,
+        keyword: (overrides.keyword ?? keyword).trim() || undefined,
+        page: overrides.page ?? page,
+        pageSize: overrides.pageSize ?? pageSize,
       })
       const list = unwrapList(payload)
       setPools(list)
@@ -224,13 +255,13 @@ export function CostPoolList() {
   }
 
   const submitManualCostPool = async () => {
-    if (!isManualCostPoolFormReady(manualForm)) {
-      toast.error('请填写作业中心、成本、动因量和调整原因')
+    if (manualValidationMessage) {
+      toast.error(manualValidationMessage)
       return
     }
     setManualSubmitting(true)
     try {
-      await abcApi.createCostPool({
+      const created: any = await abcApi.createCostPool({
         activityCenterId: manualForm.activityCenterId,
         yearMonth: month,
         directCost: Number(manualForm.directCost),
@@ -242,10 +273,22 @@ export function CostPoolList() {
         attachmentUrl: manualForm.attachmentUrl.trim() || undefined,
         description: manualForm.description.trim() || undefined,
       })
+      const selectedCenter = activityCenters.find(center => center.id === manualForm.activityCenterId)
+      const nextKeyword = String(
+        created?.sourceDocumentNo
+        || manualForm.sourceDocumentNo
+        || created?.id
+        || selectedCenter?.code
+        || selectedCenter?.name
+        || ''
+      ).trim()
       toast.success('手工成本池已保存')
       setManualModalOpen(false)
       setManualForm(initialManualForm)
-      await loadPools()
+      setSource('manual')
+      setKeyword(nextKeyword)
+      setPage(1)
+      await loadPools({ source: 'manual', keyword: nextKeyword, page: 1 })
     } catch (err) {
       console.error('manual cost pool failed', err)
       toast.error('手工成本池保存失败')
@@ -384,7 +427,7 @@ export function CostPoolList() {
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={loadPools}
+              onClick={() => loadPools()}
               disabled={loading}
               className="inline-flex h-10 items-center gap-2 rounded-md border border-gray-300 bg-white px-4 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
             >
@@ -545,6 +588,27 @@ export function CostPoolList() {
                   className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/10"
                 />
               </label>
+              <div className="rounded-md border border-emerald-100 bg-emerald-50 px-3 py-3 sm:col-span-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-sm font-semibold text-emerald-900">成本池结果确认</div>
+                  <div className="text-xs text-emerald-700">确认后将接住：{manualCostPoolDownstreamFacts}</div>
+                </div>
+                <div className="mt-3 grid grid-cols-1 gap-2 text-xs text-emerald-700 sm:grid-cols-2">
+                  <div>作业中心 {manualSelectedActivityCenter?.name || '待选择'}</div>
+                  <div>直接成本 {formatCurrency(Number.isFinite(manualDirectCost) ? manualDirectCost : 0)}</div>
+                  <div>间接成本 {formatCurrency(Number.isFinite(manualIndirectCost) ? manualIndirectCost : 0)}</div>
+                  <div>总成本 {formatCurrency(manualTotalCost)}</div>
+                  <div>动因量 {Number.isFinite(manualDriverQuantity) ? formatNumber(manualDriverQuantity, 2) : '0.00'}</div>
+                  <div>动因费率 {formatCurrency(manualDriverRate)} / 单位动因</div>
+                  <div>来源单据 {manualForm.sourceDocumentNo.trim() || '-'}</div>
+                  <div>调整原因 {manualForm.adjustmentReason.trim() || '待填写'}</div>
+                </div>
+              </div>
+              {manualValidationMessage ? (
+                <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900 sm:col-span-2">
+                  {manualValidationMessage}
+                </div>
+              ) : null}
             </div>
             <div className="flex shrink-0 justify-end gap-3 border-t border-gray-200 px-6 py-4">
               <button
@@ -557,7 +621,7 @@ export function CostPoolList() {
               <button
                 type="button"
                 onClick={submitManualCostPool}
-                disabled={manualSubmitting}
+                disabled={!canSubmitManualCostPool}
                 className="h-10 rounded-md bg-amber-600 px-4 text-sm font-medium text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {manualSubmitting ? '保存中...' : '保存成本池'}

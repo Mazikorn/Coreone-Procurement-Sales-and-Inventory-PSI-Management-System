@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { usePagination } from '@/hooks/usePagination'
 import { useUrlParams } from '@/hooks/useUrlParams'
 import { alertsApi } from '@/api/alerts'
@@ -46,6 +46,46 @@ export function buildAlertHandleRemark(form: { opinion: string; result: string }
   return opinion
     ? `处理结论：${resultLabel}\n处理意见：${opinion}`
     : `处理结论：${resultLabel}`
+}
+
+export function buildAlertInventoryEvidenceUrl(alert: Pick<AlertItem, 'batchNo' | 'materialName' | 'materialId'>) {
+  const keyword = String(alert.batchNo || alert.materialName || alert.materialId || '').trim()
+  if (!keyword) return '/inventory'
+  return `/inventory?keyword=${encodeURIComponent(keyword)}`
+}
+
+export function buildAlertAuditEvidenceUrl(alert: Pick<AlertItem, 'id'>) {
+  const keyword = String(alert.id || '').trim()
+  if (!keyword) return '/logs'
+  return `/logs?keyword=${encodeURIComponent(keyword)}`
+}
+
+export function buildAlertPurchaseOrderUrl(alert: Pick<AlertItem, 'materialId' | 'currentStock' | 'threshold' | 'message'>) {
+  const params = new URLSearchParams({ action: 'create', materialId: alert.materialId })
+  const currentStock = Number(alert.currentStock)
+  const threshold = Number(alert.threshold)
+  if (Number.isFinite(currentStock) && Number.isFinite(threshold)) {
+    params.set('orderedQty', String(Math.max(1, threshold - currentStock)))
+  }
+  if (alert.message) {
+    params.set('remark', `来自库存预警：${alert.message}`)
+  }
+  return `/purchase-orders?${params.toString()}`
+}
+
+function getAlertProcessSuccessDescription(alert: Pick<AlertItem, 'id' | 'type'>) {
+  if (alert.type === 'low-stock') {
+    return `${alert.id} 已记录处理结论和意见；预警进入已处理，库存、批次和采购事实不会自动变更，仍需通过采购、入库或盘点闭环`
+  }
+  return `${alert.id} 已记录处理结论和意见；预警进入已处理，库存、批次和业务事实不会自动变更，仍需通过对应业务单据闭环`
+}
+
+function getAlertIgnoreSuccessDescription(alert: Pick<AlertItem, 'id'>) {
+  return `${alert.id} 已记录忽略原因；预警进入已忽略，库存、批次和采购事实不会自动变更，审计记录可按预警ID回看`
+}
+
+function getAlertBatchProcessSuccessDescription(count: number) {
+  return `已记录 ${count} 条预警的批量处理结论；库存、批次和采购事实不会自动变更，仍需通过采购、入库或盘点闭环`
 }
 
 export const ALERT_TYPE_MAP: Record<string, { label: string; bg: string; text: string }> = {
@@ -107,6 +147,7 @@ export function useAlertsPage() {
   const url = useUrlParams()
   const role = getUserRole()
   const canHandle = role === 'admin' || role === 'warehouse_manager'
+  const canCreatePurchaseOrders = role === 'admin' || role === 'procurement'
 
   const initialPage = Math.max(1, url.getNumber('page', 1))
   const initialPageSize = [10, 20, 50, 100].includes(url.getNumber('pageSize', 10))
@@ -130,6 +171,8 @@ export function useAlertsPage() {
     opinion: '',
     result: 'purchase_followed',
   })
+  const [localAlertPatches, setLocalAlertPatches] = useState<Record<string, Partial<AlertItem>>>({})
+  const [suppressListError, setSuppressListError] = useState(false)
   const [stats, setStats] = useState({
     pending: 0,
     processed: 0,
@@ -150,6 +193,7 @@ export function useAlertsPage() {
   const effectiveStatus = quickFilter !== 'all'
     ? normalizeStatus(quickFilter)
     : normalizeStatus(filter.status)
+  const activeStatusFilter = quickFilter !== 'all' ? quickFilter : filter.status
   const effectiveType = filter.type !== 'all' ? filter.type : undefined
   const effectiveLevel = toApiLevelValue(filter.level)
 
@@ -215,6 +259,57 @@ export function useAlertsPage() {
     setPage(1)
   }, [setPage])
 
+  const statusMatchesFilter = useCallback((status: Alert['status'], statusFilter: AlertStatusFilter) => {
+    if (statusFilter === 'all') return true
+    if (statusFilter === 'pending') return status === 'pending'
+    if (statusFilter === 'processed') return status === 'processed' || status === 'auto_resolved' || status === 'handled'
+    if (statusFilter === 'ignored') return status === 'ignored' || status === 'dismissed'
+    return status !== 'pending'
+  }, [])
+
+  const displayData = useMemo(() => {
+    const patched = data.map(alert => ({
+      ...alert,
+      ...(localAlertPatches[alert.id] || {}),
+    }))
+    return patched.filter(alert => statusMatchesFilter(alert.status, activeStatusFilter))
+  }, [activeStatusFilter, data, localAlertPatches, statusMatchesFilter])
+
+  const displayTotal = Math.max(0, total - (data.length - displayData.length))
+  const displayError = suppressListError ? null : error
+
+  const applyLocalStatus = useCallback((
+    ids: string[],
+    status: 'processed' | 'ignored',
+    remark?: string,
+  ) => {
+    if (ids.length === 0) return
+    const handledAt = new Date().toISOString()
+    setLocalAlertPatches(prev => {
+      const next = { ...prev }
+      for (const id of ids) {
+        next[id] = {
+          ...next[id],
+          status,
+          handledAt,
+          ...(remark !== undefined ? { remark } : {}),
+        }
+      }
+      return next
+    })
+    setStats(prev => ({
+      ...prev,
+      pending: Math.max(0, prev.pending - ids.length),
+      processed: status === 'processed' ? prev.processed + ids.length : prev.processed,
+      ignored: status === 'ignored' ? prev.ignored + ids.length : prev.ignored,
+    }))
+    setSuppressListError(true)
+  }, [])
+
+  useEffect(() => {
+    setSuppressListError(false)
+  }, [page, pageSize, filter.keyword, filter.type, filter.level, filter.status, filter.dateRange, quickFilter])
+
   const resetFilters = useCallback(() => {
     setFilter({
       keyword: '',
@@ -245,7 +340,10 @@ export function useAlertsPage() {
     })
   }, [page, pageSize, filter.keyword, filter.type, filter.level, filter.status, filter.dateRange, quickFilter])
 
-  const loadStats = useCallback(async () => {
+  const loadStats = useCallback(async (
+    options: { logError?: boolean } = {},
+  ) => {
+    const { logError = true } = options
     try {
       const res: any = await alertsApi.getStats({
         keyword: debouncedKeyword || undefined,
@@ -264,7 +362,7 @@ export function useAlertsPage() {
         total: Number(res?.total || 0),
       })
     } catch (e) {
-      console.error(e)
+      if (logError) console.error(e)
       setStats((prev) => prev)
     }
   }, [
@@ -296,10 +394,10 @@ export function useAlertsPage() {
 
   const handleSelectAll = () => {
     if (!canHandle) return
-    if (data.length > 0 && selectedIds.size === data.length) {
+    if (displayData.length > 0 && selectedIds.size === displayData.length) {
       setSelectedIds(new Set())
     } else {
-      setSelectedIds(new Set(data.map((a) => a.id)))
+      setSelectedIds(new Set(displayData.map((a) => a.id)))
     }
   }
 
@@ -310,11 +408,15 @@ export function useAlertsPage() {
       toast.error('当前角色只能查看预警')
       return
     }
+    const targetAlert = displayData.find(alert => alert.id === id) || data.find(alert => alert.id === id)
     try {
       await alertsApi.process(id, { remark })
-      toast.success('处理成功')
+      applyLocalStatus([id], 'processed', remark)
+      toast.success('处理成功', {
+        description: getAlertProcessSuccessDescription(targetAlert || { id, type: '' }),
+      })
       refresh()
-      loadStats()
+      loadStats({ logError: false })
       setModal({ type: null, alert: null })
     } catch {
       toast.error('处理失败')
@@ -326,11 +428,15 @@ export function useAlertsPage() {
       toast.error('当前角色只能查看预警')
       return
     }
+    const targetAlert = displayData.find(alert => alert.id === id) || data.find(alert => alert.id === id)
     try {
       await alertsApi.ignore(id, { remark })
-      toast.success('已忽略')
+      applyLocalStatus([id], 'ignored', remark)
+      toast.success('已忽略', {
+        description: getAlertIgnoreSuccessDescription(targetAlert || { id }),
+      })
       refresh()
-      loadStats()
+      loadStats({ logError: false })
     } catch {
       toast.error('操作失败')
     }
@@ -388,10 +494,13 @@ export function useAlertsPage() {
     if (ids.length === 0) return
     try {
       await alertsApi.batchHandle(ids, { action: 'processed', remark: '批量处理' })
-      toast.success(`已处理 ${ids.length} 条预警`)
+      applyLocalStatus(ids, 'processed', '批量处理')
+      toast.success(`已处理 ${ids.length} 条预警`, {
+        description: getAlertBatchProcessSuccessDescription(ids.length),
+      })
       clearSelection()
       refresh()
-      loadStats()
+      loadStats({ logError: false })
     } catch {
       toast.error('批量处理失败')
     }
@@ -415,17 +524,18 @@ export function useAlertsPage() {
     setModal,
     handleForm,
     setHandleForm,
-    data,
+    data: displayData,
     loading,
-    error,
+    error: displayError,
     page,
     pageSize,
-    total,
+    total: displayTotal,
     setPage,
     setPageSize,
     refresh,
     stats,
     canHandle,
+    canCreatePurchaseOrders,
     handleSelect,
     handleSelectAll,
     clearSelection,

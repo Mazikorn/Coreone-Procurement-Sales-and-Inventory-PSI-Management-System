@@ -4,6 +4,7 @@ import {
   applyReviewedAdjustmentToSummary,
   buildDashboardComparisonParams,
   buildCostAlertsOverviewLink,
+  buildCostRunExceptionLink,
   getClosePeriodBlockReason,
   getComparisonDirectionMeta,
   getCostRunProcessedCount,
@@ -44,6 +45,12 @@ describe('getDashboardOpenExceptionCount', () => {
 describe('buildCostAlertsOverviewLink', () => {
   it('看板查看全部异常时包含本月和无月份异常', () => {
     expect(buildCostAlertsOverviewLink('2026-04')).toBe('/abc/alerts?yearMonth=2026-04&status=open&includeUnassigned=1')
+  })
+})
+
+describe('buildCostRunExceptionLink', () => {
+  it('按重算任务和月份过滤成本异常', () => {
+    expect(buildCostRunExceptionLink('run-1', '2026-04')).toBe('/abc/alerts?keyword=run-1&yearMonth=2026-04&status=open&includeUnassigned=1')
   })
 })
 

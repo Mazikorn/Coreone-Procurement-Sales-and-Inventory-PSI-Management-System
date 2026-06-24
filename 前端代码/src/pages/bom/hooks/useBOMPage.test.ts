@@ -392,6 +392,212 @@ describe('useBOMPage', () => {
     expect(bomApi.create).not.toHaveBeenCalled()
   })
 
+  it('focuses the newly created BOM so project, outbound, and costing users can immediately confirm the formula', async () => {
+    window.history.replaceState(null, '', '/bom?keyword=old-bom')
+    vi.mocked(bomApi.create).mockResolvedValue({
+      id: 'bom-created',
+      code: 'BOM-CREATED-001',
+      name: '新建检测BOM',
+    } as any)
+
+    const { result } = renderHook(() => useBOMPage())
+    await waitFor(() => expect(bomApi.getList).toHaveBeenCalled())
+
+    act(() => {
+      result.current.setFilterType('fish')
+      result.current.setFilterStatus('inactive')
+      result.current.setQuickFilter('low-support')
+      result.current.openCreate()
+    })
+    act(() => {
+      result.current.setForm({
+        ...result.current.form,
+        code: 'BOM-DRAFT-001',
+        name: '新建检测BOM',
+        type: 'ihc',
+        status: 'active',
+        materials: [
+          { materialId: 'mat-1', name: '核心试剂', spec: '1ml', usagePerSample: 1, unit: '瓶' },
+        ],
+      })
+    })
+
+    await act(async () => {
+      await result.current.handleSubmit()
+    })
+
+    expect(bomApi.create).toHaveBeenCalledWith(expect.objectContaining({
+      code: 'BOM-DRAFT-001',
+      name: '新建检测BOM',
+      type: 'ihc',
+      materials: [
+        expect.objectContaining({ materialId: 'mat-1', usagePerSample: 1 }),
+      ],
+    }))
+    expect(result.current.searchInput).toBe('BOM-CREATED-001')
+    expect(result.current.filterType).toBe('')
+    expect(result.current.filterStatus).toBe('')
+    expect(result.current.quickFilter).toBe('all')
+    await waitFor(() => {
+      expect(bomApi.getList).toHaveBeenCalledWith(expect.objectContaining({
+        page: 1,
+        pageSize: 20,
+        keyword: 'BOM-CREATED-001',
+        type: undefined,
+        status: undefined,
+      }))
+    })
+  })
+
+  it('keeps the newly created BOM visible when the focused refresh fails', async () => {
+    vi.mocked(bomApi.getList).mockImplementation(async (params: any) => {
+      if (params.pageSize === 1000) {
+        return { list: [], pagination: { total: 0 } } as any
+      }
+      if (params.keyword === 'BOM-CREATED-LOCAL') {
+        throw new Error('列表刷新失败')
+      }
+      return { list: [], pagination: { total: 0 } } as any
+    })
+    vi.mocked(bomApi.create).mockResolvedValue({
+      id: 'bom-created-local',
+      code: 'BOM-CREATED-LOCAL',
+      name: '现场新增BOM',
+    } as any)
+
+    const { result } = renderHook(() => useBOMPage())
+    await waitFor(() => expect(bomApi.getList).toHaveBeenCalledWith(expect.objectContaining({
+      page: 1,
+      pageSize: 20,
+    })))
+
+    act(() => {
+      result.current.openCreate()
+    })
+    act(() => {
+      result.current.setForm({
+        ...result.current.form,
+        code: 'BOM-DRAFT-LOCAL',
+        name: '现场新增BOM',
+        type: 'ihc',
+        status: 'active',
+        description: '当天出库要用',
+        materials: [
+          { materialId: 'mat-1', name: '核心试剂', spec: '1ml', usagePerSample: 1, unit: '瓶' },
+        ],
+      })
+    })
+
+    await act(async () => {
+      await result.current.handleSubmit()
+    })
+
+    expect(result.current.data[0]).toEqual(expect.objectContaining({
+      id: 'bom-created-local',
+      code: 'BOM-CREATED-LOCAL',
+      name: '现场新增BOM',
+      type: 'ihc',
+      status: 'active',
+      materialCount: 1,
+    }))
+    expect(result.current.total).toBe(1)
+    expect(toast.success).toHaveBeenCalledWith('BOM已创建')
+    expect(toast.error).not.toHaveBeenCalledWith('BOM保存失败')
+  })
+
+  it('keeps edited BOM facts visible when the follow-up refresh fails', async () => {
+    let didUpdate = false
+    vi.mocked(bomApi.getList).mockImplementation(async (params: any) => {
+      if (params.pageSize === 1000) {
+        return { list: [activeBom], pagination: { total: 1 } } as any
+      }
+      if (didUpdate) throw new Error('列表刷新失败')
+      return { list: [activeBom], pagination: { total: 1 } } as any
+    })
+    vi.mocked(bomApi.getDetail).mockResolvedValue(activeBom as any)
+    vi.mocked(bomApi.update).mockImplementation(async () => {
+      didUpdate = true
+      return { id: 'bom-1' } as any
+    })
+
+    const { result } = renderHook(() => useBOMPage())
+    await waitFor(() => expect(result.current.data[0]?.id).toBe('bom-1'))
+
+    await act(async () => {
+      await result.current.openEdit(activeBom as any)
+    })
+    act(() => {
+      result.current.setForm({
+        ...result.current.form,
+        name: '更新后的BOM',
+        description: '已补齐现场说明',
+        materials: [
+          { materialId: 'mat-1', name: '试剂', spec: '1ml', usagePerSample: 2, unit: '瓶' },
+        ],
+      })
+    })
+
+    await act(async () => {
+      await result.current.handleSubmit()
+    })
+
+    expect(result.current.data[0]).toEqual(expect.objectContaining({
+      id: 'bom-1',
+      code: 'BOM-001',
+      name: '更新后的BOM',
+      description: '已补齐现场说明',
+      materialCount: 1,
+      materials: [
+        expect.objectContaining({ materialId: 'mat-1', usagePerSample: 2 }),
+      ],
+    }))
+    expect(toast.success).toHaveBeenCalledWith('BOM已更新')
+    expect(toast.error).not.toHaveBeenCalledWith('BOM保存失败')
+  })
+
+  it('removes a disabled BOM from the active filter when the refresh fails', async () => {
+    let didDisable = false
+    vi.mocked(bomApi.getList).mockImplementation(async (params: any) => {
+      if (params.pageSize === 1000) {
+        return { list: [activeBom], pagination: { total: 1 } } as any
+      }
+      if (didDisable) throw new Error('列表刷新失败')
+      return { list: [activeBom], pagination: { total: 1 } } as any
+    })
+    vi.mocked(bomApi.checkStatus).mockResolvedValue({
+      bom: { id: 'bom-1', code: 'BOM-001', name: '原BOM' },
+      targetStatus: 'inactive',
+      canChange: true,
+      impacts: {
+        activeProjectCount: 0,
+        inactiveMaterialCount: 0,
+        inactiveEquipmentCount: 0,
+        inactiveEquipmentTypeCount: 0,
+      },
+      reasons: [],
+    } as any)
+    vi.mocked(bomApi.batchStatus).mockImplementation(async () => {
+      didDisable = true
+      return {} as any
+    })
+
+    const { result } = renderHook(() => useBOMPage())
+    await waitFor(() => expect(result.current.data[0]?.id).toBe('bom-1'))
+
+    act(() => {
+      result.current.setQuickFilter('active')
+    })
+    await act(async () => {
+      await result.current.toggleStatus(result.current.data[0])
+    })
+
+    expect(result.current.data).toHaveLength(0)
+    expect(result.current.total).toBe(0)
+    expect(result.current.selectedIds.size).toBe(0)
+    expect(toast.success).toHaveBeenCalledWith('BOM已停用')
+    expect(toast.error).not.toHaveBeenCalledWith('状态更新失败')
+  })
+
   it('does not copy the original service binding when copying a BOM', async () => {
     vi.mocked(bomApi.getDetail).mockResolvedValue(serviceBoundBom as any)
     vi.mocked(bomApi.create).mockResolvedValue({ id: 'bom-copy-1' } as any)
@@ -439,6 +645,62 @@ describe('useBOMPage', () => {
       ],
     }))
     expect(bomApi.updateStatus).toHaveBeenCalledWith('bom-copy-inactive-1', 'inactive')
+  })
+
+  it('focuses the copied BOM so users can immediately review and adjust the duplicate formula', async () => {
+    window.history.replaceState(null, '', '/bom?keyword=old-bom')
+    vi.mocked(bomApi.getDetail).mockResolvedValue(serviceBoundBom as any)
+    vi.mocked(bomApi.create).mockResolvedValue({
+      id: 'bom-copy-created',
+      code: 'BOM-COPY-CREATED-001',
+      name: '服务BOM现场副本',
+    } as any)
+
+    const { result } = renderHook(() => useBOMPage())
+    await waitFor(() => expect(bomApi.getList).toHaveBeenCalled())
+
+    act(() => {
+      result.current.setFilterType('fish')
+      result.current.setFilterStatus('inactive')
+      result.current.setQuickFilter('low-support')
+    })
+
+    await act(async () => {
+      await result.current.openCopy(serviceBoundBom as any)
+    })
+    await waitFor(() => expect(result.current.modalType).toBe('copy'))
+
+    act(() => {
+      result.current.setCopyForm({
+        ...result.current.copyForm,
+        name: '服务BOM现场副本',
+      })
+    })
+
+    await act(async () => {
+      await result.current.handleCopyConfirm()
+    })
+
+    expect(bomApi.create).toHaveBeenCalledWith(expect.objectContaining({
+      name: '服务BOM现场副本',
+      serviceId: undefined,
+      materials: [
+        expect.objectContaining({ materialId: 'mat-1', usagePerSample: 1 }),
+      ],
+    }))
+    expect(result.current.searchInput).toBe('BOM-COPY-CREATED-001')
+    expect(result.current.filterType).toBe('')
+    expect(result.current.filterStatus).toBe('')
+    expect(result.current.quickFilter).toBe('all')
+    await waitFor(() => {
+      expect(bomApi.getList).toHaveBeenCalledWith(expect.objectContaining({
+        page: 1,
+        pageSize: 20,
+        keyword: 'BOM-COPY-CREATED-001',
+        type: undefined,
+        status: undefined,
+      }))
+    })
   })
 
   it('blocks copying a BOM without material list because BOM drafts are not supported', async () => {

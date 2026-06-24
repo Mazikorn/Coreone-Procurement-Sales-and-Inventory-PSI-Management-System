@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { X, Plus, Trash2 } from 'lucide-react'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { Material, Project, BOM, Batch } from '@/types'
@@ -9,6 +9,8 @@ import { getUserRole } from '@/lib/permissions'
 export interface OutboundItemForm {
   materialId: string
   batchId?: string
+  batchNo?: string
+  unitCost?: number
   quantity: number
   usage?: 'self' | 'external'
   receiver?: string | null
@@ -317,6 +319,29 @@ export default function OutboundFormModal({
     return () => { cancelled = true }
   }, [open, materialIdsForBatchLookup])
 
+  useEffect(() => {
+    if (!open || isBomOutbound) return
+
+    let changed = false
+    const nextItems = form.items.map(item => {
+      if (!item.materialId || item.batchId) return item
+      const availableBatches = batchesByMaterialId[item.materialId] || []
+      if (availableBatches.length !== 1) return item
+      const batch = availableBatches[0]
+      changed = true
+      return {
+        ...item,
+        batchId: batch.id,
+        batchNo: batch.batchNo,
+        unitCost: Number(batch.inboundPrice || 0),
+      }
+    })
+
+    if (changed) {
+      onFormChange({ ...form, items: nextItems })
+    }
+  }, [batchesByMaterialId, form, isBomOutbound, onFormChange, open])
+
   // Load BOM detail when bomId changes
   useEffect(() => {
     if (!form.bomId) {
@@ -367,12 +392,13 @@ export default function OutboundFormModal({
       onFormChange({ ...form, caseNo })
       return
     }
+    const matchedProject = projects.find(project => project.id === matched.projectId)
     onFormChange({
       ...form,
       type: 'project',
       caseNo: matched.caseNo,
       projectId: matched.projectId || form.projectId,
-      bomId: matched.bomId || form.bomId,
+      bomId: matched.bomId || matchedProject?.bomId || form.bomId,
       sampleCount: form.sampleCount || 1,
     })
   }
@@ -399,16 +425,46 @@ export default function OutboundFormModal({
   const updateItemMaterial = (idx: number, materialId: string) => {
     onFormChange({
       ...form,
-      items: form.items.map((item, i) => (i === idx ? { ...item, materialId, batchId: undefined } : item)),
+      items: form.items.map((item, i) => (i === idx ? { ...item, materialId, batchId: undefined, batchNo: undefined, unitCost: undefined } : item)),
     })
   }
 
+  const updateItemBatch = (idx: number, batchId: string) => {
+    const current = form.items[idx]
+    const selectedBatch = current
+      ? (batchesByMaterialId[current.materialId] || []).find(batch => batch.id === batchId)
+      : undefined
+    onFormChange({
+      ...form,
+      items: form.items.map((item, i) => (i === idx ? {
+        ...item,
+        batchId: batchId || undefined,
+        batchNo: selectedBatch?.batchNo,
+        unitCost: selectedBatch ? Number(selectedBatch.inboundPrice || 0) : undefined,
+      } : item)),
+    })
+  }
+
+  const hasLoadedBatchLookup = (materialId: string) =>
+    Object.prototype.hasOwnProperty.call(batchesByMaterialId, materialId)
   const getSelectedBatch = (item: OutboundItemForm) =>
     (batchesByMaterialId[item.materialId] || []).find(batch => batch.id === item.batchId)
   const hasBatchQuantityConflict = form.items.some(item => {
     const selectedBatch = getSelectedBatch(item)
     return selectedBatch && Number(item.quantity || 0) > Number(selectedBatch.remaining || 0)
   })
+  const hasMissingRequiredBatch = !isBomOutbound && form.items.some(item => (
+    item.materialId
+    && Number(item.quantity || 0) > 0
+    && (batchesByMaterialId[item.materialId] || []).length > 0
+    && !item.batchId
+  ))
+  const hasUnavailableRequiredBatch = !isBomOutbound && form.items.some(item => (
+    item.materialId
+    && Number(item.quantity || 0) > 0
+    && hasLoadedBatchLookup(item.materialId)
+    && (batchesByMaterialId[item.materialId] || []).length === 0
+  ))
   const bomPreviewMaterialIds = isBomOutbound && selectedBom ? collectBomMaterialIds(selectedBom) : []
   const hasLoadedBomBatchDetails = bomPreviewMaterialIds.length > 0
     && bomPreviewMaterialIds.every(materialId => Object.prototype.hasOwnProperty.call(batchesByMaterialId, materialId))
@@ -423,6 +479,34 @@ export default function OutboundFormModal({
   const hasBomBatchPreviewConflict = isBomOutbound && bomBatchPreviewRows.some(row => row.insufficient)
 
   const formatCurrency = (v: number) => `¥${v.toFixed(2)}`
+  const validSummaryItems = form.items.filter(item => item.materialId && Number(item.quantity || 0) > 0)
+  const getMaterialById = (materialId: string) => materials.find(material => material.id === materialId)
+  const getSummaryBatchNo = (item: OutboundItemForm) => {
+    const selectedBatchNo = item.batchNo || getSelectedBatch(item)?.batchNo
+    if (selectedBatchNo) return selectedBatchNo
+    if (item.materialId && hasLoadedBatchLookup(item.materialId) && (batchesByMaterialId[item.materialId] || []).length === 0) {
+      return '无可用批次'
+    }
+    return '待选批次'
+  }
+  const getSummaryUnit = (item: OutboundItemForm) => getMaterialById(item.materialId)?.unit || ''
+  const getSummaryReceiver = (item: OutboundItemForm) => {
+    const receiver = typeof item.receiver === 'string' ? item.receiver.trim() : ''
+    if (receiver) return receiver
+    return item.usage === 'external' ? '待填写接收方' : '内部使用'
+  }
+  const getSummaryRemaining = (item: OutboundItemForm) => {
+    const selectedBatch = getSelectedBatch(item)
+    if (!selectedBatch) return ''
+    const unit = getSummaryUnit(item)
+    const remaining = Math.max(0, Number(selectedBatch.remaining || 0) - Number(item.quantity || 0))
+    return ` / 扣减后剩余 ${formatQuantity(remaining)}${unit}`
+  }
+  const bomSummaryName = selectedBom?.name || compatibleBoms.find(bom => bom.id === form.bomId)?.name || (selectedProject as any)?.bomName || '待选择'
+  const resultChainText = isBomOutbound
+    ? '库存、批次、BOM、项目成本、项目消耗对账、审计记录'
+    : '库存、批次、项目成本、项目消耗对账、审计记录'
+  const showMissingBomGuidance = isBomOutbound && selectedProject && !form.bomId
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -451,7 +535,7 @@ export default function OutboundFormModal({
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">关联项目</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">关联项目 <span className="text-red-500">*</span></label>
               <SearchableSelect
                 value={form.projectId}
                 onChange={handleProjectChange}
@@ -489,6 +573,18 @@ export default function OutboundFormModal({
               />
             </div>
           </div>
+
+          {showMissingBomGuidance && (
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3">
+              <div className="text-sm font-semibold text-amber-900">BOM出库缺少可计费配置</div>
+              <div className="mt-1 text-sm text-amber-800">
+                当前病例/样本数会触发BOM自动出库，但所选检测项目未绑定BOM。
+              </div>
+              <div className="mt-1 text-sm text-amber-800">
+                下一步：先在检测项目维护中绑定BOM，或选择已配置BOM的LIS病例。
+              </div>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -625,6 +721,17 @@ export default function OutboundFormModal({
                   </div>
                 </div>
               )}
+              {hasBomBatchPreviewConflict && (
+                <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3">
+                  <div className="text-sm font-semibold text-red-900">BOM批次不足，暂不能提交</div>
+                  <div className="mt-1 text-sm text-red-800">
+                    下一步：先补入库或调拨可用批次，再重新提交本次BOM出库。
+                  </div>
+                  <div className="mt-1 text-sm text-red-800">
+                    系统会继续保留病例号、样本数和BOM预览，避免重复录入。
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <div>
@@ -642,9 +749,13 @@ export default function OutboundFormModal({
               <div className="space-y-2">
                 {form.items.map((item, idx) => {
                   const selectedBatch = getSelectedBatch(item)
+                  const availableBatches = batchesByMaterialId[item.materialId] || []
+                  const batchLookupLoaded = item.materialId ? hasLoadedBatchLookup(item.materialId) : false
                   const quantityExceedsBatch = selectedBatch && Number(item.quantity || 0) > Number(selectedBatch.remaining || 0)
+                  const needsBatchSelection = item.materialId && Number(item.quantity || 0) > 0 && availableBatches.length > 0 && !item.batchId
+                  const noAvailableBatch = item.materialId && Number(item.quantity || 0) > 0 && batchLookupLoaded && availableBatches.length === 0
                   return (
-                  <div key={idx} className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(180px,240px)_96px_32px] items-start gap-2 p-3 bg-gray-50 rounded-md">
+                  <div key={idx} className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(160px,220px)_88px_110px_minmax(120px,160px)_32px] items-start gap-2 p-3 bg-gray-50 rounded-md">
                     <div>
                       <SearchableSelect
                         value={item.materialId}
@@ -657,15 +768,25 @@ export default function OutboundFormModal({
                     <div>
                       <SearchableSelect
                         value={item.batchId || ''}
-                        onChange={val => updateItem(idx, 'batchId', val || undefined)}
-                        options={(batchesByMaterialId[item.materialId] || []).map(batch => ({
+                        onChange={val => updateItemBatch(idx, val)}
+                        options={availableBatches.map(batch => ({
                           value: batch.id,
                           label: `${batch.batchNo} (余${batch.remaining}${materials.find(m => m.id === item.materialId)?.unit || ''} @${formatCurrency(Number(batch.inboundPrice || 0))})`,
                         }))}
-                        placeholder={(batchesByMaterialId[item.materialId] || []).length > 0 ? '选择出库批次' : '按系统批次'}
-                        disabled={!item.materialId || (batchesByMaterialId[item.materialId] || []).length === 0}
+                        placeholder={availableBatches.length > 0 ? '选择出库批次' : '无可用批次'}
+                        disabled={!item.materialId || availableBatches.length === 0}
                         testId={`outbound-batch-select-${idx}`}
                       />
+                      {needsBatchSelection && (
+                        <div className="mt-1 text-xs text-amber-600">
+                          请选择批次，系统会按批次扣减库存和成本
+                        </div>
+                      )}
+                      {noAvailableBatch && (
+                        <div className="mt-1 text-xs text-red-600">
+                          当前物料没有可用批次，不能直接出库
+                        </div>
+                      )}
                       {item.batchId && (
                         <div className={`mt-1 text-xs ${quantityExceedsBatch ? 'text-red-500' : 'text-gray-500'}`}>
                           {quantityExceedsBatch
@@ -684,6 +805,23 @@ export default function OutboundFormModal({
                       data-testid={`quantity-input-${idx}`}
                       className="h-10 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
+                    <SearchableSelect
+                      value={item.usage || 'self'}
+                      onChange={val => updateItem(idx, 'usage', val as OutboundItemForm['usage'])}
+                      options={[
+                        { value: 'self', label: '内部使用' },
+                        { value: 'external', label: '外给' },
+                      ]}
+                      placeholder="用途"
+                      testId={`usage-select-${idx}`}
+                    />
+                    <input
+                      value={item.receiver || ''}
+                      onChange={e => updateItem(idx, 'receiver', e.target.value)}
+                      placeholder={item.usage === 'external' ? '接收方必填' : '使用人/科室'}
+                      data-testid={`receiver-input-${idx}`}
+                      className="h-10 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
                     <div className="h-10 flex items-center justify-center">
                       {form.items.length > 1 && (
                         <button
@@ -698,6 +836,17 @@ export default function OutboundFormModal({
                   )
                 })}
               </div>
+              {hasUnavailableRequiredBatch && (
+                <div className="mt-3 rounded-md border border-red-200 bg-red-50 px-4 py-3">
+                  <div className="text-sm font-semibold text-red-900">普通出库缺少可扣减批次</div>
+                  <div className="mt-1 text-sm text-red-800">
+                    下一步：先补入库或调拨可用批次，再登记本次出库。
+                  </div>
+                  <div className="mt-1 text-sm text-red-800">
+                    系统会保留已选项目、物料、数量和用途，避免重新录入。
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -712,6 +861,37 @@ export default function OutboundFormModal({
               className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
+
+          <div className="rounded-md border border-emerald-100 bg-emerald-50 px-4 py-3">
+            <div className="text-sm font-semibold text-emerald-900">出库结果确认</div>
+            <div className="mt-1 text-xs text-emerald-800">确认后将接住：{resultChainText}</div>
+            <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-emerald-900 sm:grid-cols-3">
+              <div>关联项目 {selectedProject?.name || '待选择'}</div>
+              {isBomOutbound ? (
+                <>
+                  <div>BOM {bomSummaryName}</div>
+                  <div>样本数 {form.sampleCount || '待填写'}</div>
+                  <div>病例号 {form.caseNo?.trim() || '未填写'}</div>
+                </>
+              ) : (
+                <div>出库明细 {validSummaryItems.length || '待添加'}</div>
+              )}
+            </div>
+            {!isBomOutbound && (
+              <div className="mt-3 space-y-1 text-sm text-emerald-900">
+                {validSummaryItems.length > 0 ? validSummaryItems.map((item, index) => {
+                  const material = getMaterialById(item.materialId)
+                  return (
+                    <div key={`${item.materialId}-${index}`}>
+                      {material?.name || '未命名物料'} / {getSummaryBatchNo(item)} -{item.quantity}{getSummaryUnit(item)}{getSummaryRemaining(item)} -&gt; {getSummaryReceiver(item)}
+                    </div>
+                  )
+                }) : (
+                  <div>待添加出库明细</div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200">
           <button
@@ -724,9 +904,9 @@ export default function OutboundFormModal({
           <button
             onClick={onSubmit}
             data-testid="submit-btn"
-            disabled={hasBatchQuantityConflict || hasBomBatchPreviewConflict}
+            disabled={hasBatchQuantityConflict || hasBomBatchPreviewConflict || hasMissingRequiredBatch || hasUnavailableRequiredBatch}
             className={`px-4 py-2 text-sm text-white rounded-md transition-colors duration-150 ${
-              hasBatchQuantityConflict || hasBomBatchPreviewConflict ? 'bg-gray-300 cursor-not-allowed' : 'bg-blue-500 hover:bg-blue-600'
+              hasBatchQuantityConflict || hasBomBatchPreviewConflict || hasMissingRequiredBatch || hasUnavailableRequiredBatch ? 'bg-gray-300 cursor-not-allowed' : 'bg-blue-500 hover:bg-blue-600'
             }`}
           >
             {editRecordId ? '确认更新' : '确认出库'}

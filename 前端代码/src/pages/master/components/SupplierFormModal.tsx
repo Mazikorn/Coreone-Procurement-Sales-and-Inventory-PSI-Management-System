@@ -1,3 +1,4 @@
+import React from 'react'
 import { X } from 'lucide-react'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { FormData } from '../hooks/useSuppliersPage'
@@ -13,6 +14,10 @@ interface Props {
 
 export function SupplierFormModal({ open, type, form, onClose, onChange, onSubmit }: Props) {
   if (!open) return null
+
+  const statusLabel = form.status === 'active' ? '合作中' : '已终止'
+  const hasSettlementInfo = Boolean(form.taxNo || form.bankName || form.bankAccount)
+  const settlementLabel = hasSettlementInfo ? '已填写' : '待补齐'
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
@@ -150,6 +155,19 @@ export function SupplierFormModal({ open, type, form, onClose, onChange, onSubmi
               placeholder="请输入纳税人识别号"
               className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
             />
+          </div>
+          <div className="rounded-md border border-emerald-100 bg-emerald-50 px-4 py-3">
+            <div className="text-sm font-semibold text-emerald-900">供应商结果确认</div>
+            <div className="mt-1 text-xs text-emerald-800">
+              确认后将接住：采购订单、入库、供应商退货、供应商成本净额、物料主数据、审计记录
+            </div>
+            <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-emerald-900 sm:grid-cols-2">
+              <div>供应商 {form.name || '待填写'}</div>
+              <div>合作状态 {statusLabel}</div>
+              <div>联系人 {form.contact || '待填写'} / {form.phone || '待填写'}</div>
+              <div>结算信息 {settlementLabel}</div>
+              <div className="sm:col-span-2">税号 {form.taxNo || '待填写'}</div>
+            </div>
           </div>
         </div>
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 shrink-0">

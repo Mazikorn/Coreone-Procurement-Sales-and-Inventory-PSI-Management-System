@@ -31,6 +31,7 @@ export interface ActivityItem {
   title: string
   desc: string
   time: string
+  href?: string
 }
 
 export interface InboundStats {
@@ -109,11 +110,11 @@ export function useDashboardPage() {
           keys.push('abc-dashboard')
         }
 
-        if (cfg.apiCalls.includes('inbound-stats')) {
+        if (cfg.recentActivitySources.includes('inbound')) {
           promises.push(inboundApi.getList({ page: 1, pageSize: 3 }).catch(() => null))
           keys.push('recent-inbound')
         }
-        if (cfg.apiCalls.includes('outbound-stats')) {
+        if (cfg.recentActivitySources.includes('outbound')) {
           promises.push(outboundApi.getList({ page: 1, pageSize: 3 }).catch(() => null))
           keys.push('recent-outbound')
         }
@@ -193,23 +194,30 @@ export function useDashboardPage() {
     const list: Array<ActivityItem & { sortAt: number }> = []
     recentInbound.slice(0, 3).forEach((item: any) => {
       const createdAt = item.createdAt || item.created_at
+      const inboundNo = item.inboundNo || item.inbound_no
+      const rawMaterialName = item.materialName || item.material_name
+      const materialName = rawMaterialName || '未知物料'
+      const keyword = inboundNo || rawMaterialName || ''
       list.push({
         id: `in-${item.id}`,
         type: 'inbound',
-        title: `入库：${item.materialName || item.material_name || '未知物料'}`,
-        desc: `数量 ${item.quantity}${item.unit || ''} · ${item.operator || '系统'}`,
+        title: `入库：${inboundNo || materialName || '入库单'}`,
+        desc: `${materialName} · 数量 ${item.quantity}${item.unit || ''} · ${item.operator || '系统'}`,
         time: formatTime(createdAt),
+        href: keyword ? `/inbound?keyword=${encodeURIComponent(keyword)}` : '/inbound',
         sortAt: getTimestamp(createdAt),
       })
     })
     recentOutbound.slice(0, 3).forEach((item: any) => {
       const createdAt = item.createdAt || item.created_at
+      const outboundNo = item.outboundNo || item.outbound_no
       list.push({
         id: `out-${item.id}`,
         type: 'outbound',
         title: `出库：${item.outboundNo || item.outbound_no || '出库单'}`,
         desc: `${item.projectName || item.project_name || '项目消耗'} · ${item.operator || '系统'}`,
         time: formatTime(createdAt),
+        href: outboundNo ? `/outbound?keyword=${encodeURIComponent(outboundNo)}` : '/outbound',
         sortAt: getTimestamp(createdAt),
       })
     })

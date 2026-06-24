@@ -213,6 +213,14 @@ router.get('/batches/:batchId/trace', (req, res) => {
         bla.created_at,
         COALESCE(l.name, bla.location_id) as location_name,
         COALESCE(
+          ir.inbound_no,
+          obr.outbound_no,
+          st.stocktaking_no,
+          rr.return_no,
+          sr.return_no,
+          scr.scrap_no
+        ) as related_document_no,
+        COALESCE(
           bla.operator,
           ir.operator,
           obr.operator,
@@ -266,7 +274,7 @@ router.get('/batches/:batchId/trace', (req, res) => {
           label: formatBatchMovementLabel(row.related_type, quantityDelta),
           relatedType: row.related_type,
           relatedId: row.related_id,
-          documentNo: row.related_id,
+          documentNo: row.related_document_no || row.related_id,
           quantityDelta,
           locationName: row.location_name || '-',
           operator: row.operator || null,

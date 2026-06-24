@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildInitialCostAlertFilters, getExceptionTypeLabel, getRetryToastMessage, normalizeExceptionSummary } from './CostAlerts'
+import { buildInitialCostAlertFilters, getExceptionActionGuidance, getExceptionTypeLabel, getRetryToastMessage, normalizeExceptionSummary } from './CostAlerts'
 
 describe('buildInitialCostAlertFilters', () => {
   it('普通打开异常中心时默认筛当前月份', () => {
@@ -11,6 +11,10 @@ describe('buildInitialCostAlertFilters', () => {
       yearMonth: '2026-06',
       keyword: '',
       outboundId: '',
+      projectId: '',
+      exceptionType: '',
+      startDate: '',
+      endDate: '',
       includeUnassigned: false,
     })
   })
@@ -48,6 +52,20 @@ describe('buildInitialCostAlertFilters', () => {
       includeUnassigned: true,
     })
   })
+
+  it('从项目对账异常深链进入时保留项目和异常类型筛选', () => {
+    const filters = buildInitialCostAlertFilters(
+      new URLSearchParams('projectId=project-1&exceptionType=reconciliation_variance&status=open'),
+      '2026-06',
+    )
+
+    expect(filters).toMatchObject({
+      status: 'open',
+      yearMonth: '',
+      projectId: 'project-1',
+      exceptionType: 'reconciliation_variance',
+    })
+  })
 })
 
 describe('normalizeExceptionSummary', () => {
@@ -78,6 +96,16 @@ describe('getExceptionTypeLabel', () => {
   it('uses business wording for fee mapping exceptions instead of raw enum values', () => {
     expect(getExceptionTypeLabel('missing_fee_mapping')).toBe('缺少收费映射')
     expect(getExceptionTypeLabel('missing_driver_rate')).toBe('缺少动因费率')
+  })
+})
+
+describe('getExceptionActionGuidance', () => {
+  it('returns actionable business next steps by exception type', () => {
+    expect(getExceptionActionGuidance('missing_fee_mapping')).toBe('下一步：补齐BOM收费映射后重试，确认收费、利润和审计记录能重新接住。')
+    expect(getExceptionActionGuidance('missing_bom')).toBe('下一步：先到检测服务绑定BOM，再回到对账或异常中心重试成本计算。')
+    expect(getExceptionActionGuidance('reconciliation_variance')).toBe('下一步：回到消耗对账核对LIS病例、BOM理论消耗和出库批次，修正后重新审计差异。')
+    expect(getExceptionActionGuidance('cost_recalculation_failed')).toBe('下一步：检查出库、BOM、动因费率和期间状态；修正源数据后重试成本重算。')
+    expect(getExceptionActionGuidance('unknown_type')).toBe('下一步：查看来源单据和审计记录，修正源数据后重试；无法确认时填写复核说明再处理。')
   })
 })
 

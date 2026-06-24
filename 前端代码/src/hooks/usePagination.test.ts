@@ -196,6 +196,64 @@ describe('usePagination', () => {
     expect(result.current.error).toContain('network error')
   })
 
+  it('should keep the last successful page visible when refresh fails', async () => {
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce({
+        list: [{ id: 'item-before-refresh' }],
+        pagination: { total: 1, page: 1, pageSize: 20 },
+      })
+      .mockRejectedValueOnce(new Error('refresh failed'))
+    const { result } = renderHook(() => usePagination({ fetchFn }))
+
+    await waitFor(() => {
+      expect(result.current.data).toEqual([{ id: 'item-before-refresh' }])
+      expect(result.current.total).toBe(1)
+    })
+
+    act(() => {
+      result.current.refresh()
+    })
+
+    await waitFor(() => {
+      expect(result.current.error).toContain('refresh failed')
+    })
+
+    expect(result.current.data).toEqual([{ id: 'item-before-refresh' }])
+    expect(result.current.total).toBe(1)
+  })
+
+  it('should not show stale data for a different dependency when refetch fails', async () => {
+    let keyword = 'first'
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce({
+        list: [{ id: 'first-result' }],
+        pagination: { total: 1, page: 1, pageSize: 20 },
+      })
+      .mockRejectedValueOnce(new Error('second query failed'))
+
+    const { result, rerender } = renderHook(() =>
+      usePagination({
+        fetchFn,
+        deps: [keyword],
+      })
+    )
+
+    await waitFor(() => {
+      expect(result.current.data).toEqual([{ id: 'first-result' }])
+      expect(result.current.total).toBe(1)
+    })
+
+    keyword = 'second'
+    rerender()
+
+    await waitFor(() => {
+      expect(result.current.error).toContain('second query failed')
+    })
+
+    expect(result.current.data).toEqual([])
+    expect(result.current.total).toBe(0)
+  })
+
   it('should clear error after a successful refresh', async () => {
     const fetchFn = vi.fn()
       .mockRejectedValueOnce(new Error('network error'))

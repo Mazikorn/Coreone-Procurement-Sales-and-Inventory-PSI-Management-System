@@ -1,3 +1,4 @@
+import React from 'react'
 import { X, Loader2 } from 'lucide-react'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { Project, BOM } from '@/types'
@@ -38,6 +39,12 @@ export function ProjectEditModal({
     const selected = boms.find(bom => bom.id === bomId)
     return Boolean(selected && selected.status === 'active' && (selected.type === nextType || selected.type === 'project'))
   }
+  const selectedBom = compatibleBoms.find(bom => bom.id === form.bomId)
+  const selectedServiceType = serviceTypeOptions.find(item => item.value === form.type)?.label || '待选择'
+  const bomSummary = form.bomId ? selectedBom?.name || '待选择BOM' : '未关联'
+  const bomImpactText = form.bomId && selectedBom
+    ? `单样本成本 ¥${Number(selectedBom.unitCost || 0).toFixed(2)}`
+    : '未关联BOM，后续出库、LIS对账和成本核算需要先补齐BOM'
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
@@ -218,6 +225,16 @@ export function ProjectEditModal({
                   </table>
                 </div>
               )}
+              <div className="rounded-md border border-emerald-100 bg-emerald-50 px-4 py-3">
+                <div className="text-sm font-semibold text-emerald-900">检测服务变更确认</div>
+                <div className="mt-1 text-xs text-emerald-800">确认后将接住：检测服务、BOM、出库、LIS对账、项目成本、审计记录</div>
+                <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-emerald-900 sm:grid-cols-2">
+                  <div>服务 {form.name || editingRow.name}</div>
+                  <div>服务类型 {selectedServiceType}</div>
+                  <div>BOM {bomSummary}</div>
+                  <div>{bomImpactText}</div>
+                </div>
+              </div>
             </div>
           )}
         </div>

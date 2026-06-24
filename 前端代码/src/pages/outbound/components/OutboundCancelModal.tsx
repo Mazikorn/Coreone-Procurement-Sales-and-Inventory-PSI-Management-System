@@ -1,3 +1,4 @@
+import React from 'react'
 import { X } from 'lucide-react'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { OutboundRecord } from '@/types'
@@ -38,7 +39,16 @@ export default function OutboundCancelModal({
           </button>
         </div>
         <div className="p-6 space-y-4">
-          <p className="text-sm text-gray-500">取消后，该出库单将标记为"已取消"状态。</p>
+          <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3">
+            <div className="text-sm font-semibold text-amber-900">取消结果确认</div>
+            <div className="mt-1 text-sm text-amber-800">
+              确认后将接住：库存恢复、批次余量、成本回退、项目消耗对账口径、审计记录
+            </div>
+            <div className="mt-2 text-sm text-amber-900">出库单 {record.outboundNo}</div>
+            <div className="mt-1 text-xs text-amber-800">
+              当前列表将移除该出库单，可在审计记录中按单号回看取消原因。
+            </div>
+          </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               取消原因 <span className="text-red-500">*</span>

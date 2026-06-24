@@ -34,8 +34,10 @@ describe('AlertConsumptionHandleModal', () => {
 
     expect(screen.getByText('DAB显色液')).toBeInTheDocument()
     expect(screen.getByText('90天内消耗低于阈值，请复核是否呆滞')).toBeInTheDocument()
+    expect(screen.getByText('处理前确认')).toBeInTheDocument()
+    expect(screen.getByText((content) => content.includes('BOM、项目消耗、成本差异、预警规则、审计记录'))).toBeInTheDocument()
     expect(screen.getByLabelText('建议调整预警阈值')).toBeInTheDocument()
-    expect(screen.getByText('RULE-003')).toBeInTheDocument()
+    expect(screen.getAllByText('RULE-003').length).toBeGreaterThanOrEqual(1)
     expect(screen.queryByText('85瓶')).not.toBeInTheDocument()
     expect(screen.queryByText('+2.08σ')).not.toBeInTheDocument()
     expect(screen.queryByText('样本量增长')).not.toBeInTheDocument()
@@ -54,5 +56,21 @@ describe('AlertConsumptionHandleModal', () => {
     )
 
     expect(screen.queryByText('RULE-003')).not.toBeInTheDocument()
+  })
+
+  it('explains why users cannot confirm a consumption alert without a handling opinion', () => {
+    render(
+      <AlertConsumptionHandleModal
+        open
+        alert={stagnantAlert}
+        form={{ opinion: '', result: 'normal' }}
+        onClose={vi.fn()}
+        onChange={vi.fn()}
+        onConfirm={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('请填写处理意见，系统才能说明消耗异常判断依据并形成审计记录。')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '确认处理' })).toBeDisabled()
   })
 })

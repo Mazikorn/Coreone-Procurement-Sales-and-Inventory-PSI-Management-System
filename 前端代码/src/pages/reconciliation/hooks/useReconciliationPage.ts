@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { toast } from 'sonner'
 import { reconciliationApi } from '@/api/reconciliation'
 import { usePagination } from '@/hooks/usePagination'
@@ -79,6 +79,13 @@ export interface ReconcileLog {
   created_at: string
 }
 
+export interface ReconciliationAuditException {
+  id?: string
+  exceptionNo?: string
+  materialId?: string
+  status?: string
+}
+
 export type TabType = 'reconcile' | 'material' | 'case' | 'log'
 export type PeriodType = 'week' | 'month' | 'quarter' | 'year'
 export type ReconciliationExportFormat = 'csv' | 'xlsx'
@@ -107,6 +114,22 @@ export interface LisImportPreview {
   validCount: number
   failedCount: number
   errors: LisImportError[]
+}
+
+function getApiErrorMessage(error: unknown, fallback: string) {
+  const maybeError = error as {
+    message?: string
+    response?: {
+      data?: {
+        message?: string
+        error?: { message?: string }
+      }
+    }
+  }
+  return maybeError.response?.data?.error?.message
+    || maybeError.response?.data?.message
+    || maybeError.message
+    || fallback
 }
 
 function formatDateOnly(date: Date) {
@@ -387,18 +410,28 @@ export function getLisImportRefreshTargets(activeTab: TabType) {
 export function useReconciliationPage() {
   const { get, getNumber, setMultiple } = useUrlParams()
   const initialKeyword = get('keyword')
+  const initialProjectId = get('projectId')
   const initialPeriod: PeriodType = 'month'
-  const initialDateRange = getReconciliationPeriodRange(initialPeriod)
-  const [activeTab, setActiveTab] = useState<TabType>(initialKeyword ? 'case' : 'reconcile')
+  const defaultDateRange = getReconciliationPeriodRange(initialPeriod)
+  const urlDateRange = { startDate: get('startDate'), endDate: get('endDate') }
+  const initialUrlDateValidation = validateReconciliationDateRange(urlDateRange)
+  const hasInitialUrlDateRange = Boolean(urlDateRange.startDate && urlDateRange.endDate && initialUrlDateValidation.valid)
+  const initialDateRange = hasInitialUrlDateRange ? urlDateRange : defaultDateRange
+  const [activeTab, setActiveTab] = useState<TabType>(initialProjectId ? 'reconcile' : initialKeyword ? 'case' : 'reconcile')
   const [period, setPeriod] = useState<PeriodType>(initialPeriod)
   const [startDate, setStartDate] = useState(initialDateRange.startDate)
   const [endDate, setEndDate] = useState(initialDateRange.endDate)
+  const previousPeriodRef = useRef(initialPeriod)
   const [loading, setLoading] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [auditingProjectId, setAuditingProjectId] = useState<string | null>(null)
 
   // 根据 period 动态计算 startDate 和 endDate
   useEffect(() => {
+    if (previousPeriodRef.current === period) {
+      return
+    }
+    previousPeriodRef.current = period
     const nextRange = getReconciliationPeriodRange(period)
     setStartDate(nextRange.startDate)
     setEndDate(nextRange.endDate)
@@ -408,6 +441,8 @@ export function useReconciliationPage() {
   const [projects, setProjects] = useState<ProjectReconcile[]>([])
   const [expandedProject, setExpandedProject] = useState<string | null>(null)
   const [projectMaterials, setProjectMaterials] = useState<Record<string, MaterialDiff[]>>({})
+  const [projectAuditExceptions, setProjectAuditExceptions] = useState<Record<string, ReconciliationAuditException[]>>({})
+  const [initialProjectOpened, setInitialProjectOpened] = useState(false)
   const [materials, setMaterials] = useState<MaterialSummary[]>([])
 
   const [caseSearch, setCaseSearch] = useState(initialKeyword || get('csearch'))
@@ -507,6 +542,8 @@ export function useReconciliationPage() {
 
   useEffect(() => {
     setMultiple({
+      startDate,
+      endDate,
       cpage: casePagination.page === 1 ? null : String(casePagination.page),
       cpageSize: casePagination.pageSize === 20 ? null : String(casePagination.pageSize),
       csearch: caseSearch || null,
@@ -515,7 +552,7 @@ export function useReconciliationPage() {
       lpage: logPagination.page === 1 ? null : String(logPagination.page),
       lpageSize: logPagination.pageSize === 20 ? null : String(logPagination.pageSize),
     })
-  }, [casePagination.page, casePagination.pageSize, caseSearch, caseFilterProject, caseFilterStatus, logPagination.page, logPagination.pageSize])
+  }, [startDate, endDate, casePagination.page, casePagination.pageSize, caseSearch, caseFilterProject, caseFilterStatus, logPagination.page, logPagination.pageSize])
 
   const loadProjectMaterials = async (projectId: string) => {
     if (!dateValidation.valid) {
@@ -533,6 +570,21 @@ export function useReconciliationPage() {
     } catch (e) { toast.error('加载物料明细失败') }
   }
 
+  useEffect(() => {
+    if (!initialProjectId || initialProjectOpened || activeTab !== 'reconcile' || !dateValidation.valid) return
+    if (!projects.some(project => project.id === initialProjectId)) return
+
+    setInitialProjectOpened(true)
+    loadProjectMaterials(initialProjectId)
+  }, [activeTab, dateValidation.valid, initialProjectId, initialProjectOpened, projects])
+
+  const recordProjectAuditExceptions = (projectId: string, res: any) => {
+    const exceptions = Array.isArray(res?.exceptions)
+      ? res.exceptions.filter((item: ReconciliationAuditException) => item?.exceptionNo || item?.id)
+      : []
+    setProjectAuditExceptions(prev => ({ ...prev, [projectId]: exceptions }))
+  }
+
   const handleAuditProject = async (projectId: string) => {
     if (!dateValidation.valid) {
       toast.error(dateValidation.message)
@@ -541,9 +593,14 @@ export function useReconciliationPage() {
     setAuditingProjectId(projectId)
     try {
       const res = await reconciliationApi.auditProjectMaterials(projectId, dateParams)
+      recordProjectAuditExceptions(projectId, res)
       toast.success(`审计完成：新增 ${res?.created || 0}，更新 ${res?.updated || 0}，关闭 ${res?.resolved || 0}`)
-      const detail = await reconciliationApi.getProjectMaterials(projectId, dateParams)
-      setProjectMaterials(prev => ({ ...prev, [projectId]: detail?.list || [] }))
+      try {
+        const detail = await reconciliationApi.getProjectMaterials(projectId, dateParams)
+        setProjectMaterials(prev => ({ ...prev, [projectId]: detail?.list || [] }))
+      } catch {
+        setProjectMaterials(prev => prev)
+      }
       fetchSummary()
     } catch (e: any) {
       toast.error(e?.message || '对账审计失败')
@@ -607,11 +664,18 @@ export function useReconciliationPage() {
         : await reconciliationApi.importCases({ items: validation.validItems })
       const unmatched = Number(res?.unmatched || 0)
       const importedCount = res?.count || res?.imported || items.length
-      toast.success(`成功导入 ${importedCount} 条病例数据${unmatched > 0 ? `，${unmatched} 条未匹配项目` : ''}`)
+      toast.success(`成功导入 ${importedCount} 条病例数据${unmatched > 0 ? `，${unmatched} 条未匹配项目，请在未关联BOM病例中处理` : ''}`)
       setImportModalOpen(false)
       setImportData('')
       setImportFile(null)
       setImportErrors([])
+      if (unmatched > 0) {
+        setActiveTab('case')
+        setCaseSearch('')
+        setCaseFilterProject('')
+        setCaseFilterStatus('unmatched')
+        casePagination.setPage(1)
+      }
       const refreshTargets = getLisImportRefreshTargets(activeTab)
       if (refreshTargets.clearProjectMaterials) {
         setProjectMaterials({})
@@ -623,8 +687,8 @@ export function useReconciliationPage() {
         refreshTargets.materials ? fetchMaterials() : Promise.resolve(),
       ])
       if (refreshTargets.cases) casePagination.refresh()
-    } catch (e: any) {
-      toast.error(e?.message || '导入失败')
+    } catch (e) {
+      toast.error(getApiErrorMessage(e, '导入失败'))
     }
   }
 
@@ -674,33 +738,72 @@ export function useReconciliationPage() {
       toast.error('请选择修正单位')
       return
     }
+    const projectId = fixTargetProjectId
+    const materialId = fixTarget.materialId
+    const nextUsage = fixNewUsage
+    const nextUnit = fixNewUnit
     try {
       await reconciliationApi.createLog({
         type: 'bom_fix',
-        targetId: fixTarget.materialId,
+        targetId: materialId,
         targetName: fixTarget.materialName,
         field: 'usage_per_sample,unit',
         oldValue: `${fixTarget.bomUsagePerSample} ${fixTarget.bomUnit}`,
-        newValue: `${fixNewUsage} ${fixNewUnit}`,
+        newValue: `${nextUsage} ${nextUnit}`,
         reason: fixReason,
-        projectId: fixTargetProjectId,
-        materialId: fixTarget.materialId,
-        newUsage: fixNewUsage,
-        newUnit: fixNewUnit,
+        projectId,
+        materialId,
+        newUsage: nextUsage,
+        newUnit: nextUnit,
       })
-      toast.success('BOM用量已修正，请重新审计差异以同步成本异常')
       setFixBomModalOpen(false)
       setFixTarget(null)
       setFixTargetProjectId(null)
+      setAuditingProjectId(projectId)
+      let auditRes: any
+      try {
+        auditRes = await reconciliationApi.auditProjectMaterials(projectId, dateParams)
+        recordProjectAuditExceptions(projectId, auditRes)
+      } catch {
+        if (activeTab === 'reconcile') {
+          setProjectMaterials(prev => ({
+            ...prev,
+            [projectId]: (prev[projectId] || []).map(mat => (
+              mat.materialId === materialId
+                ? { ...mat, bomUsagePerSample: nextUsage, bomUnit: nextUnit }
+                : mat
+            )),
+          }))
+        }
+        toast.error('BOM用量已修正，但自动审计失败，请点击审计差异重试')
+        return
+      } finally {
+        setAuditingProjectId(null)
+      }
       try {
         if (activeTab === 'reconcile') {
-          const res = await reconciliationApi.getProjectMaterials(fixTargetProjectId, dateParams)
-          setProjectMaterials(prev => ({ ...prev, [fixTargetProjectId]: res?.list || [] }))
+          const res = await reconciliationApi.getProjectMaterials(projectId, dateParams)
+          setProjectMaterials(prev => ({ ...prev, [projectId]: res?.list || [] }))
         }
         if (activeTab === 'material') await fetchMaterials()
       } catch {
-        toast.error('BOM已修正，刷新对账明细失败，请重新展开项目')
+        if (activeTab === 'reconcile') {
+          setProjectMaterials(prev => ({
+            ...prev,
+            [projectId]: (prev[projectId] || []).map(mat => (
+              mat.materialId === materialId
+                ? { ...mat, bomUsagePerSample: nextUsage, bomUnit: nextUnit }
+                : mat
+            )),
+          }))
+        }
       }
+      try {
+        await fetchSummary()
+      } catch {
+        // 汇总可稍后刷新，修正和审计结果已经完成。
+      }
+      toast.success(`BOM用量已修正，并已重新审计差异：新增 ${auditRes?.created || 0}，更新 ${auditRes?.updated || 0}，关闭 ${auditRes?.resolved || 0}`)
     } catch (e: any) {
       toast.error(e?.message || '修正失败')
     }
@@ -708,16 +811,47 @@ export function useReconciliationPage() {
 
   const handleEditCase = async () => {
     if (!editCaseTarget) return
+    const affectedProjectIds = Array.from(new Set([
+      editCaseTarget.project_id,
+      editCaseProjectId,
+    ].filter(Boolean)))
     try {
       await reconciliationApi.updateCase(editCaseTarget.id, {
         ...(editCaseProjectId && { projectId: editCaseProjectId }),
         ...(editCaseStatus && { status: editCaseStatus }),
       })
-      toast.success('病例信息已更新')
       setEditCaseModalOpen(false)
       setEditCaseTarget(null)
+      let auditSummary = { created: 0, updated: 0, resolved: 0 }
+      try {
+        for (const projectId of affectedProjectIds) {
+          const res = await reconciliationApi.auditProjectMaterials(projectId, dateParams)
+          recordProjectAuditExceptions(projectId, res)
+          auditSummary = {
+            created: auditSummary.created + Number(res?.created || 0),
+            updated: auditSummary.updated + Number(res?.updated || 0),
+            resolved: auditSummary.resolved + Number(res?.resolved || 0),
+          }
+          if (activeTab === 'reconcile' && projectMaterials[projectId]) {
+            try {
+              const detail = await reconciliationApi.getProjectMaterials(projectId, dateParams)
+              setProjectMaterials(prev => ({ ...prev, [projectId]: detail?.list || [] }))
+            } catch {
+              setProjectMaterials(prev => prev)
+            }
+          }
+        }
+      } catch {
+        toast.error('病例信息已更新，但自动审计失败，请在项目对账中点击审计差异重试')
+        return
+      }
       await Promise.all([fetchSummary(), fetchProjects()])
       casePagination.refresh()
+      if (affectedProjectIds.length > 0) {
+        toast.success(`病例信息已更新，并已重新审计相关项目：新增 ${auditSummary.created}，更新 ${auditSummary.updated}，关闭 ${auditSummary.resolved}`)
+      } else {
+        toast.success('病例信息已更新')
+      }
     } catch (e: any) {
       toast.error(e?.message || '更新失败')
     }
@@ -762,6 +896,7 @@ export function useReconciliationPage() {
     projects,
     expandedProject,
     projectMaterials,
+    projectAuditExceptions,
     materials,
     caseSearch,
     setCaseSearch,

@@ -116,4 +116,156 @@ describe('useLaborTimePage', () => {
     })))
     expect(result.current.searchInput).toBe('LAB-DEEP-001')
   })
+
+  it('focuses the newly created labor time step so costing users can confirm the labor cost input', async () => {
+    window.history.replaceState(null, '', '/labor-times?keyword=old-labor-step')
+    vi.mocked(laborTimeApi.create).mockResolvedValue({
+      id: 'labor-created',
+      stepCode: 'LAB-CREATED-001',
+      stepName: '新建切片步骤',
+    } as any)
+
+    const { result } = renderHook(() => useLaborTimePage())
+    await waitFor(() => expect(laborTimeApi.getList).toHaveBeenCalled())
+
+    act(() => {
+      result.current.handleProjectTypeChange('ihc')
+      result.current.handleReferenceSourceChange('supplier')
+      result.current.openCreate()
+    })
+    act(() => {
+      result.current.setForm({
+        ...result.current.form,
+        stepCode: 'LAB-DRAFT-001',
+        stepName: '新建切片步骤',
+        projectType: 'ihc',
+        standardMinutes: 18,
+        laborRatePerMinute: 2.5,
+        isEquipmentStep: false,
+        description: '用于人工成本核算',
+        sortOrder: 20,
+        referenceSource: 'system',
+      })
+    })
+
+    await act(async () => {
+      await result.current.handleSubmit()
+    })
+
+    expect(laborTimeApi.create).toHaveBeenCalledWith(expect.objectContaining({
+      stepCode: 'LAB-DRAFT-001',
+      stepName: '新建切片步骤',
+      projectType: 'ihc',
+      standardMinutes: 18,
+      laborRatePerMinute: 2.5,
+      description: '用于人工成本核算',
+      sortOrder: 20,
+      referenceSource: 'system',
+    }))
+    expect(result.current.searchInput).toBe('LAB-CREATED-001')
+    expect(result.current.filterProjectType).toBe('')
+    expect(result.current.filterReferenceSource).toBe('')
+    await waitFor(() => {
+      expect(laborTimeApi.getList).toHaveBeenCalledWith(expect.objectContaining({
+        page: 1,
+        pageSize: 20,
+        keyword: 'LAB-CREATED-001',
+      }))
+    })
+  })
+
+  it('keeps the newly created labor time step visible when the follow-up list refresh fails', async () => {
+    vi.mocked(laborTimeApi.getList)
+      .mockResolvedValueOnce({ list: [], pagination: { total: 0, page: 1, pageSize: 20 } } as any)
+      .mockRejectedValueOnce(new Error('refresh failed'))
+    vi.mocked(laborTimeApi.create).mockResolvedValueOnce({
+      id: 'labor-visible',
+      stepCode: 'LAB-VISIBLE-001',
+      stepName: '新建包埋步骤',
+      projectType: 'he',
+      standardMinutes: 22,
+      laborRatePerMinute: 2.8,
+      isEquipmentStep: false,
+      description: '现场确认人工成本输入',
+      sortOrder: 30,
+      referenceSource: 'system',
+    } as any)
+
+    const { result } = renderHook(() => useLaborTimePage())
+    await waitFor(() => expect(laborTimeApi.getList).toHaveBeenCalled())
+
+    act(() => {
+      result.current.openCreate()
+    })
+    act(() => {
+      result.current.setForm({
+        ...result.current.form,
+        stepCode: 'LAB-DRAFT-VISIBLE',
+        stepName: '新建包埋步骤',
+        projectType: 'he',
+        standardMinutes: 22,
+        laborRatePerMinute: 2.8,
+        isEquipmentStep: false,
+        description: '现场确认人工成本输入',
+        sortOrder: 30,
+        referenceSource: 'system',
+      })
+    })
+
+    await act(async () => {
+      await result.current.handleSubmit()
+    })
+
+    expect(result.current.searchInput).toBe('LAB-VISIBLE-001')
+    expect(result.current.data).toEqual([
+      expect.objectContaining({
+        id: 'labor-visible',
+        stepCode: 'LAB-VISIBLE-001',
+        stepName: '新建包埋步骤',
+        projectType: 'he',
+        standardMinutes: 22,
+        laborRatePerMinute: 2.8,
+        description: '现场确认人工成本输入',
+      }),
+    ])
+    expect(result.current.total).toBe(1)
+  })
+
+  it('removes an archived labor time step from the current list when the follow-up refresh fails', async () => {
+    const keptLaborTime = {
+      ...laborTime,
+      id: 'labor-kept',
+      stepCode: 'LAB-KEPT-001',
+      stepName: '保留步骤',
+      standardMinutes: 12,
+    }
+    vi.mocked(laborTimeApi.getList)
+      .mockResolvedValueOnce({
+        list: [laborTime, keptLaborTime],
+        pagination: { total: 2, page: 1, pageSize: 20 },
+      } as any)
+      .mockRejectedValueOnce(new Error('delete refresh failed'))
+    vi.mocked(laborTimeApi.delete).mockResolvedValueOnce({ success: true } as any)
+
+    const { result } = renderHook(() => useLaborTimePage())
+    await waitFor(() => expect(result.current.data).toHaveLength(2))
+
+    act(() => {
+      result.current.openDelete(result.current.data[0])
+    })
+
+    await act(async () => {
+      await result.current.handleDelete()
+    })
+
+    expect(laborTimeApi.delete).toHaveBeenCalledWith('labor-1')
+    expect(result.current.data).toEqual([
+      expect.objectContaining({
+        id: 'labor-kept',
+        stepCode: 'LAB-KEPT-001',
+      }),
+    ])
+    expect(result.current.total).toBe(1)
+    expect(result.current.modalType).toBeNull()
+  })
 })

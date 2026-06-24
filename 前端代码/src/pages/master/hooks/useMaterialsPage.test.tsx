@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { categoryApi, locationApi, materialApi, supplierApi } from '@/api/master'
+import { toast } from 'sonner'
 import { useMaterialsPage } from './useMaterialsPage'
 
 vi.mock('@/api/master')
@@ -318,6 +319,248 @@ describe('useMaterialsPage', () => {
     }))
   })
 
+  it('focuses the newly created material so purchasing and inbound users can immediately reuse it', async () => {
+    window.history.replaceState(
+      null,
+      '',
+      '/materials?page=5&keyword=old-material&categoryId=cat-old&supplierId=sup-old&quick=inactive'
+    )
+    vi.mocked(materialApi.create).mockResolvedValue({
+      id: 'mat-created',
+      code: 'MAT-CREATED-001',
+      name: '新建检测试剂',
+    } as any)
+
+    const { result } = renderHook(() => useMaterialsPage())
+    await waitFor(() => expect(materialApi.getList).toHaveBeenCalled())
+
+    act(() => {
+      result.current.setForm({
+        ...result.current.form,
+        code: 'MAT-DRAFT-001',
+        name: '新建检测试剂',
+        unit: '盒',
+        categoryId: 'cat-new',
+        supplierId: 'sup-new',
+        locationId: 'loc-new',
+      })
+    })
+
+    await act(async () => {
+      await result.current.handleSubmit()
+    })
+
+    expect(materialApi.create).toHaveBeenCalledWith(expect.objectContaining({
+      code: 'MAT-DRAFT-001',
+      name: '新建检测试剂',
+      unit: '盒',
+      categoryId: 'cat-new',
+      supplierId: 'sup-new',
+      locationId: 'loc-new',
+    }))
+    expect(result.current.keyword).toBe('MAT-CREATED-001')
+    expect(result.current.categoryId).toBe('')
+    expect(result.current.supplierId).toBe('')
+    expect(result.current.quickFilter).toBe('all')
+    await waitFor(() => {
+      expect(materialApi.getList).toHaveBeenCalledWith(expect.objectContaining({
+        page: 1,
+        keyword: 'MAT-CREATED-001',
+      }))
+    })
+  })
+
+  it('keeps the newly created material visible when the focused refresh fails', async () => {
+    vi.mocked(materialApi.getList)
+      .mockResolvedValueOnce({
+        list: [],
+        pagination: { total: 0, page: 1, pageSize: 20 },
+      } as any)
+      .mockRejectedValue(new Error('refresh failed'))
+    vi.mocked(materialApi.create).mockResolvedValue({
+      id: 'mat-created-visible',
+      code: 'MAT-VISIBLE-001',
+      name: '可回看检测试剂',
+      spec: '20/ml',
+      unit: '盒',
+      categoryId: 'cat-new',
+      supplierId: 'sup-new',
+      locationId: 'loc-new',
+      price: 12,
+      minStock: 1,
+      maxStock: 20,
+      safetyStock: 2,
+      status: 'active',
+      remark: '入库扫码使用',
+    } as any)
+
+    const { result } = renderHook(() => useMaterialsPage())
+    await waitFor(() => expect(materialApi.getList).toHaveBeenCalled())
+
+    act(() => {
+      result.current.setForm({
+        ...result.current.form,
+        code: 'MAT-DRAFT-002',
+        name: '可回看检测试剂',
+        spec: '20/ml',
+        unit: '盒',
+        categoryId: 'cat-new',
+        supplierId: 'sup-new',
+        locationId: 'loc-new',
+        price: 12,
+        minStock: 1,
+        maxStock: 20,
+        safetyStock: 2,
+        status: 'active',
+        remark: '入库扫码使用',
+      })
+    })
+
+    await act(async () => {
+      await result.current.handleSubmit()
+    })
+
+    await waitFor(() => expect(materialApi.getList).toHaveBeenCalledWith(expect.objectContaining({
+      keyword: 'MAT-VISIBLE-001',
+    })))
+    expect(result.current.data[0]).toMatchObject({
+      id: 'mat-created-visible',
+      code: 'MAT-VISIBLE-001',
+      name: '可回看检测试剂',
+      locationId: 'loc-new',
+    })
+    expect(result.current.total).toBe(1)
+    act(() => {
+      result.current.toggleSelectAll()
+    })
+    expect(result.current.selectedIds.has('mat-created-visible')).toBe(true)
+    expect(toast.success).toHaveBeenCalledWith('物料创建成功')
+    expect(toast.error).not.toHaveBeenCalledWith('操作失败')
+  })
+
+  it('clears the created-material fallback once the focused refresh returns the server row', async () => {
+    const createdMaterial = {
+      id: 'mat-server-created',
+      code: 'MAT-SERVER-001',
+      name: '服务端接住物料',
+      spec: '50/ml',
+      unit: '盒',
+      categoryId: 'cat-new',
+      supplierId: 'sup-new',
+      locationId: 'loc-new',
+      price: 18,
+      stock: 0,
+      minStock: 1,
+      maxStock: 20,
+      safetyStock: 2,
+      status: 'active',
+      remark: '创建后服务端返回',
+    }
+    vi.mocked(materialApi.getList)
+      .mockResolvedValueOnce({
+        list: [],
+        pagination: { total: 0, page: 1, pageSize: 20 },
+      } as any)
+      .mockResolvedValueOnce({
+        list: [createdMaterial],
+        pagination: { total: 1, page: 1, pageSize: 20 },
+      } as any)
+      .mockResolvedValueOnce({
+        list: [],
+        pagination: { total: 0, page: 1, pageSize: 20 },
+      } as any)
+    vi.mocked(materialApi.create).mockResolvedValue(createdMaterial as any)
+
+    const { result } = renderHook(() => useMaterialsPage())
+    await waitFor(() => expect(materialApi.getList).toHaveBeenCalled())
+
+    act(() => {
+      result.current.setForm({
+        ...result.current.form,
+        code: 'MAT-DRAFT-SERVER',
+        name: '服务端接住物料',
+        spec: '50/ml',
+        unit: '盒',
+        categoryId: 'cat-new',
+        supplierId: 'sup-new',
+        locationId: 'loc-new',
+        price: 18,
+        minStock: 1,
+        maxStock: 20,
+        safetyStock: 2,
+        status: 'active',
+        remark: '创建后服务端返回',
+      })
+    })
+
+    await act(async () => {
+      await result.current.handleSubmit()
+    })
+
+    await waitFor(() => expect(result.current.data.filter(item => item.id === 'mat-server-created')).toHaveLength(1))
+
+    await act(async () => {
+      result.current.refresh()
+    })
+
+    await waitFor(() => expect(materialApi.getList).toHaveBeenCalledTimes(3))
+    await waitFor(() => expect(result.current.data.filter(item => item.id === 'mat-server-created')).toHaveLength(0))
+    expect(result.current.total).toBe(0)
+  })
+
+  it('keeps the edited material facts visible when the follow-up refresh fails', async () => {
+    const material = {
+      id: 'mat-edit-visible',
+      code: 'MAT-EDIT-001',
+      name: '旧物料名称',
+      spec: '10/ml',
+      unit: '瓶',
+      categoryId: 'cat-1',
+      supplierId: 'sup-1',
+      locationId: 'loc-1',
+      price: 10,
+      stock: 3,
+      minStock: 1,
+      maxStock: 20,
+      safetyStock: 2,
+      status: 'active',
+      remark: '旧备注',
+    }
+    vi.mocked(materialApi.getList)
+      .mockResolvedValueOnce({
+        list: [material],
+        pagination: { total: 1, page: 1, pageSize: 20 },
+      } as any)
+      .mockRejectedValue(new Error('refresh failed'))
+    vi.mocked(materialApi.update).mockResolvedValue({} as any)
+
+    const { result } = renderHook(() => useMaterialsPage())
+    await waitFor(() => expect(result.current.data[0]?.id).toBe('mat-edit-visible'))
+
+    act(() => {
+      result.current.openEdit(material as any)
+      result.current.setForm({
+        ...result.current.form,
+        name: '更新后物料名称',
+        remark: '给采购和入库回看',
+      })
+    })
+
+    await act(async () => {
+      await result.current.handleSubmit()
+    })
+
+    await waitFor(() => expect(materialApi.getList).toHaveBeenCalledTimes(2))
+    expect(result.current.data[0]).toMatchObject({
+      id: 'mat-edit-visible',
+      code: 'MAT-EDIT-001',
+      name: '更新后物料名称',
+      remark: '给采购和入库回看',
+    })
+    expect(toast.success).toHaveBeenCalledWith('物料更新成功')
+    expect(toast.error).not.toHaveBeenCalledWith('操作失败')
+  })
+
   it('allows warehouse managers to use material write actions required by the spec', async () => {
     window.localStorage.setItem('user', JSON.stringify({ role: 'warehouse_manager', username: 'wangkq' }))
 
@@ -438,5 +681,65 @@ describe('useMaterialsPage', () => {
 
     await waitFor(() => expect(result.current.data).toHaveLength(0))
     expect(result.current.selectedIds.size).toBe(0)
+  })
+
+  it('removes a status-changed material from the active filter when the refresh fails', async () => {
+    const material = {
+      id: 'mat-status-refresh-fail',
+      code: 'STS-RF-001',
+      name: '刷新失败停用物料',
+      spec: '1ml',
+      unit: '瓶',
+      categoryId: 'cat-1',
+      supplierId: 'sup-1',
+      price: 12,
+      stock: 0,
+      minStock: 1,
+      maxStock: 20,
+      safetyStock: 1,
+      status: 'active',
+      remark: '',
+    }
+    window.history.replaceState(null, '', '/materials?quick=active')
+    vi.mocked(materialApi.getList)
+      .mockResolvedValueOnce({
+        list: [material],
+        pagination: { total: 1, page: 1, pageSize: 20 },
+      } as any)
+      .mockRejectedValue(new Error('refresh failed'))
+    vi.mocked(materialApi.checkStatus).mockResolvedValue({
+      material,
+      targetStatus: 'inactive',
+      canChange: true,
+      impacts: {
+        currentInventoryCount: 0,
+        inventoryLocationCount: 0,
+        activeBomCount: 0,
+      },
+      reasons: [],
+    } as any)
+    vi.mocked(materialApi.update).mockResolvedValue({} as any)
+
+    const { result } = renderHook(() => useMaterialsPage())
+    await waitFor(() => expect(result.current.data[0]?.id).toBe('mat-status-refresh-fail'))
+
+    act(() => {
+      result.current.toggleSelect('mat-status-refresh-fail')
+    })
+    await act(async () => {
+      await result.current.handleToggleStatus(material as any)
+    })
+    await waitFor(() => expect(result.current.statusCheck?.canChange).toBe(true))
+
+    await act(async () => {
+      await result.current.confirmStatusChange()
+    })
+
+    await waitFor(() => expect(materialApi.getList).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(result.current.data).toHaveLength(0))
+    await waitFor(() => expect(result.current.total).toBe(0))
+    await waitFor(() => expect(result.current.selectedIds.size).toBe(0))
+    expect(toast.success).toHaveBeenCalledWith('物料已停用')
+    expect(toast.error).not.toHaveBeenCalledWith('操作失败')
   })
 })

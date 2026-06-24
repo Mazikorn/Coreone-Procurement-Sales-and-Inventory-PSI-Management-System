@@ -1,3 +1,4 @@
+import React from 'react'
 import { X, AlertTriangle } from 'lucide-react'
 import type { BOM, BOMDeleteCheck } from '@/types'
 
@@ -73,7 +74,7 @@ export function BOMDeleteModal({ open, editingId, data, deleteCheck, checkingDel
                     </div>
                   ) : (
                     <div className="mt-3 rounded-md bg-green-50 px-3 py-2 text-xs text-green-700">
-                      未发现业务引用，可以删除。
+                      未发现业务引用，可以删除；删除后该BOM不会再用于新检测服务绑定、项目出库、LIS对账、ABC成本计算、项目成本归集和审计筛选。
                     </div>
                   )}
                 </>

@@ -1,3 +1,4 @@
+import React from 'react'
 import { Plus, Search, Coins } from 'lucide-react'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import { useCostCenterPage } from './hooks/useCostCenterPage'
@@ -213,7 +214,7 @@ export default function IndirectCostCenterList() {
       <ConfirmDialog
         open={page.modalType === 'delete'}
         title="确认删除"
-        description={`确定要删除成本中心「${page.detailRow?.name || ''}」吗？已有分摊记录的成本中心不可删除。`}
+        description={`确定要删除成本中心「${page.detailRow?.name || ''}」吗？删除后不会再用于新月度分摊、项目成本归集、成本结账和审计筛选；已有分摊记录的成本中心后端会阻止删除，历史分摊、项目成本和审计记录仍保留可回看。`}
         confirmText="确认删除"
         confirmVariant="danger"
         onConfirm={page.handleDelete}

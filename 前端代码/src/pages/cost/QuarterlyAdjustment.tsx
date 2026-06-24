@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { Search, CheckCircle, XCircle, Clock, AlertTriangle, Send } from 'lucide-react'
 import { toast } from 'sonner'
 import { costAdjustmentApi } from '@/api/master'
@@ -47,6 +47,7 @@ export default function QuarterlyAdjustment() {
   const [loading, setLoading] = useState(true)
   const [filterStatus, setFilterStatus] = useState('')
   const [searchKeyword, setSearchKeyword] = useState('')
+  const silentNextRecordsLoadRef = useRef(false)
 
   // 创建调整弹窗
   const [showCreateModal, setShowCreateModal] = useState(false)
@@ -62,31 +63,47 @@ export default function QuarterlyAdjustment() {
   const [showReviewModal, setShowReviewModal] = useState(false)
   const [reviewForm, setReviewForm] = useState({
     id: '',
+    costCenterName: '',
     status: 'approved' as 'approved' | 'rejected',
     reason: '',
   })
+  const createAdjustmentAmount = createForm.actualAmount - createForm.preProvisionAmount
+  const createValidationMessage = !Number.isFinite(createForm.actualAmount) || createForm.actualAmount <= 0
+    ? '请输入大于 0 的实际金额，系统才能计算本季度成本调整。'
+    : !createForm.adjustmentReason.trim()
+      ? '请填写调整原因，系统才能留下成本结账和审计依据。'
+      : ''
+  const canSubmitCreate = createValidationMessage === ''
+  const createDownstreamFacts = '季度调整、成本结账、成本差异、审核记录、审计记录'
 
-  const loadSuggestions = useCallback(async () => {
+  const loadSuggestions = useCallback(async (
+    options: { showError?: boolean } = {},
+  ) => {
+    const { showError = true } = options
     try {
       setLoading(true)
       const res = await costAdjustmentApi.getSuggestions({ yearQuarter })
       setSuggestions(res?.suggestions || [])
     } catch {
-      toast.error('加载调整建议失败')
+      if (showError) toast.error('加载调整建议失败')
     } finally {
       setLoading(false)
     }
   }, [yearQuarter])
 
-  const loadRecords = useCallback(async () => {
+  const loadRecords = useCallback(async (
+    statusOverride = filterStatus,
+    options: { showError?: boolean } = {},
+  ) => {
+    const { showError = true } = options
     try {
       setLoading(true)
       const params: Record<string, string> = { yearQuarter }
-      if (filterStatus) params.reviewStatus = filterStatus
+      if (statusOverride) params.reviewStatus = statusOverride
       const res = await costAdjustmentApi.getList(params)
       setRecords(res?.list || [])
     } catch {
-      toast.error('加载调整记录失败')
+      if (showError) toast.error('加载调整记录失败')
     } finally {
       setLoading(false)
     }
@@ -96,9 +113,11 @@ export default function QuarterlyAdjustment() {
     if (activeTab === 'suggestions') {
       loadSuggestions()
     } else {
-      loadRecords()
+      const showError = !silentNextRecordsLoadRef.current
+      silentNextRecordsLoadRef.current = false
+      loadRecords(filterStatus, { showError })
     }
-  }, [activeTab, loadSuggestions, loadRecords])
+  }, [activeTab, filterStatus, loadSuggestions, loadRecords])
 
   const handleCreate = (suggestion: Suggestion) => {
     setCreateForm({
@@ -112,21 +131,31 @@ export default function QuarterlyAdjustment() {
   }
 
   const handleSubmitCreate = async () => {
-    if (!createForm.actualAmount) {
-      toast.warning('请输入实际金额')
+    if (createValidationMessage) {
+      toast.warning(createValidationMessage)
       return
     }
     try {
-      await costAdjustmentApi.create({
+      const created: any = await costAdjustmentApi.create({
         costCenterId: createForm.costCenterId,
         yearQuarter,
         actualAmount: createForm.actualAmount,
         adjustmentReason: createForm.adjustmentReason,
       })
+      const focusKeyword = String(created?.costCenterName || createForm.costCenterName || '').trim()
       toast.success('调整记录已创建')
       setShowCreateModal(false)
-      loadSuggestions()
-      if (activeTab === 'records') loadRecords()
+      silentNextRecordsLoadRef.current = true
+      setActiveTab('records')
+      setFilterStatus('pending')
+      setSearchKeyword(focusKeyword)
+      if (created?.id) {
+        setRecords(prev => [
+          created,
+          ...prev.filter(record => record.id !== created.id),
+        ])
+      }
+      loadSuggestions({ showError: false })
     } catch {
       toast.error('创建失败')
     }
@@ -135,6 +164,7 @@ export default function QuarterlyAdjustment() {
   const handleReview = (record: CostAdjustment) => {
     setReviewForm({
       id: record.id,
+      costCenterName: record.costCenterName || '',
       status: 'approved',
       reason: '',
     })
@@ -143,13 +173,20 @@ export default function QuarterlyAdjustment() {
 
   const handleSubmitReview = async () => {
     try {
+      const nextStatus = reviewForm.status
+      const focusKeyword = reviewForm.costCenterName.trim()
       await costAdjustmentApi.review(reviewForm.id, {
-        status: reviewForm.status,
+        status: nextStatus,
         reason: reviewForm.reason,
       })
-      toast.success(reviewForm.status === 'approved' ? '已通过' : '已驳回')
+      toast.success(nextStatus === 'approved' ? '已通过' : '已驳回')
       setShowReviewModal(false)
-      loadRecords()
+      silentNextRecordsLoadRef.current = true
+      setFilterStatus(nextStatus)
+      setSearchKeyword(focusKeyword)
+      setRecords(prev => prev.map(record => (
+        record.id === reviewForm.id ? { ...record, reviewStatus: nextStatus } : record
+      )))
     } catch {
       toast.error('审核失败')
     }
@@ -391,22 +428,38 @@ export default function QuarterlyAdjustment() {
               />
               {createForm.actualAmount > 0 && (
                 <div className="mt-1 text-xs text-gray-500">
-                  调整金额: <span className={createForm.actualAmount - createForm.preProvisionAmount > 0 ? 'text-red-600' : 'text-green-600'}>
-                    {formatCurrency(createForm.actualAmount - createForm.preProvisionAmount)}
+                  调整金额: <span className={createAdjustmentAmount > 0 ? 'text-red-600' : 'text-green-600'}>
+                    {formatCurrency(createAdjustmentAmount)}
                   </span>
                 </div>
               )}
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">调整原因</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">调整原因 <span className="text-red-500">*</span></label>
               <textarea
                 value={createForm.adjustmentReason}
                 onChange={e => setCreateForm(f => ({ ...f, adjustmentReason: e.target.value }))}
-                placeholder="请输入调整原因（选填）"
+                placeholder="请说明实际费用来源、差异原因或财务复核依据"
                 rows={3}
                 className="w-full px-3 py-2 border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500 resize-none"
               />
             </div>
+            <div className="rounded-md border border-emerald-100 bg-emerald-50 px-3 py-3">
+              <div className="text-sm font-semibold text-emerald-900">调整结果确认</div>
+              <div className="mt-1 text-xs text-emerald-700">确认后将接住：{createDownstreamFacts}</div>
+              <div className="mt-3 grid grid-cols-1 gap-2 text-xs text-emerald-700 sm:grid-cols-2">
+                <div>成本中心 {createForm.costCenterName || '待选择'}</div>
+                <div>预提金额 {formatCurrency(createForm.preProvisionAmount)}</div>
+                <div>实际金额 {formatCurrency(createForm.actualAmount || 0)}</div>
+                <div>调整金额 {formatCurrency(createAdjustmentAmount)}</div>
+                <div className="sm:col-span-2">调整原因 {createForm.adjustmentReason.trim() || '待填写'}</div>
+              </div>
+            </div>
+            {createValidationMessage ? (
+              <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900">
+                {createValidationMessage}
+              </div>
+            ) : null}
             <div className="flex justify-end gap-3 pt-2">
               <button
                 onClick={() => setShowCreateModal(false)}
@@ -416,7 +469,8 @@ export default function QuarterlyAdjustment() {
               </button>
               <button
                 onClick={handleSubmitCreate}
-                className="h-10 px-4 text-sm text-white bg-blue-500 rounded-md hover:bg-blue-600 transition-colors"
+                disabled={!canSubmitCreate}
+                className="h-10 px-4 text-sm text-white bg-blue-500 rounded-md hover:bg-blue-600 transition-colors disabled:cursor-not-allowed disabled:bg-gray-300"
               >
                 提交
               </button>

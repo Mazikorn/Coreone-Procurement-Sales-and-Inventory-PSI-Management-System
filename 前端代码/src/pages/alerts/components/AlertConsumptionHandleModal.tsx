@@ -13,7 +13,17 @@ interface Props {
 
 export function AlertConsumptionHandleModal({ open, alert, form, onClose, onChange, onConfirm }: Props) {
   if (!open || !alert) return null
-  const canConfirm = form.opinion.trim().length > 0
+  const validationMessage = form.opinion.trim().length === 0
+    ? '请填写处理意见，系统才能说明消耗异常判断依据并形成审计记录。'
+    : ''
+  const canConfirm = validationMessage === ''
+  const downstreamFacts = 'BOM、项目消耗、成本差异、预警规则、审计记录'
+  const resultLabels: Record<string, string> = {
+    normal: '标记为正常波动',
+    observe: '关注观察，下季度再评估',
+    optimize: '已核实，需优化流程',
+    adjust_threshold_suggested: '建议调整预警阈值',
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -37,6 +47,26 @@ export function AlertConsumptionHandleModal({ open, alert, form, onClose, onChan
               <div><strong>来源规则：</strong><span className="text-blue-600">{alert.ruleId || '-'}</span></div>
               <div><strong>当前值/阈值：</strong>{alert.currentStock ?? '-'} / {alert.threshold ?? '-'}</div>
               <div><strong>触发说明：</strong>{alert.triggerCondition || alert.message || '-'}</div>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-blue-100 bg-blue-50/60 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <h4 className="text-sm font-semibold text-gray-900">处理前确认</h4>
+              <div className="text-xs text-blue-700">确认后将接住：{downstreamFacts}</div>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              {[
+                { label: '项目', value: alert.projectName || '-' },
+                { label: '来源规则', value: alert.ruleId || '-' },
+                { label: '当前值/阈值', value: `${alert.currentStock ?? '-'} / ${alert.threshold ?? '-'}` },
+                { label: '处理结论', value: resultLabels[form.result] || '待选择' },
+              ].map((item) => (
+                <div key={item.label} className="min-w-0">
+                  <div className="text-xs text-gray-500">{item.label}</div>
+                  <div className="mt-0.5 truncate text-sm font-medium text-gray-900">{item.value}</div>
+                </div>
+              ))}
             </div>
           </div>
 
@@ -78,6 +108,11 @@ export function AlertConsumptionHandleModal({ open, alert, form, onClose, onChan
                 ))}
               </div>
             </div>
+            {validationMessage ? (
+              <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                {validationMessage}
+              </div>
+            ) : null}
           </div>
         </div>
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50">

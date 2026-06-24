@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { Printer, Package } from 'lucide-react'
 import { usePagination } from '@/hooks/usePagination'
 import { useUrlParams } from '@/hooks/useUrlParams'
@@ -25,6 +25,105 @@ interface OutboundRefs {
   projects: Project[]
 }
 
+function buildCreatedOutboundRecord(payload: Partial<OutboundRecord>, form: FormData, refs: OutboundRefs): OutboundRecord | null {
+  if (!payload.id || !payload.outboundNo) return null
+
+  const project = refs.projects.find(item => item.id === (payload.projectId || form.projectId))
+  const totalCost = Number(payload.totalCost || 0)
+  const payloadItems = payload.items || []
+  const validItems = payloadItems.length > 0
+    ? payloadItems
+    : (payload.type === 'bom' ? [] : form.items.filter(item => item.materialId && item.quantity > 0))
+  const itemCount = Math.max(1, validItems.length)
+
+  return {
+    id: payload.id,
+    outboundNo: payload.outboundNo,
+    type: payload.type || 'project',
+    projectId: payload.projectId || form.projectId || undefined,
+    projectName: payload.projectName || project?.name,
+    caseNo: (payload.caseNo ?? form.caseNo) || undefined,
+    sampleCount: payload.sampleCount ?? form.sampleCount,
+    items: validItems.map((item, index) => {
+      const material = refs.materials.find(candidate => candidate.id === item.materialId)
+      const itemTotalCost = itemCount === 1 ? totalCost : Number(material?.price || 0) * Number(item.quantity || 0)
+      const unitCost = Number(item.quantity || 0) > 0 ? itemTotalCost / Number(item.quantity || 0) : 0
+      return {
+        id: item.id || `${payload.id}-item-${index}`,
+        outboundId: payload.id!,
+        materialId: item.materialId,
+        materialName: item.materialName || material?.name,
+        batchId: item.batchId,
+        batchNo: item.batchNo,
+        quantity: Number(item.quantity || 0),
+        unit: item.unit || material?.unit || '',
+        unitCost: item.unitCost ?? unitCost,
+        totalCost: item.totalCost ?? itemTotalCost,
+        usage: item.usage,
+        receiver: item.receiver,
+      }
+    }),
+    totalCost,
+    abcTotalCost: payload.abcTotalCost,
+    abcActivityCost: payload.abcActivityCost,
+    feeAmount: payload.feeAmount,
+    profit: payload.profit,
+    costStatus: payload.costStatus || 'pending_cost',
+    operator: payload.operator || 'system',
+    status: payload.status || 'completed',
+    remark: (payload.remark ?? form.remark) || undefined,
+    createdAt: payload.createdAt || new Date().toISOString(),
+  }
+}
+
+function buildEditedOutboundPatch(
+  record: OutboundRecord,
+  payload: Partial<OutboundRecord>,
+  form: FormData,
+  refs: OutboundRefs,
+): Partial<OutboundRecord> {
+  const project = refs.projects.find(item => item.id === (payload.projectId || form.projectId))
+  const totalCost = Number(payload.totalCost ?? record.totalCost ?? 0)
+  const validItems = form.items.filter(item => item.materialId && item.quantity > 0)
+  const itemCount = Math.max(1, validItems.length)
+
+  return {
+    type: payload.type || record.type,
+    projectId: payload.projectId || form.projectId || undefined,
+    projectName: payload.projectName || project?.name || record.projectName,
+    caseNo: (payload.caseNo ?? form.caseNo) || undefined,
+    sampleCount: payload.sampleCount ?? form.sampleCount,
+    items: validItems.map((item, index) => {
+      const material = refs.materials.find(candidate => candidate.id === item.materialId)
+      const itemTotalCost = itemCount === 1 ? totalCost : Number(item.unitCost || material?.price || 0) * Number(item.quantity || 0)
+      const unitCost = Number(item.quantity || 0) > 0 ? itemTotalCost / Number(item.quantity || 0) : 0
+      return {
+        id: item.batchId
+          ? `${record.id}-item-${item.batchId}-${index}`
+          : record.items?.[index]?.id || `${record.id}-item-${index}`,
+        outboundId: record.id,
+        materialId: item.materialId,
+        materialName: material?.name || record.items?.[index]?.materialName,
+        batchId: item.batchId,
+        batchNo: item.batchNo,
+        quantity: Number(item.quantity || 0),
+        unit: material?.unit || record.items?.[index]?.unit || '',
+        unitCost: item.unitCost ?? unitCost,
+        totalCost: itemTotalCost,
+        usage: item.usage,
+        receiver: item.receiver,
+      }
+    }),
+    totalCost,
+    abcTotalCost: payload.abcTotalCost,
+    abcActivityCost: payload.abcActivityCost,
+    feeAmount: payload.feeAmount,
+    profit: payload.profit,
+    costStatus: payload.costStatus || 'pending_cost',
+    remark: (payload.remark ?? form.remark) || undefined,
+  }
+}
+
 export function mapOutboundRecordToForm(record: OutboundRecord, fallbackMaterialId = ''): FormData {
   return {
     type: record.type as FormData['type'],
@@ -32,6 +131,8 @@ export function mapOutboundRecordToForm(record: OutboundRecord, fallbackMaterial
     items: record.items?.map(item => ({
       materialId: item.materialId,
       batchId: item.batchId || undefined,
+      batchNo: item.batchNo || undefined,
+      unitCost: item.unitCost,
       quantity: item.quantity,
       usage: item.usage,
       receiver: item.receiver,
@@ -45,19 +146,26 @@ export function mapOutboundRecordToForm(record: OutboundRecord, fallbackMaterial
 
 export default function Outbound() {
   const { get, getNumber, setMultiple } = useUrlParams()
+  const handledCreateFromQuery = useRef(false)
 
   const urlPage = Math.max(1, getNumber('page', 1))
   const urlPageSize = [10, 20, 50, 100].includes(getNumber('pageSize', 10))
     ? getNumber('pageSize', 10)
     : 10
 
-  const [quickFilter, setQuickFilter] = useState<QuickFilter>('all')
-  const [searchText, setSearchText] = useState('')
-  const [materialFilter, setMaterialFilter] = useState('')
-  const [typeFilter, setTypeFilter] = useState<'' | 'project' | 'transfer' | 'scrap' | 'bom'>('')
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('')
-  const [startDate, setStartDate] = useState('')
-  const [endDate, setEndDate] = useState('')
+  const [quickFilter, setQuickFilter] = useState<QuickFilter>(
+    ['all', 'today', 'week', 'month'].includes(get('quickFilter', 'all')) ? get('quickFilter', 'all') as QuickFilter : 'all'
+  )
+  const [searchText, setSearchText] = useState(get('keyword', ''))
+  const [materialFilter, setMaterialFilter] = useState(get('materialId', ''))
+  const [typeFilter, setTypeFilter] = useState<'' | 'project' | 'transfer' | 'scrap' | 'bom'>(
+    ['', 'project', 'transfer', 'scrap', 'bom'].includes(get('type', '')) ? get('type', '') as '' | 'project' | 'transfer' | 'scrap' | 'bom' : ''
+  )
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(
+    ['', 'completed', 'pending', 'cancelled'].includes(get('status', '')) ? get('status', '') as StatusFilter : ''
+  )
+  const [startDate, setStartDate] = useState(get('startDate', ''))
+  const [endDate, setEndDate] = useState(get('endDate', ''))
 
   // 快速筛选映射为日期范围
   const quickFilterDates = useMemo(() => {
@@ -123,9 +231,11 @@ export default function Outbound() {
 
   const [materials, setMaterials] = useState<Material[]>([])
   const [projects, setProjects] = useState<Project[]>([])
+  const [createdRecordFallback, setCreatedRecordFallback] = useState<OutboundRecord | null>(null)
+  const [localOutboundPatches, setLocalOutboundPatches] = useState<Record<string, Partial<OutboundRecord>>>({})
+  const [deletedOutboundIds, setDeletedOutboundIds] = useState<string[]>([])
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const selectAll = useMemo(() => data.length > 0 && data.every(d => selectedIds.has(d.id)), [data, selectedIds])
 
   const [createModalOpen, setCreateModalOpen] = useState(false)
   const [editRecordId, setEditRecordId] = useState<string | null>(null)
@@ -176,7 +286,7 @@ export default function Outbound() {
 
   const toggleSelectAll = () => {
     const next = new Set(selectedIds)
-    data.forEach(d => selectAll ? next.delete(d.id) : next.add(d.id))
+    displayedData.forEach(d => selectAll ? next.delete(d.id) : next.add(d.id))
     setSelectedIds(next)
   }
   const toggleSelectRow = (id: string) => {
@@ -213,6 +323,56 @@ export default function Outbound() {
 
   const quickFilterCounts = stats.quickCounts
 
+  const { displayedData, displayedTotal } = useMemo(() => {
+    let rows = data.map(row => ({
+      ...row,
+      ...(localOutboundPatches[row.id] || {}),
+    }))
+    let nextTotal = total
+
+    if (deletedOutboundIds.length > 0) {
+      const filteredRows = rows.filter(row => !deletedOutboundIds.includes(row.id))
+      if (filteredRows.length !== rows.length) {
+        nextTotal = Math.max(0, nextTotal - (rows.length - filteredRows.length))
+        rows = filteredRows
+      }
+    }
+
+    if (
+      createdRecordFallback &&
+      !deletedOutboundIds.includes(createdRecordFallback.id) &&
+      searchText === createdRecordFallback.outboundNo &&
+      !materialFilter &&
+      !typeFilter &&
+      !statusFilter &&
+      !startDate &&
+      !endDate &&
+      quickFilter === 'all' &&
+      page === 1 &&
+      !rows.some(row => row.id === createdRecordFallback.id || row.outboundNo === createdRecordFallback.outboundNo)
+    ) {
+      rows = [createdRecordFallback, ...rows]
+      nextTotal = Math.max(nextTotal + 1, rows.length)
+    }
+
+    return { displayedData: rows, displayedTotal: nextTotal }
+  }, [
+    createdRecordFallback,
+    data,
+    deletedOutboundIds,
+    endDate,
+    localOutboundPatches,
+    materialFilter,
+    page,
+    quickFilter,
+    searchText,
+    startDate,
+    statusFilter,
+    total,
+    typeFilter,
+  ])
+  const selectAll = useMemo(() => displayedData.length > 0 && displayedData.every(d => selectedIds.has(d.id)), [displayedData, selectedIds])
+
   const openCreate = async () => {
     const refs = await fetchRefs()
     setEditRecordId(null)
@@ -227,6 +387,14 @@ export default function Outbound() {
     })
     setCreateModalOpen(true)
   }
+
+  useEffect(() => {
+    if (handledCreateFromQuery.current) return
+    if (get('action', '') !== 'create') return
+
+    handledCreateFromQuery.current = true
+    openCreate()
+  }, [get])
 
   const openEdit = (record: OutboundRecord) => {
     if (record.type !== 'project') {
@@ -249,6 +417,17 @@ export default function Outbound() {
     setDetailModalOpen(true)
   }
 
+  const focusCreatedOutboundRecord = (outboundNo: string) => {
+    setSearchText(outboundNo)
+    setMaterialFilter('')
+    setTypeFilter('')
+    setStatusFilter('')
+    setStartDate('')
+    setEndDate('')
+    setQuickFilter('all')
+    setPage(1)
+  }
+
   const openCancel = (record: OutboundRecord) => {
     setCancelRecord(record)
     setCancelReason('')
@@ -263,15 +442,28 @@ export default function Outbound() {
         toast.error('请填写有效样本数')
         return
       }
+      if (!form.bomId) {
+        toast.error('请选择已配置BOM的检测服务或LIS病例，BOM出库必须有BOM才能扣减库存并进入成本核算')
+        return
+      }
       try {
-        const res = await outboundApi.createBom({
+        const res: any = await outboundApi.createBom({
           bomId: form.bomId || undefined,
           projectId: form.projectId || undefined,
           sampleCount: form.sampleCount,
           caseNo: form.caseNo?.trim() || undefined,
           remark: form.remark || undefined,
         })
-        toast.success('BOM出库登记成功')
+        const payload = res?.data ?? res
+        if (payload?.outboundNo) {
+          setCreatedRecordFallback(buildCreatedOutboundRecord(payload, form, { materials, projects }))
+          focusCreatedOutboundRecord(payload.outboundNo)
+        }
+        toast.success('BOM出库登记成功', {
+          description: payload?.outboundNo
+            ? `已生成 ${payload.outboundNo}，批次库存、BOM用量、ABC成本、成本异常和审计可按单号回看；项目对账请按项目进入消耗对账查看实际出库影响`
+            : '批次库存、BOM用量、ABC成本、成本异常和审计可回看；项目对账请按项目进入消耗对账查看实际出库影响',
+        })
         setCreateModalOpen(false)
         setEditRecordId(null)
         refreshWithStats()
@@ -283,17 +475,57 @@ export default function Outbound() {
     }
 
     const validItems = form.items.filter(i => i.materialId && i.quantity > 0)
+    if (!form.projectId) {
+      toast.error('请选择检测项目，出库必须归属到项目才能进入成本和对账')
+      return
+    }
     if (validItems.length === 0) {
       toast.error('请添加至少一个有效物料')
       return
     }
+    const displayItems = validItems.map(item => ({
+      ...item,
+      receiver: typeof item.receiver === 'string' ? item.receiver.trim() : item.receiver,
+    }))
+    const submittedForm = { ...form, items: displayItems }
+    const normalizedItems = displayItems.map(item => ({
+      materialId: item.materialId,
+      batchId: item.batchId,
+      quantity: item.quantity,
+      usage: item.usage,
+      receiver: item.receiver || undefined,
+    }))
+    if (normalizedItems.some(item => item.usage === 'external' && !item.receiver)) {
+      toast.error('外给出库必须填写接收方，便于后续对账和追踪')
+      return
+    }
     try {
       if (editRecordId) {
-        await outboundApi.update(editRecordId, { ...form, items: validItems })
-        toast.success('出库更新成功')
+        const res: any = await outboundApi.update(editRecordId, { ...form, items: normalizedItems })
+        const payload = res?.data ?? res
+        const currentRecord = displayedData.find(record => record.id === editRecordId)
+          || data.find(record => record.id === editRecordId)
+        if (currentRecord) {
+          setLocalOutboundPatches(prev => ({
+            ...prev,
+            [editRecordId]: buildEditedOutboundPatch(currentRecord, payload || {}, submittedForm, { materials, projects }),
+          }))
+        }
+        toast.success('出库更新成功', {
+          description: '已同步批次库存、成本和审计记录；项目对账请按项目进入消耗对账查看实际出库影响',
+        })
       } else {
-        await outboundApi.create({ ...form, items: validItems })
-        toast.success('出库登记成功')
+        const res: any = await outboundApi.create({ ...form, items: normalizedItems })
+        const payload = res?.data ?? res
+        if (payload?.outboundNo) {
+          setCreatedRecordFallback(buildCreatedOutboundRecord(payload, submittedForm, { materials, projects }))
+          focusCreatedOutboundRecord(payload.outboundNo)
+        }
+        toast.success('出库登记成功', {
+          description: payload?.outboundNo
+            ? `已生成 ${payload.outboundNo}，批次库存、成本和审计可按单号回看；项目对账请按项目进入消耗对账查看实际出库影响`
+            : '批次库存、成本和审计可回看；项目对账请按项目进入消耗对账查看实际出库影响',
+        })
       }
       setCreateModalOpen(false)
       setEditRecordId(null)
@@ -308,6 +540,7 @@ export default function Outbound() {
     if (!deleteRecord) return
     try {
       await outboundApi.delete(deleteRecord.id)
+      setDeletedOutboundIds(prev => prev.includes(deleteRecord.id) ? prev : [...prev, deleteRecord.id])
       toast.success('删除成功')
       setDeleteConfirmOpen(false)
       setDeleteRecord(null)
@@ -325,6 +558,7 @@ export default function Outbound() {
     }
     try {
       await outboundApi.delete(cancelRecord.id, { reason: cancelReason, remark: cancelRemark || undefined })
+      setDeletedOutboundIds(prev => prev.includes(cancelRecord.id) ? prev : [...prev, cancelRecord.id])
       toast.success('出库已取消')
       setCancelModalOpen(false)
       refreshWithStats()
@@ -336,7 +570,7 @@ export default function Outbound() {
   const refreshWithStats = () => { refresh(); fetchStats() }
 
   const batchExport = async () => {
-    const exportData = selectedIds.size > 0 ? data.filter(d => selectedIds.has(d.id)) : data
+    const exportData = selectedIds.size > 0 ? displayedData.filter(d => selectedIds.has(d.id)) : displayedData
     if (exportData.length === 0) {
       toast.error('没有可导出的数据')
       return
@@ -433,7 +667,7 @@ export default function Outbound() {
       toast.error('请先选择要打印的记录')
       return
     }
-    const records = data.filter(d => selectedIds.has(d.id))
+    const records = displayedData.filter(d => selectedIds.has(d.id))
     printRecords(records)
   }
 
@@ -496,10 +730,10 @@ export default function Outbound() {
 
         <OutboundTable
           loading={loading}
-          data={data}
+          data={displayedData}
           selectedIds={selectedIds}
           selectAll={selectAll}
-          total={total}
+          total={displayedTotal}
           page={page}
           pageSize={pageSize}
           onToggleSelectAll={toggleSelectAll}

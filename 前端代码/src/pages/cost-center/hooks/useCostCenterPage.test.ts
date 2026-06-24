@@ -151,6 +151,51 @@ describe('useCostCenterPage', () => {
     expect(toast.error).toHaveBeenCalledWith('停用成本中心不可录入分摊')
   })
 
+  it('keeps a newly recorded allocation visible when the follow-up allocation refresh fails', async () => {
+    const { result } = renderHook(() => useCostCenterPage())
+    const createdAllocation = {
+      id: 'alloc-created',
+      yearMonth: '2026-06',
+      totalAmount: 1200,
+      allocationBaseValue: 300,
+      allocationRate: 4,
+    }
+    await waitFor(() => expect(indirectCostApi.getList).toHaveBeenCalled())
+    vi.mocked(indirectCostApi.getAllocations)
+      .mockResolvedValueOnce({ list: [] } as any)
+      .mockRejectedValueOnce(new Error('refresh failed'))
+    vi.mocked(indirectCostApi.recordAllocation).mockResolvedValueOnce({
+      ...createdAllocation,
+      rate: 4,
+    } as any)
+
+    await act(async () => {
+      await result.current.openAllocation(mockCenter as any)
+    })
+    act(() => {
+      result.current.setAllocationForm({
+        yearMonth: '2026-06',
+        totalAmount: 1200,
+        allocationBaseValue: 300,
+      })
+    })
+
+    await act(async () => {
+      await result.current.handleAllocationSubmit()
+    })
+
+    expect(indirectCostApi.recordAllocation).toHaveBeenCalledWith(mockCenter.id, {
+      yearMonth: '2026-06',
+      totalAmount: 1200,
+      allocationBaseValue: 300,
+    })
+    expect(result.current.allocations).toEqual(expect.arrayContaining([
+      expect.objectContaining(createdAllocation),
+    ]))
+    expect(toast.success).toHaveBeenCalledWith('分摊录入成功，单位分摊率：¥4.0000')
+    expect(toast.error).not.toHaveBeenCalledWith('分摊录入失败')
+  })
+
   it('shows the backend delete protection reason when deletion fails', async () => {
     const { result } = renderHook(() => useCostCenterPage())
     const reason = '成本中心已有 1 条分摊记录，不可删除'
@@ -243,5 +288,141 @@ describe('useCostCenterPage', () => {
     })))
     expect(result.current.keyword).toBe('IDC-DEEP-001')
     expect(result.current.searchInput).toBe('IDC-DEEP-001')
+  })
+
+  it('focuses the newly created indirect cost center so allocation users can confirm the cost source', async () => {
+    window.history.replaceState(null, '', '/indirect-costs?keyword=old-cost-center')
+    vi.mocked(indirectCostApi.create).mockResolvedValue({
+      id: 'cc-created',
+      code: 'IDC-CREATED-001',
+      name: '新建管理费用中心',
+    } as any)
+
+    const { result } = renderHook(() => useCostCenterPage())
+    await waitFor(() => expect(indirectCostApi.getList).toHaveBeenCalled())
+
+    act(() => {
+      result.current.handleStatusChange('inactive')
+      result.current.openCreate()
+      result.current.setForm({
+        code: 'IDC-DRAFT-001',
+        name: '新建管理费用中心',
+        costType: 'admin',
+        monthlyAmount: 3600,
+        allocationBase: 'sample_count',
+        description: '用于月度间接成本分摊',
+        status: 'active',
+      })
+    })
+
+    await act(async () => {
+      await result.current.handleSubmit()
+    })
+
+    expect(indirectCostApi.create).toHaveBeenCalledWith(expect.objectContaining({
+      code: 'IDC-DRAFT-001',
+      name: '新建管理费用中心',
+      costType: 'admin',
+      monthlyAmount: 3600,
+      allocationBase: 'sample_count',
+      description: '用于月度间接成本分摊',
+      status: 'active',
+    }))
+    expect(result.current.keyword).toBe('IDC-CREATED-001')
+    expect(result.current.searchInput).toBe('IDC-CREATED-001')
+    expect(result.current.filterStatus).toBe('')
+    await waitFor(() => expect(indirectCostApi.getList).toHaveBeenCalledWith(expect.objectContaining({
+      page: 1,
+      pageSize: 20,
+      keyword: 'IDC-CREATED-001',
+    })))
+  })
+
+  it('keeps the newly created indirect cost center visible when the follow-up list refresh fails', async () => {
+    vi.mocked(indirectCostApi.getList)
+      .mockResolvedValueOnce({ list: [], pagination: { page: 1, pageSize: 20, total: 0 } } as any)
+      .mockRejectedValueOnce(new Error('refresh failed'))
+    vi.mocked(indirectCostApi.create).mockResolvedValueOnce({
+      id: 'cc-visible',
+      code: 'IDC-VISIBLE-001',
+      name: '新建信息化费用中心',
+      costType: 'it',
+      monthlyAmount: 4200,
+      allocationBase: 'sample_count',
+      description: '用于成本结账分摊',
+      status: 'active',
+    } as any)
+
+    const { result } = renderHook(() => useCostCenterPage())
+    await waitFor(() => expect(indirectCostApi.getList).toHaveBeenCalled())
+
+    act(() => {
+      result.current.openCreate()
+      result.current.setForm({
+        code: 'IDC-DRAFT-VISIBLE',
+        name: '新建信息化费用中心',
+        costType: 'it',
+        monthlyAmount: 4200,
+        allocationBase: 'sample_count',
+        description: '用于成本结账分摊',
+        status: 'active',
+      })
+    })
+
+    await act(async () => {
+      await result.current.handleSubmit()
+    })
+
+    expect(result.current.keyword).toBe('IDC-VISIBLE-001')
+    expect(result.current.data).toEqual([
+      expect.objectContaining({
+        id: 'cc-visible',
+        code: 'IDC-VISIBLE-001',
+        name: '新建信息化费用中心',
+        costType: 'it',
+        monthlyAmount: 4200,
+        allocationBase: 'sample_count',
+        description: '用于成本结账分摊',
+        status: 'active',
+      }),
+    ])
+    expect(result.current.total).toBe(1)
+  })
+
+  it('removes a deleted indirect cost center from the current list when the follow-up refresh fails', async () => {
+    const keptCenter = {
+      ...mockCenter,
+      id: 'cc-kept',
+      code: 'IDC-KEPT-001',
+      name: '保留管理费用',
+    }
+    vi.mocked(indirectCostApi.getList)
+      .mockResolvedValueOnce({
+        list: [mockCenter, keptCenter],
+        pagination: { page: 1, pageSize: 20, total: 2 },
+      } as any)
+      .mockRejectedValueOnce(new Error('delete refresh failed'))
+    vi.mocked(indirectCostApi.delete).mockResolvedValueOnce({ success: true } as any)
+
+    const { result } = renderHook(() => useCostCenterPage())
+    await waitFor(() => expect(result.current.data).toHaveLength(2))
+
+    act(() => {
+      result.current.openDelete(result.current.data[0] as any)
+    })
+
+    await act(async () => {
+      await result.current.handleDelete()
+    })
+
+    expect(indirectCostApi.delete).toHaveBeenCalledWith(mockCenter.id)
+    expect(result.current.data).toEqual([
+      expect.objectContaining({
+        id: 'cc-kept',
+        code: 'IDC-KEPT-001',
+      }),
+    ])
+    expect(result.current.total).toBe(1)
+    expect(result.current.modalType).toBeNull()
   })
 })

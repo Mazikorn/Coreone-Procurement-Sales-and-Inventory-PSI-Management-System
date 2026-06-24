@@ -31,6 +31,13 @@ interface DraftMapping {
   aggregationScope: 'outbound' | 'case'
 }
 
+interface RowQueryOverrides {
+  keyword?: string
+  status?: string
+  page?: number
+  pageSize?: number
+}
+
 const statusLabels: Record<AuditRow['status'], string> = {
   mapped: '已配置',
   legacy: '旧字段',
@@ -51,10 +58,16 @@ function unwrapFeeStandards(payload: any): FeeStandard[] {
   return payload?.list || payload?.items || (Array.isArray(payload) ? payload : [])
 }
 
+function getInitialStatus(search: string) {
+  const status = new URLSearchParams(search).get('status') || ''
+  return status === 'mapped' || status === 'legacy' || status === 'missing' ? status : ''
+}
+
 export default function FeeMappingConfig() {
-  const initialKeyword = new URLSearchParams(window.location.search).get('keyword') || ''
+  const searchParams = new URLSearchParams(window.location.search)
+  const initialKeyword = searchParams.get('keyword') || ''
   const [keyword, setKeyword] = useState(initialKeyword)
-  const [status, setStatus] = useState('')
+  const [status, setStatus] = useState(getInitialStatus(window.location.search))
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
   const [total, setTotal] = useState(0)
@@ -72,14 +85,18 @@ export default function FeeMappingConfig() {
   const [caseNo, setCaseNo] = useState('')
   const [preview, setPreview] = useState<any>(null)
 
-  const loadRows = async () => {
+  const loadRows = async (overrides: RowQueryOverrides = {}) => {
+    const nextKeyword = overrides.keyword ?? keyword
+    const nextStatus = overrides.status ?? status
+    const nextPage = overrides.page ?? page
+    const nextPageSize = overrides.pageSize ?? pageSize
     setLoading(true)
     try {
       const payload = await abcApi.getBomFeeMappingAudit({
-        keyword: keyword.trim() || undefined,
-        status: status || undefined,
-        page,
-        pageSize,
+        keyword: nextKeyword.trim() || undefined,
+        status: nextStatus || undefined,
+        page: nextPage,
+        pageSize: nextPageSize,
       })
       const list = unwrapList(payload)
       setRows(list)
@@ -110,6 +127,24 @@ export default function FeeMappingConfig() {
       label: `${item.name}${item.code ? ` (${item.code})` : ''}`,
     }))
   }, [feeStandards])
+  const mappingPreviewItems = useMemo(() => {
+    return draftMappings.map(mapping => {
+      const feeStandard = feeStandards.find(item => item.id === mapping.feeStandardId)
+      return {
+        feeStandardName: feeStandard
+          ? `${feeStandard.name}${feeStandard.code ? ` (${feeStandard.code})` : ''}`
+          : '待选择收费标准',
+        quantityMultiplier: Number(mapping.quantityMultiplier) || 1,
+        aggregationScopeLabel: mapping.aggregationScope === 'case' ? '按病例' : '按出库单',
+      }
+    })
+  }, [draftMappings, feeStandards])
+  const mappingValidationMessage = draftMappings.some(mapping => !mapping.feeStandardId)
+    ? '请选择收费标准，系统才能把 BOM 接到病例收费和成本对比。'
+    : draftMappings.some(mapping => !Number.isFinite(Number(mapping.quantityMultiplier)) || Number(mapping.quantityMultiplier) <= 0)
+      ? '请填写大于 0 的数量系数，系统才能正确计算病例收费、成本对比和预警。'
+      : ''
+  const canSaveMappings = mappingValidationMessage === '' && !saving
 
   const runAudit = async () => {
     setAuditing(true)
@@ -168,17 +203,21 @@ export default function FeeMappingConfig() {
 
   const saveMappings = async () => {
     if (!editingRow) return
-    const validMappings = draftMappings.filter(item => item.feeStandardId)
-    if (validMappings.length === 0) {
-      toast.warning('至少选择一个收费标准')
+    if (mappingValidationMessage) {
+      toast.warning(mappingValidationMessage)
       return
     }
+    const validMappings = draftMappings.filter(item => item.feeStandardId)
     setSaving(true)
     try {
       await abcApi.updateBomFeeMappings(editingRow.bomId, validMappings)
+      const focusKeyword = String(editingRow.bomCode || editingRow.bomName || '').trim()
       toast.success('收费映射已保存')
+      setKeyword(focusKeyword)
+      setStatus('mapped')
+      setPage(1)
       closeEditor()
-      await loadRows()
+      await loadRows({ keyword: focusKeyword, status: 'mapped', page: 1 })
     } finally {
       setSaving(false)
     }
@@ -481,6 +520,27 @@ export default function FeeMappingConfig() {
                   </div>
                 )}
               </div>
+
+              <div className="rounded-md border border-emerald-100 bg-emerald-50 px-4 py-3">
+                <div className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
+                  <div className="text-sm font-semibold text-emerald-900">收费映射结果确认</div>
+                  <div className="text-xs text-emerald-700">确认后将接住：BOM、收费标准、病例收费、成本对比、异常预警、审计记录</div>
+                </div>
+                <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-emerald-900 md:grid-cols-2">
+                  <div>BOM {editingRow.bomName}</div>
+                  <div>编号 {editingRow.bomCode}</div>
+                  {mappingPreviewItems.map((item, index) => (
+                    <div key={index} className="md:col-span-2">
+                      映射 {item.feeStandardName} × {formatNumber(item.quantityMultiplier, 2).replace(/\.00$/, '')} · {item.aggregationScopeLabel}
+                    </div>
+                  ))}
+                </div>
+              </div>
+              {mappingValidationMessage ? (
+                <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                  {mappingValidationMessage}
+                </div>
+              ) : null}
             </div>
 
             <div className="flex justify-end gap-2 border-t border-gray-200 p-5">
@@ -494,7 +554,7 @@ export default function FeeMappingConfig() {
               <button
                 type="button"
                 onClick={saveMappings}
-                disabled={saving}
+                disabled={!canSaveMappings}
                 className="h-10 rounded-md bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {saving ? '保存中...' : '保存映射'}

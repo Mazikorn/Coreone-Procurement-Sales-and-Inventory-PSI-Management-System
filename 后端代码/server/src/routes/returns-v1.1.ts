@@ -261,10 +261,11 @@ router.post('/', (req, res) => {
       const unitCost = Number(source.unit_cost || 0)
       const totalCost = unitCost * returnQuantity
       const id = uuidv4()
+      const returnNo = generateReturnNo()
       db.prepare(`
         INSERT INTO return_records (id, return_no, outbound_item_id, material_id, batch_id, quantity, unit_cost, total_cost, reason, operator, remark)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(id, generateReturnNo(), normalizedOutboundItemId, source.material_id, source.batch_id || null, returnQuantity, unitCost, totalCost, reason, operator, remark || null)
+      `).run(id, returnNo, normalizedOutboundItemId, source.material_id, source.batch_id || null, returnQuantity, unitCost, totalCost, reason, operator, remark || null)
 
       const inv = db.prepare('SELECT id, stock, location_id FROM inventory WHERE material_id = ?').get(source.material_id) as any
       const beforeStock = Number(inv?.stock || 0)
@@ -299,11 +300,11 @@ router.post('/', (req, res) => {
       checkStockAlerts(db, [source.material_id])
       logOperation(db, req as any, {
         operation: 'POST /returns',
-        description: `创建退库记录 ${id}`,
+        description: `创建退库记录 ${returnNo}`,
         requestData: { outboundItemId: normalizedOutboundItemId, quantity: returnQuantity, reason, remark: remark || null },
-        responseData: { id, materialId: source.material_id, quantity: returnQuantity },
+        responseData: { id, returnNo, materialId: source.material_id, quantity: returnQuantity },
       })
-      success(res, { id }, 'Return created')
+      success(res, { id, returnNo }, 'Return created')
     } catch (e: any) {
       db.exec('ROLLBACK')
       throw e

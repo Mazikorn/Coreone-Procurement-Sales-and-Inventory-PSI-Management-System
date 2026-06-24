@@ -3,7 +3,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { BOMFormModal } from './BOMFormModal'
 import type { BOMForm } from '../hooks/useBOMPage'
-import type { Project } from '@/types'
+import type { Material, Project } from '@/types'
 
 const baseForm: BOMForm = {
   code: 'BOM-SVC',
@@ -33,13 +33,31 @@ const project = (patch: Partial<Project>): Project => ({
   ...patch,
 })
 
-function renderModal(form: BOMForm, projects: Project[]) {
+const material = (patch: Partial<Material>): Material => ({
+  id: 'mat-1',
+  code: 'MAT-001',
+  name: '苏木素',
+  spec: '10ml',
+  unit: 'ml',
+  price: 10,
+  stock: 20,
+  minStock: 0,
+  maxStock: 100,
+  safetyStock: 5,
+  categoryId: 'cat-1',
+  status: 'active',
+  createdAt: '2026-06-19T00:00:00.000Z',
+  updatedAt: '2026-06-19T00:00:00.000Z',
+  ...patch,
+})
+
+function renderModal(form: BOMForm, projects: Project[], materials: Material[] = []) {
   render(
     <BOMFormModal
       open
       type={form.code ? 'edit' : 'create'}
       form={form}
-      allMaterials={[]}
+      allMaterials={materials}
       allProjects={projects}
       onClose={vi.fn()}
       onChange={vi.fn()}
@@ -97,5 +115,36 @@ describe('BOMFormModal service options', () => {
     renderModal({ ...baseForm, supportableSamples: 12 }, [])
 
     expect(screen.getByDisplayValue('12')).toHaveAttribute('readonly')
+  })
+
+  it('summarizes BOM result and downstream chains before saving', () => {
+    renderModal(
+      {
+        ...baseForm,
+        serviceId: 'project-1',
+        materials: [
+          { materialId: 'mat-1', name: '苏木素', spec: '10ml', usagePerSample: 1.5, unit: 'ml' },
+        ],
+        generalReagents: [
+          { materialId: 'mat-2', name: '缓冲液', spec: '100ml', usagePerSample: 0.5, unit: 'ml' },
+        ],
+        qualityControls: [
+          { materialId: 'mat-3', name: '质控片', spec: '片', usagePerBatch: 2, unit: '片', coversSamples: 10 },
+        ],
+      },
+      [project({ id: 'project-1', code: 'PRJ-001', name: '检测服务' })],
+      [
+        material({ id: 'mat-1', price: 10 }),
+        material({ id: 'mat-2', price: 2 }),
+        material({ id: 'mat-3', price: 5, unit: '片' }),
+      ],
+    )
+
+    expect(screen.getByText('BOM结果确认')).toBeInTheDocument()
+    expect(screen.getByText('确认后将接住：BOM、检测服务、自动出库、LIS对账、项目成本、审计记录')).toBeInTheDocument()
+    expect(screen.getByText('关联服务 检测服务')).toBeInTheDocument()
+    expect(screen.getByText('核心物料 1项')).toBeInTheDocument()
+    expect(screen.getByText('扩展项 2项')).toBeInTheDocument()
+    expect(screen.getByText('预估单样本材料成本 ¥17.00')).toBeInTheDocument()
   })
 })

@@ -1,3 +1,4 @@
+import React from 'react'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { MaterialDiff } from '../hooks/useReconciliationPage'
 
@@ -18,6 +19,7 @@ interface Props {
 export function FixBomModal({
   open,
   fixTarget,
+  fixTargetProjectId,
   fixNewUsage,
   setFixNewUsage,
   fixNewUnit,
@@ -28,6 +30,21 @@ export function FixBomModal({
   onConfirm,
 }: Props) {
   if (!open || !fixTarget) return null
+
+  const formatNumber = (value: number) => Number(value || 0).toLocaleString('zh-CN', {
+    maximumFractionDigits: 2,
+  })
+  const hasValidUsage = Number.isFinite(fixNewUsage) && fixNewUsage > 0
+  const validationMessage = !fixTargetProjectId
+    ? '未定位项目，系统无法重新审计项目对账和成本差异，请从项目对账明细重新进入。'
+    : !hasValidUsage
+      ? '修正用量必须大于 0，系统才能重算 BOM 理论消耗。'
+      : !fixNewUnit
+        ? '请选择修正单位，系统才能保持 BOM、出库和对账口径一致。'
+        : !fixReason.trim()
+          ? '请填写修正原因，系统才能解释 BOM 标准变更并形成审计记录。'
+          : ''
+  const canConfirm = validationMessage === ''
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -81,10 +98,36 @@ export function FixBomModal({
           <div className="bg-amber-50 border border-amber-200 rounded-md p-3 text-xs text-amber-800">
             <strong>提示：</strong>修正后，该BOM的历史对账数据将同步更新，差异记录保留在日志中。
           </div>
+          {validationMessage ? (
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              {validationMessage}
+            </div>
+          ) : null}
+          <div className="rounded-md border border-emerald-100 bg-emerald-50 px-4 py-3">
+            <div className="text-sm font-semibold text-emerald-900">BOM修正结果确认</div>
+            <div className="mt-1 text-xs text-emerald-800">
+              确认后将接住：BOM标准、理论消耗、项目对账、成本差异、异常台账、审计记录
+            </div>
+            <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-emerald-900 sm:grid-cols-2">
+              <div>物料 {fixTarget.materialName}</div>
+              <div>当前差异率 {formatNumber(fixTarget.diffRate)}%</div>
+              <div>原用量 {formatNumber(fixTarget.bomUsagePerSample)} {fixTarget.bomUnit}/例</div>
+              <div>修正为 {formatNumber(fixNewUsage)} {fixNewUnit}/例</div>
+              <div className="sm:col-span-2">原因 {fixReason || '待填写'}</div>
+            </div>
+          </div>
         </div>
         <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
           <button onClick={onClose} className="px-4 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50">取消</button>
-          <button onClick={onConfirm} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700">确认修正</button>
+          <button
+            onClick={onConfirm}
+            disabled={!canConfirm}
+            className={`px-4 py-2 text-sm text-white rounded-md ${
+              canConfirm ? 'bg-blue-600 hover:bg-blue-700' : 'cursor-not-allowed bg-gray-300'
+            }`}
+          >
+            确认修正
+          </button>
         </div>
       </div>
     </div>

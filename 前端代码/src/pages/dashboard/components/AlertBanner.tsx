@@ -1,4 +1,5 @@
-import { AlertTriangle, Clock, ChevronRight } from 'lucide-react'
+import React from 'react'
+import { AlertTriangle, ChevronRight } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import type { AlertItem } from '../hooks/useDashboardPage'
 
@@ -17,6 +18,23 @@ const TYPE_LABELS: Record<string, string> = {
   'expired': '已过期',
 }
 
+const ALERT_TYPE_URL: Record<string, string> = {
+  'low-stock': 'stock_low',
+  'expiry': 'expiring',
+  'expired': 'expiring',
+  stagnant: 'consumption_anomaly',
+}
+
+export function buildDashboardAlertUrl(alert: AlertItem) {
+  const params = new URLSearchParams()
+  const keyword = String(alert.materialName || alert.message || alert.id || '').trim()
+  const type = ALERT_TYPE_URL[alert.type]
+  if (keyword) params.set('keyword', keyword)
+  if (type) params.set('type', type)
+  params.set('quick', 'pending')
+  return `/alerts?${params.toString()}`
+}
+
 export function AlertBanner({ alerts }: Props) {
   const navigate = useNavigate()
 
@@ -26,14 +44,17 @@ export function AlertBanner({ alerts }: Props) {
     <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
       {/* 横幅头部 */}
       <div className="flex items-center justify-between px-5 py-3 bg-orange-50 border-b border-orange-100">
-        <div className="flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4 text-orange-500" />
-          <span className="text-sm font-semibold text-gray-900">
-            待处理预警 ({alerts.length})
-          </span>
+        <div className="flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 text-orange-500 mt-0.5" />
+          <div>
+            <span className="text-sm font-semibold text-gray-900">
+              待处理预警 ({alerts.length})
+            </span>
+            <p className="text-xs text-orange-600 mt-0.5">进入后可处理、忽略并回看留痕</p>
+          </div>
         </div>
         <button
-          onClick={() => navigate('/alerts')}
+          onClick={() => navigate('/alerts?quick=pending')}
           className="flex items-center gap-1 text-xs text-blue-500 hover:text-blue-600 font-medium transition-colors"
         >
           查看全部
@@ -51,7 +72,7 @@ export function AlertBanner({ alerts }: Props) {
             <div
               key={alert.id}
               className={`flex items-center gap-3 px-5 py-3 ${style.bg} cursor-pointer hover:brightness-95 transition-all`}
-              onClick={() => navigate('/alerts')}
+              onClick={() => navigate(buildDashboardAlertUrl(alert))}
             >
               <span className={`w-2 h-2 rounded-full flex-shrink-0 ${style.dot}`} />
               <div className="flex-1 min-w-0">

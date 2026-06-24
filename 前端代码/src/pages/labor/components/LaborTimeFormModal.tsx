@@ -25,6 +25,20 @@ export function LaborTimeFormModal({ open, type, form, onClose, onChange, onSubm
   const updateNumber = (key: keyof LaborTimeForm, value: string) => {
     onChange({ ...form, [key]: Number(value) || 0 })
   }
+  const laborCost = Number(form.standardMinutes || 0) * Number(form.laborRatePerMinute || 0)
+  const hasValidStandardMinutes = Number.isFinite(form.standardMinutes) && form.standardMinutes > 0
+  const hasValidRate = Number.isFinite(form.laborRatePerMinute) && form.laborRatePerMinute >= 0
+  const hasValidSortOrder = Number.isFinite(form.sortOrder) && form.sortOrder >= 0
+  const validationMessage = !form.stepCode.trim() || !form.stepName.trim()
+    ? '请填写步骤编号和步骤名称，系统才能把工时定义接到项目成本。'
+    : !hasValidStandardMinutes
+      ? '请填写大于 0 的标准时长，系统才能计算人工成本并参与项目成本重算。'
+      : !hasValidRate
+        ? '请填写大于等于 0 的费率，系统才能计算人工成本。'
+        : !hasValidSortOrder
+          ? '排序必须大于等于 0，系统才能稳定展示工时步骤顺序。'
+          : ''
+  const canSubmit = validationMessage === ''
 
   return (
     <div
@@ -140,6 +154,24 @@ export function LaborTimeFormModal({ open, type, form, onClose, onChange, onSubm
               className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500 resize-none"
             />
           </div>
+
+          <div className="rounded-md border border-emerald-100 bg-emerald-50 px-4 py-3">
+            <div className="text-sm font-semibold text-emerald-900">工时成本确认</div>
+            <div className="mt-1 text-xs text-emerald-800">确认后将接住：工时定义、人工成本、项目成本、成本重算、审计记录</div>
+            <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-emerald-900 sm:grid-cols-3">
+              <div>步骤 {form.stepName || '待填写'}</div>
+              <div>标准时长 {Number(form.standardMinutes || 0)} 分钟</div>
+              <div>费率 ¥{Number(form.laborRatePerMinute || 0).toFixed(2)}/分钟</div>
+              <div>人工成本/次 ¥{laborCost.toFixed(2)}</div>
+              <div>步骤类型 {form.isEquipmentStep ? '设备步骤' : '人工步骤'}</div>
+              <div>参考来源 {sourceOptions.find(item => item.value === form.referenceSource)?.label || '待选择'}</div>
+            </div>
+          </div>
+          {validationMessage ? (
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              {validationMessage}
+            </div>
+          ) : null}
         </div>
 
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200">
@@ -151,7 +183,10 @@ export function LaborTimeFormModal({ open, type, form, onClose, onChange, onSubm
           </button>
           <button
             onClick={onSubmit}
-            className="h-10 px-4 text-sm text-white bg-blue-500 rounded-md hover:bg-blue-600 transition-colors"
+            disabled={!canSubmit}
+            className={`h-10 px-4 text-sm text-white rounded-md transition-colors ${
+              canSubmit ? 'bg-blue-500 hover:bg-blue-600' : 'cursor-not-allowed bg-gray-300'
+            }`}
           >
             保存
           </button>

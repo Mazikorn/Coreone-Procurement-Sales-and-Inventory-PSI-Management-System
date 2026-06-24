@@ -1,4 +1,5 @@
 import { X } from 'lucide-react'
+import React from 'react'
 import type { StocktakingRecord } from '../hooks/useStocktakingPage'
 
 interface Props {
@@ -10,6 +11,7 @@ interface Props {
 
 export function StocktakingDeleteModal({ open, row, onClose, onConfirm }: Props) {
   if (!open || !row) return null
+  const isConfirmed = row.status === 'confirmed'
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
@@ -26,7 +28,17 @@ export function StocktakingDeleteModal({ open, row, onClose, onConfirm }: Props)
           <p className="text-sm text-gray-600">
             确定要撤销盘点记录 <span className="font-mono font-medium">{row.stocktakingNo}</span> 吗？
           </p>
-          <p className="text-sm text-gray-500 mt-2">撤销后库存将自动回滚到盘点前状态。</p>
+          <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
+            <div className="text-sm font-semibold text-amber-900">撤销影响确认</div>
+            <div className="mt-1 space-y-1 text-xs text-amber-800">
+              {isConfirmed ? (
+                <p>撤销后会回退已确认的库存、库位/批次、预警和库存流水。</p>
+              ) : (
+                <p>该盘点尚未确认，撤销只关闭差异记录，不会改动库存、批次、预警或成本。</p>
+              )}
+              <p>审计记录可按单号回看。</p>
+            </div>
+          </div>
         </div>
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200">
           <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-md border border-gray-300 transition-colors">

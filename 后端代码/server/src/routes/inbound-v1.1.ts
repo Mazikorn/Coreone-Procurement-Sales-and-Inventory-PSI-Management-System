@@ -503,8 +503,29 @@ router.post('/batch', requireWriteAccess, (req, res) => {
 router.post('/', requireWriteAccess, (req, res) => {
   try {
     const { type, materialId, batchNo, quantity, price, supplierId, locationId, purchaseOrderId, productionDate, expiryDate, remark } = req.body
-    if (!type || !materialId || quantity === undefined || quantity === null || !locationId) {
+    const typeText = String(type || '').trim()
+    const materialIdText = String(materialId || '').trim()
+    const batchNoText = String(batchNo || '').trim()
+    const supplierIdText = String(supplierId || '').trim()
+    const locationIdText = String(locationId || '').trim()
+    const purchaseOrderIdText = String(purchaseOrderId || '').trim()
+    const productionDateText = normalizeOptionalDate(productionDate)
+    const expiryDateText = normalizeOptionalDate(expiryDate)
+
+    if (!typeText || !materialIdText || quantity === undefined || quantity === null || !locationIdText) {
       error(res, '缺少必填字段', 'INVALID_PARAMETER', 400); return
+    }
+    if (!batchNoText) {
+      error(res, '批号必填，入库必须形成可追踪批次', 'INVALID_PARAMETER', 400); return
+    }
+    if (!expiryDateText || !isValidDateText(expiryDateText)) {
+      error(res, '有效期必填且必须为 YYYY-MM-DD', 'INVALID_PARAMETER', 400); return
+    }
+    if (productionDateText && !isValidDateText(productionDateText)) {
+      error(res, '生产日期必须为 YYYY-MM-DD', 'INVALID_PARAMETER', 400); return
+    }
+    if (typeText === 'purchase' && !purchaseOrderIdText) {
+      error(res, '采购入库必须关联采购订单', 'INVALID_PARAMETER', 400); return
     }
 
     const db = getDatabase()
@@ -514,7 +535,7 @@ router.post('/', requireWriteAccess, (req, res) => {
     const inboundQuantity = Number(quantity)
     const hasExplicitPrice = price !== undefined && price !== null && price !== ''
     let inboundPrice = hasExplicitPrice ? Number(price) : 0
-    let effectiveSupplierId = supplierId || null
+    let effectiveSupplierId = supplierIdText || null
 
     if (!Number.isFinite(inboundQuantity) || inboundQuantity <= 0) {
       error(res, '入库数量必须大于 0', 'INVALID_PARAMETER', 400)
@@ -526,26 +547,26 @@ router.post('/', requireWriteAccess, (req, res) => {
       return
     }
 
-    const refValidation = validateInboundReferences(db, { materialId, supplierId, locationId })
+    const refValidation = validateInboundReferences(db, { materialId: materialIdText, supplierId: supplierIdText, locationId: locationIdText })
     if (!refValidation.ok) {
       error(res, refValidation.message, refValidation.code, refValidation.status)
       return
     }
 
-    const material = db.prepare('SELECT unit FROM materials WHERE id = ? AND status = 1 AND is_deleted = 0').get(materialId) as any
+    const material = db.prepare('SELECT unit FROM materials WHERE id = ? AND status = 1 AND is_deleted = 0').get(materialIdText) as any
     if (!material) { error(res, '物料不存在或已停用', 'NOT_FOUND', 404); return }
 
     const unit = material.unit
 
     // 查询采购订单信息
     let purchaseOrderNo: string | null = null
-    if (purchaseOrderId) {
-      if (type !== 'purchase') {
+    if (purchaseOrderIdText) {
+      if (typeText !== 'purchase') {
         error(res, '关联采购订单的入库类型必须为采购入库', 'INVALID_PARAMETER', 400)
         return
       }
 
-      const po = db.prepare('SELECT * FROM purchase_orders WHERE id = ? AND is_deleted = 0').get(purchaseOrderId) as any
+      const po = db.prepare('SELECT * FROM purchase_orders WHERE id = ? AND is_deleted = 0').get(purchaseOrderIdText) as any
       if (!po) {
         error(res, '采购订单不存在', 'NOT_FOUND', 404)
         return
@@ -559,14 +580,14 @@ router.post('/', requireWriteAccess, (req, res) => {
         return
       }
       const poMaterialId = String(po.material_id || '').trim()
-      const inboundMaterialId = String(materialId || '').trim()
+      const inboundMaterialId = materialIdText
       if (poMaterialId !== inboundMaterialId) {
         error(res, '采购订单物料不一致，不能用其他物料入库', 'INVALID_PARAMETER', 400)
         return
       }
 
       const poSupplierId = String(po.supplier_id || '').trim()
-      const inboundSupplierId = String(supplierId || '').trim()
+      const inboundSupplierId = supplierIdText
       if (poSupplierId && !inboundSupplierId) {
         error(res, '采购订单供应商不一致，采购入库必须使用订单供应商', 'INVALID_PARAMETER', 400)
         return
@@ -592,9 +613,9 @@ router.post('/', requireWriteAccess, (req, res) => {
       purchaseOrderNo = po.order_no
     }
 
-    if (batchNo) {
+    if (batchNoText) {
       const existingBatch = db.prepare('SELECT inbound_price, supplier_id FROM batches WHERE material_id = ? AND batch_no = ?')
-        .get(materialId, batchNo) as any
+        .get(materialIdText, batchNoText) as any
       const batchValidation = validateBatchCostSource(existingBatch, inboundPrice, effectiveSupplierId)
       if (!batchValidation.ok) {
         error(res, batchValidation.message, 'BATCH_COST_SOURCE_CONFLICT', 409)
@@ -610,11 +631,11 @@ router.post('/', requireWriteAccess, (req, res) => {
       db.prepare(`
         INSERT INTO inbound_records (id, inbound_no, type, material_id, batch_no, quantity, unit, price, amount, supplier_id, location_id, production_date, expiry_date, operator, status, remark, purchase_order_id, purchase_order_no)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?, ?, ?)
-      `).run(id, inboundNo, type, materialId, batchNo || null, inboundQuantity, unit, inboundPrice, amount, effectiveSupplierId, locationId, productionDate || null, expiryDate || null, operator, remark || null, purchaseOrderId || null, purchaseOrderNo)
+      `).run(id, inboundNo, typeText, materialIdText, batchNoText, inboundQuantity, unit, inboundPrice, amount, effectiveSupplierId, locationIdText, productionDateText || null, expiryDateText, operator, remark || null, purchaseOrderIdText || null, purchaseOrderNo)
 
-      if (batchNo) {
+      if (batchNoText) {
         // 先查询所有状态的批次（UNIQUE 约束是 (material_id, batch_no)，不区分 status）
-        const existingBatch = db.prepare('SELECT * FROM batches WHERE material_id = ? AND batch_no = ?').get(materialId, batchNo) as any
+        const existingBatch = db.prepare('SELECT * FROM batches WHERE material_id = ? AND batch_no = ?').get(materialIdText, batchNoText) as any
         if (existingBatch) {
           if (existingBatch.status === 0) {
             // 恢复已停用批次
@@ -625,47 +646,47 @@ router.post('/', requireWriteAccess, (req, res) => {
             db.prepare('UPDATE batches SET quantity = quantity + ?, remaining = remaining + ? WHERE id = ?')
               .run(inboundQuantity, inboundQuantity, existingBatch.id)
           }
-          adjustBatchLocationStock(db, existingBatch.id, materialId, locationId, inboundQuantity, { relatedType: 'inbound', relatedId: id, operator })
+          adjustBatchLocationStock(db, existingBatch.id, materialIdText, locationIdText, inboundQuantity, { relatedType: 'inbound', relatedId: id, operator })
         } else {
           const batchId = uuidv4()
           db.prepare(`
             INSERT INTO batches (id, material_id, batch_no, quantity, remaining, production_date, expiry_date, inbound_id, inbound_price, supplier_id, status)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-          `).run(batchId, materialId, batchNo, inboundQuantity, inboundQuantity, productionDate || null, expiryDate || null, id, inboundPrice, effectiveSupplierId)
-          adjustBatchLocationStock(db, batchId, materialId, locationId, inboundQuantity, { relatedType: 'inbound', relatedId: id, operator })
+          `).run(batchId, materialIdText, batchNoText, inboundQuantity, inboundQuantity, productionDateText || null, expiryDateText, id, inboundPrice, effectiveSupplierId)
+          adjustBatchLocationStock(db, batchId, materialIdText, locationIdText, inboundQuantity, { relatedType: 'inbound', relatedId: id, operator })
         }
       }
 
       // 更新采购订单收货数量
-      if (purchaseOrderId) {
-        const order = db.prepare('SELECT * FROM purchase_orders WHERE id = ? AND is_deleted = 0').get(purchaseOrderId) as any
+      if (purchaseOrderIdText) {
+        const order = db.prepare('SELECT * FROM purchase_orders WHERE id = ? AND is_deleted = 0').get(purchaseOrderIdText) as any
         if (order) {
           const newReceived = Number(order.received_qty) + inboundQuantity
           const orderedQty = Number(order.ordered_qty)
           const poStatus = newReceived >= orderedQty ? 'completed' : 'partial'
           db.prepare('UPDATE purchase_orders SET received_qty = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-            .run(newReceived, poStatus, purchaseOrderId)
+            .run(newReceived, poStatus, purchaseOrderIdText)
         }
       }
 
-      const existingInv = db.prepare('SELECT * FROM inventory WHERE material_id = ?').get(materialId) as any
+      const existingInv = db.prepare('SELECT * FROM inventory WHERE material_id = ?').get(materialIdText) as any
       if (existingInv) {
         db.prepare("UPDATE inventory SET stock = stock + ?, location_id = ?, last_inbound_id = ?, last_inbound_date = date('now','localtime'), update_time = CURRENT_TIMESTAMP WHERE material_id = ?")
-          .run(inboundQuantity, locationId, id, materialId)
+          .run(inboundQuantity, locationIdText, id, materialIdText)
       } else {
         db.prepare(`
           INSERT INTO inventory (id, material_id, stock, locked_stock, location_id, last_inbound_id, last_inbound_date, update_time)
           VALUES (?, ?, ?, 0, ?, ?, date('now','localtime'), CURRENT_TIMESTAMP)
-        `).run(uuidv4(), materialId, inboundQuantity, locationId, id)
+        `).run(uuidv4(), materialIdText, inboundQuantity, locationIdText, id)
       }
-      adjustInventoryLocationStock(db, materialId, locationId, inboundQuantity)
-      syncInventoryPrimaryLocation(db, materialId)
+      adjustInventoryLocationStock(db, materialIdText, locationIdText, inboundQuantity)
+      syncInventoryPrimaryLocation(db, materialIdText)
 
       const logId = uuidv4()
       db.prepare(`
         INSERT INTO stock_logs (id, type, material_id, quantity, before_stock, after_stock, related_id, related_type, operator)
         VALUES (?, 'inbound', ?, ?, COALESCE((SELECT stock FROM inventory WHERE material_id = ?), 0) - ?, COALESCE((SELECT stock FROM inventory WHERE material_id = ?), 0), ?, 'inbound', ?)
-      `).run(logId, materialId, inboundQuantity, materialId, inboundQuantity, materialId, id, operator)
+      `).run(logId, materialIdText, inboundQuantity, materialIdText, inboundQuantity, materialIdText, id, operator)
 
       db.exec('COMMIT')
     } catch (err) {
@@ -674,27 +695,27 @@ router.post('/', requireWriteAccess, (req, res) => {
     }
 
     // 自动检查库存预警（入库后库存可能恢复）
-    checkStockAlerts(db, [materialId])
+    checkStockAlerts(db, [materialIdText])
     logOperation(db, req as any, {
       operation: 'POST /inbound',
-      description: purchaseOrderId ? '按采购订单创建入库记录' : '创建入库记录',
+      description: purchaseOrderIdText ? '按采购订单创建入库记录' : '创建入库记录',
       requestData: {
         module: 'inbound_records',
         id,
         inboundNo,
-        type,
-        materialId,
+        type: typeText,
+        materialId: materialIdText,
         quantity: inboundQuantity,
         price: inboundPrice,
         supplierId: effectiveSupplierId,
-        locationId,
-        purchaseOrderId: purchaseOrderId || null,
+        locationId: locationIdText,
+        purchaseOrderId: purchaseOrderIdText || null,
         purchaseOrderNo,
       },
       responseData: { id, inboundNo, status: 'completed' },
     })
 
-    success(res, { id, inboundNo, type, materialId, quantity: inboundQuantity, status: 'completed', purchaseOrderId, purchaseOrderNo, createdAt: new Date().toISOString() }, 'Inbound created', 201)
+    success(res, { id, inboundNo, type: typeText, materialId: materialIdText, quantity: inboundQuantity, status: 'completed', purchaseOrderId: purchaseOrderIdText || null, purchaseOrderNo, createdAt: new Date().toISOString() }, 'Inbound created', 201)
   } catch (err: any) { error(res, err.message) }
 })
 
@@ -721,6 +742,31 @@ router.put('/:id', requireWriteAccess, (req, res) => {
       error(res, '入库单价不能小于 0', 'INVALID_PARAMETER', 400)
       return
     }
+    const batchNoProvided = batchNo !== undefined
+    const locationIdProvided = locationId !== undefined
+    const expiryDateProvided = expiryDate !== undefined
+    const productionDateProvided = productionDate !== undefined
+    const batchNoText = batchNoProvided ? String(batchNo || '').trim() : String(record.batch_no || '').trim()
+    const locationIdText = locationIdProvided ? String(locationId || '').trim() : String(record.location_id || '').trim()
+    const expiryDateText = expiryDateProvided ? normalizeOptionalDate(expiryDate) : normalizeOptionalDate(record.expiry_date)
+    const productionDateText = productionDateProvided ? normalizeOptionalDate(productionDate) : normalizeOptionalDate(record.production_date)
+
+    if (batchNoProvided && !batchNoText) {
+      error(res, '批号必填，入库必须形成可追踪批次', 'INVALID_PARAMETER', 400)
+      return
+    }
+    if (locationIdProvided && !locationIdText) {
+      error(res, '库位必填，库存和批次余量需要按库位记录', 'INVALID_PARAMETER', 400)
+      return
+    }
+    if (expiryDateProvided && (!expiryDateText || !isValidDateText(expiryDateText))) {
+      error(res, '有效期必填且必须为 YYYY-MM-DD', 'INVALID_PARAMETER', 400)
+      return
+    }
+    if (productionDateProvided && productionDateText && !isValidDateText(productionDateText)) {
+      error(res, '生产日期必须为 YYYY-MM-DD', 'INVALID_PARAMETER', 400)
+      return
+    }
 
     const oldStatus = record.status
     const newStatus = status !== undefined ? status : oldStatus
@@ -732,7 +778,7 @@ router.put('/:id', requireWriteAccess, (req, res) => {
 
     const refValidation = validateInboundReferences(db, {
       supplierId: supplierId !== undefined ? supplierId : (restoringCompleted ? record.supplier_id : undefined),
-      locationId: locationId !== undefined ? locationId : (restoringCompleted ? record.location_id : undefined),
+      locationId: locationIdProvided ? locationIdText : (restoringCompleted ? record.location_id : undefined),
       materialId: restoringCompleted ? record.material_id : undefined,
     })
     if (!refValidation.ok) {
@@ -744,9 +790,9 @@ router.put('/:id', requireWriteAccess, (req, res) => {
     const newQty = normalizedQuantity
     const newPrice = normalizedPrice
     const oldBatch = record.batch_no
-    const newBatch = batchNo !== undefined ? batchNo : oldBatch
+    const newBatch = batchNoProvided ? batchNoText : oldBatch
     const oldLocationId = record.location_id
-    const newLocationId = locationId !== undefined ? locationId : oldLocationId
+    const newLocationId = locationIdProvided ? locationIdText : oldLocationId
     const statusChanging = status !== undefined && status !== oldStatus
     const batchChanged = newBatch !== oldBatch
     const supplierChanged = supplierId !== undefined && String(supplierId || '') !== String(record.supplier_id || '')
@@ -814,13 +860,13 @@ router.put('/:id', requireWriteAccess, (req, res) => {
     }
 
     const fields: string[] = []; const params: any[] = []
-    if (batchNo !== undefined) { fields.push('batch_no = ?'); params.push(batchNo || null) }
+    if (batchNoProvided) { fields.push('batch_no = ?'); params.push(batchNoText) }
     if (quantityProvided) { fields.push('quantity = ?'); params.push(newQty) }
     if (priceProvided) { fields.push('price = ?'); params.push(newPrice) }
     if (supplierId !== undefined) { fields.push('supplier_id = ?'); params.push(supplierId || null) }
-    if (locationId !== undefined) { fields.push('location_id = ?'); params.push(locationId) }
-    if (productionDate !== undefined) { fields.push('production_date = ?'); params.push(productionDate || null) }
-    if (expiryDate !== undefined) { fields.push('expiry_date = ?'); params.push(expiryDate || null) }
+    if (locationIdProvided) { fields.push('location_id = ?'); params.push(locationIdText) }
+    if (productionDateProvided) { fields.push('production_date = ?'); params.push(productionDateText || null) }
+    if (expiryDateProvided) { fields.push('expiry_date = ?'); params.push(expiryDateText) }
     if (remark !== undefined) { fields.push('remark = ?'); params.push(remark || '') }
     if (status !== undefined) { fields.push('status = ?'); params.push(newStatus) }
 
@@ -977,7 +1023,18 @@ router.put('/:id', requireWriteAccess, (req, res) => {
               db.prepare(`
                 INSERT INTO batches (id, material_id, batch_no, quantity, remaining, production_date, expiry_date, inbound_id, inbound_price, supplier_id, status)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-              `).run(bid, record.material_id, newBatch, newQty, newQty, productionDate || record.production_date, expiryDate || record.expiry_date, id, newPrice, supplierId !== undefined ? supplierId : record.supplier_id)
+              `).run(
+                bid,
+                record.material_id,
+                newBatch,
+                newQty,
+                newQty,
+                productionDateProvided ? productionDateText || null : record.production_date,
+                expiryDateProvided ? expiryDateText : record.expiry_date,
+                id,
+                newPrice,
+                supplierId !== undefined ? supplierId : record.supplier_id,
+              )
             }
           }
           if (qtyDiff !== 0) {

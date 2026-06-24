@@ -53,12 +53,13 @@ describe('useDashboardPage', () => {
 
     renderHook(() => useDashboardPage())
 
-    await waitFor(() => expect(outboundApi.getStats).toHaveBeenCalled())
+    await waitFor(() => expect(inventoryApi.getStats).toHaveBeenCalled())
 
     expect(inventoryApi.getStats).toHaveBeenCalled()
     expect(inboundApi.getStats).not.toHaveBeenCalled()
     expect(inboundApi.getList).not.toHaveBeenCalled()
-    expect(outboundApi.getList).toHaveBeenCalled()
+    expect(outboundApi.getStats).not.toHaveBeenCalled()
+    expect(outboundApi.getList).not.toHaveBeenCalled()
   })
 
   it('keeps pathologist dashboard on read-only cost insight without outbound execution calls', async () => {
@@ -82,9 +83,74 @@ describe('useDashboardPage', () => {
     await waitFor(() => expect(inboundApi.getStats).toHaveBeenCalled())
 
     expect(inventoryApi.getStats).toHaveBeenCalled()
-    expect(inboundApi.getList).toHaveBeenCalled()
+    expect(inboundApi.getList).not.toHaveBeenCalled()
     expect(outboundApi.getStats).not.toHaveBeenCalled()
     expect(outboundApi.getList).not.toHaveBeenCalled()
+  })
+
+  it('points high-frequency warehouse actions at the actual work step instead of only the page', async () => {
+    setRole('warehouse_manager')
+
+    const { result } = renderHook(() => useDashboardPage())
+
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    expect(result.current.config.quickActions.map(({ label, desc, navigateTo }) => ({ label, desc, navigateTo }))).toEqual([
+      {
+        label: '新增入库',
+        desc: '登记批号、库位并形成库存批次',
+        navigateTo: '/inbound?action=create&type=direct',
+      },
+      {
+        label: '项目出库',
+        desc: '按项目扣减批次并进入成本对账',
+        navigateTo: '/outbound?action=create',
+      },
+      {
+        label: '采购订单',
+        desc: '按采购单收货并生成入库单',
+        navigateTo: '/purchase-orders?status=pending,partial',
+      },
+      {
+        label: '库存盘点',
+        desc: '按批次盘点并记录库存差异',
+        navigateTo: '/stocktaking?action=create',
+      },
+    ])
+  })
+
+  it('lets procurement users start a purchase order directly from the dashboard', async () => {
+    setRole('procurement')
+
+    const { result } = renderHook(() => useDashboardPage())
+
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    expect(result.current.config.quickActions.map(({ label, desc, navigateTo }) => ({ label, desc, navigateTo }))).toEqual([
+      {
+        label: '新建采购订单',
+        desc: '按补货需求建单，后续接入入库',
+        navigateTo: '/purchase-orders?action=create',
+      },
+      {
+        label: '待收货订单',
+        desc: '查看交付进度，仓库收货入库',
+        navigateTo: '/purchase-orders?status=pending,partial',
+      },
+    ])
+  })
+
+  it('keeps technician dashboard actions on modeling and review pages instead of warehouse execution', async () => {
+    setRole('technician')
+
+    const { result } = renderHook(() => useDashboardPage())
+
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    expect(result.current.config.quickActions.map(action => action.navigateTo)).toEqual([
+      '/reconciliation',
+      '/abc/slide-cost',
+    ])
   })
 
   it('uses pending alert records instead of inventory warning totals for dashboard alert count', async () => {
@@ -124,12 +190,27 @@ describe('useDashboardPage', () => {
     expect(inboundApi.getList).not.toHaveBeenCalled()
     expect(outboundApi.getStats).not.toHaveBeenCalled()
     expect(outboundApi.getList).not.toHaveBeenCalled()
+    expect(result.current.config.statCards.find(card => card.key === 'alertCount')?.navigateTo).toBe('/alerts?quick=pending')
     expect(result.current.config.quickActions.map(action => action.navigateTo)).toEqual([
-      '/alerts',
+      '/alerts?quick=pending',
       '/inventory',
       '/abc/dashboard',
       '/abc/trend',
       '/abc/profitability',
+    ])
+    expect(result.current.config.activityLinks).toEqual([])
+  })
+
+  it('only exposes recent-activity review links that the role can actually open', async () => {
+    setRole('warehouse_manager')
+
+    const { result } = renderHook(() => useDashboardPage())
+
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    expect(result.current.config.activityLinks).toEqual([
+      { label: '入库记录', path: '/inbound' },
+      { label: '出库记录', path: '/outbound' },
     ])
   })
 
@@ -139,6 +220,7 @@ describe('useDashboardPage', () => {
       list: [
         {
           id: 'old-inbound',
+          inboundNo: 'IN-OLD',
           materialName: '旧入库物料',
           quantity: 1,
           unit: '支',
@@ -164,6 +246,12 @@ describe('useDashboardPage', () => {
     await waitFor(() => expect(result.current.loading).toBe(false))
 
     expect(result.current.activities[0].id).toBe('out-new-outbound')
+    expect(result.current.activities[0].title).toBe('出库：OUT-NEW')
+    expect(result.current.activities[0].desc).toBe('新出库项目 · 仓管')
+    expect(result.current.activities[0].href).toBe('/outbound?keyword=OUT-NEW')
     expect(result.current.activities[1].id).toBe('in-old-inbound')
+    expect(result.current.activities[1].title).toBe('入库：IN-OLD')
+    expect(result.current.activities[1].desc).toBe('旧入库物料 · 数量 1支 · 仓管')
+    expect(result.current.activities[1].href).toBe('/inbound?keyword=IN-OLD')
   })
 })

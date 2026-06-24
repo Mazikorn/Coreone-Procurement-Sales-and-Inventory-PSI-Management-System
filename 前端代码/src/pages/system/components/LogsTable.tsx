@@ -51,6 +51,8 @@ export function LogsTable({
   onPageChange, onPageSizeChange,
   onOpenDetail,
 }: Props) {
+  const normalizedKeyword = keyword.trim().toLowerCase()
+
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
       <div className="px-5 py-4 border-b border-gray-200 bg-gray-50 flex items-center justify-between flex-wrap gap-3">
@@ -63,7 +65,7 @@ export function LogsTable({
               value={keyword}
               onChange={e => onKeywordChange(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && onSearch()}
-              placeholder="搜索操作内容"
+              placeholder="单号/物料/操作内容"
               className="h-10 w-44 rounded-md border border-gray-200 bg-white pl-9 pr-3 text-sm text-gray-900 outline-none transition-all focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10"
             />
           </div>
@@ -119,6 +121,12 @@ export function LogsTable({
           <button onClick={onReset} className="h-10 px-4 text-sm font-medium text-gray-700 bg-transparent hover:bg-gray-100 rounded-md transition-all">重置</button>
         </div>
       </div>
+      {normalizedKeyword && (
+        <div className="border-b border-blue-100 bg-blue-50 px-5 py-3">
+          <div className="text-sm font-medium text-blue-900">当前回看业务标识：{keyword.trim()}</div>
+          <div className="mt-1 text-xs text-blue-700">列表已限定与该标识相关的操作、库存、成本和对账证据。</div>
+        </div>
+      )}
       {dateError && (
         <p id="logs-date-error" role="alert" className="px-5 pt-3 text-sm text-red-600">
           {dateError}
@@ -138,9 +146,24 @@ export function LogsTable({
             {loading ? (
               <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-400">加载中...</td></tr>
             ) : data.length === 0 ? (
-              <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-400">暂无审计记录</td></tr>
+              <tr>
+                <td colSpan={8} className="px-4 py-8 text-center">
+                  {normalizedKeyword ? (
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium text-gray-900">未找到 {keyword.trim()} 的审计证据</div>
+                      <div className="text-sm text-gray-500">
+                        请确认单号是否正确，或返回业务页面查看该单据是否已生成库存、批次、成本或对账记录。
+                      </div>
+                    </div>
+                  ) : (
+                    <span className="text-gray-400">暂无审计记录</span>
+                  )}
+                </td>
+              </tr>
             ) : data.map(row => {
               const logType = getLogType(row.operation, row.operationType)
+              const businessToken = String(row.businessId || row.auditEvent?.businessId || row.auditEvent?.subjectId || '').toLowerCase()
+              const isCurrentBusiness = Boolean(normalizedKeyword && businessToken.includes(normalizedKeyword))
               return (
                 <tr key={row.id} className="hover:bg-gray-50 transition-colors">
                   <td className="px-4 py-3.5 font-mono text-[13px] text-gray-700">{new Date(row.createdAt).toLocaleString()}</td>
@@ -166,14 +189,21 @@ export function LogsTable({
                     <span className="text-xs px-2.5 py-1 rounded-full bg-gray-100 text-gray-700 font-medium">{getModuleLabel(row.module || (row.requestData?.module as string) || '')}</span>
                   </td>
                   <td className="px-4 py-3.5 font-mono text-[13px] text-gray-600">
-                    {row.businessId && row.businessUrl ? (
-                      <a
-                        href={row.businessUrl}
-                        className="text-blue-600 hover:text-blue-700 hover:underline"
-                      >
-                        {row.businessId}
-                      </a>
-                    ) : row.businessId || '-'}
+                    <div className="flex flex-wrap items-center gap-2">
+                      {row.businessId && row.businessUrl ? (
+                        <a
+                          href={row.businessUrl}
+                          className="text-blue-600 hover:text-blue-700 hover:underline"
+                        >
+                          {row.businessId}
+                        </a>
+                      ) : row.businessId || '-'}
+                      {isCurrentBusiness && (
+                        <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700">
+                          当前单据
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-4 py-3.5">
                     <div className="text-sm text-gray-900">{row.description}</div>

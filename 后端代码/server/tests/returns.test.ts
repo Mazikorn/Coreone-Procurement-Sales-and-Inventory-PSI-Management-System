@@ -118,6 +118,98 @@ describe('退库管理', () => {
     expect(log).toMatchObject({ quantity: 2, before_stock: 7, after_stock: 9, operator: 'admin' })
   })
 
+  it('RT-001B: 创建退库后统一日志可按退库单号回看库存恢复证据', async () => {
+    const source = seedReturnSource(db, `unified-${Date.now()}`)
+
+    const createRes = await request(app)
+      .post('/api/v1/returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        outboundItemId: source.outboundItemId,
+        quantity: 2,
+        reason: '客户退回未使用',
+        remark: '统一日志回看退库恢复',
+      })
+
+    expect(createRes.status).toBe(200)
+    const { id, returnNo } = createRes.body.data
+
+    const unifiedRes = await request(app)
+      .get('/api/v1/logs/unified')
+      .query({ keyword: returnNo, pageSize: 50 })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(unifiedRes.status).toBe(200)
+    expect(unifiedRes.body.data.list).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourceType: 'operation',
+        module: 'returns',
+        operation: 'POST /returns',
+        businessId: returnNo,
+        businessUrl: `/returns?keyword=${encodeURIComponent(returnNo)}`,
+        requestData: expect.objectContaining({
+          outboundItemId: source.outboundItemId,
+          quantity: 2,
+          reason: '客户退回未使用',
+        }),
+        responseData: expect.objectContaining({ id, returnNo }),
+        auditEvent: expect.objectContaining({
+          eventCode: 'operation.returns.create',
+          subjectType: 'returns',
+          subjectId: returnNo,
+          businessId: returnNo,
+          businessUrl: `/returns?keyword=${encodeURIComponent(returnNo)}`,
+          evidenceSource: 'operation_logs',
+        }),
+      }),
+      expect.objectContaining({
+        sourceType: 'stock',
+        module: 'returns',
+        businessId: returnNo,
+        businessUrl: `/returns?keyword=${encodeURIComponent(returnNo)}`,
+        requestData: expect.objectContaining({
+          relatedId: id,
+          relatedDocumentNo: returnNo,
+          relatedType: 'return',
+          quantity: 2,
+          beforeStock: 7,
+          afterStock: 9,
+        }),
+        auditEvent: expect.objectContaining({
+          eventCode: 'stock.returns.create',
+          subjectType: 'returns',
+          subjectId: returnNo,
+          businessId: returnNo,
+          businessUrl: `/returns?keyword=${encodeURIComponent(returnNo)}`,
+          evidenceSource: 'stock_logs',
+        }),
+      }),
+      expect.objectContaining({
+        sourceType: 'batch_location',
+        module: 'returns',
+        businessId: returnNo,
+        businessUrl: `/returns?keyword=${encodeURIComponent(returnNo)}`,
+        requestData: expect.objectContaining({
+          relatedId: id,
+          relatedDocumentNo: returnNo,
+          relatedType: 'return',
+          batchId: source.batchId,
+          materialId: source.materialId,
+          locationId: source.locationId,
+          quantityDelta: 2,
+        }),
+        auditEvent: expect.objectContaining({
+          eventCode: 'batch_location.returns.update',
+          subjectType: 'returns',
+          subjectId: returnNo,
+          businessId: returnNo,
+          businessUrl: `/returns?keyword=${encodeURIComponent(returnNo)}`,
+          evidenceSource: 'batch_location_adjustments',
+        }),
+      }),
+    ]))
+  })
+
   it('RT-002: 退库不能无来源或超过原出库可退数量', async () => {
     const source = seedReturnSource(db, `limit-${Date.now()}`, { outboundQty: 3, currentStock: 7 })
 
@@ -281,16 +373,17 @@ describe('退库管理', () => {
       .set('Authorization', `Bearer ${token}`)
       .send({ outboundItemId: source.outboundItemId, quantity: 2, reason: 'unused' })
     expect(createRes.status).toBe(200)
+    expect(createRes.body.data.returnNo).toMatch(/^RT-/)
 
     const createLog = db.prepare(`
       SELECT operation, username, request_data, response_data
       FROM operation_logs
       WHERE operation = 'POST /returns' AND description LIKE ?
       ORDER BY created_at DESC LIMIT 1
-    `).get(`%${createRes.body.data.id}%`) as any
+    `).get(`%${createRes.body.data.returnNo}%`) as any
     expect(createLog?.username).toBe('admin')
     expect(JSON.parse(createLog.request_data)).toMatchObject({ outboundItemId: source.outboundItemId, quantity: 2 })
-    expect(JSON.parse(createLog.response_data)).toMatchObject({ id: createRes.body.data.id })
+    expect(JSON.parse(createLog.response_data)).toMatchObject({ id: createRes.body.data.id, returnNo: createRes.body.data.returnNo })
 
     const deleteRes = await request(app)
       .delete(`/api/v1/returns/${createRes.body.data.id}`)

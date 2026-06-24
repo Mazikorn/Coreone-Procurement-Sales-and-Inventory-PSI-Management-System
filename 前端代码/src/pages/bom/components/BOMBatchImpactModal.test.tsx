@@ -48,6 +48,33 @@ describe('BOMBatchImpactModal', () => {
     expect(screen.getByRole('button', { name: /确认删除/ })).toBeDisabled()
   })
 
+  it('explains downstream business impact before batch deleting unreferenced BOMs', () => {
+    const check: BOMDeleteCheck = {
+      bom: { id: 'bom-1', code: 'BOM-001', name: '免疫组化BOM' },
+      deletable: true,
+      impacts: { projectCount: 0, outboundDetailCount: 0 },
+      reasons: [],
+    }
+
+    render(
+      <BOMBatchImpactModal
+        open
+        action="delete"
+        targetsCount={1}
+        deleteResults={[{ bom, check }]}
+        statusResults={[]}
+        checking={false}
+        submitting={false}
+        onClose={vi.fn()}
+        onConfirm={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('批量删除BOM')).toBeInTheDocument()
+    expect(screen.getByText('检查通过；删除后这些BOM不会再用于新检测服务绑定、项目出库、LIS对账、ABC成本计算、项目成本归集和审计筛选。')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /确认删除/ })).toBeEnabled()
+  })
+
   it('shows status blockers and disables confirm when any selected BOM is used by active project', () => {
     const check: BOMStatusCheck = {
       bom: { id: 'bom-1', code: 'BOM-001', name: '免疫组化BOM' },
@@ -150,5 +177,72 @@ describe('BOMBatchImpactModal', () => {
     expect(screen.getByText('无法批量启用BOM')).toBeInTheDocument()
     expect(screen.getByText('核心物料缺失 1')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /确认启用/ })).toBeDisabled()
+  })
+
+  it('explains downstream impact before batch disabling unreferenced BOMs', () => {
+    const check: BOMStatusCheck = {
+      bom: { id: 'bom-1', code: 'BOM-001', name: '免疫组化BOM' },
+      targetStatus: 'inactive',
+      canChange: true,
+      impacts: {
+        activeProjectCount: 0,
+        inactiveMaterialCount: 0,
+        inactiveEquipmentCount: 0,
+        inactiveEquipmentTypeCount: 0,
+      },
+      reasons: [],
+    }
+
+    render(
+      <BOMBatchImpactModal
+        open
+        action="inactive"
+        targetsCount={1}
+        deleteResults={[]}
+        statusResults={[{ bom, check }]}
+        checking={false}
+        submitting={false}
+        onClose={vi.fn()}
+        onConfirm={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('批量停用BOM')).toBeInTheDocument()
+    expect(screen.getByText('检查通过；停用后这些BOM不会再用于新检测服务绑定、项目出库、LIS对账、ABC成本计算和项目成本归集，历史成本和审计记录保留。')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /确认停用/ })).toBeEnabled()
+  })
+
+  it('explains downstream impact before batch enabling valid BOMs', () => {
+    const check: BOMStatusCheck = {
+      bom: { id: 'bom-1', code: 'BOM-001', name: '免疫组化BOM' },
+      targetStatus: 'active',
+      canChange: true,
+      impacts: {
+        activeProjectCount: 0,
+        coreMaterialCount: 1,
+        inactiveMaterialCount: 0,
+        inactiveEquipmentCount: 0,
+        inactiveEquipmentTypeCount: 0,
+      },
+      reasons: [],
+    }
+
+    render(
+      <BOMBatchImpactModal
+        open
+        action="active"
+        targetsCount={1}
+        deleteResults={[]}
+        statusResults={[{ bom: { ...bom, status: 'inactive' }, check }]}
+        checking={false}
+        submitting={false}
+        onClose={vi.fn()}
+        onConfirm={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('批量启用BOM')).toBeInTheDocument()
+    expect(screen.getByText('检查通过；启用后这些BOM可重新用于新检测服务绑定、项目出库、LIS对账、ABC成本计算和项目成本归集，历史成本和审计记录不变。')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /确认启用/ })).toBeEnabled()
   })
 })

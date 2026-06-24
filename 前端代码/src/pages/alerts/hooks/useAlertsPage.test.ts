@@ -1,7 +1,8 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { alertsApi } from '@/api/alerts'
-import { buildAlertHandleRemark, useAlertsPage } from './useAlertsPage'
+import { buildAlertHandleRemark, type AlertItem, useAlertsPage } from './useAlertsPage'
+import { toast } from 'sonner'
 
 vi.mock('@/api/alerts')
 vi.mock('sonner', () => ({
@@ -11,9 +12,23 @@ vi.mock('sonner', () => ({
   },
 }))
 
+const pendingAlert = (id = 'alert-1'): AlertItem => ({
+  id,
+  type: 'low-stock',
+  level: 'warning',
+  materialId: 'mat-1',
+  materialName: id === 'alert-2' ? '免疫试剂B' : '免疫试剂A',
+  message: id === 'alert-2' ? '免疫试剂B库存不足' : '免疫试剂A库存不足',
+  status: 'pending',
+  currentStock: 1,
+  threshold: 5,
+  createdAt: '2026-06-22T09:00:00.000Z',
+})
+
 describe('buildAlertHandleRemark', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    localStorage.setItem('user', JSON.stringify({ role: 'admin' }))
     window.history.replaceState(null, '', '/alerts')
     vi.mocked(alertsApi.getList).mockResolvedValue({
       list: [],
@@ -27,6 +42,9 @@ describe('buildAlertHandleRemark', () => {
       today: 0,
       month: 0,
     } as any)
+    vi.mocked(alertsApi.process).mockResolvedValue({} as any)
+    vi.mocked(alertsApi.ignore).mockResolvedValue({} as any)
+    vi.mocked(alertsApi.batchHandle).mockResolvedValue({} as any)
   })
 
   it('records the selected handling conclusion and opinion', () => {
@@ -127,5 +145,124 @@ describe('buildAlertHandleRemark', () => {
     expect(result.current.quickFilter).toBe('all')
     expect(result.current.page).toBe(1)
     expect(result.current.pageSize).toBe(10)
+  })
+
+  it('keeps a processed alert confirmable in the list when the follow-up refresh fails', async () => {
+    vi.mocked(alertsApi.getList)
+      .mockResolvedValueOnce({
+        list: [pendingAlert()],
+        pagination: { total: 1, page: 1, pageSize: 10 },
+      } as any)
+      .mockRejectedValue(new Error('refresh failed'))
+    vi.mocked(alertsApi.getStats)
+      .mockResolvedValueOnce({
+        total: 1,
+        pending: 1,
+        processed: 0,
+        ignored: 0,
+        today: 1,
+        month: 1,
+      } as any)
+      .mockRejectedValue(new Error('stats refresh failed'))
+
+    const { result } = renderHook(() => useAlertsPage())
+    await waitFor(() => expect(result.current.data[0]?.status).toBe('pending'))
+
+    await act(async () => {
+      await result.current.handleProcess('alert-1', '已通知采购补货')
+    })
+
+    expect(alertsApi.process).toHaveBeenCalledWith('alert-1', { remark: '已通知采购补货' })
+    await waitFor(() => expect(alertsApi.getList).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(result.current.data[0]?.status).toBe('processed'))
+    expect(result.current.error).toBeNull()
+    expect(result.current.stats.pending).toBe(0)
+    expect(result.current.stats.processed).toBe(1)
+    expect(toast.success).toHaveBeenCalledWith('处理成功', {
+      description: 'alert-1 已记录处理结论和意见；预警进入已处理，库存、批次和采购事实不会自动变更，仍需通过采购、入库或盘点闭环',
+    })
+  })
+
+  it('removes an ignored alert from the pending queue when refresh fails after the action succeeds', async () => {
+    window.history.replaceState(null, '', '/alerts?quick=pending')
+    vi.mocked(alertsApi.getList)
+      .mockResolvedValueOnce({
+        list: [pendingAlert()],
+        pagination: { total: 1, page: 1, pageSize: 10 },
+      } as any)
+      .mockRejectedValue(new Error('refresh failed'))
+    vi.mocked(alertsApi.getStats)
+      .mockResolvedValueOnce({
+        total: 1,
+        pending: 1,
+        processed: 0,
+        ignored: 0,
+        today: 1,
+        month: 1,
+      } as any)
+      .mockRejectedValue(new Error('stats refresh failed'))
+
+    const { result } = renderHook(() => useAlertsPage())
+    await waitFor(() => expect(result.current.data).toHaveLength(1))
+
+    await act(async () => {
+      await result.current.handleIgnore('alert-1', '已核实无需处理')
+    })
+
+    expect(alertsApi.ignore).toHaveBeenCalledWith('alert-1', { remark: '已核实无需处理' })
+    await waitFor(() => expect(alertsApi.getList).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(result.current.data).toHaveLength(0))
+    expect(result.current.error).toBeNull()
+    expect(result.current.total).toBe(0)
+    expect(result.current.stats.pending).toBe(0)
+    expect(result.current.stats.ignored).toBe(1)
+    expect(toast.success).toHaveBeenCalledWith('已忽略', {
+      description: 'alert-1 已记录忽略原因；预警进入已忽略，库存、批次和采购事实不会自动变更，审计记录可按预警ID回看',
+    })
+  })
+
+  it('clears processed batch alerts from the pending queue without waiting for list refresh', async () => {
+    window.history.replaceState(null, '', '/alerts?quick=pending')
+    vi.mocked(alertsApi.getList)
+      .mockResolvedValueOnce({
+        list: [pendingAlert('alert-1'), pendingAlert('alert-2')],
+        pagination: { total: 2, page: 1, pageSize: 10 },
+      } as any)
+      .mockRejectedValue(new Error('refresh failed'))
+    vi.mocked(alertsApi.getStats)
+      .mockResolvedValueOnce({
+        total: 2,
+        pending: 2,
+        processed: 0,
+        ignored: 0,
+        today: 2,
+        month: 2,
+      } as any)
+      .mockRejectedValue(new Error('stats refresh failed'))
+
+    const { result } = renderHook(() => useAlertsPage())
+    await waitFor(() => expect(result.current.data).toHaveLength(2))
+
+    act(() => {
+      result.current.setSelectedIds(new Set(['alert-1', 'alert-2']))
+    })
+    await act(async () => {
+      await result.current.handleBatchProcess()
+    })
+
+    expect(alertsApi.batchHandle).toHaveBeenCalledWith(['alert-1', 'alert-2'], {
+      action: 'processed',
+      remark: '批量处理',
+    })
+    await waitFor(() => expect(alertsApi.getList).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(result.current.data).toHaveLength(0))
+    expect(result.current.error).toBeNull()
+    expect(result.current.selectedIds.size).toBe(0)
+    expect(result.current.total).toBe(0)
+    expect(result.current.stats.pending).toBe(0)
+    expect(result.current.stats.processed).toBe(2)
+    expect(toast.success).toHaveBeenCalledWith('已处理 2 条预警', {
+      description: '已记录 2 条预警的批量处理结论；库存、批次和采购事实不会自动变更，仍需通过采购、入库或盘点闭环',
+    })
   })
 })

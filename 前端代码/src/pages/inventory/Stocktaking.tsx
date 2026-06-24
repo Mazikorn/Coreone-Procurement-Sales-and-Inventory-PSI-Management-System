@@ -1,4 +1,5 @@
 import { Plus } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import { useStocktakingPage, statusOptions } from './hooks/useStocktakingPage'
 import { StocktakingTable } from './components/StocktakingTable'
 import { StocktakingCreateModal } from './components/StocktakingCreateModal'
@@ -8,6 +9,7 @@ import { StocktakingAdjustModal } from './components/StocktakingAdjustModal'
 
 export default function Stocktaking() {
   const page = useStocktakingPage()
+  const navigate = useNavigate()
 
   return (
     <div className="space-y-6">
@@ -70,11 +72,13 @@ export default function Stocktaking() {
         createStep={page.createStep}
         materials={page.materials}
         inventoryRows={page.inventoryRows}
+        createdRecord={page.createdRecord}
         isSubmitting={page.isSubmitting}
         onClose={() => page.setModalType(null)}
         onChange={page.setForm}
         onSetCreateStep={page.setCreateStep}
         onSubmit={page.handleCreateSubmit}
+        onOpenAuditEvidence={(stocktakingNo) => navigate(`/logs?keyword=${encodeURIComponent(stocktakingNo)}`)}
       />
 
       {/* Detail Modal */}

@@ -13,8 +13,25 @@ interface Props {
   onSubmit: () => void
 }
 
+function formatCurrency(value: number) {
+  return `¥${Number(value || 0).toLocaleString('zh-CN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`
+}
+
 export function EquipmentFormModal({ open, type, form, typeOptions = [], onClose, onChange, onSubmit }: Props) {
   if (!open) return null
+
+  const depreciableAmount = Math.max(0, Number(form.purchasePrice || 0) - Number(form.residualValue || 0))
+  const annualDepreciation = form.depreciableLifeYears > 0
+    ? depreciableAmount / form.depreciableLifeYears
+    : 0
+  const monthlyDepreciation = annualDepreciation / 12
+  const unitDepreciation = form.depreciationMethod === 'units_of_production' && form.totalCapacity > 0
+    ? depreciableAmount / form.totalCapacity
+    : 0
+  const capacityUnit = form.capacityUnit.trim() || '单位'
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -185,6 +202,52 @@ export function EquipmentFormModal({ open, type, form, typeOptions = [], onClose
               </div>
             </div>
           )}
+          <div className="rounded-lg border border-blue-100 bg-blue-50/60 p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h4 className="text-sm font-semibold text-gray-900">设备折旧结果确认</h4>
+                <p className="mt-1 text-xs text-gray-600">
+                  确认后将接住：设备档案、折旧统计、月度成本、BOM 成本、审计记录
+                </p>
+              </div>
+              <span className="shrink-0 rounded-md bg-white px-2 py-1 text-xs font-medium text-blue-700 border border-blue-100">
+                {form.depreciationMethod === 'straight_line' ? '直线法' : '工作量法'}
+              </span>
+            </div>
+            <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="rounded-md bg-white border border-blue-100 p-3">
+                <div className="text-xs text-gray-500">可折旧金额</div>
+                <div className="mt-1 text-sm font-semibold text-gray-900">{formatCurrency(depreciableAmount)}</div>
+              </div>
+              {form.depreciationMethod === 'straight_line' ? (
+                <>
+                  <div className="rounded-md bg-white border border-blue-100 p-3">
+                    <div className="text-xs text-gray-500">年折旧额</div>
+                    <div className="mt-1 text-sm font-semibold text-gray-900">{formatCurrency(annualDepreciation)}</div>
+                  </div>
+                  <div className="rounded-md bg-white border border-blue-100 p-3">
+                    <div className="text-xs text-gray-500">月折旧额</div>
+                    <div className="mt-1 text-sm font-semibold text-gray-900">{formatCurrency(monthlyDepreciation)}</div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="rounded-md bg-white border border-blue-100 p-3">
+                    <div className="text-xs text-gray-500">总工作量</div>
+                    <div className="mt-1 text-sm font-semibold text-gray-900">
+                      {Number(form.totalCapacity || 0).toLocaleString('zh-CN')} {capacityUnit}
+                    </div>
+                  </div>
+                  <div className="rounded-md bg-white border border-blue-100 p-3">
+                    <div className="text-xs text-gray-500">单位折旧</div>
+                    <div className="mt-1 text-sm font-semibold text-gray-900">
+                      {formatCurrency(unitDepreciation)}/{capacityUnit}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
         </div>
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 flex-shrink-0">
           <button

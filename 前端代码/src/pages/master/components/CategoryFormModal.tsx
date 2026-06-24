@@ -1,3 +1,4 @@
+import React from 'react'
 import { X } from 'lucide-react'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { Category } from '@/types'
@@ -35,6 +36,8 @@ export function CategoryFormModal({ open, editingId, form, flatList, onClose, on
       value: c.id,
       label: `${c.name} (${c.code})`,
     }))
+  const selectedParent = form.parentId ? flatList.find(category => category.id === form.parentId) : null
+  const levelLabel = form.level === 1 ? '一级分类' : form.level === 2 ? '二级分类' : '三级分类'
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
@@ -101,6 +104,18 @@ export function CategoryFormModal({ open, editingId, form, flatList, onClose, on
               placeholder="请输入备注信息"
               className="w-full h-10 px-3 py-2 border border-gray-300 rounded-md text-sm outline-none transition-all focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10"
             />
+          </div>
+          <div className="rounded-md border border-emerald-100 bg-emerald-50 px-4 py-3">
+            <div className="text-sm font-semibold text-emerald-900">分类结果确认</div>
+            <div className="mt-1 text-xs text-emerald-800">
+              确认后将接住：物料建档、物料编码、库存筛选、BOM选料、成本分类、审计记录
+            </div>
+            <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-emerald-900 sm:grid-cols-2">
+              <div>分类 {form.name || '待填写'}</div>
+              <div>上级分类 {selectedParent?.name || '一级分类'}</div>
+              <div>层级 {levelLabel}</div>
+              <div>排序 {Number(form.sortOrder || 0)}</div>
+            </div>
           </div>
         </div>
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50">

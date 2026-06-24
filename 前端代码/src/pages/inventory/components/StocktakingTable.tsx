@@ -1,5 +1,6 @@
 import React from 'react'
-import { Search, FolderOpen, Loader2, Trash2 } from 'lucide-react'
+import { Search, FolderOpen, Loader2, Trash2, FileSearch } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import { Pagination } from '@/components/ui/Pagination'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { StocktakingRecord } from '../hooks/useStocktakingPage'
@@ -33,10 +34,18 @@ export function StocktakingTable({
   onPageChange, onPageSizeChange,
   onOpenDetail, onOpenAdjust, onOpenDelete,
 }: Props) {
-  const statusLabel = (status: string) => status === 'confirmed' ? '已确认' : '已完成'
-  const statusClass = (status: string) => status === 'confirmed'
-    ? 'bg-blue-50 text-blue-600'
-    : 'bg-green-50 text-green-600'
+  const navigate = useNavigate()
+  const hasPendingDifference = (row: StocktakingRecord) => Number(row.difference || 0) !== 0 && row.status !== 'confirmed'
+  const statusLabel = (row: StocktakingRecord) => {
+    if (row.status === 'confirmed') return '已确认'
+    if (hasPendingDifference(row)) return '待处理差异'
+    return '已完成'
+  }
+  const statusClass = (row: StocktakingRecord) => {
+    if (row.status === 'confirmed') return 'bg-blue-50 text-blue-600'
+    if (hasPendingDifference(row)) return 'bg-amber-50 text-amber-700'
+    return 'bg-green-50 text-green-600'
+  }
   const scopeLabel = (row: StocktakingRecord) => {
     if (row.batchId) return '批次库位'
     if (row.locationId) return '库位'
@@ -46,6 +55,9 @@ export function StocktakingTable({
     if (row.batchId) return `${row.locationName || row.locationId || '-'} / ${row.batchNo || row.batchId}`
     if (row.locationId) return row.locationName || row.locationId
     return ''
+  }
+  const openAuditEvidence = (row: StocktakingRecord) => {
+    navigate(`/logs?keyword=${encodeURIComponent(row.stocktakingNo)}`)
   }
 
   return (
@@ -115,14 +127,22 @@ export function StocktakingTable({
                 <td className="px-4 py-3 text-gray-700">{row.operator || '-'}</td>
                 <td className="px-4 py-3 text-gray-500 text-xs">{row.createdAt ? new Date(row.createdAt).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(/\//g, '-') : '-'}</td>
                 <td className="px-4 py-3">
-                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusClass(row.status)}`}>{statusLabel(row.status)}</span>
+                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusClass(row)}`}>{statusLabel(row)}</span>
                 </td>
                 <td className="px-4 py-3">
-                  <div className="flex items-center gap-1">
+                  <div className="flex flex-wrap items-center gap-1">
                     <button onClick={() => onOpenDetail(row)} className="px-2 py-1 text-gray-500 hover:text-blue-600 text-xs font-medium transition-colors">详情</button>
                     {row.difference !== 0 && row.status !== 'confirmed' && (
                       <button onClick={() => onOpenAdjust(row)} className="px-2 py-1 text-gray-500 hover:text-blue-600 text-xs font-medium transition-colors">处理差异</button>
                     )}
+                    <button
+                      type="button"
+                      onClick={() => openAuditEvidence(row)}
+                      className="inline-flex items-center gap-1 px-2 py-1 text-gray-500 hover:text-blue-600 text-xs font-medium transition-colors"
+                    >
+                      <FileSearch className="w-3.5 h-3.5" />
+                      审计证据
+                    </button>
                     <button onClick={() => onOpenDelete(row)} className="px-2 py-1 text-gray-400 hover:text-red-600 text-xs font-medium transition-colors" title="撤销">
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>

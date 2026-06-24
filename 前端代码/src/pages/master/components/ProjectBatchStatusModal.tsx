@@ -110,7 +110,9 @@ export function ProjectBatchStatusModal({
           </div>
         ) : (
           <div className="rounded-md bg-green-50 px-3 py-2 text-sm text-green-700">
-            检查通过，确认后将通过后端批量接口一次性执行。
+            {isDisabling
+              ? '检查通过；停用后这些检测服务不会再用于新BOM绑定、项目出库、LIS对账、项目成本归集和审计筛选，历史记录保留。'
+              : '检查通过；启用后这些检测服务可重新用于新BOM绑定、项目出库、LIS对账、项目成本归集和审计筛选，历史记录不变。'}
           </div>
         )}
       </div>

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
-import { AlertTriangle, CheckCircle2, EyeOff, RefreshCw, RotateCcw, Search } from 'lucide-react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { AlertTriangle, CheckCircle2, EyeOff, FileSearch, RefreshCw, RotateCcw, Search, Settings2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { abcApi } from '@/api/abc'
 import { Modal } from '@/components/ui/Modal'
@@ -14,7 +14,9 @@ interface CostException {
   sourceId?: string
   outboundId?: string
   outboundNo?: string
+  projectId?: string
   projectName?: string
+  bomId?: string
   bomName?: string
   yearMonth?: string
   severity: 'info' | 'warning' | 'error'
@@ -79,14 +81,23 @@ export function normalizeExceptionSummary(summary?: Partial<CostExceptionSummary
 export function buildInitialCostAlertFilters(searchParams: URLSearchParams, defaultMonth: string) {
   const outboundId = searchParams.get('outboundId') || ''
   const keyword = searchParams.get('keyword') || ''
+  const projectId = searchParams.get('projectId') || ''
+  const exceptionType = searchParams.get('exceptionType') || ''
+  const startDate = searchParams.get('startDate') || ''
+  const endDate = searchParams.get('endDate') || ''
   const explicitYearMonth = searchParams.get('yearMonth')
   const includeUnassigned = searchParams.get('includeUnassigned') === '1' || searchParams.get('includeUnassigned') === 'true'
+  const hasDeepLinkScope = Boolean(outboundId || keyword || projectId || exceptionType)
   return {
     status: searchParams.get('status') || 'open',
     severity: searchParams.get('severity') || '',
-    yearMonth: explicitYearMonth ?? (outboundId || keyword ? '' : defaultMonth),
+    yearMonth: explicitYearMonth ?? (hasDeepLinkScope ? '' : defaultMonth),
     keyword,
     outboundId,
+    projectId,
+    exceptionType,
+    startDate,
+    endDate,
     includeUnassigned,
   }
 }
@@ -106,8 +117,25 @@ export function getExceptionTypeLabel(type: string) {
   return TYPE_LABELS[type] || type
 }
 
+export function getExceptionActionGuidance(type: string) {
+  const guidance: Record<string, string> = {
+    missing_fee_mapping: '下一步：补齐BOM收费映射后重试，确认收费、利润和审计记录能重新接住。',
+    missing_driver_rate: '下一步：补齐作业动因费率后重试，确认作业成本、项目成本和审计记录能重新接住。',
+    missing_bom: '下一步：先到检测服务绑定BOM，再回到对账或异常中心重试成本计算。',
+    bom_material_skipped: '下一步：检查BOM物料、库存批次和单位口径，修正后重试成本计算。',
+    missing_project: '下一步：补齐出库记录的检测项目归属，再重试项目成本归集。',
+    reconciliation_variance: '下一步：回到消耗对账核对LIS病例、BOM理论消耗和出库批次，修正后重新审计差异。',
+    abc_calculation_failed: '下一步：检查出库、BOM、动因费率和期间状态；修正源数据后重试ABC核算。',
+    calculation_failed: '下一步：检查出库、BOM、动因费率和期间状态；修正源数据后重试成本计算。',
+    cost_recalculation_failed: '下一步：检查出库、BOM、动因费率和期间状态；修正源数据后重试成本重算。',
+    manual_review: '下一步：查看来源单据和审计记录，填写复核结论后解决或忽略异常。',
+  }
+  return guidance[type] || '下一步：查看来源单据和审计记录，修正源数据后重试；无法确认时填写复核说明再处理。'
+}
+
 export default function CostAlerts() {
   const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
   const [initialFilters] = useState(() =>
     buildInitialCostAlertFilters(searchParams, new Date().toISOString().slice(0, 7))
   )
@@ -127,7 +155,7 @@ export default function CostAlerts() {
 
   useEffect(() => {
     loadExceptions()
-  }, [filters.status, filters.severity, filters.yearMonth, filters.outboundId, filters.includeUnassigned, page, pageSize])
+  }, [filters.status, filters.severity, filters.yearMonth, filters.outboundId, filters.includeUnassigned, filters.projectId, filters.exceptionType, page, pageSize])
 
   const loadExceptions = async (nextPage = page, nextPageSize = pageSize) => {
     try {
@@ -141,6 +169,8 @@ export default function CostAlerts() {
         includeUnassigned: filters.includeUnassigned ? '1' : undefined,
         keyword: filters.keyword || undefined,
         outboundId: filters.outboundId || undefined,
+        projectId: filters.projectId || undefined,
+        exceptionType: filters.exceptionType || undefined,
       })
       const nextList = listPayload<CostException>(data)
       setExceptions(nextList)
@@ -168,22 +198,29 @@ export default function CostAlerts() {
     setActionModal({ type, exception })
   }
 
+  const actionValidationMessage = actionModal
+    ? actionModal.type === 'resolve'
+      ? remark.trim()
+        ? ''
+        : '请填写处理说明，系统才能留下异常处理、成本重算和审计依据。'
+      : remark.trim()
+        ? ''
+        : '请填写忽略原因，系统才能留下异常忽略、成本复核和审计依据。'
+    : ''
+  const canSubmitAction = !actionValidationMessage && !actionLoading
+
   const submitAction = async () => {
     if (!actionModal) return
+    if (actionValidationMessage) {
+      toast.error(actionValidationMessage)
+      return
+    }
     try {
       setActionLoading(true)
       if (actionModal.type === 'resolve') {
-        if (!remark.trim()) {
-          toast.error('请填写处理说明')
-          return
-        }
         await abcApi.resolveException(actionModal.exception.id, { remark: remark.trim() })
         toast.success('异常已解决')
       } else {
-        if (!remark.trim()) {
-          toast.error('请填写忽略原因')
-          return
-        }
         await abcApi.ignoreException(actionModal.exception.id, { reason: remark.trim() })
         toast.success('异常已忽略')
       }
@@ -227,6 +264,34 @@ export default function CostAlerts() {
   const changePageSize = (nextPageSize: number) => {
     setPageSize(nextPageSize)
     setPage(1)
+  }
+
+  const openSourceReconciliation = (projectId: string) => {
+    const params = new URLSearchParams({ projectId })
+    if (filters.startDate && filters.endDate) {
+      params.set('startDate', filters.startDate)
+      params.set('endDate', filters.endDate)
+    }
+    navigate(`/reconciliation?${params.toString()}`)
+  }
+
+  const openFeeMappingSource = (exception: CostException) => {
+    const params = new URLSearchParams()
+    const keyword = String(exception.bomId || exception.bomName || '').trim()
+    if (keyword) params.set('keyword', keyword)
+    params.set('status', 'missing')
+    navigate(`/abc/fee-mappings?${params.toString()}`)
+  }
+
+  const openProjectBomSource = (projectId: string) => {
+    const params = new URLSearchParams({
+      keyword: projectId,
+      bom: 'unconfigured',
+      action: 'edit',
+      projectId,
+      tab: 'bom',
+    })
+    navigate(`/projects?${params.toString()}`)
   }
 
   return (
@@ -319,6 +384,20 @@ export default function CostAlerts() {
           </select>
         </div>
         <div className="mt-3 flex items-center justify-end">
+          {(filters.projectId || filters.exceptionType) && (
+            <div className="mr-auto flex flex-wrap items-center gap-2 text-xs text-gray-600">
+              {filters.projectId && (
+                <span className="rounded-full border border-blue-100 bg-blue-50 px-2.5 py-1 text-blue-700">
+                  项目筛选：{filters.projectId}
+                </span>
+              )}
+              {filters.exceptionType && (
+                <span className="rounded-full border border-amber-100 bg-amber-50 px-2.5 py-1 text-amber-700">
+                  异常类型：{getExceptionTypeLabel(filters.exceptionType)}
+                </span>
+              )}
+            </div>
+          )}
           <button
             type="button"
             onClick={searchExceptions}
@@ -343,7 +422,7 @@ export default function CostAlerts() {
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">级别</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">状态</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">重试</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[190px]">操作</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[260px]">操作</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -369,6 +448,7 @@ export default function CostAlerts() {
                       </td>
                       <td className="px-4 py-3 text-gray-700 max-w-md">
                         <div className="line-clamp-2">{item.message}</div>
+                        <div className="mt-1 text-xs leading-5 text-gray-500">{getExceptionActionGuidance(item.exceptionType)}</div>
                       </td>
                       <td className="px-4 py-3">
                         <span className={`px-2 py-1 rounded-full text-xs ${severity.className}`}>{severity.label}</span>
@@ -407,6 +487,36 @@ export default function CostAlerts() {
                             <RotateCcw className="h-3.5 w-3.5" />
                             重试
                           </button>
+                          {item.exceptionType === 'reconciliation_variance' && item.projectId && (
+                            <button
+                              type="button"
+                              onClick={() => openSourceReconciliation(item.projectId as string)}
+                              className="px-2 py-1 text-xs text-gray-600 hover:text-amber-700 hover:bg-amber-50 rounded transition-colors inline-flex items-center gap-1"
+                            >
+                              <FileSearch className="h-3.5 w-3.5" />
+                              回到消耗对账
+                            </button>
+                          )}
+                          {item.exceptionType === 'missing_fee_mapping' && (item.bomId || item.bomName) && (
+                            <button
+                              type="button"
+                              onClick={() => openFeeMappingSource(item)}
+                              className="px-2 py-1 text-xs text-gray-600 hover:text-purple-700 hover:bg-purple-50 rounded transition-colors inline-flex items-center gap-1"
+                            >
+                              <Settings2 className="h-3.5 w-3.5" />
+                              配置收费映射
+                            </button>
+                          )}
+                          {item.exceptionType === 'missing_bom' && item.projectId && (
+                            <button
+                              type="button"
+                              onClick={() => openProjectBomSource(item.projectId as string)}
+                              className="px-2 py-1 text-xs text-gray-600 hover:text-indigo-700 hover:bg-indigo-50 rounded transition-colors inline-flex items-center gap-1"
+                            >
+                              <Settings2 className="h-3.5 w-3.5" />
+                              配置项目BOM
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -443,6 +553,7 @@ export default function CostAlerts() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 {actionModal.type === 'resolve' ? '处理说明' : '忽略原因'}
+                <span className="text-red-500"> *</span>
               </label>
               <textarea
                 value={remark}
@@ -451,6 +562,22 @@ export default function CostAlerts() {
                 className="w-full px-3 py-2 border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
               />
             </div>
+            <div className="rounded-md border border-emerald-100 bg-emerald-50 px-3 py-3">
+              <div className="text-sm font-semibold text-emerald-900">异常处理确认</div>
+              <div className="mt-1 text-xs text-emerald-700">
+                确认后将接住：异常台账、成本重算、成本看板、复核记录、审计记录
+              </div>
+              <div className="mt-3 grid grid-cols-1 gap-2 text-xs text-emerald-700">
+                <div>异常编号 {actionModal.exception.exceptionNo}</div>
+                <div>处理动作 {actionModal.type === 'resolve' ? '解决异常' : '忽略异常'}</div>
+                <div>处理依据 {remark.trim() || '待填写'}</div>
+              </div>
+            </div>
+            {actionValidationMessage ? (
+              <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900">
+                {actionValidationMessage}
+              </div>
+            ) : null}
           </div>
           <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-gray-200">
             <button
@@ -463,8 +590,8 @@ export default function CostAlerts() {
             <button
               type="button"
               onClick={submitAction}
-              disabled={actionLoading}
-              className="h-10 px-4 text-sm text-white bg-[#3b82f6] rounded-md hover:bg-blue-600 disabled:opacity-50 transition-colors"
+              disabled={!canSubmitAction}
+              className="h-10 px-4 text-sm text-white bg-[#3b82f6] rounded-md hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
             >
               确认
             </button>

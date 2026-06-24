@@ -97,10 +97,10 @@ export const outboundApi = {
 }
 
 export const scrapApi = {
-  getList: (params?: PageParams) =>
+  getList: (params?: PageParams & { keyword?: string }) =>
     request.get<PaginationData<Record<string, unknown>>>('/scraps', { params }),
   create: (data: { materialId: string; batchId?: string; quantity: number; reason: string; operator?: string; remark?: string; responsiblePerson?: string; responsibleDepartment?: string }) =>
-    request.post<Record<string, unknown>>('/scraps', data),
+    request.post<{ id: string; scrapNo: string; status: string; reviewStatus: string; requiresReview: boolean; scrapAmount: number }>('/scraps', data),
   batchCreate: (records: Array<{ materialId: string; batchId?: string; quantity: number; reason: string; remark?: string; responsiblePerson?: string; responsibleDepartment?: string }>) =>
     request.post<{ createdCount: number; ids: string[] }>('/scraps/batch', { records }),
   review: (id: string, data: { status: 'approved' | 'rejected'; reason?: string }) =>
@@ -115,13 +115,13 @@ export const returnApi = {
   getSources: (params?: PageParams & { keyword?: string; materialId?: string }) =>
     request.get<PaginationData<ReturnSource>>('/returns/sources', { params }),
   create: (data: { outboundItemId: string; quantity: number; reason: string; remark?: string }) =>
-    request.post<{ id: string }>('/returns', data),
+    request.post<{ id: string; returnNo: string }>('/returns', data),
   delete: (id: string) =>
     request.delete(`/returns/${id}`),
 }
 
 export const supplierReturnApi = {
-  getList: (params?: PageParams & { supplierId?: string; status?: string; keyword?: string; startDate?: string; endDate?: string }) =>
+  getList: (params?: PageParams & { supplierId?: string; status?: string; keyword?: string; startDate?: string; endDate?: string; includeDeleted?: boolean }) =>
     request.get<PaginationData<SupplierReturnRecord>>('/supplier-returns', { params }),
   getById: (id: string) =>
     request.get<SupplierReturnRecord>(`/supplier-returns/${id}`),
@@ -134,10 +134,10 @@ export const supplierReturnApi = {
 }
 
 export const transferApi = {
-  getList: (params?: PageParams) =>
+  getList: (params?: PageParams & { keyword?: string }) =>
     request.get<PaginationData<Record<string, unknown>>>('/transfers', { params }),
   createInbound: (data: { materialId: string; batchNo?: string; quantity: number; fromLocationId?: string; fromLocationName?: string; toLocationId: string; operator?: string; remark?: string }) =>
-    request.post<Record<string, unknown>>('/transfers/inbound', data),
+    request.post<{ id: string; inboundNo: string }>('/transfers/inbound', data),
   delete: (id: string) =>
     request.delete(`/transfers/${id}`),
 }

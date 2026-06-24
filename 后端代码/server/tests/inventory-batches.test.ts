@@ -55,6 +55,7 @@ function seedBatchTraceFacts(db: any, suffix: string) {
   const materialId = `mat-inv-trace-${suffix}`
   const inboundId = `inbound-inv-trace-${suffix}`
   const transferId = `transfer-trace-${suffix}`
+  const outboundId = `outbound-trace-${suffix}`
   const batchId = `batch-inv-trace-${suffix}`
 
   db.prepare('INSERT INTO material_categories (id, code, name, level) VALUES (?, ?, ?, ?)')
@@ -81,11 +82,11 @@ function seedBatchTraceFacts(db: any, suffix: string) {
   `).run(transferId, `TF-TRACE-${suffix}`, materialId, `BATCH-TRACE-${suffix}`, locationBId, locationAId)
   db.prepare(`
     INSERT INTO batches (id, material_id, batch_no, quantity, remaining, production_date, expiry_date, inbound_id, inbound_price, supplier_id, status, created_at, updated_at)
-    VALUES (?, ?, ?, 10, 7, '2026-01-01', '2028-01-31', ?, 12, ?, 1, '2026-06-20 09:00:00', '2026-06-20 10:00:00')
+    VALUES (?, ?, ?, 10, 8, '2026-01-01', '2028-01-31', ?, 12, ?, 1, '2026-06-20 09:00:00', '2026-06-20 10:00:00')
   `).run(batchId, materialId, `BATCH-TRACE-${suffix}`, inboundId, supplierId)
   db.prepare(`
     INSERT INTO batch_location_balances (id, batch_id, material_id, location_id, remaining, created_at, updated_at)
-    VALUES (?, ?, ?, ?, 4, '2026-06-20 09:00:00', '2026-06-20 10:00:00')
+    VALUES (?, ?, ?, ?, 5, '2026-06-20 09:00:00', '2026-06-20 10:00:00')
   `).run(`blb-trace-a-${suffix}`, batchId, materialId, locationAId)
   db.prepare(`
     INSERT INTO batch_location_balances (id, batch_id, material_id, location_id, remaining, created_at, updated_at)
@@ -99,6 +100,14 @@ function seedBatchTraceFacts(db: any, suffix: string) {
     INSERT INTO batch_location_adjustments (id, related_type, related_id, batch_id, material_id, location_id, quantity_delta, created_at)
     VALUES (?, 'transfer', ?, ?, ?, ?, 3, '2026-06-20 09:30:01')
   `).run(`bla-trace-in-${suffix}`, transferId, batchId, materialId, locationBId)
+  db.prepare(`
+    INSERT INTO outbound_records (id, outbound_no, type, total_cost, operator, status, created_at, updated_at)
+    VALUES (?, ?, 'project', 24, '吴出库', 'completed', '2026-06-20 09:45:00', '2026-06-20 09:45:00')
+  `).run(outboundId, `OB-TRACE-${suffix}`)
+  db.prepare(`
+    INSERT INTO batch_location_adjustments (id, related_type, related_id, batch_id, material_id, location_id, quantity_delta, created_at)
+    VALUES (?, 'outbound', ?, ?, ?, ?, -2, '2026-06-20 09:45:00')
+  `).run(`bla-trace-outbound-${suffix}`, outboundId, batchId, materialId, locationAId)
 
   return { batchId, materialId, locationAId, locationBId }
 }
@@ -179,31 +188,36 @@ describe('库存列表批次契约', () => {
       materialId,
       batchNo: `BATCH-TRACE-${suffix}`,
       quantity: 10,
-      remaining: 7,
+      remaining: 8,
       inboundNo: `IN-TRACE-${suffix}`,
       supplierName: '追溯供应商',
       locationName: '追溯A库位',
     })
     expect(res.body.data.locationBalances).toEqual([
-      expect.objectContaining({ locationName: '追溯A库位', remaining: 4 }),
+      expect.objectContaining({ locationName: '追溯A库位', remaining: 5 }),
       expect.objectContaining({ locationName: '追溯B库位', remaining: 3 }),
     ])
     expect(res.body.data.movements).toEqual([
       expect.objectContaining({ type: 'inbound', label: '采购入库', quantityDelta: 10, documentNo: `IN-TRACE-${suffix}`, locationName: '追溯A库位', operator: '王仓管' }),
       expect.objectContaining({ type: 'transfer', label: '调拨转出', quantityDelta: -3, locationName: '追溯A库位', operator: '赵调拨' }),
       expect.objectContaining({ type: 'transfer', label: '调拨转入', quantityDelta: 3, locationName: '追溯B库位', operator: '赵调拨' }),
+      expect.objectContaining({ type: 'outbound', label: '出库扣减', quantityDelta: -2, documentNo: `OB-TRACE-${suffix}`, locationName: '追溯A库位', operator: '吴出库' }),
     ])
   })
 
   it('INV-BATCH-002: 普通出库带 batchId 时只扣减用户选择的批次', async () => {
     const suffix = `outbound-${Date.now()}`
     const { materialId, earlyBatchId, lateBatchId } = seedInventoryBatches(db, suffix)
+    const projectId = `project-inv-batch-${suffix}`
+    db.prepare('INSERT INTO projects (id, code, name, type, status) VALUES (?, ?, ?, ?, 1)')
+      .run(projectId, `PROJ-INV-BATCH-${suffix}`, '库存批次出库项目', 'ihc')
 
     const res = await request(app)
       .post('/api/v1/outbound')
       .set('Authorization', `Bearer ${token}`)
       .send({
         type: 'project',
+        projectId,
         items: [{ materialId, batchId: lateBatchId, quantity: 4, usage: 'external', receiver: '测试接收方' }],
         remark: '指定批次出库测试',
       })

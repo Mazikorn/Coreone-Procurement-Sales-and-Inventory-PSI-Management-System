@@ -17,6 +17,7 @@ import { checkStockAlerts } from '../utils/alertChecker.js'
 import { generateNo } from '../utils/generateNo.js'
 import { buildBomSourceSnapshot, calculateFeeAmountFromStandard, calculateSlideCostWithFee } from '../utils/cost-calculator.js'
 import { errorMessage, recordCostException } from '../utils/cost-exceptions.js'
+import { writeAuditLog } from '../utils/cost-runs.js'
 
 function generateOutboundNo(): string {
   return generateNo('OB')
@@ -55,8 +56,11 @@ function validateOutboundBatchRestoreCapacity(
   return { ok: true }
 }
 
-function validateDirectOutboundReferences(db: any, refs: { projectId?: unknown; items?: unknown }) {
+function validateDirectOutboundReferences(db: any, refs: { projectId?: unknown; items?: unknown; requireProject?: boolean }) {
   const projectId = String(refs.projectId || '').trim()
+  if (refs.requireProject && !projectId) {
+    return { ok: false, status: 400, message: '检测项目必填，普通出库必须归属到项目', code: 'INVALID_PARAMETER' }
+  }
   if (projectId) {
     const project = db.prepare('SELECT id, status FROM projects WHERE id = ? AND is_deleted = 0').get(projectId) as any
     if (!project) return { ok: false, status: 404, message: '检测项目不存在', code: 'NOT_FOUND' }
@@ -88,6 +92,14 @@ function validateOutboundItems(items: any) {
     const quantity = Number(item?.quantity)
     if (!item?.materialId || item.quantity === undefined || item.quantity === null || !Number.isFinite(quantity) || quantity <= 0) {
       return { ok: false, message: 'Invalid quantity' }
+    }
+    const usage = String(item?.usage || 'self').trim()
+    if (!['self', 'external'].includes(usage)) {
+      return { ok: false, message: '出库用途无效' }
+    }
+    const receiver = typeof item?.receiver === 'string' ? item.receiver.trim() : ''
+    if (usage === 'external' && !receiver) {
+      return { ok: false, message: '外给出库必须填写接收方' }
     }
   }
   return { ok: true }
@@ -268,6 +280,7 @@ router.get('/', (req, res) => {
           id: i.id, materialId: i.material_id, materialName: i.material_name,
           batchId: i.batch_id, batchNo: i.batch_no, quantity: i.quantity, unit: i.unit,
           unitCost: i.unit_cost, totalCost: i.total_cost,
+          usage: i.usage || 'self', receiver: i.receiver || null,
         })),
         totalCost: r.total_cost, operator: r.operator, status: r.status,
         costStatus: r.cost_status || 'pending_cost',
@@ -330,7 +343,8 @@ router.post('/', requireWriteAccess, (req, res) => {
     const operator = (req as any).user?.username || 'system'
     const sc = sampleCountValidation.sampleCount
 
-    const refValidation = validateDirectOutboundReferences(db, { projectId, items })
+    const normalizedProjectId = String(projectId || '').trim()
+    const refValidation = validateDirectOutboundReferences(db, { projectId: normalizedProjectId, items, requireProject: true })
     if (!refValidation.ok) {
       error(res, refValidation.message, refValidation.code, refValidation.status)
       return
@@ -362,8 +376,8 @@ router.post('/', requireWriteAccess, (req, res) => {
         itemAllocations.push({
           materialId,
           quantity: qty,
-          usage: item.usage || 'self',
-          receiver: item.receiver || null,
+          usage: String(item.usage || 'self').trim(),
+          receiver: typeof item.receiver === 'string' ? item.receiver.trim() || null : null,
           allocations,
           itemTotalCost,
         })
@@ -372,7 +386,7 @@ router.post('/', requireWriteAccess, (req, res) => {
       db.prepare(`
         INSERT INTO outbound_records (id, outbound_no, type, project_id, total_cost, sample_count, operator, status, remark)
         VALUES (?, ?, ?, ?, ?, ?, ?, 'completed', ?)
-      `).run(id, outboundNo, typeValidation.type, projectId || null, totalCost, sc, operator, remark || null)
+      `).run(id, outboundNo, typeValidation.type, normalizedProjectId, totalCost, sc, operator, remark || null)
 
       for (const ia of itemAllocations) {
         for (const alloc of ia.allocations) {
@@ -441,8 +455,8 @@ router.post('/', requireWriteAccess, (req, res) => {
       logOperation(db, req as any, {
         operation: 'POST /outbound',
         description: `创建普通出库记录 ${id}`,
-        requestData: { type: typeValidation.type, projectId: projectId || null, items, remark: remark || null, sampleCount: sc },
-        responseData: { id, outboundNo, type: typeValidation.type, projectId: projectId || null, totalCost, status: 'completed' },
+        requestData: { type: typeValidation.type, projectId: normalizedProjectId, items, remark: remark || null, sampleCount: sc },
+        responseData: { id, outboundNo, type: typeValidation.type, projectId: normalizedProjectId, totalCost, status: 'completed' },
       })
     } catch (err: any) {
       db.exec('ROLLBACK')
@@ -452,7 +466,7 @@ router.post('/', requireWriteAccess, (req, res) => {
       throw err
     }
 
-    success(res, { id, outboundNo, type, projectId, totalCost, status: 'completed', createdAt: new Date().toISOString() }, 'Outbound created', 201)
+    success(res, { id, outboundNo, type, projectId: normalizedProjectId, totalCost, status: 'completed', createdAt: new Date().toISOString() }, 'Outbound created', 201)
   } catch (err: any) { error(res, err.message) }
 })
 
@@ -754,8 +768,9 @@ router.post('/bom', (req, res) => {
           id,
         )
 
+        let exceptionNo: string | null = null
         if (missingFeeMapping) {
-          recordCostException(db, {
+          const exception = recordCostException(db, {
             sourceModule: 'abc',
             sourceType: 'bom_outbound',
             sourceId: id,
@@ -775,12 +790,32 @@ router.post('/bom', (req, res) => {
               action: 'configure_bom_fee_mapping',
             },
           })
+          exceptionNo = exception.exceptionNo
         }
+
+        writeAuditLog(db, 'outbound', 'update_cost', outboundNo, {
+          outboundId: id,
+          outboundNo,
+          bomId: effectiveBomId,
+          projectId: effectiveProjectId || null,
+          caseNo: normalizedCaseNo || null,
+          sampleCount: sc,
+          materialCost: slideCostResult.materialCost,
+          activityCost: slideCostResult.totalActivityCost,
+          totalCost: slideCostResult.totalCost,
+          costMonth,
+          costStatus: missingFeeMapping ? 'cost_exception' : 'costed',
+          feeAmount: slideCostResult.feeAmount,
+          profit: slideCostResult.profit,
+          profitRate: slideCostResult.profitRate,
+          exceptionNo,
+          exceptionType: missingFeeMapping ? 'missing_fee_mapping' : null,
+        }, operator)
       } catch (abcErr) {
         const message = errorMessage(abcErr)
         console.error('ABC calculation failed, outbound continues:', abcErr)
         db.prepare("UPDATE outbound_records SET cost_status = 'cost_exception' WHERE id = ?").run(id)
-        recordCostException(db, {
+        const exception = recordCostException(db, {
           sourceModule: 'abc',
           sourceType: 'bom_outbound',
           sourceId: id,
@@ -798,6 +833,22 @@ router.post('/bom', (req, res) => {
             error: message,
           },
         })
+        writeAuditLog(db, 'outbound', 'update_cost', outboundNo, {
+          outboundId: id,
+          outboundNo,
+          bomId: effectiveBomId,
+          projectId: effectiveProjectId || null,
+          caseNo: normalizedCaseNo || null,
+          sampleCount: sc,
+          materialCost: totalCost,
+          costMonth,
+          costStatus: 'cost_exception',
+          feeAmount: 0,
+          profit: -totalCost,
+          exceptionNo: exception.exceptionNo,
+          exceptionType: 'abc_calculation_failed',
+          error: message,
+        }, operator)
       }
 
       if (lisCase?.id) {
@@ -1095,9 +1146,11 @@ router.put('/:id', requireWriteAccess, (req, res) => {
       return
     }
 
+    const nextProjectId = projectId !== undefined ? String(projectId || '').trim() : (record.project_id || '')
     const refValidation = validateDirectOutboundReferences(db, {
-      projectId: projectId !== undefined ? projectId : undefined,
+      projectId: nextProjectId,
       items: newItems,
+      requireProject: true,
     })
     if (!refValidation.ok) {
       error(res, refValidation.message, refValidation.code, refValidation.status)
@@ -1111,7 +1164,6 @@ router.put('/:id', requireWriteAccess, (req, res) => {
       }
     }
     const nextType = type !== undefined ? String(type || '').trim() : record.type
-    const nextProjectId = projectId !== undefined ? (projectId || null) : (record.project_id || null)
     const oldItems = db.prepare('SELECT * FROM outbound_items WHERE outbound_id = ?').all(id) as any[]
     const materialUnits = db.prepare('SELECT id, unit FROM materials WHERE id IN (' + newItems.map(() => '?').join(',') + ')').all(...newItems.map((i: any) => i.materialId)) as any[]
     const unitMap = new Map(materialUnits.map((m: any) => [m.id, m.unit]))
@@ -1179,8 +1231,8 @@ router.put('/:id', requireWriteAccess, (req, res) => {
         processedItems.push({
           materialId,
           quantity: qty,
-          usage: item.usage || 'self',
-          receiver: item.receiver || null,
+          usage: String(item.usage || 'self').trim(),
+          receiver: typeof item.receiver === 'string' ? item.receiver.trim() || null : null,
           allocations,
         })
       }

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { createElement } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CostDriverList, formatTierRulesForDisplay, normalizeTierRulesForSubmit } from './CostDriverList'
@@ -83,5 +83,77 @@ describe('CostDriverList', () => {
     expect(screen.getByPlaceholderText('搜索成本动因...')).toHaveValue('DRIVER-PW-DEEP-001')
     expect(await screen.findByText('深链验证阶梯动因')).toBeInTheDocument()
     expect(screen.getByText('0-100张：¥2/张；100张以上：¥1.5/张')).toBeInTheDocument()
+  })
+
+  it('focuses the newly created cost driver so activity center users can immediately confirm the costing口径', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes('/api/v1/abc/cost-drivers') && init?.method === 'POST') {
+        return {
+          json: async () => ({
+            success: true,
+            data: {
+              id: 'DRIVER-CREATED-001',
+              code: 'driver_created_001',
+              name: '新建切片张数动因',
+            },
+          }),
+        } as Response
+      }
+      if (url.includes('/api/v1/abc/cost-drivers')) {
+        return {
+          json: async () => ({
+            success: true,
+            data: [{
+              id: 'DRIVER-CREATED-001',
+              code: 'driver_created_001',
+              name: '新建切片张数动因',
+              unit: '张',
+              calculationMethod: 'linear',
+              tierRules: null,
+              description: '用于作业中心成本归集',
+              status: 'active',
+              createdAt: '2026-06-21T00:00:00.000Z',
+            }],
+          }),
+        } as Response
+      }
+      throw new Error(`Unexpected fetch: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    window.history.replaceState(null, '', '/abc/cost-drivers?keyword=old-driver')
+
+    render(createElement(CostDriverList))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/abc/cost-drivers?keyword=old-driver',
+      expect.any(Object),
+    ))
+
+    fireEvent.click(screen.getByRole('button', { name: '新增成本动因' }))
+    fireEvent.change(screen.getByPlaceholderText('例如：slide_count'), { target: { value: 'driver_created_001' } })
+    fireEvent.change(screen.getByPlaceholderText('例如：切片数'), { target: { value: '新建切片张数动因' } })
+    fireEvent.change(screen.getByPlaceholderText('例如：张、个、次'), { target: { value: '张' } })
+    fireEvent.change(screen.getByPlaceholderText('成本动因的详细描述'), { target: { value: '用于作业中心成本归集' } })
+    expect(screen.getByText('成本动因结果确认')).toBeInTheDocument()
+    expect(screen.getByText('确认后将接住：成本动因、作业中心、成本池、动因费率、项目成本、审计记录')).toBeInTheDocument()
+    expect(screen.getByText('代码 driver_created_001')).toBeInTheDocument()
+    expect(screen.getByText('名称 新建切片张数动因')).toBeInTheDocument()
+    expect(screen.getByText('单位 张')).toBeInTheDocument()
+    expect(screen.getByText('计算方法 线性')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '创建' }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/abc/cost-drivers',
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.stringContaining('"code":"driver_created_001"'),
+      }),
+    ))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/abc/cost-drivers?keyword=driver_created_001',
+      expect.any(Object),
+    ))
+    expect(screen.getByPlaceholderText('搜索成本动因...')).toHaveValue('driver_created_001')
   })
 })

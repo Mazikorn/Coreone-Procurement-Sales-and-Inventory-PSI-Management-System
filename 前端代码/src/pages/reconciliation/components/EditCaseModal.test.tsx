@@ -53,4 +53,46 @@ describe('EditCaseModal', () => {
     expect(setEditCaseProjectId).toHaveBeenCalledWith('project-1')
     expect(setEditCaseStatus).toHaveBeenCalledWith('modified')
   })
+
+  it('summarizes case edit result and downstream chains before saving', () => {
+    render(
+      <EditCaseModal
+        open
+        editCaseTarget={unmatchedCase}
+        editCaseProjectId="project-1"
+        setEditCaseProjectId={vi.fn()}
+        editCaseStatus="modified"
+        setEditCaseStatus={vi.fn()}
+        projects={projects}
+        onClose={vi.fn()}
+        onConfirm={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('病例修正结果确认')).toBeInTheDocument()
+    expect(screen.getByText('确认后将接住：LIS病例、检测项目、BOM理论消耗、项目对账、成本差异、审计记录')).toBeInTheDocument()
+    expect(screen.getByText('病理号 CASE-001')).toBeInTheDocument()
+    expect(screen.getByText('检测项目 已配置BOM项目')).toBeInTheDocument()
+    expect(screen.getByText('BOM状态 已关联BOM')).toBeInTheDocument()
+    expect(screen.getByText('状态 已修改')).toBeInTheDocument()
+  })
+
+  it('blocks saving when no project is selected for the case correction', () => {
+    render(
+      <EditCaseModal
+        open
+        editCaseTarget={unmatchedCase}
+        editCaseProjectId=""
+        setEditCaseProjectId={vi.fn()}
+        editCaseStatus="modified"
+        setEditCaseStatus={vi.fn()}
+        projects={projects}
+        onClose={vi.fn()}
+        onConfirm={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('请选择检测项目，系统才能把病例接到 BOM、项目对账和成本差异链路。')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '保存修改' })).toBeDisabled()
+  })
 })

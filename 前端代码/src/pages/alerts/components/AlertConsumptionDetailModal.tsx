@@ -1,6 +1,8 @@
 import React from 'react'
-import { X } from 'lucide-react'
+import { FileSearch, X } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import type { AlertItem } from '../hooks/useAlertsPage'
+import { buildAlertAuditEvidenceUrl } from '../hooks/useAlertsPage'
 
 interface Props {
   open: boolean
@@ -12,6 +14,8 @@ interface Props {
 }
 
 export function AlertConsumptionDetailModal({ open, alert, onClose, onHandle, canHandle = true, formatDate }: Props) {
+  const navigate = useNavigate()
+
   if (!open || !alert) return null
 
   return (
@@ -55,6 +59,16 @@ export function AlertConsumptionDetailModal({ open, alert, onClose, onHandle, ca
           )}
         </div>
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50">
+          {alert.status !== 'pending' && (
+            <button
+              type="button"
+              onClick={() => navigate(buildAlertAuditEvidenceUrl(alert))}
+              className="inline-flex items-center gap-1.5 px-4 py-2 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-md hover:bg-gray-50 transition-colors"
+            >
+              <FileSearch className="w-4 h-4" />
+              审计证据
+            </button>
+          )}
           <button onClick={onClose} className="px-4 py-2 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-md hover:bg-gray-50 transition-colors">
             关闭
           </button>

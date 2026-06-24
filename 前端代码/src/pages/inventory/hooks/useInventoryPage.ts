@@ -12,6 +12,19 @@ type SortDirection = 'asc' | 'desc'
 type QuickFilterType = 'all' | 'low-stock' | 'expiring-soon' | 'expiring-month' | 'expired' | 'out-of-stock'
 type MaterialSelectorTab = 'material' | 'bom'
 
+const QUICK_FILTER_VALUES = new Set<QuickFilterType>([
+  'all',
+  'low-stock',
+  'expiring-soon',
+  'expiring-month',
+  'expired',
+  'out-of-stock',
+])
+
+function normalizeQuickFilter(value: string): QuickFilterType {
+  return QUICK_FILTER_VALUES.has(value as QuickFilterType) ? value as QuickFilterType : 'all'
+}
+
 type InventoryRow = InventoryItem & {
   batch?: string
   expiry?: string
@@ -33,6 +46,12 @@ type OutboundMaterial = {
   user: string
   usage: OutboundUsage
   receiver: string
+}
+
+type InventoryDeduction = {
+  materialId: string
+  batchId?: string
+  quantity: number
 }
 
 type DepletionItem = {
@@ -149,6 +168,35 @@ function toOutboundMaterial(row: InventoryRow | Material | BOMMaterial, fallback
   }
 }
 
+function applyInventoryDeductions(rows: InventoryRow[], deductions: InventoryDeduction[]): InventoryRow[] {
+  return rows.map(row => {
+    const quantity = deductions
+      .filter(item => item.batchId ? row.batchId === item.batchId : row.materialId === item.materialId)
+      .reduce((sum, item) => sum + Number(item.quantity || 0), 0)
+    if (quantity <= 0) return row
+    const stock = Math.max(0, Number(row.stock ?? 0) - quantity)
+    const availableStock = Math.max(0, Number(row.availableStock ?? row.stock ?? 0) - quantity)
+    return {
+      ...row,
+      stock,
+      availableStock,
+    }
+  })
+}
+
+function outboundDeductions(materials: OutboundMaterial[]): InventoryDeduction[] {
+  return materials.map(item => ({
+    materialId: item.materialId,
+    batchId: item.batchId,
+    quantity: item.quantity,
+  }))
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  const data = (error as any)?.response?.data
+  return data?.error?.message || data?.message || (error as any)?.message || fallback
+}
+
 function mapDepletionItem(row: any): DepletionItem {
   const totalQty = Number(row.totalQty ?? row.total_qty ?? row.totalQuantity ?? row.quantity ?? 0)
   const remaining = Number(row.remaining ?? row.remain_qty ?? row.remainQty ?? row.remainingQty ?? 0)
@@ -194,10 +242,41 @@ function mapDepletedRecord(row: any): DepletedRecord {
   }
 }
 
+function withUpdatedRemaining(item: DepletionItem, remaining: number): DepletionItem {
+  const progress = item.totalQty > 0
+    ? Math.min(100, Math.round(((item.totalQty - remaining) / item.totalQty) * 100))
+    : 0
+  return {
+    ...item,
+    remaining,
+    progress,
+    status: progress > 90 ? 'warning' : item.status,
+  }
+}
+
+function toLocalDepletedRecord(item: DepletionItem, remainQty: number, depleteType: string, depleteReason: string): DepletedRecord {
+  return {
+    id: item.id,
+    materialName: item.materialName,
+    spec: item.spec,
+    batch: item.batch,
+    depleteType: toDepleteTypeLabel(depleteType),
+    depleteReason: depleteReason || '-',
+    operator: getCurrentUserOption().real_name,
+    totalQty: item.totalQty,
+    remainQty,
+    unit: item.unit,
+    startDate: '-',
+    endDate: new Date().toISOString().slice(0, 10),
+    actualDays: item.daysUsed,
+  }
+}
+
 export function useInventoryPage() {
   const url = useUrlParams()
   const initialKeyword = url.get('keyword', '')
   const filterMaterialId = url.get('materialId', '')
+  const initialQuickFilter = normalizeQuickFilter(url.get('quick', url.get('quickFilter', 'all')))
   const [activeTab, setActiveTab] = useState<ActiveTab>('in-stock')
   const [data, setData] = useState<InventoryRow[]>([])
   const [loading, setLoading] = useState(false)
@@ -210,7 +289,7 @@ export function useInventoryPage() {
   const [location, setLocation] = useState('')
   const [categoryOptions, setCategoryOptions] = useState<Array<{ value: string; label: string }>>([{ value: '', label: '全部分类' }])
   const [locationOptions, setLocationOptions] = useState<Array<{ value: string; label: string }>>([{ value: '', label: '全部库位' }])
-  const [quickFilter, setQuickFilter] = useState<QuickFilterType>('all')
+  const [quickFilter, setQuickFilter] = useState<QuickFilterType>(initialQuickFilter)
   const [inventoryStats, setInventoryStats] = useState<InventoryStats | null>(null)
   const [sortField, setSortField] = useState<SortField>(null)
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
@@ -268,6 +347,10 @@ export function useInventoryPage() {
   const canManageInventoryActions = useMemo(() => {
     const role = getUserRole()
     return role === 'admin' || role === 'warehouse_manager'
+  }, [])
+  const canCreatePurchaseOrders = useMemo(() => {
+    const role = getUserRole()
+    return role === 'admin' || role === 'procurement'
   }, [])
 
   const loadInventory = useCallback(async () => {
@@ -389,7 +472,7 @@ export function useInventoryPage() {
     }
   }, [])
 
-  const loadDepletion = useCallback(async () => {
+  const loadDepletion = useCallback(async (options?: { preserveOnError?: boolean }) => {
     try {
       const [trackingRes, depletedRes] = await Promise.all([
         depletionApi.getTracking({ status: 'in-use' }),
@@ -400,8 +483,10 @@ export function useInventoryPage() {
       setDepletionTracking((trackingPayload?.list ?? []).map(mapDepletionItem))
       setDepletedRecords((depletedPayload?.list ?? []).map(mapDepletedRecord))
     } catch {
-      setDepletionTracking([])
-      setDepletedRecords([])
+      if (!options?.preserveOnError) {
+        setDepletionTracking([])
+        setDepletedRecords([])
+      }
     }
   }, [])
 
@@ -644,16 +729,33 @@ export function useInventoryPage() {
       toast.error('请选择领用人')
       return
     }
+    const selectedProjectIds = Array.from(new Set(
+      outboundMaterials.map(item => item.project.trim()).filter(Boolean),
+    ))
+    if (outboundMaterials.some(item => !item.project.trim())) {
+      toast.error('请选择检测项目，快捷出库必须归属到项目才能进入成本和对账')
+      return
+    }
+    if (selectedProjectIds.length > 1) {
+      toast.error('一次快捷出库只能关联一个检测项目，请分项目分别出库')
+      return
+    }
+    const projectId = selectedProjectIds[0]
+    if (!projectList.some(project => project.id === projectId)) {
+      toast.error('检测项目已失效，请重新选择')
+      return
+    }
     const missingExternalReceiver = outboundMaterials.some(item => item.usage === 'external' && !item.receiver.trim())
     if (missingExternalReceiver) {
       toast.error('外给用途必须填写接收方')
       return
     }
+    const submittedMaterials = outboundMaterials
     try {
-      await outboundApi.create({
+      const createdOutbound: any = await outboundApi.create({
         type: 'project',
-        projectId: projectList.find(project => project.name === outboundMaterials.find(item => item.project)?.project)?.id,
-        items: outboundMaterials.map(item => ({
+        projectId,
+        items: submittedMaterials.map(item => ({
           materialId: item.materialId,
           batchId: item.batchId,
           quantity: item.quantity,
@@ -662,15 +764,21 @@ export function useInventoryPage() {
         })),
         remark: outboundRemark || undefined,
       })
-      toast.success('出库登记成功')
+      const outboundNo = createdOutbound?.data?.outboundNo || createdOutbound?.outboundNo
+      toast.success('出库登记成功', {
+        description: outboundNo
+          ? `已生成 ${outboundNo}，库存和批次已扣减；成本和审计可按单号回看，项目对账请按项目进入消耗对账查看实际出库影响`
+          : '库存和批次已扣减；成本和审计可回看，项目对账请按项目进入消耗对账查看实际出库影响',
+      })
+      setData(prev => applyInventoryDeductions(prev, outboundDeductions(submittedMaterials)))
       setOutboundModalOpen(false)
       setOutboundMaterials([])
       setOutboundRemark('')
       clearSelection()
       loadInventory()
       loadInventoryStats()
-    } catch {
-      toast.error('出库登记失败')
+    } catch (e) {
+      toast.error(getErrorMessage(e, '出库登记失败'))
     }
   }
 
@@ -737,7 +845,7 @@ export function useInventoryPage() {
       return
     }
     try {
-      const result = await scrapApi.batchCreate(items.map(item => ({
+      const scrapItems = items.map(item => ({
         materialId: item.materialId,
         batchId: item.batchId,
         quantity: item.stock,
@@ -745,8 +853,12 @@ export function useInventoryPage() {
         remark: scrapRemark || undefined,
         responsiblePerson: scrapResponsiblePerson.trim() || undefined,
         responsibleDepartment: scrapResponsibleDepartment.trim() || undefined,
-      })))
-      toast.success('报废登记成功', { description: `已报废 ${result.createdCount} 项物料` })
+      }))
+      const result = await scrapApi.batchCreate(scrapItems)
+      toast.success('报废登记成功', {
+        description: `已报废 ${result.createdCount} 项物料，库存和批次已扣减，报废记录进入成本、库存流水和审计链路`,
+      })
+      setData(prev => applyInventoryDeductions(prev, scrapItems))
       setBatchScrapModalOpen(false)
       setScrapReason('')
       setScrapRemark('')
@@ -755,8 +867,8 @@ export function useInventoryPage() {
       clearSelection()
       loadInventory()
       loadInventoryStats()
-    } catch {
-      toast.error('报废登记失败')
+    } catch (e) {
+      toast.error(getErrorMessage(e, '报废登记失败'))
     }
   }
 
@@ -780,14 +892,19 @@ export function useInventoryPage() {
         remaining,
         reason: editRemainReason.trim(),
       })
-      toast.success('剩余量已更新')
+      toast.success('剩余量已更新', {
+        description: '使用中记录、批次余量、耗材消耗和审计链路已同步',
+      })
+      setDepletionTracking(prev => prev.map(item => (
+        item.id === selectedDepletionItem.id ? withUpdatedRemaining(item, remaining) : item
+      )))
       setEditRemainModalOpen(false)
       setSelectedDepletionItem(null)
       setEditRemainValue('')
       setEditRemainReason('')
-      loadDepletion()
-    } catch {
-      toast.error('剩余量更新失败')
+      loadDepletion({ preserveOnError: true })
+    } catch (e) {
+      toast.error(getErrorMessage(e, '剩余量更新失败'))
     }
   }
 
@@ -813,18 +930,23 @@ export function useInventoryPage() {
         deplete_type: depleteType,
         deplete_reason: reason || undefined,
       })
-      toast.success('已确认耗尽')
+      toast.success('已确认耗尽', {
+        description: '使用中记录已归档，批次、耗尽记录、库存状态和审计链路已同步',
+      })
+      const completedRecord = toLocalDepletedRecord(selectedDepletionItem, remainQty, depleteType, reason)
+      setDepletionTracking(prev => prev.filter(item => item.id !== selectedDepletionItem.id))
+      setDepletedRecords(prev => [completedRecord, ...prev.filter(item => item.id !== selectedDepletionItem.id)])
       setConfirmDepleteModalOpen(false)
       setSelectedDepletionItem(null)
       setDepleteType('normal')
       setDepleteRemainValue('0')
       setExpiredReason('')
       setExpiredRemark('')
-      loadDepletion()
+      loadDepletion({ preserveOnError: true })
       loadInventory()
       loadInventoryStats()
-    } catch {
-      toast.error('确认耗尽失败')
+    } catch (e) {
+      toast.error(getErrorMessage(e, '确认耗尽失败'))
     }
   }
 
@@ -834,6 +956,7 @@ export function useInventoryPage() {
     canAccessDepletion,
     canManageDepletionActions,
     canManageInventoryActions,
+    canCreatePurchaseOrders,
     data,
     loading,
     total,

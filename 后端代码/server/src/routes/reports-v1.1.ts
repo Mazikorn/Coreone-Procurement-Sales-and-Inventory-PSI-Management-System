@@ -16,6 +16,13 @@ function round2(value: number) {
   return Math.round(value * 100) / 100
 }
 
+function supplierReturnEvidenceUrl(supplierId: string, startDate?: string, endDate?: string) {
+  const params = new URLSearchParams({ supplierId, status: 'refunded' })
+  if (startDate) params.set('startDate', startDate)
+  if (endDate) params.set('endDate', endDate)
+  return `/supplier-returns?${params.toString()}`
+}
+
 function formatYearMonth(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
 }
@@ -269,22 +276,31 @@ router.get('/cost-by-supplier', (req, res) => {
       ORDER BY amount DESC
     `).all(...params) as any[]
 
-    let supplierReturnWhere = "is_deleted = 0 AND status != 'cancelled'"
+    let supplierReturnWhere = "is_deleted = 0 AND status = 'refunded'"
     const supplierReturnParams: any[] = []
     if (startDate) { supplierReturnWhere += ' AND created_at >= ?'; supplierReturnParams.push(startDate) }
     if (endDate) { supplierReturnWhere += ' AND created_at <= ?'; supplierReturnParams.push(`${endDate}T23:59:59`) }
     const supplierReturnRows = db.prepare(`
-      SELECT supplier_id, SUM(refund_amount) as refund_amount
+      SELECT supplier_id, SUM(refund_amount) as refund_amount, COUNT(id) as refunded_return_count
       FROM supplier_returns
       WHERE ${supplierReturnWhere} AND supplier_id IS NOT NULL
       GROUP BY supplier_id
     `).all(...supplierReturnParams) as any[]
-    const supplierReturnMap = new Map(supplierReturnRows.map((r: any) => [r.supplier_id, Number(r.refund_amount) || 0]))
+    const supplierReturnMap = new Map(supplierReturnRows.map((r: any) => [
+      r.supplier_id,
+      {
+        refundedAmount: Number(r.refund_amount) || 0,
+        refundedReturnCount: Number(r.refunded_return_count) || 0,
+      },
+    ]))
 
     const netRows = rows.map((r: any) => ({
       ...r,
-      amount: Math.max(0, (Number(r.amount) || 0) - (supplierReturnMap.get(r.supplier_id) || 0)),
-    }))
+      grossAmount: Number(r.amount) || 0,
+      refundedAmount: supplierReturnMap.get(r.supplier_id)?.refundedAmount || 0,
+      refundedReturnCount: supplierReturnMap.get(r.supplier_id)?.refundedReturnCount || 0,
+      amount: Math.max(0, (Number(r.amount) || 0) - (supplierReturnMap.get(r.supplier_id)?.refundedAmount || 0)),
+    })).sort((a: any, b: any) => (b.amount || 0) - (a.amount || 0))
 
     const totalAmount = netRows.reduce((sum: number, r: any) => sum + (r.amount || 0), 0)
 
@@ -292,6 +308,10 @@ router.get('/cost-by-supplier', (req, res) => {
       suppliers: netRows.map((r: any) => ({
         id: r.supplier_id, name: r.name || 'Unknown',
         amount: r.amount, ratio: totalAmount > 0 ? parseFloat((r.amount / totalAmount * 100).toFixed(1)) : 0,
+        grossAmount: r.grossAmount,
+        refundedAmount: r.refundedAmount,
+        refundedReturnCount: r.refundedReturnCount,
+        supplierReturnUrl: supplierReturnEvidenceUrl(r.supplier_id, String(startDate || ''), String(endDate || '')),
         orderCount: r.order_count, status: 'long-term',
       })),
     })

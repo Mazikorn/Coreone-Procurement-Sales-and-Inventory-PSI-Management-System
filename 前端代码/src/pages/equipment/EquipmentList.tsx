@@ -1,3 +1,4 @@
+import React from 'react'
 import { Plus, Search, Eye, Edit2, Trash2, Settings, BarChart3 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
@@ -245,7 +246,7 @@ export default function EquipmentList() {
       <ConfirmDialog
         open={page.modalType === 'delete'}
         title="确认删除"
-        description={`确定要删除设备「${page.detailRow?.name || ''}」吗？此操作不可撤销。`}
+        description={`确定要删除设备「${page.detailRow?.name || ''}」吗？删除后不会再进入新 BOM 设备选择、设备使用登记、折旧统计和月度成本计算；历史 BOM、使用记录、成本明细和审计记录仍保留可回看。`}
         confirmText="确认删除"
         confirmVariant="danger"
         onConfirm={page.handleDelete}

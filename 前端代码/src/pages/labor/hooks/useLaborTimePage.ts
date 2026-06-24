@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { laborTimeApi } from '@/api/master'
 import { usePagination } from '@/hooks/usePagination'
@@ -27,6 +27,29 @@ const defaultForm: LaborTimeForm = {
   description: '',
   sortOrder: 0,
   referenceSource: 'system',
+}
+
+function buildCreatedLaborTimeRecord(
+  payload: Partial<StandardLaborTime>,
+  form: LaborTimeForm,
+): StandardLaborTime | null {
+  if (!payload.id || !payload.stepCode) return null
+
+  return {
+    id: payload.id,
+    stepCode: payload.stepCode,
+    stepName: payload.stepName || form.stepName,
+    projectType: payload.projectType || form.projectType,
+    standardMinutes: Number(payload.standardMinutes ?? form.standardMinutes),
+    laborRatePerMinute: Number(payload.laborRatePerMinute ?? form.laborRatePerMinute),
+    isEquipmentStep: Boolean(payload.isEquipmentStep ?? form.isEquipmentStep),
+    description: payload.description ?? form.description,
+    sortOrder: Number(payload.sortOrder ?? form.sortOrder),
+    referenceSource: payload.referenceSource || form.referenceSource,
+    referenceSourceLabel: payload.referenceSourceLabel,
+    createdAt: payload.createdAt || new Date().toISOString(),
+    updatedAt: payload.updatedAt || new Date().toISOString(),
+  }
 }
 
 export const PROJECT_TYPE_OPTIONS = [
@@ -62,6 +85,8 @@ export function useLaborTimePage() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState<LaborTimeForm>(defaultForm)
   const [stats, setStats] = useState({ total: 0, totalMinutes: 0, avgRate: 0, equipmentSteps: 0 })
+  const [createdLaborTimeFallback, setCreatedLaborTimeFallback] = useState<StandardLaborTime | null>(null)
+  const [deletedLaborTimeIds, setDeletedLaborTimeIds] = useState<Set<string>>(new Set())
 
   const { data, loading, page, pageSize, total, setPage, setPageSize, refresh } = usePagination<StandardLaborTime>({
     fetchFn: async (params) => {
@@ -77,6 +102,28 @@ export function useLaborTimePage() {
     initialPageSize: 20,
     deps: [keyword, filterProjectType, filterReferenceSource],
   })
+
+  const displayedPage = useMemo(() => {
+    const filteredData = deletedLaborTimeIds.size
+      ? data.filter(row => !deletedLaborTimeIds.has(row.id))
+      : data
+    let nextTotal = Math.max(0, total - (data.length - filteredData.length))
+
+    if (
+      createdLaborTimeFallback &&
+      !deletedLaborTimeIds.has(createdLaborTimeFallback.id) &&
+      keyword === createdLaborTimeFallback.stepCode &&
+      !filterProjectType &&
+      !filterReferenceSource &&
+      page === 1 &&
+      !filteredData.some(row => row.id === createdLaborTimeFallback.id || row.stepCode === createdLaborTimeFallback.stepCode)
+    ) {
+      const rows = [createdLaborTimeFallback, ...filteredData]
+      return { data: rows, total: Math.max(nextTotal + 1, rows.length) }
+    }
+
+    return { data: filteredData, total: nextTotal }
+  }, [createdLaborTimeFallback, data, deletedLaborTimeIds, filterProjectType, filterReferenceSource, keyword, page, total])
 
   useEffect(() => {
     laborTimeApi.getStats({
@@ -113,6 +160,15 @@ export function useLaborTimePage() {
 
   const handleReferenceSourceChange = useCallback((value: string) => {
     setFilterReferenceSource(value)
+    setPage(1)
+  }, [setPage])
+
+  const focusLaborTimeList = useCallback((value: string) => {
+    const nextKeyword = value.trim()
+    setSearchInput(nextKeyword)
+    setKeyword(nextKeyword)
+    setFilterProjectType('')
+    setFilterReferenceSource('')
     setPage(1)
   }, [setPage])
 
@@ -178,7 +234,10 @@ export function useLaborTimePage() {
         })
         toast.success('工时定义已更新')
       } else {
-        await laborTimeApi.create(form)
+        const created = await laborTimeApi.create(form)
+        const createdKeyword = created?.stepCode || form.stepCode || form.stepName
+        setCreatedLaborTimeFallback(buildCreatedLaborTimeRecord(created, form))
+        focusLaborTimeList(createdKeyword)
         toast.success('工时定义已创建')
       }
       setModalType(null)
@@ -192,6 +251,11 @@ export function useLaborTimePage() {
     if (!detailRow) return
     try {
       await laborTimeApi.delete(detailRow.id)
+      setDeletedLaborTimeIds(prev => {
+        const next = new Set(prev)
+        next.add(detailRow.id)
+        return next
+      })
       toast.success('工时定义已归档')
       setModalType(null)
       refresh()
@@ -202,11 +266,11 @@ export function useLaborTimePage() {
 
   return {
     canManageLaborTimes,
-    data,
+    data: displayedPage.data,
     loading,
     page,
     pageSize,
-    total,
+    total: displayedPage.total,
     setPage,
     setPageSize,
     stats,

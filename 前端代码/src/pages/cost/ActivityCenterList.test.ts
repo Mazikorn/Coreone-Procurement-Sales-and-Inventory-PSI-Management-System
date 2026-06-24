@@ -120,4 +120,86 @@ describe('ActivityCenterList', () => {
       status: 'active',
     })
   })
+
+  it('focuses the newly created activity center so cost pool users can confirm the collection node', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes('/api/v1/abc/activity-centers') && init?.method === 'POST') {
+        return {
+          json: async () => ({
+            success: true,
+            data: {
+              id: 'CENTER-CREATED-001',
+              code: 'AC_CREATED_001',
+              name: '新建切片作业中心',
+            },
+          }),
+        } as Response
+      }
+      if (url.includes('/api/v1/abc/activity-centers')) {
+        return {
+          json: async () => ({
+            success: true,
+            data: [{
+              id: 'CENTER-CREATED-001',
+              code: 'AC_CREATED_001',
+              name: '新建切片作业中心',
+              description: '用于切片成本归集',
+              costDriverType: 'slide_count',
+              parentId: null,
+              sortOrder: 18,
+              status: 'active',
+              createdAt: '2026-06-21T00:00:00.000Z',
+              updatedAt: '2026-06-21T00:00:00.000Z',
+            }],
+          }),
+        } as Response
+      }
+      if (url.includes('/api/v1/abc/cost-drivers')) {
+        return {
+          json: async () => ({
+            success: true,
+            data: [{
+              id: 'driver-slide',
+              code: 'slide_count',
+              name: '切片数',
+              unit: '张',
+              status: 'active',
+            }],
+          }),
+        } as Response
+      }
+      throw new Error(`Unexpected fetch: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    window.history.replaceState(null, '', '/abc/activity-centers?keyword=old-center')
+
+    render(createElement(ActivityCenterList))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/abc/activity-centers?keyword=old-center',
+      expect.any(Object),
+    ))
+
+    fireEvent.click(screen.getByRole('button', { name: '新增作业中心' }))
+    fireEvent.change(screen.getByLabelText('代码 *'), { target: { value: 'AC_CREATED_001' } })
+    fireEvent.change(screen.getByLabelText('名称 *'), { target: { value: '新建切片作业中心' } })
+    fireEvent.change(screen.getByLabelText('描述'), { target: { value: '用于切片成本归集' } })
+    fireEvent.change(screen.getByLabelText('成本动因类型 *'), { target: { value: 'slide_count' } })
+    fireEvent.change(screen.getByLabelText('排序'), { target: { value: '18' } })
+    fireEvent.click(screen.getByRole('button', { name: '创建' }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/abc/activity-centers',
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.stringContaining('"code":"AC_CREATED_001"'),
+      }),
+    ))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/abc/activity-centers?keyword=AC_CREATED_001',
+      expect.any(Object),
+    ))
+    expect(screen.getByPlaceholderText('搜索作业中心...')).toHaveValue('AC_CREATED_001')
+  })
 })

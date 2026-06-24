@@ -166,15 +166,11 @@ export default function QualityCostAnalysis() {
   }
 
   const handleSave = async () => {
-    if (!formData.yearMonth || !formData.costType || !formData.subType || !formData.amount) {
-      toast.error('请填写必填字段')
+    if (qualityCostValidationMessage) {
+      toast.error(qualityCostValidationMessage)
       return
     }
     const amount = parseFloat(formData.amount)
-    if (isNaN(amount) || amount < 0) {
-      toast.error('金额必须为非负数')
-      return
-    }
     try {
       const payload = {
         yearMonth: formData.yearMonth,
@@ -215,6 +211,16 @@ export default function QualityCostAnalysis() {
     { key: 'internal_failure', label: '内部失败', value: summary?.internalFailureCost || 0 },
     { key: 'external_failure', label: '外部失败', value: summary?.externalFailureCost || 0 },
   ]
+  const qualityCostDownstreamFacts = '质量成本、成本预算、成本看板、质量改进、审计记录'
+  const qualityCostAmount = Number(formData.amount || 0)
+  const qualityCostValidationMessage = !formData.yearMonth || !formData.costType || !formData.subType || !formData.amount
+    ? '请填写月份、成本类型、子类型和金额，系统才能建立质量成本记录。'
+    : !Number.isFinite(qualityCostAmount) || qualityCostAmount <= 0
+      ? '请填写大于 0 的金额，系统才能纳入质量成本、预算和看板统计。'
+      : !formData.description.trim()
+        ? '请填写描述，系统才能解释质量成本来源、改进动作和审计依据。'
+        : ''
+  const canSaveQualityCost = qualityCostValidationMessage === ''
 
   const filteredCosts = costs.filter(c => {
     if (!searchKeyword) return true
@@ -411,7 +417,7 @@ export default function QualityCostAnalysis() {
               />
             </div>
             <div>
-              <label htmlFor="quality-cost-description" className="block text-sm font-medium text-gray-700 mb-1">描述</label>
+              <label htmlFor="quality-cost-description" className="block text-sm font-medium text-gray-700 mb-1">描述 *</label>
               <textarea
                 id="quality-cost-description"
                 value={formData.description}
@@ -421,6 +427,24 @@ export default function QualityCostAnalysis() {
                 className="w-full px-3 py-2 border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
               />
             </div>
+            <div className="rounded-md border border-emerald-100 bg-emerald-50 px-3 py-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm font-semibold text-emerald-900">质量成本结果确认</div>
+                <div className="text-xs text-emerald-700">确认后将接住：{qualityCostDownstreamFacts}</div>
+              </div>
+              <div className="mt-3 grid grid-cols-1 gap-2 text-xs text-emerald-700 sm:grid-cols-2">
+                <div>月份 {formData.yearMonth || '-'}</div>
+                <div>成本类型 {COST_TYPE_LABELS[formData.costType] || formData.costType}</div>
+                <div>子类型 {getSubTypeLabel(formData.costType, formData.subType)}</div>
+                <div>金额 {formatCurrency(Number.isFinite(qualityCostAmount) ? qualityCostAmount : 0)}</div>
+                <div>描述 {formData.description.trim() || '待填写'}</div>
+              </div>
+            </div>
+            {qualityCostValidationMessage ? (
+              <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900">
+                {qualityCostValidationMessage}
+              </div>
+            ) : null}
           </div>
           <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-gray-200">
             <button
@@ -431,7 +455,8 @@ export default function QualityCostAnalysis() {
             </button>
             <button
               onClick={handleSave}
-              className="h-10 px-4 text-sm text-white bg-[#3b82f6] rounded-md hover:bg-blue-600 transition-colors"
+              disabled={!canSaveQualityCost}
+              className="h-10 px-4 text-sm text-white bg-[#3b82f6] rounded-md hover:bg-blue-600 transition-colors disabled:cursor-not-allowed disabled:bg-gray-300"
             >
               {editingCost ? '更新' : '录入'}
             </button>

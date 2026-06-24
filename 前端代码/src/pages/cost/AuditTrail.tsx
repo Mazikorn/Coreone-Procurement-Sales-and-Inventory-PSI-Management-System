@@ -119,6 +119,55 @@ export function getAuditReason(log: Pick<AuditLog, 'reason' | 'detail'>) {
   }
 }
 
+function parseAuditDetail(detail?: string) {
+  if (!detail) return null
+  try {
+    const parsed = JSON.parse(detail)
+    return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : null
+  } catch {
+    return null
+  }
+}
+
+function stringValue(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value.trim() : ''
+}
+
+export function getAuditReviewKeyword(log: Pick<AuditLog, 'targetId' | 'detail'>) {
+  const detail = parseAuditDetail(log.detail)
+  return stringValue(detail?.adjustmentNo)
+    || stringValue(detail?.exceptionNo)
+    || stringValue(detail?.runNo)
+    || stringValue(detail?.runId)
+    || stringValue(detail?.costRunId)
+    || stringValue(log.targetId)
+}
+
+export function buildAuditBusinessReviewLink(log: Pick<AuditLog, 'targetType' | 'module' | 'targetId' | 'detail'>) {
+  const targetType = getAuditTargetType(log)
+  const detail = parseAuditDetail(log.detail)
+  const keyword = getAuditReviewKeyword(log)
+  if (!keyword) return ''
+
+  if (targetType === 'exception') {
+    const params = new URLSearchParams()
+    params.set('keyword', keyword)
+    return `/abc/alerts?${params.toString()}`
+  }
+
+  if (targetType === 'cost_adjustment' || targetType === 'cost_run' || targetType === 'period') {
+    const params = new URLSearchParams()
+    const yearMonth = stringValue(detail?.yearMonth)
+    if (yearMonth) params.set('month', yearMonth)
+    params.set('keyword', keyword)
+    return `/abc/dashboard?${params.toString()}`
+  }
+
+  if (targetType === 'cost_pool') return `/abc/cost-pools?keyword=${encodeURIComponent(keyword)}`
+  if (targetType === 'bom_fee_mapping') return `/abc/fee-mappings?keyword=${encodeURIComponent(keyword)}`
+  return ''
+}
+
 export default function AuditTrail() {
   const [logs, setLogs] = useState<AuditLog[]>([])
   const [loading, setLoading] = useState(true)
@@ -129,11 +178,12 @@ export default function AuditTrail() {
   const [filterTargetType, setFilterTargetType] = useState('')
   const [filterStartDate, setFilterStartDate] = useState('')
   const [filterEndDate, setFilterEndDate] = useState('')
+  const [filterKeyword, setFilterKeyword] = useState(() => new URLSearchParams(window.location.search).get('keyword')?.trim() || '')
   const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null)
 
   useEffect(() => {
     loadLogs()
-  }, [page, filterAction, filterTargetType, filterStartDate, filterEndDate])
+  }, [page, filterAction, filterTargetType, filterStartDate, filterEndDate, filterKeyword])
 
   const loadLogs = async () => {
     try {
@@ -143,6 +193,7 @@ export default function AuditTrail() {
       if (filterTargetType) params.targetType = filterTargetType
       if (filterStartDate) params.startDate = filterStartDate
       if (filterEndDate) params.endDate = filterEndDate
+      if (filterKeyword.trim()) params.keyword = filterKeyword.trim()
       const data = await abcApi.getAuditLogs(params)
       const nextLogs = listPayload<AuditLog>(data)
       setLogs(nextLogs)
@@ -159,6 +210,7 @@ export default function AuditTrail() {
     setFilterTargetType('')
     setFilterStartDate('')
     setFilterEndDate('')
+    setFilterKeyword('')
     setPage(1)
   }
 
@@ -210,7 +262,7 @@ export default function AuditTrail() {
         <div className="flex items-center gap-2 mb-3">
           <Filter className="h-4 w-4 text-gray-400" />
           <span className="text-sm font-medium text-gray-700">筛选条件</span>
-          {(filterAction || filterTargetType || filterStartDate || filterEndDate) && (
+          {(filterAction || filterTargetType || filterStartDate || filterEndDate || filterKeyword) && (
             <button
               onClick={handleClearFilters}
               className="ml-auto text-sm text-blue-600 hover:text-blue-800 transition-colors"
@@ -219,7 +271,17 @@ export default function AuditTrail() {
             </button>
           )}
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+          <div className="relative sm:col-span-2 lg:col-span-1">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+            <input
+              type="search"
+              value={filterKeyword}
+              onChange={(e) => { setFilterKeyword(e.target.value); setPage(1) }}
+              placeholder="调整单号/异常号/任务号"
+              className="h-10 w-full rounded-md border border-gray-200 pl-9 pr-3 text-sm focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
+            />
+          </div>
           <select
             value={filterAction}
             onChange={(e) => { setFilterAction(e.target.value); setPage(1) }}
@@ -253,6 +315,11 @@ export default function AuditTrail() {
             className="h-10 px-3 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
           />
         </div>
+        {filterKeyword.trim() ? (
+          <div className="mt-3 rounded-md border border-blue-100 bg-blue-50 px-3 py-2 text-sm text-blue-800">
+            当前按关键字检索：{filterKeyword.trim()}
+          </div>
+        ) : null}
       </div>
 
       {/* 审计日志表格 */}
@@ -275,7 +342,20 @@ export default function AuditTrail() {
               </tr>
             ) : logs.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-4 py-12 text-center text-gray-400">暂无审计日志</td>
+                <td colSpan={6} className="px-4 py-12 text-center">
+                  {filterKeyword.trim() ? (
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium text-gray-900">
+                        未找到 {filterKeyword.trim()} 的成本审计证据
+                      </div>
+                      <div className="mx-auto max-w-xl text-sm text-gray-500">
+                        请确认调整单号、异常号或任务号是否正确；也可以返回成本看板或异常中心确认该业务动作是否已经生成审计记录。
+                      </div>
+                    </div>
+                  ) : (
+                    <span className="text-gray-400">暂无审计日志</span>
+                  )}
+                </td>
               </tr>
             ) : (
               logs.map(log => (
@@ -376,6 +456,8 @@ export default function AuditTrail() {
               </div>
             </div>
 
+            <AuditReviewLinks log={selectedLog} />
+
             {renderJsonDetail('变更前数据', selectedLog.oldValue)}
             {renderJsonDetail('变更后数据', selectedLog.newValue)}
             {renderJsonDetail('审计详情', selectedLog.detail)}
@@ -390,6 +472,39 @@ export default function AuditTrail() {
           </div>
         </Modal>
       )}
+    </div>
+  )
+}
+
+function AuditReviewLinks({ log }: { log: AuditLog }) {
+  const keyword = getAuditReviewKeyword(log)
+  if (!keyword) return null
+
+  const businessLink = buildAuditBusinessReviewLink(log)
+  const auditLink = `/abc/audit?keyword=${encodeURIComponent(keyword)}`
+
+  return (
+    <div className="rounded-md border border-blue-100 bg-blue-50 px-3 py-3">
+      <div className="text-sm font-semibold text-blue-950">审计证据回看</div>
+      <div className="mt-1 text-sm text-blue-800">
+        先回成本业务页面核对原始事实，再用同一业务标识继续查看审计日志。
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {businessLink && (
+          <a
+            href={businessLink}
+            className="inline-flex h-8 items-center rounded-md border border-blue-200 bg-white px-3 text-xs font-medium text-blue-700 hover:bg-blue-50"
+          >
+            回到成本业务页面
+          </a>
+        )}
+        <a
+          href={auditLink}
+          className="inline-flex h-8 items-center rounded-md border border-blue-200 bg-white px-3 text-xs font-medium text-blue-700 hover:bg-blue-50"
+        >
+          查看同一标识审计日志
+        </a>
+      </div>
     </div>
   )
 }

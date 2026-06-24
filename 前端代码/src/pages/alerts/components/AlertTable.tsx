@@ -1,5 +1,6 @@
 import React from 'react'
-import { CheckCircle2, Eye, RotateCcw, Search, Trash2 } from 'lucide-react'
+import { CheckCircle2, Eye, FileSearch, FileText, Plus, RotateCcw, Search, Trash2 } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import { Pagination } from '@/components/ui/Pagination'
 import type {
   AlertItem,
@@ -9,6 +10,7 @@ import type {
   FilterState,
   ModalState,
 } from '../hooks/useAlertsPage'
+import { buildAlertAuditEvidenceUrl, buildAlertInventoryEvidenceUrl, buildAlertPurchaseOrderUrl } from '../hooks/useAlertsPage'
 
 interface Props {
   data: AlertItem[]
@@ -21,6 +23,7 @@ interface Props {
   quickFilter: AlertStatusFilter
   selectedIds: Set<string>
   canHandle?: boolean
+  canCreatePurchaseOrders?: boolean
   onFilterChange: (filter: FilterState) => void
   onQuickFilterChange: (value: AlertStatusFilter) => void
   onResetFilters: () => void
@@ -72,6 +75,7 @@ export function AlertTable({
   quickFilter,
   selectedIds,
   canHandle = true,
+  canCreatePurchaseOrders = false,
   onFilterChange,
   onQuickFilterChange,
   onResetFilters,
@@ -89,6 +93,7 @@ export function AlertTable({
   isConsumption,
   formatDate,
 }: Props) {
+  const navigate = useNavigate()
   const allSelected = data.length > 0 && selectedIds.size === data.length
 
   return (
@@ -196,7 +201,7 @@ export function AlertTable({
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">库存/阈值</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">状态</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">时间</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[170px]">操作</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[280px]">操作</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
@@ -270,9 +275,36 @@ export function AlertTable({
                           <Eye className="w-3.5 h-3.5" />
                           详情
                         </button>
+                        <button
+                          type="button"
+                          onClick={() => navigate(buildAlertInventoryEvidenceUrl(alert))}
+                          className="px-2 py-1 text-xs text-gray-600 hover:text-indigo-700 hover:bg-indigo-50 rounded inline-flex items-center gap-1"
+                        >
+                          <FileSearch className="w-3.5 h-3.5" />
+                          库存证据
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => navigate(buildAlertAuditEvidenceUrl(alert))}
+                          className="px-2 py-1 text-xs text-gray-600 hover:text-indigo-700 hover:bg-indigo-50 rounded inline-flex items-center gap-1"
+                        >
+                          <FileText className="w-3.5 h-3.5" />
+                          审计证据
+                        </button>
+                        {canCreatePurchaseOrders && alert.type === 'low-stock' && alert.materialId && (
+                          <button
+                            type="button"
+                            onClick={() => navigate(buildAlertPurchaseOrderUrl(alert))}
+                            className="px-2 py-1 text-xs text-gray-600 hover:text-blue-700 hover:bg-blue-50 rounded inline-flex items-center gap-1"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            补采购
+                          </button>
+                        )}
                         {canHandle && alert.status === 'pending' && (
                           <>
                             <button
+                              type="button"
                               onClick={() => onOpenModal(handleType, alert)}
                               className="px-2 py-1 text-xs text-gray-600 hover:text-green-700 hover:bg-green-50 rounded inline-flex items-center gap-1"
                             >
@@ -280,6 +312,7 @@ export function AlertTable({
                               处理
                             </button>
                             <button
+                              type="button"
                               onClick={() => onIgnore(alert.id)}
                               className="px-2 py-1 text-xs text-gray-600 hover:text-red-700 hover:bg-red-50 rounded inline-flex items-center gap-1"
                             >

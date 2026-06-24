@@ -84,6 +84,7 @@ export const ALL_MENU_GROUPS: MenuGroup[] = [
       { label: '切片成本', path: '/abc/slide-cost', icon: Layers },
       { label: '盈利分析', path: '/abc/profitability', icon: TrendingUp },
       { label: '收费对照', path: '/abc/fee-comparison', icon: Receipt },
+      { label: '供应商成本', path: '/abc/supplier-costs', icon: Coins },
       { label: '成本趋势', path: '/abc/trend', icon: LineChart },
     ],
   },

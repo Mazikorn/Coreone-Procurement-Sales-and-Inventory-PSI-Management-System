@@ -3213,6 +3213,7 @@ router.get('/audit-logs', (req, res) => {
       module,
       targetId,
       operator,
+      keyword,
       startDate,
       endDate,
     } = req.query
@@ -3222,6 +3223,7 @@ router.get('/audit-logs', (req, res) => {
     const normalizedAction = String(action || '').trim()
     const normalizedTargetId = String(targetId || '').trim()
     const normalizedOperator = String(operator || '').trim()
+    const normalizedKeyword = String(keyword || '').trim()
     const normalizedStartDate = String(startDate || '').trim()
     const normalizedEndDate = String(endDate || '').trim()
     const datePattern = /^\d{4}-\d{2}-\d{2}$/
@@ -3239,6 +3241,11 @@ router.get('/audit-logs', (req, res) => {
     if (normalizedModule) { where += ' AND module = ?'; params.push(normalizedModule) }
     if (normalizedTargetId) { where += ' AND target_id = ?'; params.push(normalizedTargetId) }
     if (normalizedOperator) { where += ' AND operator = ?'; params.push(normalizedOperator) }
+    if (normalizedKeyword) {
+      where += ' AND (module LIKE ? OR action LIKE ? OR target_id LIKE ? OR operator LIKE ? OR detail LIKE ?)'
+      const kw = `%${normalizedKeyword}%`
+      params.push(kw, kw, kw, kw, kw)
+    }
     if (normalizedStartDate) { where += ' AND substr(created_at, 1, 10) >= ?'; params.push(normalizedStartDate) }
     if (normalizedEndDate) { where += ' AND substr(created_at, 1, 10) <= ?'; params.push(normalizedEndDate) }
 

@@ -1,3 +1,4 @@
+import React from 'react'
 import { AlertTriangle } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import type { Location, LocationDeleteCheck } from '@/types'
@@ -77,7 +78,7 @@ export function LocationDeleteModal({
                 </div>
               ) : (
                 <div className="mt-3 rounded-md bg-green-50 px-3 py-2 text-xs text-green-700">
-                  未发现业务引用，可以删除。
+                  未发现业务引用，可以删除；删除后该库位不会再用于新物料默认库位、入库上架、库存批次、调拨、盘点、预警和审计筛选。
                 </div>
               )}
             </>

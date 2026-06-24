@@ -44,6 +44,13 @@ function seedTransferMaterial(db: any, suffix: string) {
   return { materialId, fromLocationId, toLocationId, batchNo }
 }
 
+function seedTransferProject(db: any, suffix: string) {
+  const projectId = `project-transfer-${suffix}`
+  db.prepare('INSERT INTO projects (id, code, name, type, status) VALUES (?, ?, ?, ?, 1)')
+    .run(projectId, `PRJ-TF-${suffix}`, '调拨出库测试项目', 'ihc')
+  return projectId
+}
+
 describe('调拨管理', () => {
   let app: any
   let db: any
@@ -458,6 +465,7 @@ describe('调拨管理', () => {
 
   it('TR-007: 部分调拨后出库撤销按原扣减库位恢复明细库存', async () => {
     const { materialId, fromLocationId, toLocationId, batchNo } = seedTransferMaterial(db, `outbound-cancel-${Date.now()}`)
+    const projectId = seedTransferProject(db, `outbound-cancel-${Date.now()}`)
 
     const transferRes = await request(app)
       .post('/api/v1/transfers/inbound')
@@ -477,6 +485,7 @@ describe('调拨管理', () => {
       .set('Authorization', `Bearer ${token}`)
       .send({
         type: 'project',
+        projectId,
         items: [{ materialId, quantity: 9, usage: 'self' }],
         remark: '出库撤销库位恢复测试',
       })

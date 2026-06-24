@@ -41,6 +41,10 @@ function normalizePositiveInteger(value: unknown) {
   return Number.isInteger(num) && num > 0 ? num : undefined
 }
 
+function areDepsEqual(a: DependencyList, b: DependencyList) {
+  return a.length === b.length && a.every((dep, index) => Object.is(dep, b[index]))
+}
+
 export function usePagination<T>({
   fetchFn,
   initialPage = 1,
@@ -55,6 +59,14 @@ export function usePagination<T>({
   const [total, setTotal] = useState(0)
   const [refreshKey, setRefreshKey] = useState(0)
   const fetchFnRef = useRef(fetchFn)
+  const hasSuccessfulFetchRef = useRef(false)
+  const lastSuccessfulPageRef = useRef<{
+    list: T[]
+    total: number
+    page: number
+    pageSize: number
+    deps: DependencyList
+  }>({ list: [], total: 0, page: initialPage, pageSize: initialPageSize, deps: [...deps] })
 
   useEffect(() => {
     fetchFnRef.current = fetchFn
@@ -70,6 +82,14 @@ export function usePagination<T>({
         })
         setData(res.list || [])
         setTotal(res.pagination?.total || 0)
+        hasSuccessfulFetchRef.current = true
+        lastSuccessfulPageRef.current = {
+          list: res.list || [],
+          total: res.pagination?.total || 0,
+          page,
+          pageSize,
+          deps: [...deps],
+        }
         const serverPage = normalizePositiveInteger(res.pagination?.page)
         const serverPageSize = normalizePositiveInteger(res.pagination?.pageSize)
         if (serverPageSize !== undefined && serverPageSize !== pageSize) {
@@ -80,8 +100,19 @@ export function usePagination<T>({
         }
         setError(null)
       } catch (e) {
-        setData([])
-        setTotal(0)
+        const lastSuccessfulPage = lastSuccessfulPageRef.current
+        if (
+          hasSuccessfulFetchRef.current &&
+          lastSuccessfulPage.page === page &&
+          lastSuccessfulPage.pageSize === pageSize &&
+          areDepsEqual(lastSuccessfulPage.deps, deps)
+        ) {
+          setData(lastSuccessfulPageRef.current.list)
+          setTotal(lastSuccessfulPageRef.current.total)
+        } else {
+          setData([])
+          setTotal(0)
+        }
         setError(getErrorMessage(e))
       } finally {
         setLoading(false)

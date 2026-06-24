@@ -139,7 +139,11 @@ export function MaterialBatchImpactModal({
           </div>
         ) : (
           <div className="rounded-md bg-green-50 px-3 py-2 text-sm text-green-700">
-            检查通过，确认后将通过后端批量接口一次性执行。
+            {isDelete
+              ? '检查通过；删除后这些物料不会再用于新采购、入库、库存批次、BOM选料、成本计算、预警和审计筛选。'
+              : isDisabling
+                ? '检查通过；停用后这些物料不会再用于新采购、入库、BOM选料、库存预警和成本计算，历史库存和审计记录保留。'
+                : '检查通过；启用后这些物料可重新用于新采购、入库、BOM选料、库存预警和成本计算，历史库存和审计记录不变。'}
           </div>
         )}
       </div>

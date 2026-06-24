@@ -184,6 +184,32 @@ describe('StocktakingCreateModal', () => {
     expect(screen.getByText(/批次库位盘点/)).toBeInTheDocument()
     expect(screen.getByText('B-001')).toBeInTheDocument()
     expect(screen.getByText('A1-01')).toBeInTheDocument()
-    expect(screen.getByText(/-1瓶/)).toBeInTheDocument()
+    expect(screen.getAllByText(/-1瓶/).length).toBeGreaterThan(0)
+    expect(screen.getByText('盘点结果确认')).toBeInTheDocument()
+    expect(screen.getByText('创建后只记录盘点差异，不会立即调整库存。')).toBeInTheDocument()
+    expect(screen.getByText(/处理差异后才调整库存、库位\/批次、预警、库存流水和审计记录/)).toBeInTheDocument()
+  })
+
+  it('shows the created stocktaking number and opens audit evidence from the success step', () => {
+    const onOpenAuditEvidence = vi.fn()
+    renderModal({
+      materialId: 'mat-001',
+      scopeType: 'material',
+      locationId: '',
+      batchId: '',
+      systemStock: 10,
+      actualStock: 8,
+      remark: '',
+    }, {
+      createStep: 3,
+      createdRecord: { id: 'stk-created', stocktakingNo: 'ST-20260622-001', status: 'completed' },
+      onOpenAuditEvidence,
+    })
+
+    expect(screen.getByText('ST-20260622-001')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '查看审计记录' }))
+
+    expect(onOpenAuditEvidence).toHaveBeenCalledWith('ST-20260622-001')
   })
 })

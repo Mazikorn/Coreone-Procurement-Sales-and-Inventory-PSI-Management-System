@@ -1,3 +1,4 @@
+import React from 'react'
 import { X } from 'lucide-react'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { CostCenterForm } from '../hooks/useCostCenterPage'
@@ -29,6 +30,9 @@ const ALLOCATION_BASE_OPTIONS = [
 
 export function CostCenterFormModal({ open, type, form, onClose, onChange, onSubmit }: Props) {
   if (!open) return null
+  const costTypeLabel = COST_TYPE_OPTIONS.find(item => item.value === form.costType)?.label || '待选择'
+  const allocationBaseLabel = ALLOCATION_BASE_OPTIONS.find(item => item.value === form.allocationBase)?.label || '待选择'
+  const statusLabel = form.status === 'active' ? '已启用' : '已停用'
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -133,6 +137,17 @@ export function CostCenterFormModal({ open, type, form, onClose, onChange, onSub
               placeholder="请输入描述"
               className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm text-gray-700 placeholder:text-gray-400 focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500 transition-colors resize-none"
             />
+          </div>
+          <div className="rounded-md border border-emerald-100 bg-emerald-50 px-4 py-3">
+            <div className="text-sm font-semibold text-emerald-900">成本中心配置确认</div>
+            <div className="mt-1 text-xs text-emerald-800">确认后将接住：成本中心、月度分摊、项目成本、成本结账、审计记录</div>
+            <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-emerald-900 sm:grid-cols-2">
+              <div>成本中心 {form.name || '待填写'}</div>
+              <div>费用类型 {costTypeLabel}</div>
+              <div>月度金额 ¥{Number(form.monthlyAmount || 0).toFixed(2)}</div>
+              <div>分摊基础 {allocationBaseLabel}</div>
+              <div>状态 {statusLabel}</div>
+            </div>
           </div>
         </div>
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 flex-shrink-0">

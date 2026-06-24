@@ -219,8 +219,83 @@ describe('供应商退货', () => {
       SELECT * FROM operation_logs
       WHERE operation = ? AND description LIKE ?
       ORDER BY created_at DESC LIMIT 1
-    `).get('supplier_return_status_update', `%${createRes.body.data.id}%`) as any
+    `).get('supplier_return_status_update', `%${createRes.body.data.returnNo}%`) as any
     expect(log?.username).toBe('admin')
+    expect(JSON.parse(log.request_data)).toMatchObject({
+      id: createRes.body.data.id,
+      returnNo: createRes.body.data.returnNo,
+      from: 'pending',
+      to: 'shipped',
+    })
+  })
+
+  it('SR-003B: 状态流转统一日志可按退供单号回看发货收货退款证据', async () => {
+    const { materialId, supplierId } = seedSupplierReturnMaterial(db, `status-unified-${Date.now()}`)
+    const createRes = await request(app)
+      .post('/api/v1/supplier-returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ materialId, supplierId, quantity: 1, refundAmount: 42, reason: '状态流转统一日志回看' })
+    expect(createRes.status).toBe(200)
+
+    const { id, returnNo } = createRes.body.data
+    for (const status of ['shipped', 'received', 'refunded']) {
+      const statusRes = await request(app)
+        .put(`/api/v1/supplier-returns/${id}/status`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ status })
+      expect(statusRes.status).toBe(200)
+    }
+
+    const unifiedRes = await request(app)
+      .get('/api/v1/logs/unified')
+      .query({ sourceType: 'operation', keyword: returnNo, pageSize: 50 })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(unifiedRes.status).toBe(200)
+    const statusLogs = unifiedRes.body.data.list
+      .filter((row: any) => row.operation === 'supplier_return_status_update')
+      .map((row: any) => ({
+        businessId: row.businessId,
+        businessUrl: row.businessUrl,
+        requestData: row.requestData,
+        responseData: row.responseData,
+        auditEvent: row.auditEvent,
+      }))
+
+    expect(statusLogs).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        businessId: returnNo,
+        businessUrl: `/supplier-returns?keyword=${encodeURIComponent(returnNo)}`,
+        requestData: expect.objectContaining({ id, returnNo, from: 'pending', to: 'shipped' }),
+        responseData: expect.objectContaining({ id, returnNo, status: 'shipped' }),
+        auditEvent: expect.objectContaining({
+          eventCode: 'operation.supplier_returns.update',
+          subjectId: returnNo,
+          businessId: returnNo,
+          businessUrl: `/supplier-returns?keyword=${encodeURIComponent(returnNo)}`,
+          evidenceSource: 'operation_logs',
+        }),
+      }),
+      expect.objectContaining({
+        businessId: returnNo,
+        requestData: expect.objectContaining({ id, returnNo, from: 'shipped', to: 'received' }),
+        responseData: expect.objectContaining({ id, returnNo, status: 'received' }),
+      }),
+      expect.objectContaining({
+        businessId: returnNo,
+        requestData: expect.objectContaining({ id, returnNo, from: 'received', to: 'refunded' }),
+        responseData: expect.objectContaining({
+          id,
+          returnNo,
+          status: 'refunded',
+          materialId,
+          supplierId,
+          quantity: 1,
+          refundAmount: 42,
+        }),
+      }),
+    ]))
+    expect(statusLogs).toHaveLength(3)
   })
 
   it('SR-AUDIT-003: 创建和删除供应商退货必须写入操作日志，便于采购仓储交接回看', async () => {
@@ -339,6 +414,103 @@ describe('供应商退货', () => {
     expect(Number(batchLocation.remaining)).toBe(7)
   })
 
+  it('SR-004B: 创建供应商退货后统一日志可按退供单号回看库存扣减证据', async () => {
+    const suffix = `unified-${Date.now()}`
+    const { materialId, supplierId, batchId, locationId } = seedSupplierReturnMaterialWithBatch(db, suffix)
+    seedSupplierReturnBatchLocation(db, { materialId, batchId, locationId }, 10)
+
+    const createRes = await request(app)
+      .post('/api/v1/supplier-returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId,
+        supplierId,
+        batchId,
+        quantity: 3,
+        reason: '供应商退货统一日志回看',
+      })
+
+    expect(createRes.status).toBe(200)
+    const { id, returnNo } = createRes.body.data
+
+    const unifiedRes = await request(app)
+      .get('/api/v1/logs/unified')
+      .query({ keyword: returnNo, pageSize: 50 })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(unifiedRes.status).toBe(200)
+    expect(unifiedRes.body.data.list).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourceType: 'operation',
+        module: 'supplier_returns',
+        operation: 'POST /supplier-returns',
+        businessId: returnNo,
+        businessUrl: `/supplier-returns?keyword=${encodeURIComponent(returnNo)}`,
+        requestData: expect.objectContaining({
+          materialId,
+          supplierId,
+          batchId,
+          quantity: 3,
+          reason: '供应商退货统一日志回看',
+        }),
+        responseData: expect.objectContaining({ id, returnNo }),
+        auditEvent: expect.objectContaining({
+          eventCode: 'operation.supplier_returns.create',
+          subjectType: 'supplier_returns',
+          subjectId: returnNo,
+          businessId: returnNo,
+          businessUrl: `/supplier-returns?keyword=${encodeURIComponent(returnNo)}`,
+          evidenceSource: 'operation_logs',
+        }),
+      }),
+      expect.objectContaining({
+        sourceType: 'stock',
+        module: 'supplier_returns',
+        businessId: returnNo,
+        businessUrl: `/supplier-returns?keyword=${encodeURIComponent(returnNo)}`,
+        requestData: expect.objectContaining({
+          relatedId: id,
+          relatedDocumentNo: returnNo,
+          relatedType: 'supplier_return',
+          quantity: -3,
+          beforeStock: 10,
+          afterStock: 7,
+        }),
+        auditEvent: expect.objectContaining({
+          eventCode: 'stock.supplier_returns.create',
+          subjectType: 'supplier_returns',
+          subjectId: returnNo,
+          businessId: returnNo,
+          businessUrl: `/supplier-returns?keyword=${encodeURIComponent(returnNo)}`,
+          evidenceSource: 'stock_logs',
+        }),
+      }),
+      expect.objectContaining({
+        sourceType: 'batch_location',
+        module: 'supplier_returns',
+        businessId: returnNo,
+        businessUrl: `/supplier-returns?keyword=${encodeURIComponent(returnNo)}`,
+        requestData: expect.objectContaining({
+          relatedId: id,
+          relatedDocumentNo: returnNo,
+          relatedType: 'supplier_return',
+          batchId,
+          materialId,
+          locationId,
+          quantityDelta: -3,
+        }),
+        auditEvent: expect.objectContaining({
+          eventCode: 'batch_location.supplier_returns.update',
+          subjectType: 'supplier_returns',
+          subjectId: returnNo,
+          businessId: returnNo,
+          businessUrl: `/supplier-returns?keyword=${encodeURIComponent(returnNo)}`,
+          evidenceSource: 'batch_location_adjustments',
+        }),
+      }),
+    ]))
+  })
+
   it('SR-005: 删除待发货供应商退货时恢复对应批次和库存', async () => {
     const { materialId, supplierId, batchId, locationId } = seedSupplierReturnMaterialWithBatch(db, `restore-${Date.now()}`)
     seedSupplierReturnBatchLocation(db, { materialId, batchId, locationId }, 10)
@@ -373,6 +545,111 @@ describe('供应商退货', () => {
     expect(Number(batch.status)).toBe(1)
     expect(Number(inv.stock)).toBe(10)
     expect(Number(batchLocation.remaining)).toBe(10)
+  })
+
+  it('SR-005B: 删除待发货供应商退货后可按退供单号回看恢复证据和已删除原单', async () => {
+    const suffix = `delete-audit-${Date.now()}`
+    const { materialId, supplierId, batchId, locationId } = seedSupplierReturnMaterialWithBatch(db, suffix)
+    seedSupplierReturnBatchLocation(db, { materialId, batchId, locationId }, 10)
+    const createRes = await request(app)
+      .post('/api/v1/supplier-returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId,
+        supplierId,
+        batchId,
+        quantity: 4,
+        reason: '删除退供审计回看',
+      })
+    expect(createRes.status).toBe(200)
+    const { id, returnNo } = createRes.body.data
+
+    const deleteRes = await request(app)
+      .delete(`/api/v1/supplier-returns/${id}`)
+      .set('Authorization', `Bearer ${token}`)
+    expect(deleteRes.status).toBe(200)
+
+    const hiddenListRes = await request(app)
+      .get('/api/v1/supplier-returns')
+      .query({ keyword: returnNo, pageSize: 20 })
+      .set('Authorization', `Bearer ${token}`)
+    expect(hiddenListRes.status).toBe(200)
+    expect(hiddenListRes.body.data.list).toHaveLength(0)
+
+    const deletedListRes = await request(app)
+      .get('/api/v1/supplier-returns')
+      .query({ keyword: returnNo, includeDeleted: 'true', pageSize: 20 })
+      .set('Authorization', `Bearer ${token}`)
+    expect(deletedListRes.status).toBe(200)
+    expect(deletedListRes.body.data.list).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id, returnNo, isDeleted: true }),
+    ]))
+
+    const encodedReturnNo = encodeURIComponent(returnNo)
+    const deletedBusinessUrl = `/supplier-returns?keyword=${encodedReturnNo}&includeDeleted=true`
+    const unifiedRes = await request(app)
+      .get('/api/v1/logs/unified')
+      .query({ keyword: returnNo, pageSize: 100 })
+      .set('Authorization', `Bearer ${token}`)
+    expect(unifiedRes.status).toBe(200)
+
+    expect(unifiedRes.body.data.list).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourceType: 'operation',
+        module: 'supplier_returns',
+        operation: 'DELETE /supplier-returns/:id',
+        businessId: returnNo,
+        businessUrl: deletedBusinessUrl,
+        requestData: expect.objectContaining({ id, returnNo }),
+        responseData: expect.objectContaining({ id, returnNo, status: 'deleted' }),
+        auditEvent: expect.objectContaining({
+          eventCode: 'operation.supplier_returns.delete',
+          subjectId: returnNo,
+          businessId: returnNo,
+          businessUrl: deletedBusinessUrl,
+        }),
+      }),
+      expect.objectContaining({
+        sourceType: 'stock',
+        module: 'supplier_returns',
+        operationType: 'delete',
+        businessId: returnNo,
+        businessUrl: deletedBusinessUrl,
+        requestData: expect.objectContaining({
+          relatedId: id,
+          relatedDocumentNo: returnNo,
+          relatedType: 'supplier_return_cancel',
+          quantity: 4,
+          beforeStock: 6,
+          afterStock: 10,
+        }),
+        auditEvent: expect.objectContaining({
+          eventCode: 'stock.supplier_returns.delete',
+          subjectId: returnNo,
+          businessId: returnNo,
+          businessUrl: deletedBusinessUrl,
+        }),
+      }),
+      expect.objectContaining({
+        sourceType: 'batch_location',
+        module: 'supplier_returns',
+        businessId: returnNo,
+        requestData: expect.objectContaining({
+          relatedId: id,
+          relatedDocumentNo: returnNo,
+          relatedType: 'supplier_return_cancel',
+          batchId,
+          materialId,
+          locationId,
+          quantityDelta: 4,
+        }),
+        auditEvent: expect.objectContaining({
+          eventCode: 'batch_location.supplier_returns.update',
+          subjectId: returnNo,
+          businessId: returnNo,
+        }),
+      }),
+    ]))
   })
 
   it('SR-006: 所选批次库存不足时拒绝退货且不扣总库存', async () => {
@@ -585,6 +862,94 @@ describe('供应商退货', () => {
     expect(Number(cancelLog.before_stock)).toBe(6)
     expect(Number(cancelLog.after_stock)).toBe(10)
     expect(cancelLog.operator).toBe('admin')
+  })
+
+  it('SR-007B: 状态取消供应商退货后可按退供单号回看库存和批次库位恢复证据', async () => {
+    const suffix = `status-cancel-audit-${Date.now()}`
+    const { materialId, supplierId, batchId, locationId } = seedSupplierReturnMaterialWithBatch(db, suffix)
+    seedSupplierReturnBatchLocation(db, { materialId, batchId, locationId }, 10)
+    const createRes = await request(app)
+      .post('/api/v1/supplier-returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        materialId,
+        supplierId,
+        batchId,
+        quantity: 4,
+        reason: '状态取消退供审计回看',
+      })
+    expect(createRes.status).toBe(200)
+    const { id, returnNo } = createRes.body.data
+
+    const shippedRes = await request(app)
+      .put(`/api/v1/supplier-returns/${id}/status`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ status: 'shipped' })
+    expect(shippedRes.status).toBe(200)
+
+    const cancelRes = await request(app)
+      .put(`/api/v1/supplier-returns/${id}/status`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ status: 'cancelled' })
+    expect(cancelRes.status).toBe(200)
+
+    const businessUrl = `/supplier-returns?keyword=${encodeURIComponent(returnNo)}&includeDeleted=true`
+    const unifiedRes = await request(app)
+      .get('/api/v1/logs/unified')
+      .query({ keyword: returnNo, pageSize: 100 })
+      .set('Authorization', `Bearer ${token}`)
+    expect(unifiedRes.status).toBe(200)
+
+    expect(unifiedRes.body.data.list).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourceType: 'operation',
+        module: 'supplier_returns',
+        operation: 'supplier_return_status_update',
+        businessId: returnNo,
+        requestData: expect.objectContaining({ id, returnNo, from: 'shipped', to: 'cancelled' }),
+        responseData: expect.objectContaining({ id, returnNo, status: 'cancelled' }),
+      }),
+      expect.objectContaining({
+        sourceType: 'stock',
+        module: 'supplier_returns',
+        operationType: 'delete',
+        businessId: returnNo,
+        businessUrl,
+        requestData: expect.objectContaining({
+          relatedId: id,
+          relatedDocumentNo: returnNo,
+          relatedType: 'supplier_return_cancel',
+          quantity: 4,
+          beforeStock: 6,
+          afterStock: 10,
+        }),
+        auditEvent: expect.objectContaining({
+          eventCode: 'stock.supplier_returns.delete',
+          subjectId: returnNo,
+          businessId: returnNo,
+          businessUrl,
+        }),
+      }),
+      expect.objectContaining({
+        sourceType: 'batch_location',
+        module: 'supplier_returns',
+        businessId: returnNo,
+        requestData: expect.objectContaining({
+          relatedId: id,
+          relatedDocumentNo: returnNo,
+          relatedType: 'supplier_return_cancel',
+          batchId,
+          materialId,
+          locationId,
+          quantityDelta: 4,
+        }),
+        auditEvent: expect.objectContaining({
+          eventCode: 'batch_location.supplier_returns.update',
+          subjectId: returnNo,
+          businessId: returnNo,
+        }),
+      }),
+    ]))
   })
 
   it('SR-009: 删除待发货退货时若批次数量已下调必须拒绝，避免批次剩余量超过批次数量', async () => {
@@ -948,6 +1313,14 @@ describe('供应商退货', () => {
       supplier_id: seed.supplierId,
       inbound_record_id: inboundRecordId,
     })
+
+    for (const status of ['shipped', 'received', 'refunded']) {
+      const statusRes = await request(app)
+        .put(`/api/v1/supplier-returns/${createRes.body.data.id}/status`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ status })
+      expect(statusRes.status).toBe(200)
+    }
 
     const reportRes = await request(app)
       .get('/api/v1/reports/cost-by-supplier')

@@ -1,3 +1,4 @@
+import React from 'react'
 import { Trash2 } from 'lucide-react'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 
@@ -45,6 +46,19 @@ export function BatchScrapModal({
   onChangeResponsibleDepartment,
 }: Props) {
   if (!open) return null
+  const downstreamFacts = '库存、批次、成本、库存流水、审计记录'
+  const responsibilityText = responsibleDepartment.trim() || responsiblePerson.trim()
+    ? `${responsibleDepartment.trim() || '待填部门'} / ${responsiblePerson.trim() || '待填责任人'}`
+    : '待填写'
+  const scrapLines = items.map(item => {
+    const materialName = item.materialName || item.name || '-'
+    const batchNo = item.batchNo || item.batch || '-'
+    const quantity = item.totalQuantity ?? item.quantity ?? item.stock ?? 0
+    return `${materialName} / ${batchNo} -${quantity}${item.unit || ''}`
+  })
+  const hasSelectedItems = items.length > 0
+  const hasScrapReason = scrapReason.trim().length > 0
+  const canConfirm = hasSelectedItems && hasScrapReason
 
   return (
     <div
@@ -97,6 +111,28 @@ export function BatchScrapModal({
               </table>
             </div>
           </div>
+          {hasSelectedItems && (
+            <div className="mb-4 rounded-md border border-red-100 bg-red-50 px-4 py-3">
+              <div className="mb-2 text-sm font-medium text-red-800">批量报废结果确认</div>
+              <div className="space-y-1.5 text-xs text-red-700">
+                <div>确认后将接住：{downstreamFacts}</div>
+                <div>责任归属 {responsibilityText}</div>
+                {scrapLines.map((line, index) => (
+                  <div key={`${line}-${index}`}>{line}</div>
+                ))}
+              </div>
+            </div>
+          )}
+          {!hasSelectedItems && (
+            <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              请先在库存列表勾选需要报废的批次。
+            </div>
+          )}
+          {hasSelectedItems && !hasScrapReason && (
+            <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              请选择报废原因，系统才能沉淀损耗原因、成本和审计证据。
+            </div>
+          )}
           <div className="mb-4">
             <label className="block text-sm font-medium text-gray-700 mb-1.5">
               报废原因 <span className="text-red-500">*</span>
@@ -155,7 +191,8 @@ export function BatchScrapModal({
           <button
             onClick={onConfirm}
             data-testid="batch-scrap-confirm-btn"
-            className="inline-flex items-center gap-1.5 px-4 py-2 bg-red-500 text-white rounded-md text-sm font-medium hover:bg-red-600 transition-all duration-150 ease shadow-sm"
+            disabled={!canConfirm}
+            className="inline-flex items-center gap-1.5 px-4 py-2 bg-red-500 text-white rounded-md text-sm font-medium hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-150 ease shadow-sm"
           >
             <Trash2 className="w-4 h-4" />
             确认报废

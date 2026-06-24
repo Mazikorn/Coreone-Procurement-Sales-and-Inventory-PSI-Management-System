@@ -1,4 +1,6 @@
-import { Edit2, Eye, Printer, RotateCcw, Trash2 } from 'lucide-react'
+import React from 'react'
+import { Edit2, Eye, FileSearch, Printer, RotateCcw, Trash2 } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import { Pagination } from '@/components/ui/Pagination'
 import { formatCurrency, formatDateTime } from '@/lib/utils'
 import type { InboundRecord } from '@/types'
@@ -49,6 +51,8 @@ export default function InboundTable({
   onPageChange,
   onPageSizeChange,
 }: InboundTableProps) {
+  const navigate = useNavigate()
+
   return (
     <div>
       {selectedIds.size > 0 && (
@@ -133,6 +137,7 @@ export default function InboundTable({
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1">
                       <IconButton label="查看" onClick={() => onDetail(row)}><Eye className="h-4 w-4" /></IconButton>
+                      <IconButton label="审计证据" onClick={() => navigate(`/logs?keyword=${encodeURIComponent(row.inboundNo)}`)}><FileSearch className="h-4 w-4" /></IconButton>
                       {row.status === 'completed' && (
                         <>
                           <IconButton label="编辑" onClick={() => onEdit(row)}><Edit2 className="h-4 w-4" /></IconButton>
@@ -189,6 +194,7 @@ function IconButton({
     <button
       type="button"
       title={label}
+      aria-label={label}
       onClick={onClick}
       className={`inline-flex h-8 w-8 items-center justify-center rounded-md ${
         danger ? 'text-red-500 hover:bg-red-50' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'

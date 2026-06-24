@@ -1,3 +1,4 @@
+import React from 'react'
 import { X, AlertTriangle } from 'lucide-react'
 import type { Category } from '@/types'
 
@@ -38,7 +39,7 @@ export function CategoryDeleteModal({ open, target, onClose, onConfirm }: Props)
               ? '该分类下还有子分类，请先调整或删除子分类后再删除。'
               : hasMaterials
                 ? '该分类下有关联物料，请先在分类详情中迁移物料后再删除。'
-                : '此操作不可恢复。'
+                : '删除后该分类不会再用于新物料建档、库存筛选、BOM选料、成本分类和审计筛选；已有物料、库存、BOM、成本和审计记录仍保留可回看。'
             }
           </p>
           <div className="bg-gray-50 rounded-lg p-3 text-left">

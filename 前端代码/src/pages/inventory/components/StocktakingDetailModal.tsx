@@ -1,5 +1,6 @@
 import React from 'react'
-import { X } from 'lucide-react'
+import { FileSearch, X } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import type { StocktakingRecord } from '../hooks/useStocktakingPage'
 
 interface Props {
@@ -10,12 +11,22 @@ interface Props {
 }
 
 export function StocktakingDetailModal({ open, row, onClose, onAdjust }: Props) {
+  const navigate = useNavigate()
+
   if (!open || !row) return null
-  const statusText = row.status === 'confirmed' ? '已确认' : '已完成'
-  const statusClass = row.status === 'confirmed' ? 'bg-blue-50 text-blue-600' : 'bg-green-50 text-green-600'
+  const hasPendingDifference = Number(row.difference || 0) !== 0 && row.status !== 'confirmed'
+  const statusText = row.status === 'confirmed' ? '已确认' : hasPendingDifference ? '待处理差异' : '已完成'
+  const statusClass = row.status === 'confirmed'
+    ? 'bg-blue-50 text-blue-600'
+    : hasPendingDifference
+      ? 'bg-amber-50 text-amber-700'
+      : 'bg-green-50 text-green-600'
   const scopeLabel = row.batchId ? '批次库位' : row.locationId ? '库位' : '整物料'
   const locationText = row.locationName || row.locationId || '-'
   const batchText = row.batchNo || row.batchId || '-'
+  const openAuditEvidence = () => {
+    navigate(`/logs?keyword=${encodeURIComponent(row.stocktakingNo)}`)
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
@@ -49,6 +60,12 @@ export function StocktakingDetailModal({ open, row, onClose, onAdjust }: Props) 
               ))}
             </div>
           </div>
+          {hasPendingDifference && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+              <div className="text-sm font-semibold text-amber-900">库存尚未调整</div>
+              <div className="mt-1 text-xs text-amber-800">请处理差异后再让系统写入库存、库位/批次、预警、库存流水和审计记录。</div>
+            </div>
+          )}
           <div>
             <h4 className="text-sm font-semibold text-gray-900 mb-3">盘点明细</h4>
             <div className="overflow-x-auto border border-gray-200 rounded-lg">
@@ -94,6 +111,14 @@ export function StocktakingDetailModal({ open, row, onClose, onAdjust }: Props) 
           </div>
         </div>
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 shrink-0">
+          <button
+            type="button"
+            onClick={openAuditEvidence}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-md border border-gray-300"
+          >
+            <FileSearch className="w-4 h-4" />
+            审计证据
+          </button>
           <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-md border border-gray-300">关闭</button>
           {row.difference !== 0 && row.status !== 'confirmed' && (
             <button onClick={() => onAdjust(row)} className="px-4 py-2 bg-blue-500 text-white text-sm rounded-md hover:bg-blue-600">处理差异</button>

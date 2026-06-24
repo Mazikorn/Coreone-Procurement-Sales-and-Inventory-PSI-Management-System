@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from 'react'
-import { CheckCircle, RotateCcw, Search, Trash2, XCircle } from 'lucide-react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { CheckCircle, FileSearch, RotateCcw, Search, Trash2, XCircle } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import { usePagination } from '@/hooks/usePagination'
 import { Pagination } from '@/components/ui/Pagination'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
@@ -30,6 +31,56 @@ export function requiresScrapReview(material: Pick<Material, 'price'> | undefine
   return getScrapAmount(material, quantity) >= HIGH_VALUE_SCRAP_AMOUNT_THRESHOLD
 }
 
+interface ScrapRefs {
+  materials: Material[]
+  batches: Batch[]
+}
+
+function buildCreatedScrapRecord(
+  payload: Partial<ScrapRecord>,
+  form: {
+    materialId: string
+    batchId: string
+    quantity: number
+    reason: string
+    responsiblePerson: string
+    responsibleDepartment: string
+    remark: string
+  },
+  refs: ScrapRefs,
+): ScrapRecord | null {
+  if (!payload.id || !payload.scrapNo) return null
+
+  const materialId = payload.materialId || form.materialId
+  const batchId = payload.batchId || form.batchId || undefined
+  const material = refs.materials.find(item => item.id === materialId)
+  const batch = refs.batches.find(item => item.id === batchId)
+
+  return {
+    id: payload.id,
+    scrapNo: payload.scrapNo,
+    materialId,
+    materialName: payload.materialName || material?.name,
+    unit: payload.unit || material?.unit,
+    batchId,
+    batchNo: payload.batchNo || batch?.batchNo,
+    quantity: Number(payload.quantity ?? form.quantity),
+    reason: payload.reason || form.reason,
+    operator: payload.operator || 'system',
+    status: payload.status || 'completed',
+    responsiblePerson: payload.responsiblePerson || form.responsiblePerson || undefined,
+    responsibleDepartment: payload.responsibleDepartment || form.responsibleDepartment || undefined,
+    scrapAmount: payload.scrapAmount ?? getScrapAmount(material, Number(payload.quantity ?? form.quantity)),
+    requiresReview: payload.requiresReview ?? requiresScrapReview(material, Number(payload.quantity ?? form.quantity)),
+    reviewStatus: payload.reviewStatus || 'not_required',
+    reviewedBy: payload.reviewedBy,
+    reviewedAt: payload.reviewedAt,
+    reviewReason: payload.reviewReason,
+    remark: (payload.remark ?? form.remark) || undefined,
+    createdAt: payload.createdAt || new Date().toISOString(),
+  }
+}
+
 const reviewStatusMeta = {
   not_required: { label: '无需复核', className: 'bg-gray-100 text-gray-600' },
   pending: { label: '待复核', className: 'bg-amber-50 text-amber-700' },
@@ -38,6 +89,7 @@ const reviewStatusMeta = {
 }
 
 export default function Scraps() {
+  const navigate = useNavigate()
   const initialKeyword = new URLSearchParams(window.location.search).get('keyword') || ''
   const [materials, setMaterials] = useState<Material[]>([])
   const [keywordInput, setKeywordInput] = useState(initialKeyword)
@@ -49,6 +101,10 @@ export default function Scraps() {
   const [reviewAction, setReviewAction] = useState<'approved' | 'rejected'>('approved')
   const [reviewReason, setReviewReason] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const createDraftHandledRef = useRef(false)
+  const [createdScrapFallback, setCreatedScrapFallback] = useState<ScrapRecord | null>(null)
+  const [reviewedScrapFallback, setReviewedScrapFallback] = useState<ScrapRecord | null>(null)
+  const [deletedScrapIds, setDeletedScrapIds] = useState<Set<string>>(new Set())
   const [batches, setBatches] = useState<Batch[]>([])
   const [form, setForm] = useState({
     materialId: '',
@@ -74,7 +130,15 @@ export default function Scraps() {
     }
     try {
       const detail = await materialApi.getDetail(materialId)
-      setBatches((detail?.batches || []).filter(batch => Number(batch.remaining || 0) > 0 && (batch.status as string) === 'normal'))
+      const availableBatches = (detail?.batches || []).filter(batch => Number(batch.remaining || 0) > 0 && (batch.status as string) === 'normal')
+      setBatches(availableBatches)
+      if (availableBatches.length === 1) {
+        setForm(prev => (
+          prev.materialId === materialId && !prev.batchId
+            ? { ...prev, batchId: availableBatches[0].id }
+            : prev
+        ))
+      }
     } catch (e) {
       console.error(e)
       setBatches([])
@@ -82,6 +146,29 @@ export default function Scraps() {
   }
 
   useEffect(() => { fetchRefs() }, [])
+
+  useEffect(() => {
+    if (createDraftHandledRef.current) return
+
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('action') !== 'create') return
+
+    createDraftHandledRef.current = true
+    const draftQuantity = Number(params.get('quantity'))
+    const materialId = params.get('materialId') || ''
+    setForm({
+      materialId,
+      batchId: params.get('batchId') || '',
+      quantity: Number.isFinite(draftQuantity) && draftQuantity > 0 ? draftQuantity : 1,
+      reason: params.get('reason') || '',
+      responsiblePerson: params.get('responsiblePerson') || '',
+      responsibleDepartment: params.get('responsibleDepartment') || '',
+      remark: params.get('remark') || '',
+    })
+    setModalOpen(true)
+    fetchRefs()
+    if (materialId) fetchBatches(materialId)
+  }, [])
 
   const fetchFn = useCallback(
     async ({ page, pageSize }: { page: number; pageSize: number }) => {
@@ -114,6 +201,71 @@ export default function Scraps() {
   const maxQuantity = selectedBatch ? Number(selectedBatch.remaining || 0) : Number(selectedMaterial?.stock || 0)
   const scrapAmount = getScrapAmount(selectedMaterial, form.quantity)
   const needsReview = requiresScrapReview(selectedMaterial, form.quantity)
+  const selectedReasonLabel = reasonOptions.find(reason => reason.value === form.reason)?.label || (form.reason ? form.reason : '待选择')
+  const scrapUnit = selectedMaterial?.unit || ''
+  const scrapQuantityText = `${form.quantity || 0} ${scrapUnit}`.trim()
+  const scrapDeductionText = selectedBatch ? `批次扣减 ${scrapQuantityText}` : `库存扣减 ${scrapQuantityText}`
+  const scrapOutcomeText = needsReview ? '先扣减库存，进入待复核' : '直接完成报废登记'
+  const batchRemainingAfterScrap = selectedBatch
+    ? `${Math.max(0, Number(selectedBatch.remaining || 0) - Number(form.quantity || 0))} ${scrapUnit}`.trim()
+    : '-'
+  const showScrapPreview = Boolean(selectedMaterial && form.quantity > 0)
+  const downstreamFacts = '库存、批次、成本、库存流水、审计记录'
+  const scrapValidationMessage = (() => {
+    if (!form.materialId || form.quantity <= 0 || !form.reason) {
+      return '请先选择物料、报废数量和报废原因。'
+    }
+    if (batches.length > 0 && !form.batchId) {
+      return '请选择报废批次，系统才能扣减正确批次并保留成本来源。'
+    }
+    if (maxQuantity > 0 && form.quantity > maxQuantity) {
+      return `报废数量不能超过所选批次剩余 ${maxQuantity} ${selectedMaterial?.unit || ''}，请按实际可报废数量修改。`
+    }
+    if (selectedMaterial && form.quantity > selectedMaterial.stock) {
+      return `报废数量不能超过当前库存 ${selectedMaterial.stock} ${selectedMaterial.unit}，请按实际可报废数量修改。`
+    }
+    if (needsReview && (!form.responsiblePerson.trim() || !form.responsibleDepartment.trim())) {
+      return '高价值报废必须填写责任人和责任部门，系统才能进入可追责复核。'
+    }
+    return ''
+  })()
+  const canConfirmScrap = !isSubmitting && !scrapValidationMessage
+
+  const { displayedData, displayedTotal } = useMemo(() => {
+    let rows = deletedScrapIds.size
+      ? data.filter(row => !deletedScrapIds.has(row.id))
+      : data
+    let nextTotal = Math.max(0, total - (data.length - rows.length))
+
+    if (
+      reviewedScrapFallback &&
+      !deletedScrapIds.has(reviewedScrapFallback.id) &&
+      keyword === reviewedScrapFallback.scrapNo &&
+      page === 1
+    ) {
+      const reviewedIndex = rows.findIndex(row => row.id === reviewedScrapFallback.id || row.scrapNo === reviewedScrapFallback.scrapNo)
+      if (reviewedIndex >= 0) {
+        rows = rows.map((row, index) => index === reviewedIndex ? reviewedScrapFallback : row)
+      } else {
+        rows = [reviewedScrapFallback, ...rows]
+        nextTotal = Math.max(nextTotal + 1, rows.length)
+      }
+    }
+
+    if (
+      createdScrapFallback &&
+      !deletedScrapIds.has(createdScrapFallback.id) &&
+      keyword === createdScrapFallback.scrapNo &&
+      page === 1
+    ) {
+      if (!rows.some(row => row.id === createdScrapFallback.id || row.scrapNo === createdScrapFallback.scrapNo)) {
+        rows = [createdScrapFallback, ...rows]
+        nextTotal = Math.max(nextTotal + 1, rows.length)
+      }
+    }
+
+    return { displayedData: rows, displayedTotal: nextTotal }
+  }, [createdScrapFallback, data, deletedScrapIds, keyword, page, reviewedScrapFallback, total])
 
   const openCreate = () => {
     fetchRefs()
@@ -133,6 +285,12 @@ export default function Scraps() {
     setPage(1)
   }
 
+  const focusScrapRecord = (scrapNo: string) => {
+    setKeywordInput(scrapNo)
+    setKeyword(scrapNo)
+    setPage(1)
+  }
+
   const handleMaterialChange = (value: string) => {
     setForm({ ...form, materialId: value, batchId: '', quantity: 1 })
     fetchBatches(value)
@@ -143,16 +301,16 @@ export default function Scraps() {
       toast.error('请填写物料、数量和报废原因')
       return
     }
-    if (selectedMaterial && form.quantity > selectedMaterial.stock) {
-      toast.error(`报废数量不能超过当前库存 ${selectedMaterial.stock} ${selectedMaterial.unit}`)
-      return
-    }
     if (batches.length > 0 && !form.batchId) {
       toast.error('请选择报废批次')
       return
     }
     if (maxQuantity > 0 && form.quantity > maxQuantity) {
       toast.error(`报废数量不能超过批次剩余 ${maxQuantity} ${selectedMaterial?.unit || ''}`)
+      return
+    }
+    if (selectedMaterial && form.quantity > selectedMaterial.stock) {
+      toast.error(`报废数量不能超过当前库存 ${selectedMaterial.stock} ${selectedMaterial.unit}`)
       return
     }
     if (needsReview && (!form.responsiblePerson.trim() || !form.responsibleDepartment.trim())) {
@@ -167,7 +325,24 @@ export default function Scraps() {
         responsibleDepartment: form.responsibleDepartment.trim() || undefined,
         remark: form.remark.trim() || undefined,
       })
-      toast.success(result?.reviewStatus === 'pending' ? '报废已登记，待复核' : '报废登记成功')
+      const created = result?.data ?? result
+      if (created?.scrapNo) {
+        setCreatedScrapFallback(buildCreatedScrapRecord(created, form, { materials, batches }))
+        focusScrapRecord(created.scrapNo)
+      }
+      if (created?.reviewStatus === 'pending') {
+        toast.success('报废已登记，待复核', {
+          description: created?.scrapNo
+            ? `已生成 ${created.scrapNo}，库存和批次已扣减；待复核通过后完成报废闭环，驳回会恢复库存并保留审计记录`
+            : '库存和批次已扣减；待复核通过后完成报废闭环，驳回会恢复库存并保留审计记录',
+        })
+      } else {
+        toast.success('报废登记成功', {
+          description: created?.scrapNo
+            ? `已生成 ${created.scrapNo}，库存、批次、成本和审计链路可按单号回看`
+            : '库存、批次、成本和审计链路已记录，可在报废记录和审计证据中回看',
+        })
+      }
       setModalOpen(false)
       setBatches([])
       setForm({ materialId: '', batchId: '', quantity: 1, reason: '', responsiblePerson: '', responsibleDepartment: '', remark: '' })
@@ -195,6 +370,11 @@ export default function Scraps() {
     if (!recordToDelete) return
     try {
       await scrapApi.delete(recordToDelete.id)
+      setDeletedScrapIds(prev => {
+        const next = new Set(prev)
+        next.add(recordToDelete.id)
+        return next
+      })
       toast.success('报废记录已撤销')
       setDeleteConfirmOpen(false)
       setRecordToDelete(null)
@@ -211,10 +391,20 @@ export default function Scraps() {
       return
     }
     try {
-      await scrapApi.review(reviewRecord.id, {
+      const result: any = await scrapApi.review(reviewRecord.id, {
         status: reviewAction,
         reason: reviewReason.trim() || undefined,
       })
+      const reviewed = result?.data ?? result
+      const nextRecord: ScrapRecord = {
+        ...reviewRecord,
+        status: String(reviewed?.status || (reviewAction === 'approved' ? 'completed' : 'rejected')),
+        reviewStatus: (reviewed?.reviewStatus || reviewAction) as ScrapRecord['reviewStatus'],
+        reviewedAt: reviewed?.reviewedAt || new Date().toISOString(),
+        reviewReason: reviewReason.trim() || undefined,
+      }
+      setReviewedScrapFallback(nextRecord)
+      focusScrapRecord(nextRecord.scrapNo)
       toast.success(reviewAction === 'approved' ? '报废复核已通过' : '报废已驳回并恢复库存')
       setReviewRecord(null)
       setReviewReason('')
@@ -223,6 +413,10 @@ export default function Scraps() {
     } catch (e) {
       toast.error('复核失败')
     }
+  }
+
+  const openAuditEvidence = (scrapNo: string) => {
+    navigate(`/logs?keyword=${encodeURIComponent(scrapNo)}`)
   }
 
   return (
@@ -295,12 +489,12 @@ export default function Scraps() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {loading ? (
+              {loading && displayedData.length === 0 ? (
                 <tr><td colSpan={12} className="px-4 py-8 text-center text-gray-400">加载中...</td></tr>
-              ) : data.length === 0 ? (
+              ) : displayedData.length === 0 ? (
                 <tr><td colSpan={12} className="px-4 py-8 text-center text-gray-400">暂无数据</td></tr>
               ) : (
-                data.map(row => {
+                displayedData.map(row => {
                   const mat = materials.find(m => m.id === row.materialId)
                   const reasonLabel = reasonOptions.find(r => r.value === row.reason)?.label || row.reason
                   const statusMeta = reviewStatusMeta[row.reviewStatus || 'not_required']
@@ -331,13 +525,24 @@ export default function Scraps() {
                       <td className="px-4 py-3 text-gray-500">{formatDate(row.createdAt)}</td>
                       <td className="px-4 py-3 text-gray-500">{row.remark || '-'}</td>
                       <td className="px-4 py-3">
-                        <button
-                          onClick={() => openDelete(row)}
-                          className="text-gray-400 hover:text-red-600 transition-colors"
-                          title="撤销"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        <div className="inline-flex items-center gap-2">
+                          <button
+                            type="button"
+                            aria-label={`审计证据 ${row.scrapNo}`}
+                            onClick={() => openAuditEvidence(row.scrapNo)}
+                            className="text-gray-400 hover:text-indigo-600 transition-colors"
+                            title="审计证据"
+                          >
+                            <FileSearch className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => openDelete(row)}
+                            className="text-gray-400 hover:text-red-600 transition-colors"
+                            title="撤销"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                         {row.reviewStatus === 'pending' && (
                           <div className="inline-flex items-center gap-2 ml-3">
                             <button
@@ -366,8 +571,8 @@ export default function Scraps() {
         </div>
 
         <div className="flex items-center justify-between px-4 py-3 border-t border-gray-200">
-          <span className="text-sm text-gray-500">共 {total} 条记录</span>
-          <Pagination page={page} pageSize={pageSize} total={total} onChangePage={setPage} onChangePageSize={setPageSize} />
+          <span className="text-sm text-gray-500">共 {displayedTotal} 条记录</span>
+          <Pagination page={page} pageSize={pageSize} total={displayedTotal} onChangePage={setPage} onChangePageSize={setPageSize} />
         </div>
       </div>
 
@@ -428,7 +633,7 @@ export default function Scraps() {
               <div className={needsReview ? 'rounded-md border border-amber-200 bg-amber-50 px-3 py-2' : 'rounded-md border border-gray-200 bg-gray-50 px-3 py-2'}>
                 <p className={`text-sm ${needsReview ? 'text-amber-800' : 'text-gray-600'}`}>
                   预计损耗金额：¥{scrapAmount.toFixed(2)}
-                  {needsReview ? '，达到高价值报废标准，提交后进入待复核。' : '，提交后直接完成报废登记。'}
+                  {needsReview ? '，达到高价值报废标准，确认后先扣减库存并进入待复核，驳回会自动恢复库存。' : '，提交后直接完成报废登记。'}
                 </p>
               </div>
             )}
@@ -467,6 +672,36 @@ export default function Scraps() {
                 </div>
               </div>
             )}
+            {showScrapPreview && (
+              <div className="border border-gray-200 rounded-lg overflow-hidden">
+                <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
+                  <h4 className="text-sm font-semibold text-gray-900">报废结果确认</h4>
+                  <div className="text-xs text-gray-500 mt-0.5">确认后将接住：{downstreamFacts}</div>
+                </div>
+                <div className="p-4 grid grid-cols-2 md:grid-cols-4 gap-4">
+                  {[
+                    { label: '物料', value: selectedMaterial?.name || '-' },
+                    { label: '批次', value: selectedBatch?.batchNo || '-' },
+                    { label: '报废数量', value: scrapQuantityText || '-' },
+                    { label: '扣减动作', value: scrapDeductionText },
+                    { label: '损耗金额', value: `预计损耗 ¥${scrapAmount.toFixed(2)}` },
+                    { label: '处理结果', value: scrapOutcomeText },
+                    { label: '报废原因', value: selectedReasonLabel },
+                    { label: '批次余量', value: batchRemainingAfterScrap },
+                  ].map(item => (
+                    <div key={item.label} className="min-w-0">
+                      <div className="text-xs text-gray-500 mb-1">{item.label}</div>
+                      <div className="text-sm font-medium text-gray-900 truncate">{item.value}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {scrapValidationMessage && (
+              <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                {scrapValidationMessage}
+              </div>
+            )}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">备注</label>
               <textarea
@@ -479,7 +714,7 @@ export default function Scraps() {
           </div>
           <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-gray-200">
             <button onClick={() => setModalOpen(false)} className="px-4 h-10 text-sm text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors">取消</button>
-            <button data-testid="scrap-confirm-btn" onClick={handleCreate} disabled={isSubmitting} className="px-4 h-10 text-sm text-white bg-red-500 rounded-md hover:bg-red-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">{isSubmitting ? '提交中...' : '确认报废'}</button>
+            <button data-testid="scrap-confirm-btn" onClick={handleCreate} disabled={!canConfirmScrap} className="px-4 h-10 text-sm text-white bg-red-500 rounded-md hover:bg-red-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">{isSubmitting ? '提交中...' : '确认报废'}</button>
           </div>
         </Modal>
       )}
@@ -525,7 +760,7 @@ export default function Scraps() {
       <ConfirmDialog
         open={deleteConfirmOpen && !!recordToDelete}
         title="确认撤销"
-        description={`确定要撤销报废记录 ${recordToDelete?.scrapNo} 吗？撤销后库存将自动回滚。`}
+        description={`确定要撤销报废记录 ${recordToDelete?.scrapNo} 吗？撤销后将恢复本次报废扣减的库存和批次余量，回滚损耗成本和库存流水，重新触发库存预警检查；审计记录将保留撤销动作。`}
         confirmText="确认撤销"
         confirmVariant="danger"
         onConfirm={handleDelete}

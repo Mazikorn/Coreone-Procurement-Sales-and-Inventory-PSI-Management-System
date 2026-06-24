@@ -59,6 +59,25 @@ function seedNoBatchOutbound(db: any, fixture: { materialId: string; locationId:
   return { outboundId, itemId }
 }
 
+function seedLegacyNoBatchInbound(db: any, fixture: { materialId: string; supplierId: string; locationId: string }, suffix: string, quantity = 10) {
+  const inboundId = `in-legacy-nobatch-${suffix}`
+  const inboundNo = `IB-LEGACY-NOBATCH-${suffix}`
+  db.prepare(`
+    INSERT INTO inbound_records (id, inbound_no, type, material_id, batch_no, quantity, unit, price, amount, supplier_id, location_id, expiry_date, operator, status)
+    VALUES (?, ?, 'direct', ?, NULL, ?, '瓶', 10, ?, ?, ?, '2027-01-01', 'admin', 'completed')
+  `).run(inboundId, inboundNo, fixture.materialId, quantity, quantity * 10, fixture.supplierId, fixture.locationId)
+  db.prepare(`
+    INSERT INTO inventory (id, material_id, stock, locked_stock, location_id, last_inbound_id, last_inbound_date, update_time)
+    VALUES (?, ?, ?, 0, ?, ?, date('now','localtime'), CURRENT_TIMESTAMP)
+  `).run(`inv-legacy-nobatch-${suffix}`, fixture.materialId, quantity, fixture.locationId, inboundId)
+  db.prepare(`
+    INSERT INTO inventory_locations (id, material_id, location_id, stock)
+    VALUES (?, ?, ?, ?)
+  `).run(`inv-loc-legacy-nobatch-${suffix}`, fixture.materialId, fixture.locationId, quantity)
+
+  return { inboundId, inboundNo }
+}
+
 describe('批量入库 API', () => {
   let app: any
   let db: any
@@ -271,6 +290,75 @@ describe('批量入库 API', () => {
     expect(inventory).toBeUndefined()
   })
 
+  it('INB-VALIDATION-002: 普通入库必须写入批号和有效期，避免批次和预警链路断裂', async () => {
+    const suffix = `single-required-${Date.now()}`
+    const fixture = seedBatchInboundFixture(db, suffix)
+
+    const missingBatch = await request(app)
+      .post('/api/v1/inbound')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        type: 'direct',
+        materialId: fixture.materialId,
+        quantity: 1,
+        price: 10,
+        supplierId: fixture.supplierId,
+        locationId: fixture.locationId,
+        expiryDate: '2027-01-01',
+      })
+
+    const missingExpiry = await request(app)
+      .post('/api/v1/inbound')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        type: 'direct',
+        materialId: fixture.materialId,
+        batchNo: `B-INB-${suffix}-NO-EXPIRY`,
+        quantity: 1,
+        price: 10,
+        supplierId: fixture.supplierId,
+        locationId: fixture.locationId,
+      })
+
+    expect(missingBatch.status).toBe(400)
+    expect(missingBatch.body.error.message).toContain('批号')
+    expect(missingExpiry.status).toBe(400)
+    expect(missingExpiry.body.error.message).toContain('有效期')
+
+    const inboundCount = (db.prepare('SELECT COUNT(*) as count FROM inbound_records WHERE material_id = ?')
+      .get(fixture.materialId) as any).count
+    const batchCount = (db.prepare('SELECT COUNT(*) as count FROM batches WHERE material_id = ?')
+      .get(fixture.materialId) as any).count
+    expect(inboundCount).toBe(0)
+    expect(batchCount).toBe(0)
+  })
+
+  it('INB-VALIDATION-003: 采购入库必须关联采购订单，避免采购收货进度靠线下核对', async () => {
+    const suffix = `single-po-required-${Date.now()}`
+    const fixture = seedBatchInboundFixture(db, suffix)
+
+    const res = await request(app)
+      .post('/api/v1/inbound')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        type: 'purchase',
+        materialId: fixture.materialId,
+        batchNo: `B-INB-${suffix}-PO`,
+        quantity: 1,
+        price: 10,
+        supplierId: fixture.supplierId,
+        locationId: fixture.locationId,
+        expiryDate: '2027-01-01',
+      })
+
+    expect(res.status).toBe(400)
+    expect(res.body.error.message).toContain('采购订单')
+
+    const inboundCount = (db.prepare('SELECT COUNT(*) as count FROM inbound_records WHERE material_id = ?')
+      .get(fixture.materialId) as any).count
+    expect(inboundCount).toBe(0)
+  })
+
   it('INB-BATCH-003: 同一物料同一批号拒绝不同单价或供应商再次入库', async () => {
     const suffix = `cost-source-${Date.now()}`
     const fixture = seedBatchInboundFixture(db, suffix)
@@ -426,6 +514,59 @@ describe('批量入库 API', () => {
 
     const inventory = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(fixture.materialId) as any
     expect(inventory.stock).toBe(15)
+  })
+
+  it('INB-UPDATE-004: 普通入库更新不能清空批号、库位或有效期，避免事后断开批次和预警链路', async () => {
+    const suffix = `update-required-${Date.now()}`
+    const fixture = seedBatchInboundFixture(db, suffix)
+    const batchNo = `B-INB-${suffix}-A`
+
+    const inboundRes = await request(app)
+      .post('/api/v1/inbound')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        type: 'direct',
+        materialId: fixture.materialId,
+        batchNo,
+        quantity: 5,
+        price: 10,
+        supplierId: fixture.supplierId,
+        locationId: fixture.locationId,
+        expiryDate: '2027-01-01',
+      })
+    expect(inboundRes.status).toBe(201)
+    const inboundId = inboundRes.body.data.id
+
+    const invalidPayloads = [
+      { body: { batchNo: '' }, message: '批号' },
+      { body: { locationId: '' }, message: '库位' },
+      { body: { expiryDate: '' }, message: '有效期' },
+      { body: { expiryDate: '2027/01/01' }, message: '有效期' },
+      { body: { productionDate: '2027/01/01' }, message: '生产日期' },
+    ]
+
+    for (const payload of invalidPayloads) {
+      const updateRes = await request(app)
+        .put(`/api/v1/inbound/${inboundId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send(payload.body)
+
+      expect(updateRes.status).toBe(400)
+      expect(updateRes.body.error.message).toContain(payload.message)
+    }
+
+    const record = db.prepare('SELECT batch_no, location_id, expiry_date, production_date FROM inbound_records WHERE id = ?')
+      .get(inboundId) as any
+    const batch = db.prepare('SELECT quantity, remaining, expiry_date FROM batches WHERE material_id = ? AND batch_no = ?')
+      .get(fixture.materialId, batchNo) as any
+
+    expect(record).toMatchObject({
+      batch_no: batchNo,
+      location_id: fixture.locationId,
+      expiry_date: '2027-01-01',
+      production_date: null,
+    })
+    expect(batch).toMatchObject({ quantity: 5, remaining: 5, expiry_date: '2027-01-01' })
   })
 
   it('INB-UPDATE-002: 已有出库记录的入库批次不能改批号，避免出库追溯失真', async () => {
@@ -729,21 +870,7 @@ describe('批量入库 API', () => {
   it('INB-CHECK-001: 无批号入库存在出库记录时删除预检查必须阻断', async () => {
     const suffix = `check-nobatch-${Date.now()}`
     const fixture = seedBatchInboundFixture(db, suffix)
-
-    const inboundRes = await request(app)
-      .post('/api/v1/inbound')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .send({
-        type: 'direct',
-        materialId: fixture.materialId,
-        quantity: 10,
-        price: 10,
-        supplierId: fixture.supplierId,
-        locationId: fixture.locationId,
-        expiryDate: '2027-01-01',
-      })
-    expect(inboundRes.status).toBe(201)
-    const inboundId = inboundRes.body.data.id
+    const { inboundId } = seedLegacyNoBatchInbound(db, fixture, suffix, 10)
     seedNoBatchOutbound(db, fixture, suffix, 3)
 
     const checkRes = await request(app)
@@ -758,21 +885,7 @@ describe('批量入库 API', () => {
   it('INB-STATUS-001: 通用状态取消必须阻断已有出库的无批号入库并避免负库存', async () => {
     const suffix = `status-cancel-nobatch-${Date.now()}`
     const fixture = seedBatchInboundFixture(db, suffix)
-
-    const inboundRes = await request(app)
-      .post('/api/v1/inbound')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .send({
-        type: 'direct',
-        materialId: fixture.materialId,
-        quantity: 10,
-        price: 10,
-        supplierId: fixture.supplierId,
-        locationId: fixture.locationId,
-        expiryDate: '2027-01-01',
-      })
-    expect(inboundRes.status).toBe(201)
-    const inboundId = inboundRes.body.data.id
+    const { inboundId } = seedLegacyNoBatchInbound(db, fixture, suffix, 10)
     seedNoBatchOutbound(db, fixture, suffix, 3)
 
     const cancelRes = await request(app)

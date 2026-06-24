@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { materialApi, categoryApi, supplierApi, locationApi } from '@/api/master'
 import type { Material, MaterialDeleteCheck, MaterialStatusCheck, Category, Supplier, Location } from '@/types'
 import { toast } from 'sonner'
@@ -59,6 +59,10 @@ function flattenLeafCategories(nodes: Category[]): Category[] {
   }
   walk(nodes)
   return result
+}
+
+function isSameMaterial(a: Pick<Material, 'id' | 'code'>, b: Pick<Material, 'id' | 'code'>): boolean {
+  return a.id === b.id || (!!a.code && !!b.code && a.code === b.code)
 }
 
 interface MaterialStats {
@@ -139,6 +143,55 @@ export function useMaterialsPage() {
     initialPageSize: urlPageSize,
     deps: [debouncedKeyword, categoryId, supplierId, quickFilter, includeDeleted],
   })
+
+  const [localMaterialPatches, setLocalMaterialPatches] = useState<Record<string, Partial<Material>>>({})
+  const [localCreatedMaterial, setLocalCreatedMaterial] = useState<Material | null>(null)
+
+  const materialMatchesCurrentFilters = useCallback((material: Material) => {
+    if (quickFilter === 'active' && material.status !== 'active') return false
+    if (quickFilter === 'inactive' && material.status !== 'inactive') return false
+    if (quickFilter === 'low-stock') {
+      const stock = Number(material.stock || 0)
+      const minStock = Number(material.minStock || 0)
+      if (!(stock <= minStock)) return false
+    }
+    if (categoryId && material.categoryId !== categoryId) return false
+    if (supplierId && material.supplierId !== supplierId) return false
+    const keywordText = debouncedKeyword.trim().toLowerCase()
+    if (!keywordText) return true
+    return [
+      material.code,
+      material.barcode,
+      material.name,
+      material.spec,
+    ].some(value => String(value || '').toLowerCase().includes(keywordText))
+  }, [categoryId, debouncedKeyword, quickFilter, supplierId])
+
+  const displayData = useMemo(() => {
+    const patched = data
+      .map(material => ({
+        ...material,
+        ...(localMaterialPatches[material.id] || {}),
+      }))
+      .filter(materialMatchesCurrentFilters)
+    if (
+      localCreatedMaterial &&
+      materialMatchesCurrentFilters(localCreatedMaterial) &&
+      !patched.some(material => isSameMaterial(material, localCreatedMaterial))
+    ) {
+      return [localCreatedMaterial, ...patched]
+    }
+    return patched
+  }, [data, localCreatedMaterial, localMaterialPatches, materialMatchesCurrentFilters])
+
+  useEffect(() => {
+    if (!localCreatedMaterial) return
+    if (data.some(material => isSameMaterial(material, localCreatedMaterial))) {
+      setLocalCreatedMaterial(null)
+    }
+  }, [data, localCreatedMaterial])
+
+  const displayTotal = Math.max(0, total - (data.length - displayData.length))
 
   useEffect(() => {
     setMultiple({
@@ -322,15 +375,38 @@ export function useMaterialsPage() {
       if (editingId) {
         const { code: _readonlyCode, ...editableForm } = form
         await materialApi.update(editingId, editableForm)
+        setLocalMaterialPatches(prev => ({
+          ...prev,
+          [editingId]: editableForm,
+        }))
         toast.success('物料更新成功')
+        setModalOpen(false)
+        refresh()
+        fetchRefs()
+        loadStats()
       } else {
-        await materialApi.create(form)
+        const res: any = await materialApi.create(form)
+        const created = res?.data ?? res
+        const createdKeyword = created?.code || form.code || form.name
+        const materialForDisplay = {
+          ...form,
+          ...created,
+          id: created?.id || `local-${Date.now()}`,
+          code: created?.code || form.code,
+          name: created?.name || form.name,
+          status: created?.status || form.status,
+        } as Material
         toast.success('物料创建成功')
+        setLocalCreatedMaterial(materialForDisplay)
+        setKeywordState(createdKeyword)
+        setDebouncedKeyword(createdKeyword)
+        setCategoryIdState('')
+        setSupplierIdState('')
+        setQuickFilter('all')
+        setPage(1)
+        setModalOpen(false)
+        fetchRefs()
       }
-      setModalOpen(false)
-      refresh()
-      fetchRefs()
-      loadStats()
     } catch (e) {
       toast.error('操作失败')
     }
@@ -341,7 +417,7 @@ export function useMaterialsPage() {
       toast.error('当前角色只能查看物料')
       return
     }
-    const target = data.find(item => item.id === id) || null
+    const target = displayData.find(item => item.id === id) || null
     if (!target) {
       toast.error('未找到要删除的物料')
       return
@@ -418,6 +494,13 @@ export function useMaterialsPage() {
     setUpdatingStatus(true)
     try {
       await materialApi.update(statusTarget.id, { status: statusTargetStatus })
+      setLocalMaterialPatches(prev => ({
+        ...prev,
+        [statusTarget.id]: {
+          ...(prev[statusTarget.id] || {}),
+          status: statusTargetStatus,
+        },
+      }))
       toast.success(statusTargetStatus === 'active' ? '物料已启用' : '物料已停用')
       setStatusTarget(null)
       setStatusCheck(null)
@@ -438,10 +521,10 @@ export function useMaterialsPage() {
   }
 
   const toggleSelectAll = () => {
-    if (selectedIds.size === data.length && data.length > 0) {
+    if (selectedIds.size === displayData.length && displayData.length > 0) {
       setSelectedIds(new Set())
     } else {
-      setSelectedIds(new Set(data.map(d => d.id)))
+      setSelectedIds(new Set(displayData.map(d => d.id)))
     }
   }
 
@@ -461,7 +544,7 @@ export function useMaterialsPage() {
       toast.error('当前角色只能查看物料')
       return
     }
-    const targets = data.filter(item => selectedIds.has(item.id))
+    const targets = displayData.filter(item => selectedIds.has(item.id))
     if (targets.length === 0) return
     setBatchAction(action)
     setBatchTargets(targets)
@@ -601,7 +684,7 @@ export function useMaterialsPage() {
   }, [setPage])
 
   return {
-    data, loading, page, pageSize, total, setPage, setPageSize, refresh,
+    data: displayData, loading, page, pageSize, total: displayTotal, setPage, setPageSize, refresh,
     canWrite,
     keyword, setKeyword, categoryId, setCategoryId, supplierId, setSupplierId,
     quickFilter, setQuickFilter,

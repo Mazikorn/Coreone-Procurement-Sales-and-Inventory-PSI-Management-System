@@ -103,6 +103,11 @@ interface CostRun {
       materialCost?: number
       outboundCount?: number
     }
+    failures?: Array<{
+      outboundId?: string
+      outboundNo?: string
+      message?: string
+    }>
   }
   startedAt: string
   finishedAt?: string
@@ -315,6 +320,16 @@ export function buildCostAlertsOverviewLink(month: string) {
   return `/abc/alerts?${params.toString()}`
 }
 
+export function buildCostRunExceptionLink(runId: string, month: string) {
+  const params = new URLSearchParams({
+    keyword: runId,
+    yearMonth: month,
+    status: 'open',
+    includeUnassigned: '1',
+  })
+  return `/abc/alerts?${params.toString()}`
+}
+
 export function getClosePeriodBlockReason(
   periodStatus: CostPeriod['status'] | undefined,
   openExceptionCount: number,
@@ -334,6 +349,10 @@ export function getCostRunProcessedCount(summary?: CostRun['summary']) {
 
 export function getCostRunSucceededCount(summary?: CostRun['summary']) {
   return summary?.success ?? summary?.succeeded ?? 0
+}
+
+function getFirstCostRunFailure(summary?: CostRun['summary']) {
+  return summary?.failures?.find(item => item?.outboundNo || item?.message)
 }
 
 export function buildDashboardComparisonParams(month: string) {
@@ -495,11 +514,11 @@ export default function CostDashboard() {
   const handleCreateAdjustment = async () => {
     const amount = Number(adjustmentAmount)
     if (!Number.isFinite(amount) || amount === 0) {
-      toast.error('调整金额不能为 0')
+      toast.error('请填写非 0 调整金额，系统才能重算调整后成本和利润。')
       return
     }
     if (!adjustmentReason.trim()) {
-      toast.error('请填写调整原因')
+      toast.error('请填写调整原因，系统才能解释关账后调整并形成审核记录。')
       return
     }
     try {
@@ -555,6 +574,15 @@ export default function CostDashboard() {
     openAlertCount,
     summary?.pendingCostCount ?? 0,
   )
+  const adjustmentAmountValue = Number(adjustmentAmount)
+  const adjustmentValidationMessage = adjustmentModalOpen
+    ? !Number.isFinite(adjustmentAmountValue) || adjustmentAmountValue === 0
+      ? '请填写非 0 调整金额，系统才能重算调整后成本和利润。'
+      : !adjustmentReason.trim()
+        ? '请填写调整原因，系统才能解释关账后调整并形成审核记录。'
+        : ''
+    : ''
+  const canSubmitAdjustment = !adjustmentValidationMessage && !adjustmentSubmitting
   const closingReadinessMeta = closingReadiness
     ? CLOSING_READINESS_STATUS[closingReadiness.status]
     : null
@@ -743,6 +771,7 @@ export default function CostDashboard() {
               <tbody className="divide-y divide-gray-100">
                 {costRuns.map(run => {
                   const runStatus = RUN_STATUS[run.status] || RUN_STATUS.running
+                  const firstFailure = getFirstCostRunFailure(run.summary)
                   return (
                     <tr key={run.id}>
                       <td className="py-2 text-gray-900">
@@ -756,7 +785,24 @@ export default function CostDashboard() {
                       </td>
                       <td className="py-2 text-gray-600">{getCostRunProcessedCount(run.summary)}</td>
                       <td className="py-2 text-emerald-600">{getCostRunSucceededCount(run.summary)}</td>
-                      <td className="py-2 text-red-600">{run.summary?.failed ?? 0}</td>
+                      <td className="py-2 text-red-600">
+                        <div>{run.summary?.failed ?? 0}</div>
+                        {firstFailure && (
+                          <div className="mt-1 max-w-[320px] space-y-1 text-xs leading-5 text-red-700">
+                            <div>
+                              失败出库 {firstFailure.outboundNo || '未关联单号'}：
+                              {firstFailure.message || '请查看成本异常详情'}
+                            </div>
+                            <div className="text-gray-500">修正源数据后重新执行重算</div>
+                            <Link
+                              to={buildCostRunExceptionLink(run.id, run.yearMonth)}
+                              className="inline-flex text-blue-600 hover:text-blue-700"
+                            >
+                              查看失败异常
+                            </Link>
+                          </div>
+                        )}
+                      </td>
                       <td className="py-2 text-gray-500">{run.finishedAt || run.startedAt || '-'}</td>
                     </tr>
                   )
@@ -1151,6 +1197,26 @@ export default function CostDashboard() {
                   placeholder="例如：关账后发现设备折旧分摊差异，经财务复核调整"
                 />
               </div>
+              <div className="rounded-md border border-emerald-100 bg-emerald-50 px-3 py-3">
+                <div className="text-sm font-semibold text-emerald-900">调整单结果确认</div>
+                <div className="mt-1 text-xs text-emerald-700">
+                  确认后将接住：关账后调整、调整额、调整后利润、成本看板、审核记录、审计记录
+                </div>
+                <div className="mt-3 grid grid-cols-1 gap-2 text-xs text-emerald-700">
+                  <div>调整期间 {month}</div>
+                  <div>
+                    调整金额 {Number.isFinite(adjustmentAmountValue) && adjustmentAmountValue !== 0
+                      ? formatCurrency(adjustmentAmountValue)
+                      : '待填写'}
+                  </div>
+                  <div>调整原因 {adjustmentReason.trim() || '待填写'}</div>
+                </div>
+              </div>
+              {adjustmentValidationMessage ? (
+                <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                  {adjustmentValidationMessage}
+                </div>
+              ) : null}
             </div>
             <div className="flex justify-end gap-2 border-t border-gray-200 px-5 py-4">
               <button
@@ -1163,8 +1229,8 @@ export default function CostDashboard() {
               <button
                 type="button"
                 onClick={handleCreateAdjustment}
-                disabled={adjustmentSubmitting}
-                className="h-9 rounded-md bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+                disabled={!canSubmitAdjustment}
+                className="h-9 rounded-md bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {adjustmentSubmitting ? '提交中...' : '提交调整单'}
               </button>

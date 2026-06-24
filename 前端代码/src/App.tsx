@@ -35,6 +35,7 @@ import CostDashboard from '@/pages/cost/CostDashboard'
 import SlideCostAnalysis from '@/pages/cost/SlideCostAnalysis'
 import { ProfitabilityAnalysis } from '@/pages/cost/ProfitabilityAnalysis'
 import FeeComparison from '@/pages/cost/FeeComparison'
+import SupplierCostAnalysis from '@/pages/cost/SupplierCostAnalysis'
 import FeeMappingConfig from '@/pages/cost/FeeMappingConfig'
 import CostTrend from '@/pages/cost/CostTrend'
 import { ActivityCenterList } from '@/pages/cost/ActivityCenterList'
@@ -102,6 +103,7 @@ function ProtectedLayout() {
             <Route path="/abc/slide-cost" element={<RoleRoute><SlideCostAnalysis /></RoleRoute>} />
             <Route path="/abc/profitability" element={<RoleRoute><ProfitabilityAnalysis /></RoleRoute>} />
             <Route path="/abc/fee-comparison" element={<RoleRoute><FeeComparison /></RoleRoute>} />
+            <Route path="/abc/supplier-costs" element={<RoleRoute><SupplierCostAnalysis /></RoleRoute>} />
             <Route path="/abc/fee-mappings" element={<RoleRoute><FeeMappingConfig /></RoleRoute>} />
             <Route path="/abc/trend" element={<RoleRoute><CostTrend /></RoleRoute>} />
             <Route path="/abc/activity-centers" element={<RoleRoute><ActivityCenterList /></RoleRoute>} />

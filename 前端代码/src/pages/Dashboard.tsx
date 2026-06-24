@@ -1,3 +1,4 @@
+import React from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Clock, AlertTriangle, TrendingUp, Package, ArrowDownToLine, BarChart3, ShoppingCart, ClipboardCheck, Bell } from 'lucide-react'
 import { useDashboardPage, formatNumber, formatCurrency, formatPercent } from './dashboard/hooks/useDashboardPage'
@@ -126,12 +127,19 @@ export default function Dashboard() {
         <div className="bg-white rounded-lg p-5 border border-gray-200 shadow-sm">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-base font-semibold text-gray-900">最近活动</h3>
-            <button
-              onClick={() => navigate('/logs')}
-              className="text-xs text-blue-500 hover:text-blue-600 font-medium transition-colors"
-            >
-              查看全部
-            </button>
+            {config.activityLinks.length > 0 && (
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {config.activityLinks.map(link => (
+                  <button
+                    key={link.path}
+                    onClick={() => navigate(link.path)}
+                    className="text-xs text-blue-500 hover:text-blue-600 font-medium transition-colors"
+                  >
+                    {link.label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           {page.activities.length > 0 ? (
             <div className="divide-y divide-gray-100">
@@ -155,37 +163,37 @@ export default function Dashboard() {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             {page.pendingAlerts.length > 0 && (
               <button
-                onClick={() => navigate('/alerts')}
+                onClick={() => navigate('/alerts?quick=pending')}
                 className="flex items-center gap-3 p-3 rounded-lg bg-orange-50 hover:bg-orange-100 transition-colors text-left"
               >
                 <Bell className="w-5 h-5 text-orange-500 flex-shrink-0" />
                 <div>
                   <p className="text-sm font-medium text-orange-700">{page.pendingAlerts.length} 条预警待处理</p>
-                  <p className="text-xs text-orange-500 mt-0.5">点击前往预警中心</p>
+                  <p className="text-xs text-orange-500 mt-0.5">进入后可处理、忽略并回看留痕</p>
                 </div>
               </button>
             )}
             {page.inboundStats && page.inboundStats.pendingOrders > 0 && (
               <button
-                onClick={() => navigate('/purchase-orders')}
+                onClick={() => navigate('/purchase-orders?status=pending,partial')}
                 className="flex items-center gap-3 p-3 rounded-lg bg-blue-50 hover:bg-blue-100 transition-colors text-left"
               >
                 <ShoppingCart className="w-5 h-5 text-blue-500 flex-shrink-0" />
                 <div>
                   <p className="text-sm font-medium text-blue-700">{page.inboundStats.pendingOrders} 个采购单待收货</p>
-                  <p className="text-xs text-blue-500 mt-0.5">点击前往采购订单</p>
+                  <p className="text-xs text-blue-500 mt-0.5">进入后可按采购单收货并生成入库单</p>
                 </div>
               </button>
             )}
             {page.inventoryStats && page.inventoryStats.lowStockCount > 0 && (
               <button
-                onClick={() => navigate('/inventory')}
+                onClick={() => navigate('/inventory?quick=low-stock')}
                 className="flex items-center gap-3 p-3 rounded-lg bg-red-50 hover:bg-red-100 transition-colors text-left"
               >
                 <Package className="w-5 h-5 text-red-500 flex-shrink-0" />
                 <div>
                   <p className="text-sm font-medium text-red-700">{page.inventoryStats.lowStockCount} 种物料库存不足</p>
-                  <p className="text-xs text-red-500 mt-0.5">点击前往库存列表</p>
+                  <p className="text-xs text-red-500 mt-0.5">进入后可按物料补采购或发起盘点</p>
                 </div>
               </button>
             )}
@@ -277,7 +285,7 @@ function LowStockSummarySection({ stats, onNavigate }: {
   stats: { lowStockCount: number; expiringCount: number; expiredCount: number; outOfStockCount: number }
   onNavigate: (path: string) => void
 }) {
-  const total = stats.lowStockCount + stats.expiringCount + stats.expiredCount
+  const total = stats.lowStockCount + stats.expiringCount + stats.expiredCount + stats.outOfStockCount
   if (total === 0) return null
 
   return (
@@ -285,7 +293,7 @@ function LowStockSummarySection({ stats, onNavigate }: {
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-base font-semibold text-gray-900">库存预警摘要</h3>
         <button
-          onClick={() => onNavigate('/alerts')}
+          onClick={() => onNavigate('/alerts?quick=pending')}
           className="text-xs text-blue-500 hover:text-blue-600 font-medium transition-colors"
         >
           查看全部
@@ -293,40 +301,56 @@ function LowStockSummarySection({ stats, onNavigate }: {
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         {stats.outOfStockCount > 0 && (
-          <div className="flex items-center gap-3 p-3 rounded-lg bg-red-50">
+          <button
+            type="button"
+            onClick={() => onNavigate('/inventory?quick=out-of-stock')}
+            className="flex items-center gap-3 p-3 rounded-lg bg-red-50 text-left transition-colors hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-red-200"
+          >
             <AlertTriangle className="w-5 h-5 text-red-500 flex-shrink-0" />
             <div>
               <p className="text-lg font-bold text-red-600">{stats.outOfStockCount}</p>
               <p className="text-xs text-gray-500">已缺货</p>
             </div>
-          </div>
+          </button>
         )}
         {stats.lowStockCount > 0 && (
-          <div className="flex items-center gap-3 p-3 rounded-lg bg-orange-50">
+          <button
+            type="button"
+            onClick={() => onNavigate('/inventory?quick=low-stock')}
+            className="flex items-center gap-3 p-3 rounded-lg bg-orange-50 text-left transition-colors hover:bg-orange-100 focus:outline-none focus:ring-2 focus:ring-orange-200"
+          >
             <Package className="w-5 h-5 text-orange-500 flex-shrink-0" />
             <div>
               <p className="text-lg font-bold text-orange-600">{stats.lowStockCount}</p>
               <p className="text-xs text-gray-500">库存不足</p>
             </div>
-          </div>
+          </button>
         )}
         {stats.expiringCount > 0 && (
-          <div className="flex items-center gap-3 p-3 rounded-lg bg-yellow-50">
+          <button
+            type="button"
+            onClick={() => onNavigate('/inventory?quick=expiring-month')}
+            className="flex items-center gap-3 p-3 rounded-lg bg-yellow-50 text-left transition-colors hover:bg-yellow-100 focus:outline-none focus:ring-2 focus:ring-yellow-200"
+          >
             <Clock className="w-5 h-5 text-yellow-500 flex-shrink-0" />
             <div>
               <p className="text-lg font-bold text-yellow-600">{stats.expiringCount}</p>
               <p className="text-xs text-gray-500">即将过期</p>
             </div>
-          </div>
+          </button>
         )}
         {stats.expiredCount > 0 && (
-          <div className="flex items-center gap-3 p-3 rounded-lg bg-red-50">
+          <button
+            type="button"
+            onClick={() => onNavigate('/inventory?quick=expired')}
+            className="flex items-center gap-3 p-3 rounded-lg bg-red-50 text-left transition-colors hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-red-200"
+          >
             <AlertTriangle className="w-5 h-5 text-red-500 flex-shrink-0" />
             <div>
               <p className="text-lg font-bold text-red-600">{stats.expiredCount}</p>
               <p className="text-xs text-gray-500">已过期</p>
             </div>
-          </div>
+          </button>
         )}
       </div>
     </div>

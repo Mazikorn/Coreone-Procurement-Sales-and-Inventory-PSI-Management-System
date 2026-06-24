@@ -1,6 +1,7 @@
 import React from 'react'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
+import { MemoryRouter, useLocation } from 'react-router-dom'
 import { AlertTable } from './AlertTable'
 import type { AlertItem, FilterState } from '../hooks/useAlertsPage'
 
@@ -25,35 +26,44 @@ const filter: FilterState = {
   dateRange: ['', ''],
 }
 
-function renderTable(canHandle = false) {
+function renderTable(canHandle = false, canCreatePurchaseOrders = false) {
   render(
-    <AlertTable
-      data={[pendingAlert]}
-      loading={false}
-      total={1}
-      page={1}
-      pageSize={10}
-      filter={filter}
-      quickFilter="all"
-      selectedIds={new Set()}
-      canHandle={canHandle}
-      onFilterChange={vi.fn()}
-      onQuickFilterChange={vi.fn()}
-      onResetFilters={vi.fn()}
-      onSelect={vi.fn()}
-      onSelectAll={vi.fn()}
-      onClearSelection={vi.fn()}
-      onPageChange={vi.fn()}
-      onPageSizeChange={vi.fn()}
-      onBatchProcess={vi.fn()}
-      onOpenModal={vi.fn()}
-      onIgnore={vi.fn()}
-      getAlertTypeInfo={() => ({ label: '库存不足', bg: 'bg-red-50', text: 'text-red-600' })}
-      getStatusInfo={() => ({ label: '待处理', bg: 'bg-yellow-50', text: 'text-yellow-700' })}
-      isConsumption={() => false}
-      formatDate={(value) => value}
-    />
+    <MemoryRouter initialEntries={['/alerts']}>
+      <LocationProbe />
+      <AlertTable
+        data={[pendingAlert]}
+        loading={false}
+        total={1}
+        page={1}
+        pageSize={10}
+        filter={filter}
+        quickFilter="all"
+        selectedIds={new Set()}
+        canHandle={canHandle}
+        canCreatePurchaseOrders={canCreatePurchaseOrders}
+        onFilterChange={vi.fn()}
+        onQuickFilterChange={vi.fn()}
+        onResetFilters={vi.fn()}
+        onSelect={vi.fn()}
+        onSelectAll={vi.fn()}
+        onClearSelection={vi.fn()}
+        onPageChange={vi.fn()}
+        onPageSizeChange={vi.fn()}
+        onBatchProcess={vi.fn()}
+        onOpenModal={vi.fn()}
+        onIgnore={vi.fn()}
+        getAlertTypeInfo={() => ({ label: '库存不足', bg: 'bg-red-50', text: 'text-red-600' })}
+        getStatusInfo={() => ({ label: '待处理', bg: 'bg-yellow-50', text: 'text-yellow-700' })}
+        isConsumption={() => false}
+        formatDate={(value) => value}
+      />
+    </MemoryRouter>
   )
+}
+
+function LocationProbe() {
+  const location = useLocation()
+  return <div data-testid="location">{location.pathname}{location.search}</div>
 }
 
 describe('AlertTable role actions', () => {
@@ -64,6 +74,7 @@ describe('AlertTable role actions', () => {
     expect(screen.getByRole('button', { name: /详情/ })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^处理$/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^忽略$/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '补采购' })).not.toBeInTheDocument()
     expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
   })
 
@@ -73,5 +84,35 @@ describe('AlertTable role actions', () => {
     expect(screen.getByRole('button', { name: /^处理$/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^忽略$/ })).toBeInTheDocument()
     expect(screen.queryAllByRole('checkbox')).toHaveLength(2)
+  })
+
+  it('links alerts back to filtered inventory evidence from the list', async () => {
+    renderTable(false)
+
+    fireEvent.click(screen.getByRole('button', { name: '库存证据' }))
+
+    expect(screen.getByTestId('location')).toHaveTextContent(
+      `/inventory?keyword=${encodeURIComponent(pendingAlert.materialName)}`
+    )
+  })
+
+  it('links alerts to filtered audit evidence so handled decisions can be reviewed without manual log search', async () => {
+    renderTable(false)
+
+    fireEvent.click(screen.getByRole('button', { name: '审计证据' }))
+
+    expect(screen.getByTestId('location')).toHaveTextContent(
+      `/logs?keyword=${pendingAlert.id}`
+    )
+  })
+
+  it('opens a prefilled purchase order from low-stock alerts', async () => {
+    renderTable(false, true)
+
+    fireEvent.click(screen.getByRole('button', { name: '补采购' }))
+
+    expect(screen.getByTestId('location')).toHaveTextContent(
+      `/purchase-orders?action=create&materialId=${pendingAlert.materialId}&orderedQty=4&remark=${encodeURIComponent(`来自库存预警：${pendingAlert.message}`)}`
+    )
   })
 })

@@ -83,7 +83,7 @@ export function MaterialDeleteModal({
                 </div>
               ) : (
                 <div className="mt-3 rounded-md bg-green-50 px-3 py-2 text-xs text-green-700">
-                  未发现业务引用，可以删除。
+                  未发现业务引用，可以删除；删除后该物料不会再用于新采购、入库、库存批次、BOM选料、成本计算、预警和审计筛选。
                 </div>
               )}
             </>

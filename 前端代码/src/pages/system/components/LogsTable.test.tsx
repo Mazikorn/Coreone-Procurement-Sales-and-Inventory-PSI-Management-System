@@ -100,4 +100,52 @@ describe('LogsTable', () => {
     expect(screen.getByText('标准事件：batch_location.inbound.update')).toBeInTheDocument()
     expect(screen.getByText('证据：batch_location_adjustments')).toBeInTheDocument()
   })
+
+  it('makes audit deep-link context visible so users know they are reviewing one business document', () => {
+    render(
+      <LogsTable
+        {...baseProps}
+        keyword="IN-LINK-001"
+        data={[{
+          id: 'log-linked-business',
+          userId: 'u-1',
+          username: '李仓管',
+          operation: 'inbound',
+          operationType: 'update',
+          module: 'inbound',
+          description: '批次库位增加',
+          requestData: { relatedId: 'IN-LINK-001' },
+          sourceType: 'batch_location',
+          sourceLabel: '批次库位流水',
+          businessId: 'IN-LINK-001',
+          businessUrl: '/inbound?keyword=IN-LINK-001',
+          ip: '',
+          userAgent: '',
+          createdAt: '2026-06-20 10:00:00',
+        }]}
+        total={1}
+        dateError=""
+      />,
+    )
+
+    expect(screen.getByDisplayValue('IN-LINK-001')).toBeInTheDocument()
+    expect(screen.getByText('当前回看业务标识：IN-LINK-001')).toBeInTheDocument()
+    expect(screen.getByText('列表已限定与该标识相关的操作、库存、成本和对账证据。')).toBeInTheDocument()
+    expect(screen.getByText('当前单据')).toBeInTheDocument()
+  })
+
+  it('explains an empty business evidence result instead of leaving users to verify offline', () => {
+    render(
+      <LogsTable
+        {...baseProps}
+        keyword="IN-MISSING-001"
+        data={[]}
+        total={0}
+        dateError=""
+      />,
+    )
+
+    expect(screen.getByText('未找到 IN-MISSING-001 的审计证据')).toBeInTheDocument()
+    expect(screen.getByText('请确认单号是否正确，或返回业务页面查看该单据是否已生成库存、批次、成本或对账记录。')).toBeInTheDocument()
+  })
 })

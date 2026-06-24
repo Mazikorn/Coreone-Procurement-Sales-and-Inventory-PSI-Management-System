@@ -56,6 +56,9 @@ export function LocationFormModal({
       value: loc.id,
       label: `${getTypeIcon(loc.type)} ${loc.name} (${loc.zone})`,
     }))
+  const selectedParent = form.parentId ? flatLocations.get(form.parentId) : null
+  const levelPath = form.levelData.filter(Boolean).join(' / ') || '待填写'
+  const statusLabel = form.status === 'active' ? '启用' : '停用'
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
@@ -201,6 +204,20 @@ export function LocationFormModal({
               ]}
               placeholder="请选择"
             />
+          </div>
+          <div className="rounded-md border border-emerald-100 bg-emerald-50 px-4 py-3">
+            <div className="text-sm font-semibold text-emerald-900">库位结果确认</div>
+            <div className="mt-1 text-xs text-emerald-800">
+              确认后将接住：入库、库存、批次、调拨、盘点、预警、审计记录
+            </div>
+            <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-emerald-900 sm:grid-cols-2">
+              <div>库位 {form.name || '待填写'}</div>
+              <div>类型 {getTypeLabel(form.type)}</div>
+              <div>上级库位 {selectedParent?.name || '顶级库位'}</div>
+              <div>容量 {Number(form.capacity || 0)}</div>
+              <div>状态 {statusLabel}</div>
+              <div className="sm:col-span-2">层级路径 {levelPath}</div>
+            </div>
           </div>
         </div>
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50">

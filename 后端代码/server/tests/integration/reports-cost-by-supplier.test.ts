@@ -76,7 +76,7 @@ describe('集成测试：非ABC供应商成本报表', () => {
     })
   })
 
-  it('REPORT-SUPPLIER-002: 供应商成本报表扣减同期间未取消供应商退货退款金额', async () => {
+  it('REPORT-SUPPLIER-002: 供应商成本报表只扣减同期间已退款供应商退货金额', async () => {
     const suffix = Date.now()
     const categoryId = `report-supplier-net-cat-${suffix}`
     const supplierId = `report-supplier-net-${suffix}`
@@ -114,10 +114,16 @@ describe('集成测试：非ABC供应商成本报表', () => {
       )
       VALUES
         (?, ?, ?, 12, ?, '质量问题', 120, 'refunded', 'admin', '2033-01-12T09:00:00', '2033-01-12T09:00:00', 0),
+        (?, ?, ?, 9, ?, '待发货预计退款', 90, 'pending', 'admin', '2033-01-12T10:00:00', '2033-01-12T10:00:00', 0),
+        (?, ?, ?, 8, ?, '已发货预计退款', 80, 'shipped', 'admin', '2033-01-12T11:00:00', '2033-01-12T11:00:00', 0),
+        (?, ?, ?, 7, ?, '已收货待退款', 70, 'received', 'admin', '2033-01-12T12:00:00', '2033-01-12T12:00:00', 0),
         (?, ?, ?, 5, ?, '取消退货', 50, 'cancelled', 'admin', '2033-01-13T09:00:00', '2033-01-13T09:00:00', 0),
         (?, ?, ?, 3, ?, '已删除退货', 30, 'refunded', 'admin', '2033-01-14T09:00:00', '2033-01-14T09:00:00', 1)
     `).run(
       `report-sup-return-net-${suffix}`, `REPORT-SUP-RET-NET-${suffix}`, materialId, supplierId,
+      `report-sup-return-pending-${suffix}`, `REPORT-SUP-RET-PENDING-${suffix}`, materialId, supplierId,
+      `report-sup-return-shipped-${suffix}`, `REPORT-SUP-RET-SHIPPED-${suffix}`, materialId, supplierId,
+      `report-sup-return-received-${suffix}`, `REPORT-SUP-RET-RECEIVED-${suffix}`, materialId, supplierId,
       `report-sup-return-cancel-${suffix}`, `REPORT-SUP-RET-CANCEL-${suffix}`, materialId, supplierId,
       `report-sup-return-deleted-${suffix}`, `REPORT-SUP-RET-DELETED-${suffix}`, materialId, supplierId,
     )
@@ -133,6 +139,10 @@ describe('集成测试：非ABC供应商成本报表', () => {
       id: supplierId,
       name: '供应商净额测试',
       amount: 380,
+      grossAmount: 500,
+      refundedAmount: 120,
+      refundedReturnCount: 1,
+      supplierReturnUrl: `/supplier-returns?supplierId=${supplierId}&status=refunded&startDate=2033-01-01&endDate=2033-01-31`,
       orderCount: 1,
     })
   })

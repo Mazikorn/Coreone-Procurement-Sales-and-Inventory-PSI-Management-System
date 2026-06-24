@@ -2,6 +2,7 @@ import type { ElementType } from 'react'
 import {
   AlertTriangle,
   ArrowDownToLine,
+  Activity,
   BarChart3,
   ClipboardList,
   Bell,
@@ -12,6 +13,7 @@ import {
 } from 'lucide-react'
 
 type ApiCall = 'inventory' | 'alerts' | 'inbound-stats' | 'outbound-stats' | 'abc-dashboard'
+type RecentActivitySource = 'inbound' | 'outbound'
 
 export interface DashboardCardConfig {
   key: string
@@ -32,10 +34,17 @@ export interface DashboardQuickAction {
   navigateTo: string
 }
 
+export interface DashboardActivityLink {
+  label: string
+  path: string
+}
+
 export interface DashboardRoleConfig {
   apiCalls: ApiCall[]
   statCards: DashboardCardConfig[]
   quickActions: DashboardQuickAction[]
+  recentActivitySources: RecentActivitySource[]
+  activityLinks: DashboardActivityLink[]
   showBanner: boolean
   exclusiveSection?: 'cost-overview' | 'low-stock-summary'
 }
@@ -77,7 +86,7 @@ const alertCard: DashboardCardConfig = {
   icon: AlertTriangle,
   colorClass: 'text-orange-500',
   bgClass: 'bg-orange-50',
-  navigateTo: '/alerts',
+  navigateTo: '/alerts?quick=pending',
 }
 
 const costCards: DashboardCardConfig[] = [
@@ -118,29 +127,65 @@ const costCards: DashboardCardConfig[] = [
 const baseQuickActions: DashboardQuickAction[] = [
   {
     label: '新增入库',
-    desc: '登记耗材入库',
+    desc: '登记批号、库位并形成库存批次',
     icon: ArrowDownToLine,
     colorClass: 'text-green-500',
     bgClass: 'bg-green-50',
-    navigateTo: '/inbound',
+    navigateTo: '/inbound?action=create&type=direct',
   },
   {
     label: '项目出库',
-    desc: '记录项目领用',
+    desc: '按项目扣减批次并进入成本对账',
     icon: PackageSearch,
     colorClass: 'text-purple-500',
     bgClass: 'bg-purple-50',
-    navigateTo: '/outbound',
+    navigateTo: '/outbound?action=create',
   },
   {
     label: '采购订单',
-    desc: '查看采购进度',
+    desc: '按采购单收货并生成入库单',
     icon: ShoppingCart,
     colorClass: 'text-blue-500',
     bgClass: 'bg-blue-50',
-    navigateTo: '/purchase-orders',
+    navigateTo: '/purchase-orders?status=pending,partial',
   },
 ]
+
+const purchaseCreateAction: DashboardQuickAction = {
+  label: '新建采购订单',
+  desc: '按补货需求建单，后续接入入库',
+  icon: ShoppingCart,
+  colorClass: 'text-blue-500',
+  bgClass: 'bg-blue-50',
+  navigateTo: '/purchase-orders?action=create',
+}
+
+const purchaseReceivingAction: DashboardQuickAction = {
+  label: '待收货订单',
+  desc: '查看交付进度，仓库收货入库',
+  icon: ShoppingCart,
+  colorClass: 'text-blue-500',
+  bgClass: 'bg-blue-50',
+  navigateTo: '/purchase-orders?status=pending,partial',
+}
+
+const reconciliationAction: DashboardQuickAction = {
+  label: '消耗对账',
+  desc: '核对 LIS 与系统消耗',
+  icon: Activity,
+  colorClass: 'text-orange-500',
+  bgClass: 'bg-orange-50',
+  navigateTo: '/reconciliation',
+}
+
+const slideCostAction: DashboardQuickAction = {
+  label: '切片成本',
+  desc: '查看单张切片成本',
+  icon: BarChart3,
+  colorClass: 'text-indigo-500',
+  bgClass: 'bg-indigo-50',
+  navigateTo: '/abc/slide-cost',
+}
 
 const costQuickAction: DashboardQuickAction = {
   label: '成本核算',
@@ -153,11 +198,11 @@ const costQuickAction: DashboardQuickAction = {
 
 const inventoryQuickAction: DashboardQuickAction = {
   label: '库存盘点',
-  desc: '维护批次库存',
+  desc: '按批次盘点并记录库存差异',
   icon: ClipboardList,
   colorClass: 'text-orange-500',
   bgClass: 'bg-orange-50',
-  navigateTo: '/stocktaking',
+  navigateTo: '/stocktaking?action=create',
 }
 
 const managerQuickActions: DashboardQuickAction[] = [
@@ -167,7 +212,7 @@ const managerQuickActions: DashboardQuickAction[] = [
     icon: Bell,
     colorClass: 'text-orange-500',
     bgClass: 'bg-orange-50',
-    navigateTo: '/alerts',
+    navigateTo: '/alerts?quick=pending',
   },
   {
     label: '库存风险',
@@ -207,6 +252,11 @@ const defaultConfig: DashboardRoleConfig = {
   apiCalls: ['inventory', 'alerts', 'inbound-stats', 'outbound-stats'],
   statCards: [inventoryCard, inboundCard, outboundCard, alertCard],
   quickActions: baseQuickActions,
+  recentActivitySources: ['inbound', 'outbound'],
+  activityLinks: [
+    { label: '入库记录', path: '/inbound' },
+    { label: '出库记录', path: '/outbound' },
+  ],
   showBanner: true,
 }
 
@@ -215,6 +265,12 @@ const roleConfigs: Record<string, DashboardRoleConfig> = {
     apiCalls: ['inventory', 'alerts', 'inbound-stats', 'outbound-stats', 'abc-dashboard'],
     statCards: costCards,
     quickActions: [costQuickAction, ...baseQuickActions],
+    recentActivitySources: ['inbound', 'outbound'],
+    activityLinks: [
+      { label: '入库记录', path: '/inbound' },
+      { label: '出库记录', path: '/outbound' },
+      { label: '操作日志', path: '/logs' },
+    ],
     showBanner: true,
     exclusiveSection: 'cost-overview',
   },
@@ -222,6 +278,8 @@ const roleConfigs: Record<string, DashboardRoleConfig> = {
     apiCalls: ['abc-dashboard', 'alerts'],
     statCards: costCards,
     quickActions: [costQuickAction],
+    recentActivitySources: [],
+    activityLinks: [{ label: '操作日志', path: '/logs' }],
     showBanner: true,
     exclusiveSection: 'cost-overview',
   },
@@ -229,6 +287,11 @@ const roleConfigs: Record<string, DashboardRoleConfig> = {
     apiCalls: ['inventory', 'alerts', 'inbound-stats', 'outbound-stats'],
     statCards: [inventoryCard, inboundCard, outboundCard, alertCard],
     quickActions: [...baseQuickActions, inventoryQuickAction],
+    recentActivitySources: ['inbound', 'outbound'],
+    activityLinks: [
+      { label: '入库记录', path: '/inbound' },
+      { label: '出库记录', path: '/outbound' },
+    ],
     showBanner: true,
     exclusiveSection: 'low-stock-summary',
   },
@@ -236,15 +299,19 @@ const roleConfigs: Record<string, DashboardRoleConfig> = {
     apiCalls: ['inventory', 'alerts', 'inbound-stats'],
     statCards: [inventoryCard, inboundCard, alertCard],
     quickActions: [
-      baseQuickActions[0],
-      baseQuickActions[2],
+      purchaseCreateAction,
+      purchaseReceivingAction,
     ],
+    recentActivitySources: [],
+    activityLinks: [{ label: '采购订单', path: '/purchase-orders' }],
     showBanner: true,
   },
   technician: {
-    apiCalls: ['inventory', 'alerts', 'outbound-stats'],
-    statCards: [inventoryCard, outboundCard, alertCard],
-    quickActions: [baseQuickActions[1]],
+    apiCalls: ['inventory', 'alerts'],
+    statCards: [inventoryCard, alertCard],
+    quickActions: [reconciliationAction, slideCostAction],
+    recentActivitySources: [],
+    activityLinks: [],
     showBanner: true,
   },
   pathologist: {
@@ -261,12 +328,16 @@ const roleConfigs: Record<string, DashboardRoleConfig> = {
       },
       costQuickAction,
     ],
+    recentActivitySources: [],
+    activityLinks: [],
     showBanner: false,
   },
   manager: {
     apiCalls: ['inventory', 'alerts', 'abc-dashboard'],
     statCards: [alertCard, inventoryCard, costCards[0], costCards[2], costCards[3]],
     quickActions: managerQuickActions,
+    recentActivitySources: [],
+    activityLinks: [],
     showBanner: true,
     exclusiveSection: 'cost-overview',
   },

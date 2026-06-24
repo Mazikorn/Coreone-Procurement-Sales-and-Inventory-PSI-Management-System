@@ -122,6 +122,12 @@ export function ProjectImportModal({ open, onClose, importing, boms, onImport }:
     () => rows.filter(row => row.code && row.name),
     [rows]
   )
+  const importSummary = useMemo(() => ({
+    validCount: validRows.length,
+    bomLinkedCount: validRows.filter(row => row.bomId).length,
+    noBomCount: validRows.filter(row => !row.bomId).length,
+    errorCount: errors.length,
+  }), [errors.length, validRows])
 
   if (!open) return null
 
@@ -261,6 +267,19 @@ export function ProjectImportModal({ open, onClose, importing, boms, onImport }:
               <div className="mb-1 font-medium">以下行未导入</div>
               <div className="space-y-1">
                 {errors.map(error => <div key={error}>{error}</div>)}
+              </div>
+            </div>
+          )}
+
+          {(rows.length > 0 || errors.length > 0) && (
+            <div className="rounded-md border border-emerald-100 bg-emerald-50 px-4 py-3">
+              <div className="text-sm font-semibold text-emerald-900">导入结果确认</div>
+              <div className="mt-1 text-xs text-emerald-800">确认后将接住：检测服务、BOM、出库、LIS对账、项目成本、审计记录</div>
+              <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-emerald-900 sm:grid-cols-4">
+                <div>可导入 {importSummary.validCount} 条</div>
+                <div>关联BOM {importSummary.bomLinkedCount} 条</div>
+                <div>未关联BOM {importSummary.noBomCount} 条</div>
+                <div>需修正 {importSummary.errorCount} 条</div>
               </div>
             </div>
           )}

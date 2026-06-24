@@ -5,6 +5,7 @@ import type { LogFormData } from '../hooks/useLogsPage'
 interface Props {
   open: boolean
   form: LogFormData
+  filterSummary?: string[]
   dateError?: string
   contentError?: string
   onClose: () => void
@@ -12,8 +13,20 @@ interface Props {
   onExport: () => void
 }
 
-export function LogExportModal({ open, form, dateError = '', contentError = '', onClose, onChange, onExport }: Props) {
+const CONTENT_LABELS: Array<{ key: keyof Pick<LogFormData, 'includeBasic' | 'includeDetail' | 'includeIP' | 'includeDiff'>; label: string }> = [
+  { key: 'includeBasic', label: '基本信息' },
+  { key: 'includeDetail', label: '操作详情' },
+  { key: 'includeIP', label: 'IP地址和设备信息' },
+  { key: 'includeDiff', label: '变更前后数据对比' },
+]
+
+export function LogExportModal({ open, form, filterSummary = [], dateError = '', contentError = '', onClose, onChange, onExport }: Props) {
   if (!open) return null
+  const selectedContent = CONTENT_LABELS
+    .filter(item => form[item.key])
+    .map(item => item.label)
+  const rangeText = `${form.startDate || '不限'} 至 ${form.endDate || '不限'}`
+  const scopeText = filterSummary.length ? filterSummary.join(' / ') : '全部统一审计记录'
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
@@ -87,6 +100,21 @@ export function LogExportModal({ open, form, dateError = '', contentError = '', 
                 {contentError}
               </p>
             )}
+          </div>
+
+          <div className="mt-5 rounded-md border border-emerald-100 bg-emerald-50 px-3 py-3">
+            <div className="text-sm font-semibold text-emerald-950">导出结果确认</div>
+            <div className="mt-1 text-xs leading-5 text-emerald-700">
+              导出后用于审计交接、问题复核和外部留痕；当前页面筛选会一起带到导出请求。
+            </div>
+            <div className="mt-3 grid grid-cols-1 gap-2 text-xs text-emerald-700">
+              <div>筛选范围 {scopeText}</div>
+              <div>时间范围 {rangeText}</div>
+              <div>导出内容 {selectedContent.length ? selectedContent.join('、') : '待选择'}</div>
+            </div>
+            <div className="mt-3 text-xs text-emerald-700">
+              建议保留基本信息和操作详情，否则外部接收人可能无法按单号、用户和动作回看证据。
+            </div>
           </div>
         </div>
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50">

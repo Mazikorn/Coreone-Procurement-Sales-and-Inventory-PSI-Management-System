@@ -63,6 +63,43 @@ describe('Material impact modals', () => {
     expect(screen.getByRole('button', { name: '确认删除' })).toBeDisabled()
   })
 
+  it('explains downstream business impact before deleting an unreferenced material', () => {
+    const deleteCheck: MaterialDeleteCheck = {
+      material: { id: 'mat-1', code: 'MAT-001', name: '测试物料' },
+      deletable: true,
+      impacts: {
+        currentInventoryCount: 0,
+        inventoryLocationCount: 0,
+        batchCount: 0,
+        inboundCount: 0,
+        outboundCount: 0,
+        bomCount: 0,
+        returnCount: 0,
+        scrapCount: 0,
+        supplierReturnCount: 0,
+        stockLogCount: 0,
+        usageTrackingCount: 0,
+      },
+      reasons: [],
+    }
+
+    render(
+      <MaterialDeleteModal
+        open
+        target={material}
+        deleteCheck={deleteCheck}
+        checkingDelete={false}
+        deleting={false}
+        onClose={vi.fn()}
+        onConfirm={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('确定要删除该物料吗？')).toBeInTheDocument()
+    expect(screen.getByText('未发现业务引用，可以删除；删除后该物料不会再用于新采购、入库、库存批次、BOM选料、成本计算、预警和审计筛选。')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '确认删除' })).toBeEnabled()
+  })
+
   it('shows status impacts and disables confirm when material has stock or active BOM', () => {
     const statusCheck: MaterialStatusCheck = {
       material: { id: 'mat-1', code: 'MAT-001', name: '测试物料' },
@@ -129,6 +166,66 @@ describe('Material impact modals', () => {
     expect(screen.getByRole('button', { name: '确认启用' })).toBeDisabled()
   })
 
+  it('explains downstream impact before disabling an unreferenced material', () => {
+    const statusCheck: MaterialStatusCheck = {
+      material: { id: 'mat-1', code: 'MAT-001', name: '测试物料' },
+      targetStatus: 'inactive',
+      canChange: true,
+      impacts: {
+        currentInventoryCount: 0,
+        inventoryLocationCount: 0,
+        activeBomCount: 0,
+      },
+      reasons: [],
+    }
+
+    render(
+      <MaterialStatusModal
+        open
+        target={material}
+        targetStatus="inactive"
+        statusCheck={statusCheck}
+        checkingStatus={false}
+        updatingStatus={false}
+        onClose={vi.fn()}
+        onConfirm={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('未发现阻断影响，可以停用；停用后该物料不会再用于新采购、入库、BOM选料、库存预警和成本计算，历史库存和审计记录保留。')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '确认停用' })).toBeEnabled()
+  })
+
+  it('explains downstream impact before enabling a valid material', () => {
+    const statusCheck: MaterialStatusCheck = {
+      material: { id: 'mat-1', code: 'MAT-001', name: '测试物料' },
+      targetStatus: 'active',
+      canChange: true,
+      impacts: {
+        currentInventoryCount: 0,
+        inventoryLocationCount: 0,
+        activeBomCount: 0,
+      },
+      reasons: [],
+    }
+
+    render(
+      <MaterialStatusModal
+        open
+        target={{ ...material, status: 'inactive' }}
+        targetStatus="active"
+        statusCheck={statusCheck}
+        checkingStatus={false}
+        updatingStatus={false}
+        onClose={vi.fn()}
+        onConfirm={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('未发现阻断影响，可以启用；启用后该物料可重新用于新采购、入库、BOM选料、库存预警和成本计算，历史库存和审计记录不变。')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '确认启用' })).toBeEnabled()
+  })
+
   it('shows batch delete blockers and disables confirm when any selected material is referenced', () => {
     const deleteCheck: MaterialDeleteCheck = {
       material: { id: 'mat-1', code: 'MAT-001', name: '测试物料' },
@@ -170,6 +267,45 @@ describe('Material impact modals', () => {
     expect(screen.getByRole('button', { name: /确认删除/ })).toBeDisabled()
   })
 
+  it('explains downstream business impact before batch deleting unreferenced materials', () => {
+    const deleteCheck: MaterialDeleteCheck = {
+      material: { id: 'mat-1', code: 'MAT-001', name: '测试物料' },
+      deletable: true,
+      impacts: {
+        currentInventoryCount: 0,
+        inventoryLocationCount: 0,
+        batchCount: 0,
+        inboundCount: 0,
+        outboundCount: 0,
+        bomCount: 0,
+        returnCount: 0,
+        scrapCount: 0,
+        supplierReturnCount: 0,
+        stockLogCount: 0,
+        usageTrackingCount: 0,
+      },
+      reasons: [],
+    }
+
+    render(
+      <MaterialBatchImpactModal
+        open
+        action="delete"
+        targetsCount={1}
+        deleteResults={[{ material, check: deleteCheck }]}
+        statusResults={[]}
+        checking={false}
+        submitting={false}
+        onClose={vi.fn()}
+        onConfirm={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('批量删除物料')).toBeInTheDocument()
+    expect(screen.getByText('检查通过；删除后这些物料不会再用于新采购、入库、库存批次、BOM选料、成本计算、预警和审计筛选。')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /确认删除/ })).toBeEnabled()
+  })
+
   it('shows batch status blockers and disables confirm when any selected material cannot be disabled', () => {
     const statusCheck: MaterialStatusCheck = {
       material: { id: 'mat-1', code: 'MAT-001', name: '测试物料' },
@@ -200,5 +336,69 @@ describe('Material impact modals', () => {
     expect(screen.getByText('无法批量停用物料')).toBeInTheDocument()
     expect(screen.getByText('当前库存 1，库位库存 1，启用BOM明细 1')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /确认停用/ })).toBeDisabled()
+  })
+
+  it('explains downstream impact before batch disabling unreferenced materials', () => {
+    const statusCheck: MaterialStatusCheck = {
+      material: { id: 'mat-1', code: 'MAT-001', name: '测试物料' },
+      targetStatus: 'inactive',
+      canChange: true,
+      impacts: {
+        currentInventoryCount: 0,
+        inventoryLocationCount: 0,
+        activeBomCount: 0,
+      },
+      reasons: [],
+    }
+
+    render(
+      <MaterialBatchImpactModal
+        open
+        action="inactive"
+        targetsCount={1}
+        deleteResults={[]}
+        statusResults={[{ material, check: statusCheck }]}
+        checking={false}
+        submitting={false}
+        onClose={vi.fn()}
+        onConfirm={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('批量停用物料')).toBeInTheDocument()
+    expect(screen.getByText('检查通过；停用后这些物料不会再用于新采购、入库、BOM选料、库存预警和成本计算，历史库存和审计记录保留。')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /确认停用/ })).toBeEnabled()
+  })
+
+  it('explains downstream impact before batch enabling valid materials', () => {
+    const statusCheck: MaterialStatusCheck = {
+      material: { id: 'mat-1', code: 'MAT-001', name: '测试物料' },
+      targetStatus: 'active',
+      canChange: true,
+      impacts: {
+        currentInventoryCount: 0,
+        inventoryLocationCount: 0,
+        activeBomCount: 0,
+      },
+      reasons: [],
+    }
+
+    render(
+      <MaterialBatchImpactModal
+        open
+        action="active"
+        targetsCount={1}
+        deleteResults={[]}
+        statusResults={[{ material: { ...material, status: 'inactive' }, check: statusCheck }]}
+        checking={false}
+        submitting={false}
+        onClose={vi.fn()}
+        onConfirm={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('批量启用物料')).toBeInTheDocument()
+    expect(screen.getByText('检查通过；启用后这些物料可重新用于新采购、入库、BOM选料、库存预警和成本计算，历史库存和审计记录不变。')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /确认启用/ })).toBeEnabled()
   })
 })

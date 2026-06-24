@@ -1,3 +1,4 @@
+import React from 'react'
 import { X, AlertTriangle } from 'lucide-react'
 import type { Project, ProjectDeleteCheck } from '@/types'
 
@@ -61,7 +62,7 @@ export function ProjectDeleteModal({ open, editingRow, deleteCheck, checkingDele
                   </div>
                 ) : (
                   <div className="mt-3 rounded-md bg-green-50 px-3 py-2 text-xs text-green-700">
-                    未发现业务引用，可以删除。
+                    未发现业务引用，可以删除；删除后该检测服务不会再用于新BOM绑定、项目出库、LIS对账、项目成本归集和审计筛选。
                   </div>
                 )}
               </>

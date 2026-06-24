@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   CornerUpLeft,
   X,
@@ -7,6 +7,7 @@ import {
   Package,
   Truck,
   RotateCcw,
+  FileSearch,
   FileText,
   Eye,
   Trash2,
@@ -56,6 +57,58 @@ export interface SupplierReturnFormState {
   remark: string
 }
 
+interface SupplierReturnRefs {
+  materials: Material[]
+  suppliers: Supplier[]
+  batches: Batch[]
+  purchaseOrders: PurchaseOrder[]
+  inboundRecords: InboundRecord[]
+}
+
+function buildCreatedSupplierReturnRecord(
+  payload: Partial<SupplierReturnRecord>,
+  form: SupplierReturnFormState,
+  refs: SupplierReturnRefs,
+): SupplierReturnRecord | null {
+  if (!payload.id || !payload.returnNo) return null
+
+  const materialId = payload.materialId || form.materialId
+  const batchId = payload.batchId || form.batchId || undefined
+  const supplierId = payload.supplierId || form.supplierId || undefined
+  const purchaseOrderId = payload.purchaseOrderId || form.purchaseOrderId || undefined
+  const inboundRecordId = payload.inboundRecordId || form.inboundRecordId || undefined
+  const material = refs.materials.find(item => item.id === materialId)
+  const batch = refs.batches.find(item => item.id === batchId)
+  const supplier = refs.suppliers.find(item => item.id === supplierId)
+  const purchaseOrder = refs.purchaseOrders.find(item => item.id === purchaseOrderId)
+  const inboundRecord = refs.inboundRecords.find(item => item.id === inboundRecordId)
+  const createdAt = payload.createdAt || new Date().toISOString()
+
+  return {
+    id: payload.id,
+    returnNo: payload.returnNo,
+    materialId,
+    materialName: payload.materialName || material?.name,
+    batchId,
+    batchNo: payload.batchNo || batch?.batchNo,
+    quantity: Number(payload.quantity ?? form.quantity),
+    supplierId,
+    supplierName: payload.supplierName || supplier?.name,
+    purchaseOrderId,
+    purchaseOrderNo: payload.purchaseOrderNo || purchaseOrder?.orderNo,
+    inboundRecordId,
+    inboundNo: payload.inboundNo || inboundRecord?.inboundNo,
+    reason: payload.reason || form.reason,
+    refundAmount: payload.refundAmount ?? (form.refundAmount ? Number(form.refundAmount) : undefined),
+    trackingNo: payload.trackingNo || form.trackingNo || undefined,
+    status: payload.status || 'pending',
+    operator: payload.operator || 'system',
+    remark: (payload.remark ?? form.remark) || undefined,
+    createdAt,
+    updatedAt: payload.updatedAt || createdAt,
+  }
+}
+
 export function validateSupplierReturnForm(
   form: SupplierReturnFormState,
   selectedMaterial: Material | undefined,
@@ -102,6 +155,7 @@ export function canAccessPurchaseOrders(role: string | null): boolean {
 }
 
 export default function SupplierReturns() {
+  const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const [materials, setMaterials] = useState<Material[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
@@ -112,6 +166,9 @@ export default function SupplierReturns() {
   const [keyword, setKeyword] = useState(searchParams.get('keyword') || '')
   const [statusFilter, setStatusFilter] = useState(searchParams.get('status') || '')
   const [supplierFilter, setSupplierFilter] = useState(searchParams.get('supplierId') || '')
+  const startDateFilter = searchParams.get('startDate') || ''
+  const endDateFilter = searchParams.get('endDate') || ''
+  const includeDeleted = searchParams.get('includeDeleted') === 'true'
 
   const [modalOpen, setModalOpen] = useState(false)
   const [detailOpen, setDetailOpen] = useState(false)
@@ -120,7 +177,15 @@ export default function SupplierReturns() {
   const [recordToDelete, setRecordToDelete] = useState<SupplierReturnRecord | null>(null)
   const [statusCancelConfirmOpen, setStatusCancelConfirmOpen] = useState(false)
   const [recordToCancelStatus, setRecordToCancelStatus] = useState<SupplierReturnRecord | null>(null)
+  const [pendingStatusTransition, setPendingStatusTransition] = useState<{
+    record: SupplierReturnRecord
+    status: SupplierReturnRecord['status']
+  } | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [createdSupplierReturnFallback, setCreatedSupplierReturnFallback] = useState<SupplierReturnRecord | null>(null)
+  const [updatedSupplierReturnFallback, setUpdatedSupplierReturnFallback] = useState<SupplierReturnRecord | null>(null)
+  const [deletedSupplierReturnIds, setDeletedSupplierReturnIds] = useState<string[]>([])
+  const previousSuggestedRefundAmountRef = useRef('')
 
   const [form, setForm] = useState<SupplierReturnFormState>({
     materialId: '',
@@ -134,6 +199,7 @@ export default function SupplierReturns() {
     trackingNo: '',
     remark: '',
   })
+  const createDraftHandledRef = useRef(false)
 
   const fetchRefs = async () => {
     try {
@@ -158,6 +224,28 @@ export default function SupplierReturns() {
   useEffect(() => {
     fetchRefs()
   }, [])
+
+  useEffect(() => {
+    if (createDraftHandledRef.current) return
+    if (searchParams.get('action') !== 'create') return
+
+    createDraftHandledRef.current = true
+    const quantity = Number(searchParams.get('quantity') || 1)
+    setForm(prev => ({
+      ...prev,
+      materialId: searchParams.get('materialId') || prev.materialId,
+      batchId: searchParams.get('batchId') || prev.batchId,
+      supplierId: searchParams.get('supplierId') || prev.supplierId,
+      purchaseOrderId: searchParams.get('purchaseOrderId') || prev.purchaseOrderId,
+      inboundRecordId: searchParams.get('inboundRecordId') || prev.inboundRecordId,
+      quantity: Number.isFinite(quantity) && quantity > 0 ? quantity : prev.quantity,
+      reason: searchParams.get('reason') || prev.reason,
+      refundAmount: searchParams.get('refundAmount') || prev.refundAmount,
+      trackingNo: searchParams.get('trackingNo') || prev.trackingNo,
+      remark: searchParams.get('remark') || prev.remark,
+    }))
+    setModalOpen(true)
+  }, [searchParams])
 
   // 选择物料后获取批次列表
   useEffect(() => {
@@ -191,10 +279,13 @@ export default function SupplierReturns() {
         keyword: keyword || undefined,
         status: statusFilter || undefined,
         supplierId: supplierFilter || undefined,
+        startDate: startDateFilter || undefined,
+        endDate: endDateFilter || undefined,
+        includeDeleted: includeDeleted || undefined,
       })
       return { list: res.list || [], pagination: res.pagination }
     },
-    [keyword, statusFilter, supplierFilter]
+    [endDateFilter, includeDeleted, keyword, startDateFilter, statusFilter, supplierFilter]
   )
 
   const {
@@ -208,14 +299,69 @@ export default function SupplierReturns() {
     refresh,
   } = usePagination<SupplierReturnRecord>({
     fetchFn,
-    deps: [keyword, statusFilter, supplierFilter],
+    deps: [keyword, statusFilter, supplierFilter, startDateFilter, endDateFilter, includeDeleted],
   })
+
+  const { displayedData, displayedTotal } = useMemo(() => {
+    let rows = data
+    let nextTotal = total
+
+    if (!includeDeleted && deletedSupplierReturnIds.length > 0) {
+      const filteredRows = rows.filter(row => !deletedSupplierReturnIds.includes(row.id))
+      if (filteredRows.length !== rows.length) {
+        nextTotal = Math.max(0, nextTotal - (rows.length - filteredRows.length))
+        rows = filteredRows
+      }
+    }
+
+    if (
+      createdSupplierReturnFallback &&
+      !deletedSupplierReturnIds.includes(createdSupplierReturnFallback.id) &&
+      keyword === createdSupplierReturnFallback.returnNo &&
+      !statusFilter &&
+      !supplierFilter &&
+      page === 1 &&
+      !rows.some(row => row.id === createdSupplierReturnFallback.id || row.returnNo === createdSupplierReturnFallback.returnNo)
+    ) {
+      rows = [createdSupplierReturnFallback, ...rows]
+      nextTotal = Math.max(nextTotal + 1, rows.length)
+    }
+    if (
+      updatedSupplierReturnFallback &&
+      !deletedSupplierReturnIds.includes(updatedSupplierReturnFallback.id) &&
+      keyword === updatedSupplierReturnFallback.returnNo &&
+      !statusFilter &&
+      !supplierFilter &&
+      page === 1
+    ) {
+      const hasUpdatedRow = rows.some(row => row.id === updatedSupplierReturnFallback.id || row.returnNo === updatedSupplierReturnFallback.returnNo)
+      rows = hasUpdatedRow
+        ? rows.map(row => (row.id === updatedSupplierReturnFallback.id || row.returnNo === updatedSupplierReturnFallback.returnNo ? updatedSupplierReturnFallback : row))
+        : [updatedSupplierReturnFallback, ...rows]
+      if (!hasUpdatedRow) nextTotal = Math.max(nextTotal + 1, rows.length)
+    }
+    return { displayedData: rows, displayedTotal: nextTotal }
+  }, [
+    createdSupplierReturnFallback,
+    data,
+    deletedSupplierReturnIds,
+    includeDeleted,
+    keyword,
+    page,
+    statusFilter,
+    supplierFilter,
+    total,
+    updatedSupplierReturnFallback,
+  ])
 
   const handleSearch = () => {
     const params: Record<string, string> = {}
     if (keyword) params.keyword = keyword
     if (statusFilter) params.status = statusFilter
     if (supplierFilter) params.supplierId = supplierFilter
+    if (startDateFilter) params.startDate = startDateFilter
+    if (endDateFilter) params.endDate = endDateFilter
+    if (includeDeleted) params.includeDeleted = 'true'
     setSearchParams(params)
     setPage(1)
   }
@@ -228,6 +374,14 @@ export default function SupplierReturns() {
     setPage(1)
   }
 
+  const focusCreatedSupplierReturn = (returnNo: string) => {
+    setKeyword(returnNo)
+    setStatusFilter('')
+    setSupplierFilter('')
+    setSearchParams({ keyword: returnNo })
+    setPage(1)
+  }
+
   const handleCreate = async () => {
     const validationError = validateSupplierReturnForm(form, materials.find((m) => m.id === form.materialId), materialBatches)
     if (validationError) {
@@ -236,7 +390,7 @@ export default function SupplierReturns() {
     }
     setIsSubmitting(true)
     try {
-      await supplierReturnApi.create({
+      const res: any = await supplierReturnApi.create({
         materialId: form.materialId,
         quantity: form.quantity,
         batchId: form.batchId || undefined,
@@ -248,6 +402,17 @@ export default function SupplierReturns() {
         trackingNo: form.trackingNo || undefined,
         remark: form.remark || undefined,
       })
+      const created = res?.data ?? res
+      if (created?.returnNo) {
+        setCreatedSupplierReturnFallback(buildCreatedSupplierReturnRecord(created, form, {
+          materials,
+          suppliers,
+          batches: materialBatches,
+          purchaseOrders,
+          inboundRecords,
+        }))
+        focusCreatedSupplierReturn(created.returnNo)
+      }
       toast.success('退货记录创建成功')
       setModalOpen(false)
       setForm({
@@ -266,13 +431,26 @@ export default function SupplierReturns() {
   const handleStatusChange = async (id: string, status: string) => {
     try {
       await supplierReturnApi.updateStatus(id, status)
+      const currentRecord = detailRecord?.id === id
+        ? detailRecord
+        : displayedData.find(row => row.id === id)
+      if (currentRecord) {
+        const updatedRecord = {
+          ...currentRecord,
+          status: status as SupplierReturnRecord['status'],
+          updatedAt: new Date().toISOString(),
+        }
+        setUpdatedSupplierReturnFallback(updatedRecord)
+        focusCreatedSupplierReturn(updatedRecord.returnNo)
+        if (detailRecord?.id === id) {
+          setDetailRecord(updatedRecord)
+        }
+      }
       toast.success('状态更新成功')
       setStatusCancelConfirmOpen(false)
       setRecordToCancelStatus(null)
+      setPendingStatusTransition(null)
       refresh()
-      if (detailRecord?.id === id) {
-        setDetailRecord({ ...detailRecord, status: status as any })
-      }
     } catch (e: any) {
       toast.error(e?.response?.data?.message || '状态更新失败')
     }
@@ -288,10 +466,15 @@ export default function SupplierReturns() {
     setStatusCancelConfirmOpen(true)
   }
 
+  const openStatusTransitionConfirm = (row: SupplierReturnRecord, status: SupplierReturnRecord['status']) => {
+    setPendingStatusTransition({ record: row, status })
+  }
+
   const handleDelete = async () => {
     if (!recordToDelete) return
     try {
       await supplierReturnApi.delete(recordToDelete.id)
+      setDeletedSupplierReturnIds(prev => prev.includes(recordToDelete.id) ? prev : [...prev, recordToDelete.id])
       toast.success('退货记录已删除')
       setDeleteConfirmOpen(false)
       setRecordToDelete(null)
@@ -306,9 +489,115 @@ export default function SupplierReturns() {
     setDetailOpen(true)
   }
 
+  const openAuditEvidence = (returnNo: string) => {
+    navigate(`/logs?keyword=${encodeURIComponent(returnNo)}`)
+  }
+
   const selectedMaterial = materials.find((m) => m.id === form.materialId)
   const selectedBatch = materialBatches.find((b) => b.id === form.batchId)
+  const selectedInboundRecord = inboundRecords.find((record) => record.id === form.inboundRecordId)
+    || inboundRecords.find((record) => selectedBatch?.inboundId && record.id === selectedBatch.inboundId)
+  const selectedPurchaseOrder = purchaseOrders.find((order) => order.id === form.purchaseOrderId)
+    || purchaseOrders.find((order) => selectedInboundRecord?.purchaseOrderId && order.id === selectedInboundRecord.purchaseOrderId)
+  const selectedSupplier = suppliers.find((supplier) => supplier.id === form.supplierId)
   const supplierScopedBatches = materialBatches.filter((batch) => !form.supplierId || batch.supplierId === form.supplierId)
+
+  useEffect(() => {
+    if (form.batchId || !form.inboundRecordId || materialBatches.length === 0) return
+
+    const sourceInboundRecord = inboundRecords.find((record) => record.id === form.inboundRecordId)
+    if (!sourceInboundRecord) return
+
+    const matchedBatch = materialBatches.find((batch) => batch.inboundId === sourceInboundRecord.id)
+      || materialBatches.find((batch) => sourceInboundRecord.batchNo && batch.batchNo === sourceInboundRecord.batchNo)
+    if (!matchedBatch) return
+
+    setForm((prev) => prev.batchId ? prev : ({
+      ...prev,
+      batchId: matchedBatch.id,
+      supplierId: matchedBatch.supplierId || sourceInboundRecord.supplierId || prev.supplierId,
+      purchaseOrderId: sourceInboundRecord.purchaseOrderId || prev.purchaseOrderId,
+    }))
+  }, [form.batchId, form.inboundRecordId, inboundRecords, materialBatches])
+
+  useEffect(() => {
+    if (!selectedBatch) return
+
+    setForm((prev) => {
+      const sourceInboundRecord = inboundRecords.find((record) => selectedBatch.inboundId && record.id === selectedBatch.inboundId)
+      const nextSupplierId = selectedBatch.supplierId || ''
+      const nextInboundRecordId = sourceInboundRecord?.id || ''
+      const nextPurchaseOrderId = sourceInboundRecord?.purchaseOrderId || ''
+      const next = {
+        ...prev,
+        supplierId: nextSupplierId || prev.supplierId,
+        inboundRecordId: nextInboundRecordId || prev.inboundRecordId,
+        purchaseOrderId: nextPurchaseOrderId || prev.purchaseOrderId,
+      }
+      return next.supplierId === prev.supplierId
+        && next.inboundRecordId === prev.inboundRecordId
+        && next.purchaseOrderId === prev.purchaseOrderId
+        ? prev
+        : next
+    })
+  }, [inboundRecords, selectedBatch])
+
+  const suggestedRefundAmount = useMemo(() => {
+    if (!selectedBatch) return ''
+    const amount = Number(selectedBatch.inboundPrice || 0) * Number(form.quantity || 0)
+    return amount > 0 ? amount.toFixed(2) : ''
+  }, [form.quantity, selectedBatch])
+
+  const supplierReturnUnit = selectedMaterial?.unit || ''
+  const supplierReturnQuantityText = `${form.quantity || 0} ${supplierReturnUnit}`.trim()
+  const supplierReturnDeductionText = selectedBatch ? `批次扣减 ${supplierReturnQuantityText}` : `库存扣减 ${supplierReturnQuantityText}`
+  const supplierReturnBatchRemainingText = selectedBatch
+    ? `批次余量 ${Math.max(0, Number(selectedBatch.remaining || 0) - Number(form.quantity || 0))} ${supplierReturnUnit}`.trim()
+    : '-'
+  const supplierReturnRefundAmount = Number(form.refundAmount || suggestedRefundAmount || 0)
+  const selectedReasonLabel = reasonOptions.find((reason) => reason.value === form.reason)?.label || (form.reason ? form.reason : '待选择')
+  const supplierReturnDownstreamFacts = '库存、批次、采购退货、供应商成本净额、退款状态、审计记录'
+  const showSupplierReturnPreview = Boolean(selectedMaterial && selectedBatch && form.quantity > 0)
+  const supplierReturnValidationMessage = (() => {
+    const validationError = validateSupplierReturnForm(form, selectedMaterial, materialBatches)
+    if (!validationError) return ''
+    if (validationError === '退货数量不能超过所选批次剩余量' && selectedBatch) {
+      return `退货数量不能超过所选批次剩余量 ${selectedBatch.remaining} ${supplierReturnUnit}，请按实际退回数量修改。`
+    }
+    if (validationError === '退货批次与供应商不一致') {
+      return '退货批次与供应商不一致，请选择该供应商对应的可退批次。'
+    }
+    if (validationError === '请选择退货批次') {
+      return '请选择退货批次，系统才能扣减正确批次并保留成本来源。'
+    }
+    if (validationError === '请选择退货供应商') {
+      return '请选择退货供应商，系统才能接住供应商成本净额和退款状态。'
+    }
+    return validationError
+  })()
+  const canConfirmSupplierReturn = !isSubmitting && !supplierReturnValidationMessage
+  const pendingStatusDescription = pendingStatusTransition
+    ? [
+      `退货单 ${pendingStatusTransition.record.returnNo}`,
+      `${statusMap[pendingStatusTransition.record.status]?.label || pendingStatusTransition.record.status} -> ${statusMap[pendingStatusTransition.status]?.label || pendingStatusTransition.status}`,
+      `${pendingStatusTransition.record.materialName || pendingStatusTransition.record.materialId} / ${pendingStatusTransition.record.batchNo || '无批次'} / ${pendingStatusTransition.record.supplierName || '未记录供应商'}`,
+      pendingStatusTransition.record.refundAmount ? `退款金额 ${formatCurrency(pendingStatusTransition.record.refundAmount)}` : '退款金额待记录',
+      '确认后将接住：库存、批次、供应商成本净额、退款状态、审计记录',
+    ].join('；')
+    : ''
+
+  useEffect(() => {
+    const previousSuggestedRefundAmount = previousSuggestedRefundAmountRef.current
+    previousSuggestedRefundAmountRef.current = suggestedRefundAmount
+
+    if (!suggestedRefundAmount) return
+
+    setForm((prev) => {
+      const userEditedRefundAmount = prev.refundAmount && prev.refundAmount !== previousSuggestedRefundAmount
+      if (userEditedRefundAmount || prev.refundAmount === suggestedRefundAmount) return prev
+      return { ...prev, refundAmount: suggestedRefundAmount }
+    })
+  }, [suggestedRefundAmount])
 
   return (
     <div className="space-y-6">
@@ -398,7 +687,7 @@ export default function SupplierReturns() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {loading ? (
+              {loading && displayedData.length === 0 ? (
                 <tr>
                   <td colSpan={10} className="px-4 py-12 text-center text-gray-400">
                     <div className="flex items-center justify-center gap-2">
@@ -407,7 +696,7 @@ export default function SupplierReturns() {
                     </div>
                   </td>
                 </tr>
-              ) : data.length === 0 ? (
+              ) : displayedData.length === 0 ? (
                 <tr>
                   <td colSpan={10} className="px-4 py-12 text-center text-gray-400">
                     <div className="flex flex-col items-center gap-2">
@@ -418,8 +707,10 @@ export default function SupplierReturns() {
                   </td>
                 </tr>
               ) : (
-                data.map((row) => {
-                  const statusInfo = statusMap[row.status] || statusMap.pending
+                displayedData.map((row) => {
+                  const statusInfo = row.isDeleted
+                    ? { label: '已删除', color: 'text-red-700', bg: 'bg-red-50', icon: Trash2 }
+                    : statusMap[row.status] || statusMap.pending
                   const StatusIcon = statusInfo.icon
                   const reasonLabel = reasonOptions.find((r) => r.value === row.reason)?.label || row.reason
                   return (
@@ -453,7 +744,16 @@ export default function SupplierReturns() {
                             <Eye className="w-3.5 h-3.5 inline mr-0.5" />
                             详情
                           </button>
-                          {row.status === 'pending' && (
+                          <button
+                            type="button"
+                            aria-label={`审计证据 ${row.returnNo}`}
+                            onClick={() => openAuditEvidence(row.returnNo)}
+                            className="px-2 py-1 text-gray-500 hover:text-indigo-600 text-xs font-medium transition-colors"
+                          >
+                            <FileSearch className="w-3.5 h-3.5 inline mr-0.5" />
+                            证据
+                          </button>
+	                          {row.status === 'pending' && !row.isDeleted && (
                             <button
                               onClick={() => openDelete(row)}
                               className="px-2 py-1 text-gray-500 hover:text-red-600 text-xs font-medium transition-colors"
@@ -473,11 +773,11 @@ export default function SupplierReturns() {
         </div>
 
         <div className="flex items-center justify-between px-4 py-3 border-t border-gray-200">
-          <span className="text-sm text-gray-500">共 {total} 条记录</span>
+          <span className="text-sm text-gray-500">共 {displayedTotal} 条记录</span>
           <Pagination
             page={page}
             pageSize={pageSize}
-            total={total}
+            total={displayedTotal}
             onChange={setPage}
             onPageSizeChange={setPageSize}
           />
@@ -492,10 +792,10 @@ export default function SupplierReturns() {
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">
                   物料 <span className="text-red-500">*</span>
                 </label>
-                <SearchableSelect
-                  testId="supplier-return-material-select"
-                  value={form.materialId}
-                    onChange={(val) => setForm({ ...form, materialId: val, batchId: '', quantity: 1 })}
+                  <SearchableSelect
+                    testId="supplier-return-material-select"
+                    value={form.materialId}
+                    onChange={(val) => setForm({ ...form, materialId: val, batchId: '', quantity: 1, refundAmount: '' })}
                   options={materials.map((m) => ({
                     value: m.id,
                     label: `${m.name} (${m.code}) - 库存 ${m.stock} ${m.unit}`,
@@ -565,7 +865,7 @@ export default function SupplierReturns() {
                   <SearchableSelect
                     testId="supplier-return-supplier-select"
                     value={form.supplierId}
-                    onChange={(val) => setForm({ ...form, supplierId: val, batchId: '', purchaseOrderId: '', inboundRecordId: '' })}
+                    onChange={(val) => setForm({ ...form, supplierId: val, batchId: '', purchaseOrderId: '', inboundRecordId: '', refundAmount: '' })}
                     options={suppliers.map((s) => ({
                       value: s.id,
                       label: s.name,
@@ -633,6 +933,7 @@ export default function SupplierReturns() {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1.5">退款金额</label>
                   <input
+                    data-testid="supplier-return-refund-amount-input"
                     type="number"
                     min={0}
                     step={0.01}
@@ -654,6 +955,40 @@ export default function SupplierReturns() {
                 </div>
               </div>
 
+              {showSupplierReturnPreview && (
+                <div className="border border-gray-200 rounded-lg overflow-hidden">
+                  <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
+                    <h4 className="text-sm font-semibold text-gray-900">退货结果确认</h4>
+                    <div className="text-xs text-gray-500 mt-0.5">确认后将接住：{supplierReturnDownstreamFacts}</div>
+                  </div>
+                  <div className="p-4 grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {[
+                      { label: '物料', value: selectedMaterial?.name || '-' },
+                      { label: '批次', value: selectedBatch?.batchNo || '-' },
+                      { label: '供应商', value: selectedSupplier?.name || '-' },
+                      { label: '退货数量', value: supplierReturnQuantityText || '-' },
+                      { label: '扣减动作', value: supplierReturnDeductionText },
+                      { label: '批次余量', value: supplierReturnBatchRemainingText },
+                      { label: '预计退款', value: `预计退款 ${formatCurrency(supplierReturnRefundAmount)}` },
+                      { label: '退货原因', value: selectedReasonLabel },
+                      { label: '采购订单', value: selectedPurchaseOrder?.orderNo || '-' },
+                      { label: '入库来源', value: selectedInboundRecord?.inboundNo || '-' },
+                    ].map((item) => (
+                      <div key={item.label} className="min-w-0">
+                        <div className="text-xs text-gray-500 mb-1">{item.label}</div>
+                        <div className="text-sm font-medium text-gray-900 truncate">{item.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {supplierReturnValidationMessage && (
+                <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                  {supplierReturnValidationMessage}
+                </div>
+              )}
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">备注</label>
                 <textarea
@@ -674,7 +1009,7 @@ export default function SupplierReturns() {
               <button
                 data-testid="supplier-return-confirm-btn"
                 onClick={handleCreate}
-                disabled={isSubmitting}
+                disabled={!canConfirmSupplierReturn}
                 className="px-4 h-10 bg-blue-500 text-white text-sm rounded-md hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isSubmitting ? '提交中...' : '确认创建'}
@@ -740,23 +1075,28 @@ export default function SupplierReturns() {
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-gray-500">当前状态</span>
-                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${statusMap[detailRecord.status].bg} ${statusMap[detailRecord.status].color}`}>
-                  {(() => {
-                    const Icon = statusMap[detailRecord.status].icon
-                    return <Icon className="w-3 h-3" />
-                  })()}
-                  {statusMap[detailRecord.status].label}
-                </span>
+                {(() => {
+                  const detailStatusInfo = detailRecord.isDeleted
+                    ? { label: '已删除', color: 'text-red-700', bg: 'bg-red-50', icon: Trash2 }
+                    : statusMap[detailRecord.status]
+                  const DetailStatusIcon = detailStatusInfo.icon
+                  return (
+                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${detailStatusInfo.bg} ${detailStatusInfo.color}`}>
+                      <DetailStatusIcon className="w-3 h-3" />
+                      {detailStatusInfo.label}
+                    </span>
+                  )
+                })()}
               </div>
 
               {/* Status Flow */}
-              {detailRecord.status !== 'refunded' && detailRecord.status !== 'cancelled' && (
+              {!detailRecord.isDeleted && detailRecord.status !== 'refunded' && detailRecord.status !== 'cancelled' && (
                 <div className="border-t border-gray-200 pt-4">
                   <label className="block text-sm font-medium text-gray-700 mb-2">状态流转</label>
                   <div className="flex items-center gap-2 flex-wrap">
                     {detailRecord.status === 'pending' && (
                       <button
-                        onClick={() => handleStatusChange(detailRecord.id, 'shipped')}
+                        onClick={() => openStatusTransitionConfirm(detailRecord, 'shipped')}
                         className="px-3 py-1.5 bg-blue-600 text-white text-xs rounded-md hover:bg-blue-700 transition-colors"
                       >
                         标记为已发货
@@ -764,7 +1104,7 @@ export default function SupplierReturns() {
                     )}
                     {detailRecord.status === 'shipped' && (
                       <button
-                        onClick={() => handleStatusChange(detailRecord.id, 'received')}
+                        onClick={() => openStatusTransitionConfirm(detailRecord, 'received')}
                         className="px-3 py-1.5 bg-purple-600 text-white text-xs rounded-md hover:bg-purple-700 transition-colors"
                       >
                         供应商已收货
@@ -772,7 +1112,7 @@ export default function SupplierReturns() {
                     )}
                     {detailRecord.status === 'received' && (
                       <button
-                        onClick={() => handleStatusChange(detailRecord.id, 'refunded')}
+                        onClick={() => openStatusTransitionConfirm(detailRecord, 'refunded')}
                         className="px-3 py-1.5 bg-green-600 text-white text-xs rounded-md hover:bg-green-700 transition-colors"
                       >
                         标记退款完成
@@ -827,7 +1167,7 @@ export default function SupplierReturns() {
       <ConfirmDialog
         open={deleteConfirmOpen && !!recordToDelete}
         title="确认删除"
-        description={`确定要删除退货记录 ${recordToDelete?.returnNo} 吗？仅待发货状态可删除，删除后库存将自动恢复。`}
+        description={`确定要删除退货记录 ${recordToDelete?.returnNo} 吗？仅待发货状态可删除；删除后将恢复本次退货扣减的库存和批次余量，同步更新供应商成本净额和库存流水，重新触发库存预警检查；审计记录将保留删除动作。`}
         confirmText="确认删除"
         confirmVariant="danger"
         onConfirm={handleDelete}
@@ -837,11 +1177,21 @@ export default function SupplierReturns() {
       <ConfirmDialog
         open={statusCancelConfirmOpen && !!recordToCancelStatus}
         title="确认取消退货"
-        description={`确定要取消退货记录 ${recordToCancelStatus?.returnNo} 吗？取消后将恢复对应库存和批次余额。`}
+        description={`确定要取消退货记录 ${recordToCancelStatus?.returnNo} 吗？取消后将恢复本次退货扣减的库存和批次余量，同步更新供应商成本净额和库存流水，重新触发库存预警检查；审计记录将保留取消动作。`}
         confirmText="确认取消"
         confirmVariant="danger"
         onConfirm={() => recordToCancelStatus && handleStatusChange(recordToCancelStatus.id, 'cancelled')}
         onCancel={() => { setStatusCancelConfirmOpen(false); setRecordToCancelStatus(null) }}
+      />
+
+      <ConfirmDialog
+        open={!!pendingStatusTransition}
+        title="确认状态流转"
+        description={pendingStatusDescription}
+        confirmText="确认流转"
+        confirmVariant="primary"
+        onConfirm={() => pendingStatusTransition && handleStatusChange(pendingStatusTransition.record.id, pendingStatusTransition.status)}
+        onCancel={() => setPendingStatusTransition(null)}
       />
     </div>
   )

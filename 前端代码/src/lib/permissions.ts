@@ -49,7 +49,7 @@ export const ROLE_MENU_MAP: Record<string, string[]> = {
     // 库存作业
     '/inventory', '/inbound', '/outbound', '/returns', '/supplier-returns', '/transfers', '/scraps', '/stocktaking',
     // 成本管理（含 ABC 配置入口）
-    '/abc/dashboard', '/abc/slide-cost', '/abc/profitability', '/abc/fee-comparison', '/abc/trend',
+    '/abc/dashboard', '/abc/slide-cost', '/abc/profitability', '/abc/fee-comparison', '/abc/supplier-costs', '/abc/trend',
     '/abc/fee-mappings', '/reconciliation', '/abc/activity-centers',
     // 采购管理
     '/purchase-orders', '/suppliers',
@@ -82,7 +82,7 @@ export const ROLE_MENU_MAP: Record<string, string[]> = {
     '/', '/alerts',
     '/reconciliation', '/categories', '/labor-times', '/logs',
     '/projects', '/bom',
-    '/abc/dashboard', '/abc/slide-cost', '/abc/profitability', '/abc/fee-comparison', '/abc/fee-mappings', '/abc/trend',
+    '/abc/dashboard', '/abc/slide-cost', '/abc/profitability', '/abc/fee-comparison', '/abc/supplier-costs', '/abc/fee-mappings', '/abc/trend',
     '/abc/activity-centers',
     // ABC 高级页面
     '/abc/cost-drivers', '/abc/cost-pools', '/abc/budgets', '/abc/quality-costs',
@@ -94,7 +94,7 @@ export const ROLE_MENU_MAP: Record<string, string[]> = {
     '/', '/alerts',
     '/inventory', '/projects', '/bom',
     '/categories', '/equipment', '/labor-times',
-    '/abc/dashboard', '/abc/slide-cost', '/abc/profitability', '/abc/fee-comparison', '/abc/trend',
+    '/abc/dashboard', '/abc/slide-cost', '/abc/profitability', '/abc/fee-comparison', '/abc/supplier-costs', '/abc/trend',
     '/abc/model-validation',
   ],
   manager: [
@@ -128,6 +128,7 @@ const PERMISSION_PATH_MAP: Record<string, string[]> = {
     '/abc/slide-cost',
     '/abc/profitability',
     '/abc/fee-comparison',
+    '/abc/supplier-costs',
     '/abc/fee-mappings',
     '/abc/trend',
   ],
@@ -143,6 +144,7 @@ const PERMISSION_ACTION_PATH_MAP: Record<string, string[]> = {
     '/abc/slide-cost',
     '/abc/profitability',
     '/abc/fee-comparison',
+    '/abc/supplier-costs',
     '/abc/trend',
   ],
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { categoryApi, materialApi } from '@/api/master'
 import type { Category, Material } from '@/types'
 import { toast } from 'sonner'
@@ -38,6 +38,65 @@ function flattenCategories(nodes: Category[]): Category[] {
   return result
 }
 
+function buildCreatedCategory(payload: Partial<Category>, form: FormData): Category | null {
+  const code = String(payload.code || form.code || '').trim()
+  if (!payload.id || !code) return null
+
+  return {
+    id: String(payload.id),
+    code,
+    name: String(payload.name || form.name),
+    parentId: payload.parentId ?? form.parentId,
+    level: Number(payload.level ?? form.level),
+    sortOrder: Number(payload.sortOrder ?? form.sortOrder),
+    status: payload.status || 'active',
+    count: Number(payload.count ?? 0),
+    isLeaf: payload.isLeaf ?? true,
+    children: payload.children,
+    createdAt: payload.createdAt || new Date().toISOString(),
+    updatedAt: payload.updatedAt || new Date().toISOString(),
+  }
+}
+
+function containsCategory(nodes: Category[], fallback: Category): boolean {
+  return nodes.some(node => (
+    node.id === fallback.id ||
+    node.code === fallback.code ||
+    (node.children ? containsCategory(node.children, fallback) : false)
+  ))
+}
+
+function insertCategoryFallback(nodes: Category[], fallback: Category): Category[] {
+  if (containsCategory(nodes, fallback)) return nodes
+  if (!fallback.parentId) return [fallback, ...nodes]
+
+  const insertIntoParent = (items: Category[]): { nodes: Category[]; inserted: boolean } => {
+    let inserted = false
+    const nextItems = items.map(node => {
+      if (node.id === fallback.parentId) {
+        inserted = true
+        return {
+          ...node,
+          isLeaf: false,
+          children: [fallback, ...(node.children || [])],
+        }
+      }
+      if (node.children?.length) {
+        const nextChildren = insertIntoParent(node.children)
+        if (nextChildren.inserted) {
+          inserted = true
+          return { ...node, children: nextChildren.nodes }
+        }
+      }
+      return node
+    })
+    return { nodes: inserted ? nextItems : items, inserted }
+  }
+
+  const result = insertIntoParent(nodes)
+  return result.inserted ? result.nodes : [fallback, ...nodes]
+}
+
 export function useCategoriesPage() {
   const initialParams = new URLSearchParams(window.location.search)
   const initialKeyword = initialParams.get('keyword') || ''
@@ -61,6 +120,7 @@ export function useCategoriesPage() {
   const [materialKeyword, setMaterialKeyword] = useState('')
   const [migrateModalOpen, setMigrateModalOpen] = useState(false)
   const [migrateTarget, setMigrateTarget] = useState<Material | null>(null)
+  const [createdCategoryFallback, setCreatedCategoryFallback] = useState<Category | null>(null)
 
   const fetchCategoryMaterials = useCallback(async (page: number, keyword?: string) => {
     if (!selectedId) return
@@ -94,6 +154,7 @@ export function useCategoriesPage() {
       const res: any = await categoryApi.getTree(includeDeleted ? { includeDeleted: true } : undefined)
       const t = res || []
       setTree(t)
+      setCreatedCategoryFallback(prev => (prev && containsCategory(t, prev) ? null : prev))
       const firstLevelIds = new Set<string>()
       t.forEach((n: Category) => firstLevelIds.add(n.id))
       setExpandedIds(firstLevelIds)
@@ -114,7 +175,13 @@ export function useCategoriesPage() {
     fetchCategoryMaterials(1)
   }, [selectedId, fetchCategoryMaterials])
 
-  const stats = countStats(tree)
+  const displayedTree = useMemo(() => (
+    createdCategoryFallback
+      ? insertCategoryFallback(tree, createdCategoryFallback)
+      : tree
+  ), [createdCategoryFallback, tree])
+  const displayedFlatList = useMemo(() => flattenCategories(displayedTree), [displayedTree])
+  const stats = countStats(displayedTree)
 
   const toggleExpand = (id: string) => {
     setExpandedIds(prev => {
@@ -135,13 +202,13 @@ export function useCategoriesPage() {
         }
       })
     }
-    walk(tree)
+    walk(displayedTree)
     setExpandedIds(all)
   }
 
   const collapseAll = () => {
     const first = new Set<string>()
-    tree.forEach(n => first.add(n.id))
+    displayedTree.forEach(n => first.add(n.id))
     setExpandedIds(first)
   }
 
@@ -156,7 +223,7 @@ export function useCategoriesPage() {
     return null
   }, [])
 
-  const selectedNode = selectedId ? findNodeById(tree, selectedId) : null
+  const selectedNode = selectedId ? findNodeById(displayedTree, selectedId) : null
 
   const openCreate = (parentId: string | null = null, level: number = 1) => {
     setEditingId(null)
@@ -186,12 +253,22 @@ export function useCategoriesPage() {
       if (editingId) {
         await categoryApi.update(editingId, form)
         toast.success('分类更新成功')
+        setModalOpen(false)
+        fetchData()
       } else {
-        await categoryApi.create(form)
+        const res: any = await categoryApi.create(form)
+        const created = res?.data ?? res
+        const createdKeyword = created?.code || form.code || form.name
+        setCreatedCategoryFallback(buildCreatedCategory(created, form))
         toast.success('分类创建成功')
+        setSearchKeyword(createdKeyword)
+        if (created?.id) setSelectedId(created.id)
+        if (form.parentId) {
+          setExpandedIds(prev => new Set(prev).add(form.parentId as string))
+        }
+        setModalOpen(false)
+        fetchData()
       }
-      setModalOpen(false)
-      fetchData()
     } catch (e) {
       toast.error('操作失败')
     }
@@ -274,12 +351,12 @@ export function useCategoriesPage() {
       }
       return false
     }
-    walk(tree, id)
+    walk(displayedTree, id)
     return path
   }
 
   return {
-    tree,
+    tree: displayedTree,
     loading,
     modalOpen,
     setModalOpen,
@@ -287,7 +364,7 @@ export function useCategoriesPage() {
     setEditingId,
     form,
     setForm,
-    flatList,
+    flatList: displayedFlatList,
     expandedIds,
     setExpandedIds,
     selectedId,

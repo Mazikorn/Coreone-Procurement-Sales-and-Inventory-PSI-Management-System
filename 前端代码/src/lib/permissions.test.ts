@@ -95,6 +95,7 @@ describe('ROLE_MENU_MAP', () => {
       '/abc/slide-cost',
       '/abc/profitability',
       '/abc/fee-comparison',
+      '/abc/supplier-costs',
       '/abc/trend',
     ])
     expect(costObserverPaths).not.toContain('/reconciliation')
@@ -113,6 +114,7 @@ describe('ROLE_MENU_MAP', () => {
       '/abc/slide-cost',
       '/abc/profitability',
       '/abc/fee-comparison',
+      '/abc/supplier-costs',
       '/abc/fee-mappings',
       '/abc/trend',
     ])

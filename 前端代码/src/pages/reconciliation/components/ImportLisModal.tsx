@@ -1,3 +1,4 @@
+import React from 'react'
 import { useMemo, useRef, useState, type ChangeEvent, type DragEvent } from 'react'
 import { Download, Upload } from 'lucide-react'
 import { toast } from 'sonner'
@@ -19,6 +20,10 @@ export function ImportLisModal({ open, importData, setImportData, setImportFile,
   const [fileName, setFileName] = useState('')
   const preview = useMemo(() => importData.trim() ? buildLisImportPreview(importData) : null, [importData])
   const visibleErrors = importErrors.length > 0 ? importErrors : preview?.errors || []
+  const hasImportData = importData.trim().length > 0
+  const hasInvalidRows = visibleErrors.length > 0
+  const canConfirm = hasImportData && !hasInvalidRows
+  const confirmLabel = !hasImportData ? '先提供数据' : hasInvalidRows ? '修正后导入' : '确认导入'
 
   const readTextFile = (file: File) => new Promise<string>((resolve, reject) => {
     const reader = new FileReader()
@@ -84,7 +89,7 @@ export function ImportLisModal({ open, importData, setImportData, setImportFile,
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative bg-white rounded-xl shadow-xl w-full max-w-lg mx-4">
+      <div className="relative max-h-[90vh] w-full max-w-lg mx-4 overflow-y-auto rounded-xl bg-white shadow-xl">
         <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
           <h3 className="text-lg font-semibold text-gray-900">导入LIS病例数据</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl">&times;</button>
@@ -145,6 +150,16 @@ export function ImportLisModal({ open, importData, setImportData, setImportFile,
               </div>
             </div>
           )}
+          {preview && preview.total > 0 && (
+            <div className="mt-3 rounded-md border border-emerald-100 bg-emerald-50 px-4 py-3">
+              <div className="mb-2 text-sm font-medium text-emerald-800">导入结果确认</div>
+              <div className="space-y-1.5 text-xs text-emerald-700">
+                <div>确认后将接住：LIS病例、项目对账、BOM理论消耗、成本差异、审计记录</div>
+                <div>可导入 {preview.validCount} 条，需修正 {preview.failedCount} 条</div>
+                <div>未匹配项目会进入按病理号查看，继续补齐项目和BOM归属</div>
+              </div>
+            </div>
+          )}
           {visibleErrors.length > 0 && (
             <div className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
               <div className="font-medium">发现 {visibleErrors.length} 条无效数据</div>
@@ -163,7 +178,13 @@ export function ImportLisModal({ open, importData, setImportData, setImportFile,
         </div>
         <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
           <button onClick={onClose} className="px-4 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50">取消</button>
-          <button onClick={onConfirm} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700">确认导入</button>
+          <button
+            onClick={onConfirm}
+            disabled={!canConfirm}
+            className="px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {confirmLabel}
+          </button>
         </div>
       </div>
     </div>

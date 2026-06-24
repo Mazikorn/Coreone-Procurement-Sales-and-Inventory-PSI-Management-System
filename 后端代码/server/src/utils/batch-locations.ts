@@ -8,6 +8,8 @@ type AdjustmentContext = {
   relatedType: string
   relatedId: string
   operator?: string
+  restoreRelatedType?: string
+  preserveRestoreSourceAdjustments?: boolean
 }
 
 type LocationQuantity = {
@@ -201,13 +203,18 @@ export function restoreBatchLocationStock(
     `).all(context.relatedType, context.relatedId, batchId, materialId) as any[]
 
     if (rows.length > 0) {
+      const restoreContext = context.restoreRelatedType
+        ? { relatedType: context.restoreRelatedType, relatedId: context.relatedId, operator: context.operator }
+        : undefined
       for (const row of rows) {
-        adjustBatchLocationStock(db, batchId, materialId, row.location_id, Math.abs(Number(row.quantity_delta || 0)))
+        adjustBatchLocationStock(db, batchId, materialId, row.location_id, Math.abs(Number(row.quantity_delta || 0)), restoreContext)
       }
-      db.prepare(`
-        DELETE FROM batch_location_adjustments
-        WHERE related_type = ? AND related_id = ? AND batch_id = ? AND material_id = ?
-      `).run(context.relatedType, context.relatedId, batchId, materialId)
+      if (!context.preserveRestoreSourceAdjustments) {
+        db.prepare(`
+          DELETE FROM batch_location_adjustments
+          WHERE related_type = ? AND related_id = ? AND batch_id = ? AND material_id = ?
+        `).run(context.relatedType, context.relatedId, batchId, materialId)
+      }
       return
     }
   }

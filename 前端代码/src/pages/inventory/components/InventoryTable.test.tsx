@@ -1,6 +1,6 @@
 import React from 'react'
 import { fireEvent, render, screen, within } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, useLocation } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 import { InventoryTable } from './InventoryTable'
 import { InventoryDetailModal } from './InventoryDetailModal'
@@ -56,17 +56,24 @@ function renderTable(data: InventoryRow[], overrides: Partial<Parameters<typeof 
     onBatchOutbound: vi.fn(),
     onBatchScrap: vi.fn(),
     canManageInventoryActions: true,
+    canCreatePurchaseOrders: false,
     ...overrides,
   }
 
   return {
     ...render(
       <MemoryRouter>
+        <LocationProbe />
         <InventoryTable {...props} />
       </MemoryRouter>
     ),
     props,
   }
+}
+
+function LocationProbe() {
+  const location = useLocation()
+  return <div data-testid="location">{location.pathname}{location.search}</div>
 }
 
 function makeRow(materialId: string, code: string, stock: number): InventoryRow {
@@ -130,6 +137,102 @@ describe('InventoryTable', () => {
     expect(screen.queryByText('批量出库')).not.toBeInTheDocument()
     expect(screen.queryByText('批量报废')).not.toBeInTheDocument()
     expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
+  })
+
+  it('opens a prefilled purchase order from a low-stock inventory group', () => {
+    const lowStockRow = {
+      ...makeRow('mat-low', 'INV-LOW', 1),
+      name: '低库存试剂',
+      minStock: 5,
+      stock: 1,
+      totalStock: 1,
+      availableStock: 1,
+    }
+
+    renderTable([lowStockRow], {
+      canCreatePurchaseOrders: true,
+      stats: { total: 1, normal: 0, low: 1, warning: 0, expired: 0, outOfStock: 0 },
+      quickFilterCounts: {
+        all: 1,
+        'low-stock': 1,
+        'expiring-soon': 0,
+        'expiring-month': 0,
+        expired: 0,
+        'out-of-stock': 0,
+      },
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '补采购' }))
+
+    expect(screen.getByTestId('location')).toHaveTextContent(
+      `/purchase-orders?action=create&materialId=mat-low&orderedQty=4&remark=${encodeURIComponent('来自库存不足：低库存试剂，当前库存 1，最低库存 5')}`
+    )
+  })
+
+  it('opens a batch-scoped stocktaking draft from an inventory row without reselecting material and batch', () => {
+    const row = makeRow('mat-count', 'INV-COUNT', 7)
+
+    renderTable([row])
+
+    fireEvent.click(screen.getByRole('button', { name: '盘点' }))
+
+    expect(screen.getByTestId('location')).toHaveTextContent(
+      `/stocktaking?action=create&materialId=mat-count&scopeType=batch&batchId=batch-mat-count&locationId=loc-1&systemStock=7`
+    )
+  })
+
+  it('opens a supplier return draft from an inventory batch without reselecting material and batch', () => {
+    const row = makeRow('mat-return', 'INV-RETURN', 3)
+
+    renderTable([row])
+
+    fireEvent.click(screen.getByRole('button', { name: '退供' }))
+
+    const locationText = screen.getByTestId('location').textContent || ''
+    const params = new URLSearchParams(locationText.split('?')[1])
+    expect(locationText).toContain('/supplier-returns?')
+    expect(params.get('action')).toBe('create')
+    expect(params.get('materialId')).toBe('mat-return')
+    expect(params.get('batchId')).toBe('batch-mat-return')
+    expect(params.get('quantity')).toBe('1')
+    expect(params.get('reason')).toBe('quality_issue')
+    expect(params.get('remark')).toBe('来自库存列表退供：同名试剂 / B-INV-RETURN')
+  })
+
+  it('opens a transfer draft from an inventory batch without reselecting material, batch, and source location', () => {
+    const row = makeRow('mat-transfer', 'INV-TRANSFER', 4)
+
+    renderTable([row])
+
+    fireEvent.click(screen.getByRole('button', { name: '调拨' }))
+
+    const locationText = screen.getByTestId('location').textContent || ''
+    const params = new URLSearchParams(locationText.split('?')[1])
+    expect(locationText).toContain('/transfers?')
+    expect(params.get('action')).toBe('create')
+    expect(params.get('materialId')).toBe('mat-transfer')
+    expect(params.get('batchNo')).toBe('B-INV-TRANSFER')
+    expect(params.get('fromLocationId')).toBe('loc-1')
+    expect(params.get('quantity')).toBe('1')
+    expect(params.get('remark')).toBe('来自库存列表调拨：同名试剂 / B-INV-TRANSFER / A1')
+  })
+
+  it('opens a scrap draft from an inventory batch without reselecting material and batch', () => {
+    const row = makeRow('mat-scrap', 'INV-SCRAP', 2)
+
+    renderTable([row])
+
+    fireEvent.click(screen.getByRole('button', { name: '报废' }))
+
+    const locationText = screen.getByTestId('location').textContent || ''
+    const params = new URLSearchParams(locationText.split('?')[1])
+    expect(locationText).toContain('/scraps?')
+    expect(params.get('action')).toBe('create')
+    expect(params.get('materialId')).toBe('mat-scrap')
+    expect(params.get('batchId')).toBe('batch-mat-scrap')
+    expect(params.get('quantity')).toBe('1')
+    expect(params.get('reason')).toBe('damaged')
+    expect(params.get('remark')).toBe('来自库存列表报废：同名试剂 / B-INV-SCRAP')
   })
 })
 

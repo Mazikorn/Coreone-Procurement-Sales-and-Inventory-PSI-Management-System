@@ -108,6 +108,7 @@ export default function InventoryList() {
           onBatchOutbound={page.openBatchOutbound}
           onBatchScrap={page.openBatchScrap}
           canManageInventoryActions={page.canManageInventoryActions}
+          canCreatePurchaseOrders={page.canCreatePurchaseOrders}
         />
       )}
 

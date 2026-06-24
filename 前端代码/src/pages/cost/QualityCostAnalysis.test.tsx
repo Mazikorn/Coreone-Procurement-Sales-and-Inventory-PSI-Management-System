@@ -93,7 +93,7 @@ describe('QualityCostAnalysis display labels', () => {
     fireEvent.change(screen.getByRole('combobox', { name: '成本类型 *' }), { target: { value: 'appraisal' } })
     fireEvent.change(screen.getByRole('combobox', { name: '子类型 *' }), { target: { value: 'quality_audit' } })
     fireEvent.change(screen.getByRole('spinbutton', { name: '金额 (元) *' }), { target: { value: '880' } })
-    fireEvent.change(screen.getByRole('textbox', { name: '描述' }), { target: { value: '质量成本更正后' } })
+    fireEvent.change(screen.getByRole('textbox', { name: /描述/ }), { target: { value: '质量成本更正后' } })
     fireEvent.click(screen.getByRole('button', { name: '更新' }))
 
     await waitFor(() => {
@@ -105,6 +105,30 @@ describe('QualityCostAnalysis display labels', () => {
         description: '质量成本更正后',
       })
     })
+    expect(abcApi.createQualityCost).not.toHaveBeenCalled()
+  })
+
+  it('summarizes quality cost result and downstream chain before saving', async () => {
+    render(<QualityCostAnalysis />)
+
+    fireEvent.click(await screen.findByRole('button', { name: '录入质量成本' }))
+
+    expect(await screen.findByText('质量成本结果确认')).toBeInTheDocument()
+    expect(screen.getByText('确认后将接住：质量成本、成本预算、成本看板、质量改进、审计记录')).toBeInTheDocument()
+    expect(screen.getByText('月份 2026-06')).toBeInTheDocument()
+    expect(screen.getByText('成本类型 预防成本')).toBeInTheDocument()
+    expect(screen.getByText('子类型 培训费用')).toBeInTheDocument()
+    expect(screen.getByText('金额 ¥0.00')).toBeInTheDocument()
+  })
+
+  it('blocks saving quality cost without an explainable description', async () => {
+    render(<QualityCostAnalysis />)
+
+    fireEvent.click(await screen.findByRole('button', { name: '录入质量成本' }))
+    fireEvent.change(screen.getByRole('spinbutton', { name: '金额 (元) *' }), { target: { value: '600' } })
+
+    expect(screen.getByText('请填写描述，系统才能解释质量成本来源、改进动作和审计依据。')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '录入' })).toBeDisabled()
     expect(abcApi.createQualityCost).not.toHaveBeenCalled()
   })
 })

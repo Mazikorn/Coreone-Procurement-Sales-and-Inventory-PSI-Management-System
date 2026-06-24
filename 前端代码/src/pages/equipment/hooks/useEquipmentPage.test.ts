@@ -121,4 +121,122 @@ describe('useEquipmentPage', () => {
       expect.objectContaining({ id: 'eq-deleted-001', isDeleted: true }),
     ]))
   })
+
+  it('focuses the newly created equipment so costing users can confirm the depreciation input', async () => {
+    window.history.replaceState(null, '', '/equipment?keyword=old-equipment')
+    vi.mocked(equipmentApi.create).mockResolvedValue({
+      id: 'eq-created',
+      code: 'EQ-CREATED-001',
+      name: '新建切片机',
+    } as any)
+
+    const { result } = renderHook(() => useEquipmentPage())
+    await waitFor(() => expect(equipmentApi.getList).toHaveBeenCalled())
+
+    act(() => {
+      result.current.handleStatusChange('inactive')
+      result.current.handleTypeChange('type-old')
+      result.current.openCreate()
+      result.current.setForm({
+        code: 'EQ-DRAFT-001',
+        name: '新建切片机',
+        model: 'S-1',
+        manufacturer: 'Leica',
+        purchasePrice: 120000,
+        purchaseDate: '2026-06-20',
+        depreciableLifeYears: 6,
+        residualValue: 12000,
+        depreciationMethod: 'straight_line',
+        totalCapacity: 0,
+        capacityUnit: '',
+        status: 'active',
+        locationId: '',
+        typeId: 'type-new',
+      })
+    })
+
+    await act(async () => {
+      await result.current.handleSubmit()
+    })
+
+    expect(equipmentApi.create).toHaveBeenCalledWith(expect.objectContaining({
+      code: 'EQ-DRAFT-001',
+      name: '新建切片机',
+      purchasePrice: 120000,
+      depreciableLifeYears: 6,
+      residualValue: 12000,
+      depreciationMethod: 'straight_line',
+      status: 'active',
+      typeId: 'type-new',
+    }))
+    expect(result.current.keyword).toBe('EQ-CREATED-001')
+    expect(result.current.searchInput).toBe('EQ-CREATED-001')
+    expect(result.current.filterStatus).toBe('')
+    expect(result.current.filterTypeId).toBe('')
+    await waitFor(() => expect(equipmentApi.getList).toHaveBeenCalledWith(expect.objectContaining({
+      page: 1,
+      pageSize: 20,
+      keyword: 'EQ-CREATED-001',
+    })))
+  })
+
+  it('keeps the newly created equipment visible when the focused refresh fails', async () => {
+    vi.mocked(equipmentApi.getList)
+      .mockResolvedValueOnce({ list: [], pagination: { page: 1, pageSize: 20, total: 0 } } as any)
+      .mockRejectedValueOnce(new Error('refresh failed'))
+    vi.mocked(equipmentApi.create).mockResolvedValueOnce({
+      id: 'eq-visible',
+      code: 'EQ-VISIBLE-001',
+      name: '可回看包埋机',
+      model: 'E-1',
+      manufacturer: 'Sakura',
+      purchasePrice: 90000,
+      purchaseDate: '2026-06-20',
+      depreciableLifeYears: 5,
+      residualValue: 9000,
+      depreciationMethod: 'straight_line',
+      totalCapacity: 0,
+      capacityUnit: '',
+      status: 'active',
+      typeId: 'type-visible',
+    } as any)
+
+    const { result } = renderHook(() => useEquipmentPage())
+    await waitFor(() => expect(equipmentApi.getList).toHaveBeenCalled())
+
+    act(() => {
+      result.current.openCreate()
+      result.current.setForm({
+        code: 'EQ-DRAFT-VISIBLE',
+        name: '可回看包埋机',
+        model: 'E-1',
+        manufacturer: 'Sakura',
+        purchasePrice: 90000,
+        purchaseDate: '2026-06-20',
+        depreciableLifeYears: 5,
+        residualValue: 9000,
+        depreciationMethod: 'straight_line',
+        totalCapacity: 0,
+        capacityUnit: '',
+        status: 'active',
+        locationId: '',
+        typeId: 'type-visible',
+      })
+    })
+
+    await act(async () => {
+      await result.current.handleSubmit()
+    })
+
+    expect(result.current.keyword).toBe('EQ-VISIBLE-001')
+    expect(result.current.data).toEqual([
+      expect.objectContaining({
+        id: 'eq-visible',
+        code: 'EQ-VISIBLE-001',
+        name: '可回看包埋机',
+        annualDepreciation: 16200,
+      }),
+    ])
+    expect(result.current.total).toBe(1)
+  })
 })

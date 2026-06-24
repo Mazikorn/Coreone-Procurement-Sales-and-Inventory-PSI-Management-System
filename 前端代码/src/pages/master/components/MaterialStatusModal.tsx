@@ -92,7 +92,9 @@ export function MaterialStatusModal({
                 </div>
               ) : (
                 <div className="mt-3 rounded-md bg-green-50 px-3 py-2 text-xs text-green-700">
-                  未发现阻断影响，可以{isDisabling ? '停用' : '启用'}。
+                  {isDisabling
+                    ? '未发现阻断影响，可以停用；停用后该物料不会再用于新采购、入库、BOM选料、库存预警和成本计算，历史库存和审计记录保留。'
+                    : '未发现阻断影响，可以启用；启用后该物料可重新用于新采购、入库、BOM选料、库存预警和成本计算，历史库存和审计记录不变。'}
                 </div>
               )}
             </>

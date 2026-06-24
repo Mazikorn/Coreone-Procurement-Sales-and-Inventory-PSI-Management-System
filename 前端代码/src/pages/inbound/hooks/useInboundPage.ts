@@ -10,13 +10,19 @@ import { getUserRole } from '@/lib/permissions'
 import type { FormData } from '../components/InboundFormModal'
 
 type ModalType = 'create' | 'edit' | 'detail' | 'cancel' | 'restore' | 'scan' | 'import' | 'print' | null
+const PAGE_CANCEL_REASON = '页面取消入库'
 
 interface PurchaseOrderOption {
   id: string
   orderNo?: string
   purchaseOrderNo?: string
+  materialId?: string
   materialName?: string
+  supplierId?: string
+  supplierName?: string
   remainingQty?: number
+  unitPrice?: number
+  unit?: string
 }
 
 interface InboundRefs {
@@ -45,9 +51,122 @@ function canAccessLocations(role: string | null): boolean {
   return role === 'admin' || role === 'warehouse_manager'
 }
 
+function getInboundErrorMessage(error: unknown, fallback: string) {
+  const maybeError = error as {
+    message?: string
+    response?: {
+      data?: {
+        message?: string
+        error?: { message?: string }
+      }
+    }
+  }
+  return maybeError.response?.data?.error?.message
+    || maybeError.response?.data?.message
+    || maybeError.message
+    || fallback
+}
+
+function buildCreatedInboundRecord(
+  payload: Partial<InboundRecord>,
+  form: FormData,
+  refs: InboundRefs & { purchaseOrders: PurchaseOrderOption[] },
+): InboundRecord | null {
+  if (!payload.id || !payload.inboundNo) return null
+
+  const materialId = payload.materialId || form.materialId
+  const supplierId = payload.supplierId || form.supplierId || undefined
+  const locationId = payload.locationId || form.locationId
+  const purchaseOrderId = payload.purchaseOrderId || form.purchaseOrderId || undefined
+  const material = refs.materials.find(item => item.id === materialId)
+  const supplier = refs.suppliers.find(item => item.id === supplierId)
+  const location = refs.locations.find(item => item.id === locationId)
+  const purchaseOrder = refs.purchaseOrders.find(item => item.id === purchaseOrderId)
+  const quantity = Number(payload.quantity ?? form.quantity)
+  const price = Number(payload.price ?? form.price ?? 0)
+
+  return {
+    id: payload.id,
+    inboundNo: payload.inboundNo,
+    type: payload.type || form.type,
+    materialId,
+    materialName: payload.materialName || material?.name || materialId,
+    batchNo: payload.batchNo || form.batchNo || undefined,
+    quantity,
+    unit: payload.unit || material?.unit || '',
+    price,
+    amount: Number(payload.amount ?? Number((quantity * price).toFixed(2))),
+    supplierId,
+    supplierName: payload.supplierName || supplier?.name,
+    locationId,
+    locationName: payload.locationName || location?.name,
+    productionDate: payload.productionDate || form.productionDate || undefined,
+    expiryDate: payload.expiryDate || form.expiryDate || undefined,
+    operator: payload.operator || 'system',
+    status: payload.status || 'completed',
+    remark: (payload.remark ?? form.remark) || undefined,
+    purchaseOrderId,
+    purchaseOrderNo: payload.purchaseOrderNo || purchaseOrder?.orderNo || purchaseOrder?.purchaseOrderNo || form.purchaseOrderNo,
+    createdAt: payload.createdAt || new Date().toISOString(),
+  }
+}
+
+function isSameInboundRecord(a: Pick<InboundRecord, 'id' | 'inboundNo'>, b: Pick<InboundRecord, 'id' | 'inboundNo'>): boolean {
+  return a.id === b.id || a.inboundNo === b.inboundNo
+}
+
+function buildEditedInboundPatch(
+  record: InboundRecord,
+  payload: Partial<InboundRecord>,
+  form: FormData,
+  refs: InboundRefs,
+): Partial<InboundRecord> {
+  const material = refs.materials.find(item => item.id === (payload.materialId || form.materialId || record.materialId))
+  const supplierId = payload.supplierId || form.supplierId || record.supplierId
+  const locationId = payload.locationId || form.locationId || record.locationId
+  const supplier = refs.suppliers.find(item => item.id === supplierId)
+  const location = refs.locations.find(item => item.id === locationId)
+  const quantity = Number(payload.quantity ?? form.quantity ?? record.quantity)
+  const price = Number(payload.price ?? form.price ?? record.price ?? 0)
+
+  return {
+    type: payload.type || form.type || record.type,
+    materialId: payload.materialId || form.materialId || record.materialId,
+    materialName: payload.materialName || material?.name || record.materialName,
+    batchNo: payload.batchNo || form.batchNo || record.batchNo,
+    quantity,
+    unit: payload.unit || material?.unit || record.unit,
+    price,
+    amount: Number(payload.amount ?? Number((quantity * price).toFixed(2))),
+    supplierId,
+    supplierName: payload.supplierName || supplier?.name || record.supplierName,
+    locationId,
+    locationName: payload.locationName || location?.name || record.locationName,
+    productionDate: payload.productionDate || form.productionDate || undefined,
+    expiryDate: payload.expiryDate || form.expiryDate || undefined,
+    remark: (payload.remark ?? form.remark) || undefined,
+    purchaseOrderId: payload.purchaseOrderId || form.purchaseOrderId || record.purchaseOrderId,
+    purchaseOrderNo: payload.purchaseOrderNo || form.purchaseOrderNo || record.purchaseOrderNo,
+    status: payload.status || record.status,
+  }
+}
+
+function upsertPurchaseOrderOption(
+  orders: PurchaseOrderOption[],
+  candidate: PurchaseOrderOption | null,
+): PurchaseOrderOption[] {
+  if (!candidate?.id) return orders
+  const index = orders.findIndex(order => order.id === candidate.id)
+  if (index < 0) return [candidate, ...orders]
+  return orders.map((order, orderIndex) => (
+    orderIndex === index ? { ...candidate, ...order } : order
+  ))
+}
+
 export function useInboundPage() {
   const url = useUrlParams()
   const handledCreateFromQuery = useRef(false)
+  const purchaseOrderCandidateFromQuery = useRef<PurchaseOrderOption | null>(null)
   const role = getUserRole()
   const canUsePurchaseOrders = canAccessPurchaseOrders(role)
   const canUseLocations = canAccessLocations(role)
@@ -78,6 +197,9 @@ export function useInboundPage() {
   const [modalType, setModalType] = useState<ModalType>(null)
   const [selectedRecord, setSelectedRecord] = useState<InboundRecord | null>(null)
   const [printRecords, setPrintRecords] = useState<InboundRecord[]>([])
+  const [createdInboundFallback, setCreatedInboundFallback] = useState<InboundRecord | null>(null)
+  const [localInboundPatches, setLocalInboundPatches] = useState<Record<string, Partial<InboundRecord>>>({})
+  const [cancelledInboundIds, setCancelledInboundIds] = useState<string[]>([])
 
   // 自定义确认弹窗状态
   const [confirmModal, setConfirmModal] = useState<{
@@ -95,7 +217,7 @@ export function useInboundPage() {
   const [form, setForm] = useState<FormData>({
     type: canUsePurchaseOrders ? 'purchase' : 'direct', materialId: '', batchNo: '', quantity: 0, price: 0,
     supplierId: '', locationId: '', fromLocationId: '', fromLocationName: '',
-    productionDate: '', expiryDate: '', remark: '', purchaseOrderId: ''
+    productionDate: '', expiryDate: '', remark: '', purchaseOrderId: '', purchaseOrderNo: ''
   })
 
   // 快速筛选映射为日期范围
@@ -168,6 +290,69 @@ export function useInboundPage() {
       effectiveEndDate,
     ],
   })
+
+  const { displayedData, displayedTotal } = useMemo(() => {
+    let rows = data.map(row => ({
+      ...row,
+      ...(localInboundPatches[row.id] || {}),
+    }))
+    let nextTotal = total
+
+    if (cancelledInboundIds.length > 0) {
+      const withCancelledStatus = rows.map(row =>
+        cancelledInboundIds.includes(row.id)
+          ? { ...row, status: 'cancelled' as const, cancelReason: row.cancelReason || PAGE_CANCEL_REASON }
+          : row
+      )
+      rows = filterStatus
+        ? withCancelledStatus.filter(row => row.status === filterStatus)
+        : withCancelledStatus
+      const removedCount = withCancelledStatus.length - rows.length
+      if (removedCount > 0) nextTotal = Math.max(0, nextTotal - removedCount)
+    }
+
+    if (!createdInboundFallback) return { displayedData: rows, displayedTotal: nextTotal }
+    const fallbackRecord = cancelledInboundIds.includes(createdInboundFallback.id)
+      ? { ...createdInboundFallback, status: 'cancelled' as const, cancelReason: createdInboundFallback.cancelReason || PAGE_CANCEL_REASON }
+      : createdInboundFallback
+    if (
+      searchKeyword !== fallbackRecord.inboundNo ||
+      filterMaterial ||
+      (filterStatus && filterStatus !== fallbackRecord.status) ||
+      filterType ||
+      filterStartDate ||
+      filterEndDate ||
+      activeQuickFilter !== 'all' ||
+      page !== 1
+    ) return { displayedData: rows, displayedTotal: nextTotal }
+    if (rows.some(row => row.id === fallbackRecord.id || row.inboundNo === fallbackRecord.inboundNo)) {
+      return { displayedData: rows, displayedTotal: nextTotal }
+    }
+    rows = [fallbackRecord, ...rows]
+    nextTotal = Math.max(nextTotal + 1, rows.length)
+    return { displayedData: rows, displayedTotal: nextTotal }
+  }, [
+    activeQuickFilter,
+    cancelledInboundIds,
+    createdInboundFallback,
+    data,
+    filterEndDate,
+    filterMaterial,
+    filterStartDate,
+    filterStatus,
+    filterType,
+    localInboundPatches,
+    page,
+    searchKeyword,
+    total,
+  ])
+
+  useEffect(() => {
+    if (!createdInboundFallback) return
+    if (data.some(row => isSameInboundRecord(row, createdInboundFallback))) {
+      setCreatedInboundFallback(null)
+    }
+  }, [createdInboundFallback, data])
 
   // 筛选变化自动重置页码的包装 setter
   const setSearchKeyword = (v: string) => { setSearchKeywordRaw(v); setPage(1) }
@@ -261,9 +446,9 @@ export function useInboundPage() {
     }
     try {
       const res = await purchaseOrderApi.getList({ status: 'pending,partial', page: 1, pageSize: 999 }) as unknown as PaginationData<PurchaseOrderOption>
-      setPurchaseOrders(res?.list || [])
+      setPurchaseOrders(upsertPurchaseOrderOption(res?.list || [], purchaseOrderCandidateFromQuery.current))
     } catch (e) {
-      setPurchaseOrders([])
+      setPurchaseOrders(upsertPurchaseOrderOption([], purchaseOrderCandidateFromQuery.current))
     }
   }
 
@@ -278,22 +463,45 @@ export function useInboundPage() {
 
     const type = url.get('type', 'purchase') as FormData['type']
     const purchaseOrderId = url.get('purchaseOrderId', '')
+    const purchaseOrderNo = url.get('purchaseOrderNo', '')
     const materialId = url.get('materialId', '')
     const supplierId = url.get('supplierId', '')
+    const supplierName = url.get('supplierName', '')
     const quantity = url.getNumber('quantity', 0)
+    const remainingQty = url.getNumber('remainingQty', quantity)
     const price = url.getNumber('price', 0)
+    const materialName = url.get('materialName', '')
+    const unit = url.get('unit', '')
+    const sourceRemark = url.get('remark', '') || (purchaseOrderNo ? `来自采购订单 ${purchaseOrderNo}` : '')
 
     handledCreateFromQuery.current = true
+    if (purchaseOrderId) {
+      purchaseOrderCandidateFromQuery.current = {
+        id: purchaseOrderId,
+        orderNo: purchaseOrderNo,
+        purchaseOrderNo,
+        materialId,
+        materialName,
+        supplierId,
+        supplierName,
+        remainingQty,
+        unitPrice: price,
+        unit,
+      }
+      setPurchaseOrders(prev => upsertPurchaseOrderOption(prev, purchaseOrderCandidateFromQuery.current))
+    }
     setSelectedOrderId(purchaseOrderId)
     setForm(prev => ({
       ...prev,
       type,
       purchaseOrderId,
+      purchaseOrderNo,
       materialId,
       supplierId,
       quantity,
       price,
       locationId: prev.locationId || locations[0]?.id || '',
+      remark: sourceRemark || prev.remark,
     }))
     fetchRefs()
     fetchPurchaseOrders()
@@ -308,10 +516,10 @@ export function useInboundPage() {
 
   // 选择操作
   const toggleSelectAll = () => {
-    if (selectedIds.size === data.length && data.length > 0) {
+    if (selectedIds.size === displayedData.length && displayedData.length > 0) {
       setSelectedIds(new Set())
     } else {
-      setSelectedIds(new Set(data.map(d => d.id)))
+      setSelectedIds(new Set(displayedData.map(d => d.id)))
     }
   }
 
@@ -327,8 +535,8 @@ export function useInboundPage() {
 
   const clearSelection = () => setSelectedIds(new Set())
 
-  const isAllSelected = data.length > 0 && selectedIds.size === data.length
-  const isIndeterminate = selectedIds.size > 0 && selectedIds.size < data.length
+  const isAllSelected = displayedData.length > 0 && selectedIds.size === displayedData.length
+  const isIndeterminate = selectedIds.size > 0 && selectedIds.size < displayedData.length
 
   // 确认弹窗
   const openConfirmModal = (title: string, message: string, onConfirm: () => void) => {
@@ -345,7 +553,7 @@ export function useInboundPage() {
     setForm({
       type: canUsePurchaseOrders ? 'purchase' : 'direct', materialId: refs.materials[0]?.id || '', batchNo: '', quantity: 0,
       price: 0, supplierId: '', locationId: refs.locations[0]?.id || '', fromLocationId: '', fromLocationName: '',
-      productionDate: '', expiryDate: '', remark: '', purchaseOrderId: ''
+      productionDate: '', expiryDate: '', remark: '', purchaseOrderId: '', purchaseOrderNo: ''
     })
     setModalType('create')
   }
@@ -369,7 +577,10 @@ export function useInboundPage() {
       productionDate: record.productionDate || '',
       expiryDate: record.expiryDate || '',
       remark: record.remark || '',
+      purchaseOrderId: record.purchaseOrderId || '',
+      purchaseOrderNo: record.purchaseOrderNo || '',
     })
+    setSelectedOrderId(record.purchaseOrderId || '')
     fetchRefs()
     setModalType('edit')
   }
@@ -382,8 +593,11 @@ export function useInboundPage() {
   const handleCancelInbound = async () => {
     if (!selectedRecord) return
     try {
-      await inboundApi.cancel(selectedRecord.id, '页面取消入库')
-      toast.success('取消成功')
+      await inboundApi.cancel(selectedRecord.id, PAGE_CANCEL_REASON)
+      setCancelledInboundIds(prev => prev.includes(selectedRecord.id) ? prev : [...prev, selectedRecord.id])
+      toast.success('取消成功', {
+        description: `${selectedRecord.inboundNo || '该入库单'} 已取消，库存、批次、采购收货数量、成本和审计记录已同步回退`,
+      })
       closeModal()
       refresh()
     } catch (e) {
@@ -408,10 +622,38 @@ export function useInboundPage() {
     [purchaseOrders, selectedOrderId]
   )
 
+  const focusCreatedInboundRecord = (inboundNo: string) => {
+    setSearchKeywordRaw(inboundNo)
+    setFilterMaterialRaw('')
+    setFilterStatusRaw('')
+    setFilterTypeRaw('')
+    setFilterStartDateRaw('')
+    setFilterEndDateRaw('')
+    setActiveQuickFilterRaw('all')
+    setPage(1)
+  }
+
   const handleSubmit = async () => {
     if (submitting) return
     if (!form.materialId || form.quantity <= 0) {
       toast.error('请选择耗材并输入数量')
+      return
+    }
+    if (!form.batchNo.trim()) {
+      toast.error('请填写批号，库存批次和后续出库需要用它追踪')
+      return
+    }
+    if (!form.locationId) {
+      toast.error('请选择入库库位，库存和批次余量需要按库位记录')
+      return
+    }
+    if (!form.expiryDate) {
+      toast.error('请填写有效期，系统需要据此生成效期预警')
+      return
+    }
+    const effectivePurchaseOrderId = form.purchaseOrderId || selectedOrderId
+    if (form.type === 'purchase' && !effectivePurchaseOrderId) {
+      toast.error('采购入库必须关联采购订单；未走采购单请改为直接入库')
       return
     }
     if (
@@ -429,7 +671,7 @@ export function useInboundPage() {
     setSubmitting(true)
     try {
       if (selectedRecord && modalType === 'edit') {
-        await inboundApi.update(selectedRecord.id, {
+        const res: any = await inboundApi.update(selectedRecord.id, {
           batchNo: form.batchNo,
           quantity: form.quantity,
           price: form.price,
@@ -439,9 +681,19 @@ export function useInboundPage() {
           expiryDate: form.expiryDate,
           remark: form.remark,
         })
-        toast.success('更新成功')
+        const payload = res?.data ?? res
+        const currentRecord = displayedData.find(record => record.id === selectedRecord.id)
+          || data.find(record => record.id === selectedRecord.id)
+          || selectedRecord
+        setLocalInboundPatches(prev => ({
+          ...prev,
+          [selectedRecord.id]: buildEditedInboundPatch(currentRecord, payload || {}, form, { materials, suppliers, locations }),
+        }))
+        toast.success('更新成功', {
+          description: `${selectedRecord.inboundNo || '该入库单'} 已同步库存、批次、库位、成本、效期预警和审计记录`,
+        })
       } else if (form.type === 'transfer') {
-        await inboundApi.createTransfer({
+        const res: any = await inboundApi.createTransfer({
           materialId: form.materialId,
           quantity: form.quantity,
           fromLocationId: form.fromLocationId,
@@ -451,15 +703,35 @@ export function useInboundPage() {
           operator: 'system',
           remark: form.remark,
         })
-        toast.success('入库成功')
+        const payload = res?.data ?? res
+        toast.success('入库成功', {
+          description: payload?.inboundNo
+            ? `已生成 ${payload.inboundNo}，来源库位、目标库位、批次、库存流水和审计链路可按单号回看`
+            : '来源库位、目标库位、批次、库存流水和审计链路已记录',
+        })
       } else {
-        await inboundApi.create(form)
-        toast.success(selectedOrderId ? '入库成功，已更新采购订单收货数量' : '入库成功')
+        const res: any = await inboundApi.create(form)
+        const payload = res?.data ?? res
+        if (payload?.inboundNo) {
+          setCreatedInboundFallback(buildCreatedInboundRecord(payload, form, { materials, suppliers, locations, purchaseOrders }))
+          focusCreatedInboundRecord(payload.inboundNo)
+        }
+        const linkedPurchaseOrderId = selectedOrderId || effectivePurchaseOrderId
+        const successDescription = payload?.inboundNo
+          ? linkedPurchaseOrderId
+            ? `已生成 ${payload.inboundNo}，采购订单、库存、批次、库位、成本和审计链路可按单号回看`
+            : `已生成 ${payload.inboundNo}，库存、批次、库位、成本、效期预警和审计链路可按单号回看`
+          : linkedPurchaseOrderId
+            ? '采购订单、库存、批次、库位、成本和审计链路已记录'
+            : '库存、批次、库位、成本、效期预警和审计链路已记录'
+        toast.success(linkedPurchaseOrderId ? '入库成功，已更新采购订单收货数量' : '入库成功', {
+          description: successDescription,
+        })
       }
       closeModal()
       refresh()
     } catch (e) {
-      toast.error(modalType === 'edit' ? '更新失败' : '创建失败')
+      toast.error(getInboundErrorMessage(e, modalType === 'edit' ? '更新失败' : '创建失败'))
     } finally {
       setSubmitting(false)
     }
@@ -469,6 +741,7 @@ export function useInboundPage() {
     if (!selectedRecord) return
     try {
       await inboundApi.update(selectedRecord.id, { status: 'completed' })
+      setCancelledInboundIds(prev => prev.filter(id => id !== selectedRecord.id))
       toast.success('恢复成功', { description: '入库记录已恢复' })
       closeModal()
       refresh()
@@ -479,8 +752,8 @@ export function useInboundPage() {
 
   const handleBatchExport = async () => {
     const exportData = selectedIds.size > 0
-      ? data.filter(d => selectedIds.has(d.id))
-      : data
+      ? displayedData.filter(d => selectedIds.has(d.id))
+      : displayedData
     if (exportData.length === 0) {
       toast.error('没有可导出的数据')
       return
@@ -514,8 +787,8 @@ export function useInboundPage() {
 
   const handleBatchPrint = () => {
     const records = selectedIds.size > 0
-      ? data.filter(d => selectedIds.has(d.id))
-      : data
+      ? displayedData.filter(d => selectedIds.has(d.id))
+      : displayedData
     if (records.length === 0) {
       toast.error('没有可打印的数据')
       return
@@ -563,7 +836,7 @@ export function useInboundPage() {
     purchaseOrders, selectedOrderId, setSelectedOrderId,
     form, setForm, submitting, handleSubmit,
     // 数据
-    data, loading, page, pageSize, total, setPage, setPageSize,
+    data: displayedData, loading, page, pageSize, total: displayedTotal, setPage, setPageSize,
     refresh: () => { refresh(); fetchStats() },
     // 统计
     stats, quickFilterCounts,

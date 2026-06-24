@@ -86,11 +86,15 @@ describe('集成测试：出库管理', () => {
   let app: any
   let db: any
   let token: string
+  let defaultProjectId: string
 
   beforeAll(async () => {
     ({ app, db } = await getApp())
     token = await loginAdmin(app)
     seedBasicData(db)
+    defaultProjectId = 'project-out-default'
+    db.prepare('INSERT INTO projects (id, code, name, type, status) VALUES (?, ?, ?, ?, 1)')
+      .run(defaultProjectId, 'OB-DEFAULT', '出库默认检测项目', 'ihc')
   })
 
   describe('出库列表查询', () => {
@@ -155,10 +159,53 @@ describe('集成测试：出库管理', () => {
         expect(res.body.error.code, JSON.stringify(query)).toBe('INVALID_PARAMETER')
       }
     })
+
+    it('OUT-LIST-CHAIN-001: 出库列表返回用途和接收方，方便仓管回看责任归属', async () => {
+      const suffix = `LIST-${Date.now()}`
+      const materialId = await createMaterial(app, token, `OB-${suffix}`, 80)
+      await inbound(app, token, materialId, `B-${suffix}`, 8, 80)
+
+      const createRes = await request(app)
+        .post('/api/v1/outbound')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          type: 'project',
+          projectId: defaultProjectId,
+          items: [{ materialId, quantity: 2, usage: 'external', receiver: '外部病理中心' }],
+          remark: '列表回看测试',
+        })
+      expect(createRes.status).toBe(201)
+
+      const listRes = await request(app)
+        .get('/api/v1/outbound')
+        .query({ keyword: createRes.body.data.outboundNo })
+        .set('Authorization', `Bearer ${token}`)
+
+      expect(listRes.status).toBe(200)
+      expect(listRes.body.data.list[0].items[0]).toMatchObject({
+        materialId,
+        usage: 'external',
+        receiver: '外部病理中心',
+      })
+    })
   })
 
   describe('出库统计', () => {
     it('出库统计返回本月数量和快捷筛选全量计数', async () => {
+      const today = new Date().toISOString().slice(0, 10)
+      const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+      const now = new Date()
+      const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
+      const before = {
+        total: (db.prepare("SELECT COUNT(*) as c FROM outbound_records WHERE is_deleted = 0").get() as any)?.c || 0,
+        monthTotal: (db.prepare("SELECT COUNT(*) as c FROM outbound_records WHERE is_deleted = 0 AND created_at >= ?").get(monthStart) as any)?.c || 0,
+        completed: (db.prepare("SELECT COUNT(*) as c FROM outbound_records WHERE is_deleted = 0 AND status = 'completed'").get() as any)?.c || 0,
+        pending: (db.prepare("SELECT COUNT(*) as c FROM outbound_records WHERE is_deleted = 0 AND status = 'pending'").get() as any)?.c || 0,
+        cancelled: (db.prepare("SELECT COUNT(*) as c FROM outbound_records WHERE is_deleted = 0 AND status = 'cancelled'").get() as any)?.c || 0,
+        totalCost: (db.prepare("SELECT COALESCE(SUM(total_cost),0) as c FROM outbound_records WHERE is_deleted = 0 AND status = 'completed'").get() as any)?.c || 0,
+        today: (db.prepare("SELECT COUNT(*) as c FROM outbound_records WHERE is_deleted = 0 AND created_at >= ?").get(today) as any)?.c || 0,
+        week: (db.prepare("SELECT COUNT(*) as c FROM outbound_records WHERE is_deleted = 0 AND created_at >= ?").get(weekAgo) as any)?.c || 0,
+      }
       const suffix = `stats-${Date.now()}`
       db.prepare(`
         INSERT INTO outbound_records (id, outbound_no, type, total_cost, operator, status, created_at)
@@ -179,18 +226,18 @@ describe('集成测试：出库管理', () => {
 
       expect(res.status).toBe(200)
       expect(res.body.data).toMatchObject({
-        total: 3,
-        monthTotal: 2,
-        completed: 1,
-        pending: 1,
-        cancelled: 1,
-        totalCost: 10,
+        total: before.total + 3,
+        monthTotal: before.monthTotal + 2,
+        completed: before.completed + 1,
+        pending: before.pending + 1,
+        cancelled: before.cancelled + 1,
+        totalCost: before.totalCost + 10,
       })
       expect(res.body.data.quickCounts).toMatchObject({
-        all: 3,
-        today: 2,
-        week: 2,
-        month: 2,
+        all: before.total + 3,
+        today: before.today + 2,
+        week: before.week + 2,
+        month: before.monthTotal + 2,
       })
     })
   })
@@ -209,6 +256,7 @@ describe('集成测试：出库管理', () => {
         .set('Authorization', `Bearer ${token}`)
         .send({
           type: 'project',
+          projectId: defaultProjectId,
           items: [{ materialId, quantity: 5, usage: 'self', receiver: '测试员' }],
           operator: '测试员',
         })
@@ -232,6 +280,7 @@ describe('集成测试：出库管理', () => {
         .set('Authorization', `Bearer ${token}`)
         .send({
           type: 'project',
+          projectId: defaultProjectId,
           items: [{ materialId, quantity: 2, usage: 'self', receiver: '审计测试员' }],
           remark: '普通出库审计测试',
         })
@@ -269,6 +318,7 @@ describe('集成测试：出库管理', () => {
         .set('Authorization', `Bearer ${token}`)
         .send({
           type: 'project',
+          projectId: defaultProjectId,
           items: [{ materialId, quantity: 2, usage: 'external', receiver: '外部科室' }],
         })
 
@@ -281,6 +331,39 @@ describe('集成测试：出库管理', () => {
       expect(tracking).toBeUndefined()
     })
 
+    it('OUT-CHAIN-001: 普通出库必须关联检测项目且外给必须填写接收方，避免库存扣减后责任断链', async () => {
+      const invalidPayloads = [
+        {
+          body: { type: 'project', items: [{ materialId, quantity: 1 }] },
+          message: '检测项目',
+        },
+        {
+          body: {
+            type: 'project',
+            projectId: defaultProjectId,
+            items: [{ materialId, quantity: 1, usage: 'external' }],
+          },
+          message: '接收方',
+        },
+      ]
+
+      for (const payload of invalidPayloads) {
+        const beforeStock = (db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any).stock
+        const beforeCount = (db.prepare('SELECT COUNT(*) as count FROM outbound_records').get() as any).count
+
+        const res = await request(app)
+          .post('/api/v1/outbound')
+          .set('Authorization', `Bearer ${token}`)
+          .send(payload.body)
+
+        expect(res.status).toBe(400)
+        expect(res.body.error.code).toBe('INVALID_PARAMETER')
+        expect(res.body.error.message).toContain(payload.message)
+        expect((db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any).stock).toBe(beforeStock)
+        expect((db.prepare('SELECT COUNT(*) as count FROM outbound_records').get() as any).count).toBe(beforeCount)
+      }
+    })
+
     it('创建出库单后库存减少', async () => {
       const beforeInv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
       const beforeStock = beforeInv.stock
@@ -290,6 +373,7 @@ describe('集成测试：出库管理', () => {
         .set('Authorization', `Bearer ${token}`)
         .send({
           type: 'project',
+          projectId: defaultProjectId,
           items: [{ materialId, quantity: 3 }],
           operator: '测试员',
         })
@@ -307,6 +391,7 @@ describe('集成测试：出库管理', () => {
         .set('Authorization', `Bearer ${token}`)
         .send({
           type: 'project',
+          projectId: defaultProjectId,
           items: [{ materialId, quantity: currentStock + 100 }],
           operator: '测试员',
         })
@@ -342,6 +427,7 @@ describe('集成测试：出库管理', () => {
           .set('Authorization', `Bearer ${token}`)
           .send({
             type: 'project',
+            projectId: defaultProjectId,
             ...payload,
           })
 
@@ -364,6 +450,7 @@ describe('集成测试：出库管理', () => {
         .set('Authorization', `Bearer ${token}`)
         .send({
           type: 'mystery',
+          projectId: defaultProjectId,
           items: [{ materialId, quantity: 1 }],
           remark: '非法类型创建',
         })
@@ -379,6 +466,7 @@ describe('集成测试：出库管理', () => {
         .set('Authorization', `Bearer ${token}`)
         .send({
           type: 'project',
+          projectId: defaultProjectId,
           items: [{ materialId, quantity: 1 }],
           remark: '合法类型编辑前',
         })
@@ -421,6 +509,7 @@ describe('集成测试：出库管理', () => {
           .set('Authorization', `Bearer ${token}`)
           .send({
             type: payload.type,
+            projectId: defaultProjectId,
             items: [{ materialId, quantity: 1 }],
             remark: '不应通过通用出库入口处理',
           })
@@ -457,6 +546,7 @@ describe('集成测试：出库管理', () => {
         .set('Authorization', `Bearer ${token}`)
         .send({
           type: 'project',
+          projectId: defaultProjectId,
           items: [{ materialId: inactiveMaterialId, quantity: 1 }],
         })
 
@@ -505,6 +595,7 @@ describe('集成测试：出库管理', () => {
         .set('Authorization', `Bearer ${token}`)
         .send({
           type: 'project',
+          projectId: defaultProjectId,
           items: [{ materialId, quantity: 1 }],
           remark: '原始有效出库',
         })
@@ -545,7 +636,7 @@ describe('集成测试：出库管理', () => {
 
       expect(activeStock).toBe(beforeActiveStock)
       expect(inactiveStock).toBe(beforeInactiveStock)
-      expect(savedRecord.project_id).toBeNull()
+      expect(savedRecord.project_id).toBe(defaultProjectId)
       expect(savedRecord.remark).toBe('原始有效出库')
       expect(savedItems).toHaveLength(1)
       expect(savedItems[0]).toMatchObject({ material_id: materialId, quantity: 1 })
@@ -557,6 +648,7 @@ describe('集成测试：出库管理', () => {
         .set('Authorization', `Bearer ${token}`)
         .send({
           type: 'project',
+          projectId: defaultProjectId,
           items: [{ materialId, quantity: 1 }],
           remark: '非有限数量编辑前',
         })
@@ -643,6 +735,7 @@ describe('集成测试：出库管理', () => {
         .set('Authorization', `Bearer ${token}`)
         .send({
           type: 'project',
+          projectId: defaultProjectId,
           items: [{ materialId: staleMaterialId, batchId: batch.id, quantity: 4 }],
           remark: '批次后续下调前出库',
         })
@@ -685,6 +778,7 @@ describe('集成测试：出库管理', () => {
         .set('Authorization', `Bearer ${token}`)
         .send({
           type: 'project',
+          projectId: defaultProjectId,
           items: [{ materialId: staleMaterialId, batchId: batch.id, quantity: 4 }],
           remark: '批次后续下调前出库',
         })
@@ -751,6 +845,7 @@ describe('集成测试：出库管理', () => {
         .set('Authorization', `Bearer ${token}`)
         .send({
           type: 'project',
+          projectId: defaultProjectId,
           items: [{ materialId, quantity: 15 }],
           operator: '测试员',
         })
@@ -813,6 +908,7 @@ describe('集成测试：出库管理', () => {
         .set('Authorization', `Bearer ${token}`)
         .send({
           type: 'project',
+          projectId: defaultProjectId,
           items: [{ materialId: materialIdForLocation, quantity: 4 }],
           remark: '多批次多库位出库',
         })

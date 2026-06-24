@@ -15,6 +15,11 @@ interface Budget {
   description?: string
 }
 
+interface BudgetQueryOverrides {
+  yearMonth?: string
+  keyword?: string
+}
+
 const CATEGORY_LABELS: Record<string, string> = {
   total: '总预算',
   material: '材料成本',
@@ -67,6 +72,7 @@ export default function BudgetManagement() {
   const [budgets, setBudgets] = useState<Budget[]>([])
   const [loading, setLoading] = useState(true)
   const [searchKeyword, setSearchKeyword] = useState(deepLinkKeyword)
+  const [backendKeyword, setBackendKeyword] = useState(deepLinkKeyword)
   const [filterMonth, setFilterMonth] = useState(() => urlParams.get('month')?.trim() || urlParams.get('yearMonth')?.trim() || '')
   const [showDialog, setShowDialog] = useState(false)
   const [editingBudget, setEditingBudget] = useState<Budget | null>(null)
@@ -82,12 +88,14 @@ export default function BudgetManagement() {
     loadBudgets()
   }, [filterMonth])
 
-  const loadBudgets = async () => {
+  const loadBudgets = async (overrides: BudgetQueryOverrides = {}) => {
     try {
       setLoading(true)
       const params: Record<string, string> = {}
-      if (filterMonth) params.yearMonth = filterMonth
-      if (deepLinkKeyword) params.keyword = deepLinkKeyword
+      const nextMonth = overrides.yearMonth ?? filterMonth
+      const nextKeyword = overrides.keyword ?? backendKeyword
+      if (nextMonth) params.yearMonth = nextMonth
+      if (nextKeyword) params.keyword = nextKeyword
       const data = await abcApi.getBudgets(params)
       setBudgets(normalizeBudgetResponse(data))
     } catch {
@@ -122,20 +130,12 @@ export default function BudgetManagement() {
   }
 
   const handleSave = async () => {
-    if (!formData.yearMonth || !formData.category || !formData.budgetAmount) {
-      toast.error('请填写必填字段')
+    if (budgetValidationMessage) {
+      toast.error(budgetValidationMessage)
       return
     }
     const amount = parseFloat(formData.budgetAmount)
-    if (isNaN(amount) || amount < 0) {
-      toast.error('预算金额必须为非负数')
-      return
-    }
     const actualAmount = formData.actualAmount.trim() ? parseFloat(formData.actualAmount) : 0
-    if (isNaN(actualAmount) || actualAmount < 0) {
-      toast.error('实际金额必须为非负数')
-      return
-    }
     try {
       const payload = {
         yearMonth: formData.yearMonth,
@@ -144,14 +144,23 @@ export default function BudgetManagement() {
         actualAmount,
         description: formData.description.trim(),
       }
+      let focusKeyword = ''
       if (editingBudget) {
-        await abcApi.updateBudget(editingBudget.id, payload)
+        const updated: any = await abcApi.updateBudget(editingBudget.id, payload)
+        focusKeyword = String(updated?.id || editingBudget.id).trim()
       } else {
-        await abcApi.createBudget(payload)
+        const created: any = await abcApi.createBudget(payload)
+        focusKeyword = String(created?.id || payload.category).trim()
       }
       toast.success(editingBudget ? '更新成功' : '创建成功')
+      setSearchKeyword(focusKeyword)
+      setBackendKeyword(focusKeyword)
+      setFilterMonth(payload.yearMonth)
       setShowDialog(false)
-      loadBudgets()
+      await loadBudgets({
+        yearMonth: payload.yearMonth,
+        keyword: focusKeyword,
+      })
     } catch {
       toast.error('操作失败')
     }
@@ -171,6 +180,22 @@ export default function BudgetManagement() {
 
   const formatCurrency = (value: number) =>
     new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY' }).format(value)
+  const budgetAmountPreview = Number(formData.budgetAmount || 0)
+  const actualAmountPreview = Number(formData.actualAmount || 0)
+  const safeBudgetAmountPreview = Number.isFinite(budgetAmountPreview) ? budgetAmountPreview : 0
+  const safeActualAmountPreview = Number.isFinite(actualAmountPreview) ? actualAmountPreview : 0
+  const budgetExecutionRate = safeBudgetAmountPreview > 0 ? safeActualAmountPreview / safeBudgetAmountPreview : 0
+  const budgetDownstreamFacts = '成本预算、成本看板、执行进度、成本预警、审计记录'
+  const budgetValidationMessage = !formData.yearMonth || !formData.category || !formData.budgetAmount
+    ? '请填写月份、成本类型和预算金额，系统才能建立预算跟踪对象。'
+    : !Number.isFinite(budgetAmountPreview) || budgetAmountPreview < 0
+      ? '请填写大于等于 0 的预算金额，系统才能计算执行进度。'
+      : !Number.isFinite(actualAmountPreview) || actualAmountPreview < 0
+        ? '请填写大于等于 0 的实际金额，系统才能计算预算执行率。'
+        : !formData.description.trim()
+          ? '请填写口径说明，系统才能解释预算来源、实际金额口径和审计依据。'
+          : ''
+  const canSaveBudget = budgetValidationMessage === ''
 
   const filteredBudgets = budgets.filter(b => {
     if (!searchKeyword) return true
@@ -210,7 +235,10 @@ export default function BudgetManagement() {
               type="text"
               placeholder="搜索预算类型..."
               value={searchKeyword}
-              onChange={(e) => setSearchKeyword(e.target.value)}
+              onChange={(e) => {
+                setSearchKeyword(e.target.value)
+                setBackendKeyword('')
+              }}
               className="w-full h-10 pl-10 pr-4 border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
             />
           </div>
@@ -356,7 +384,7 @@ export default function BudgetManagement() {
               </div>
             </div>
             <div>
-              <label htmlFor="budget-description" className="block text-sm font-medium text-gray-700 mb-1">口径说明</label>
+              <label htmlFor="budget-description" className="block text-sm font-medium text-gray-700 mb-1">口径说明 *</label>
               <textarea
                 id="budget-description"
                 value={formData.description}
@@ -366,6 +394,25 @@ export default function BudgetManagement() {
                 className="w-full px-3 py-2 border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500 resize-none"
               />
             </div>
+            <div className="rounded-md border border-emerald-100 bg-emerald-50 px-3 py-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm font-semibold text-emerald-900">预算结果确认</div>
+                <div className="text-xs text-emerald-700">确认后将接住：{budgetDownstreamFacts}</div>
+              </div>
+              <div className="mt-3 grid grid-cols-1 gap-2 text-xs text-emerald-700 sm:grid-cols-2">
+                <div>月份 {formData.yearMonth || '-'}</div>
+                <div>成本类型 {CATEGORY_LABELS[formData.category] || formData.category}</div>
+                <div>预算金额 {formatCurrency(safeBudgetAmountPreview)}</div>
+                <div>实际金额 {formatCurrency(safeActualAmountPreview)}</div>
+                <div>执行率 {(budgetExecutionRate * 100).toFixed(1)}%</div>
+                <div>口径说明 {formData.description.trim() || '待填写'}</div>
+              </div>
+            </div>
+            {budgetValidationMessage ? (
+              <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900">
+                {budgetValidationMessage}
+              </div>
+            ) : null}
           </div>
           <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-gray-200">
             <button
@@ -376,7 +423,8 @@ export default function BudgetManagement() {
             </button>
             <button
               onClick={handleSave}
-              className="h-10 px-4 text-sm text-white bg-[#3b82f6] rounded-md hover:bg-blue-600 transition-colors"
+              disabled={!canSaveBudget}
+              className="h-10 px-4 text-sm text-white bg-[#3b82f6] rounded-md hover:bg-blue-600 transition-colors disabled:cursor-not-allowed disabled:bg-gray-300"
             >
               {editingBudget ? '更新' : '创建'}
             </button>

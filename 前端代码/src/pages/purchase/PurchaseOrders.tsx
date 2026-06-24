@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Search, Plus, X, Package } from 'lucide-react'
+import { FileSearch, Plus, Search } from 'lucide-react'
 import { usePagination } from '@/hooks/usePagination'
 import { Pagination } from '@/components/ui/Pagination'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
@@ -20,6 +20,16 @@ const statusConfig: Record<string, { label: string; bg: string; text: string }> 
   cancelled: { label: '已取消', bg: 'bg-red-50', text: 'text-red-600' },
 }
 
+const DEFAULT_PURCHASE_FORM: PurchaseOrderForm = {
+  materialId: '',
+  supplierId: '',
+  orderedQty: 1,
+  unitPrice: 0,
+  unit: '个',
+  expectedDate: '',
+  remark: '',
+}
+
 export interface PurchaseOrderForm {
   materialId: string
   supplierId: string
@@ -30,11 +40,23 @@ export interface PurchaseOrderForm {
   remark: string
 }
 
+interface CreateDraft {
+  materialId?: string
+  orderedQty?: number
+  remark?: string
+}
+
+interface PurchaseOrderRefs {
+  materials: Material[]
+  suppliers: Supplier[]
+}
+
 export function applySelectedMaterialToPurchaseForm(form: PurchaseOrderForm, material?: Material): PurchaseOrderForm {
   if (!material) return form
   return {
     ...form,
     materialId: material.id,
+    supplierId: material.supplierId || form.supplierId,
     unit: material.unit || form.unit,
     unitPrice: Number(material.price || 0),
   }
@@ -64,16 +86,90 @@ export function purchaseOrderToForm(order: PurchaseOrder): PurchaseOrderForm {
   }
 }
 
+function getPurchaseOrderErrorMessage(error: unknown, fallback: string) {
+  const maybeError = error as {
+    message?: string
+    response?: {
+      data?: {
+        message?: string
+        error?: { message?: string }
+      }
+    }
+  }
+  return maybeError.response?.data?.error?.message
+    || maybeError.response?.data?.message
+    || maybeError.message
+    || fallback
+}
+
+function buildCreatedPurchaseOrderRecord(
+  payload: Partial<PurchaseOrder>,
+  form: PurchaseOrderForm,
+  refs: PurchaseOrderRefs,
+): PurchaseOrder | null {
+  if (!payload.id || !payload.orderNo) return null
+
+  const materialId = payload.materialId || form.materialId
+  const supplierId = payload.supplierId || form.supplierId || undefined
+  const material = refs.materials.find(item => item.id === materialId)
+  const supplier = refs.suppliers.find(item => item.id === supplierId)
+  const orderedQty = Number(payload.orderedQty ?? form.orderedQty)
+  const receivedQty = Number(payload.receivedQty ?? 0)
+  const unitPrice = Number(payload.unitPrice ?? form.unitPrice ?? 0)
+  const createdAt = payload.createdAt || new Date().toISOString()
+
+  return {
+    id: payload.id,
+    orderNo: payload.orderNo,
+    materialId,
+    materialName: payload.materialName || material?.name || materialId,
+    supplierId,
+    supplierName: payload.supplierName || supplier?.name,
+    orderedQty,
+    receivedQty,
+    remainingQty: Number(payload.remainingQty ?? Math.max(0, orderedQty - receivedQty)),
+    unit: payload.unit || form.unit || material?.unit || '',
+    unitPrice,
+    totalAmount: Number(payload.totalAmount ?? Number((orderedQty * unitPrice).toFixed(2))),
+    expectedDate: payload.expectedDate || form.expectedDate || undefined,
+    status: payload.status || 'pending',
+    remark: (payload.remark ?? form.remark) || undefined,
+    createdAt,
+    updatedAt: payload.updatedAt || createdAt,
+  }
+}
+
+function isSamePurchaseOrder(a: Pick<PurchaseOrder, 'id' | 'orderNo'>, b: Pick<PurchaseOrder, 'id' | 'orderNo'>): boolean {
+  return a.id === b.id || a.orderNo === b.orderNo
+}
+
+function getInitialStatusFilter(): string {
+  const status = new URLSearchParams(window.location.search).get('status') || ''
+  const allowed = new Set(['', 'pending', 'partial', 'pending,partial', 'completed', 'cancelled'])
+  return allowed.has(status) ? status : ''
+}
+
+function getCreateDraftFromUrl(): CreateDraft {
+  const params = new URLSearchParams(window.location.search)
+  const orderedQty = Number(params.get('orderedQty') || '')
+  return {
+    materialId: params.get('materialId') || undefined,
+    orderedQty: Number.isFinite(orderedQty) && orderedQty > 0 ? orderedQty : undefined,
+    remark: params.get('remark') || undefined,
+  }
+}
+
 export default function PurchaseOrders() {
   const navigate = useNavigate()
   const role = getUserRole()
   const canWrite = canWritePurchaseOrders(role)
   const canReceive = canReceivePurchaseOrders(role)
+  const handledCreateFromQuery = useRef(false)
   const initialKeyword = new URLSearchParams(window.location.search).get('keyword') || ''
   const [materials, setMaterials] = useState<Material[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [searchText, setSearchText] = useState(initialKeyword)
-  const [statusFilter, setStatusFilter] = useState('')
+  const [statusFilter, setStatusFilter] = useState(getInitialStatusFilter)
 
   const [modalOpen, setModalOpen] = useState(false)
   const [receiveModalOpen, setReceiveModalOpen] = useState(false)
@@ -83,16 +179,10 @@ export default function PurchaseOrders() {
   const [orderToCancel, setOrderToCancel] = useState<PurchaseOrder | null>(null)
   const [editingOrder, setEditingOrder] = useState<PurchaseOrder | null>(null)
   const [receiveQty, setReceiveQty] = useState(0)
+  const [createdPurchaseOrderFallback, setCreatedPurchaseOrderFallback] = useState<PurchaseOrder | null>(null)
+  const [cancelledPurchaseOrderFallback, setCancelledPurchaseOrderFallback] = useState<PurchaseOrder | null>(null)
 
-  const [form, setForm] = useState<PurchaseOrderForm>({
-    materialId: '',
-    supplierId: '',
-    orderedQty: 1,
-    unitPrice: 0,
-    unit: '个',
-    expectedDate: '',
-    remark: '',
-  })
+  const [form, setForm] = useState<PurchaseOrderForm>(DEFAULT_PURCHASE_FORM)
 
   const fetchRefs = async () => {
     try {
@@ -100,9 +190,17 @@ export default function PurchaseOrders() {
         materialApi.getList({ page: 1, pageSize: 999, status: 'active' }),
         supplierApi.getList({ page: 1, pageSize: 999, status: 'active' }),
       ])
-      setMaterials(mRes?.list || [])
-      setSuppliers(sRes?.list || [])
-    } catch (e) { console.error(e) }
+      const refs = { materials: mRes?.list || [], suppliers: sRes?.list || [] }
+      setMaterials(refs.materials)
+      setSuppliers(refs.suppliers)
+      return refs
+    } catch (e) {
+      console.error(e)
+      const refs = { materials: [], suppliers: [] }
+      setMaterials(refs.materials)
+      setSuppliers(refs.suppliers)
+      return refs
+    }
   }
 
   useEffect(() => { fetchRefs() }, [])
@@ -133,16 +231,79 @@ export default function PurchaseOrders() {
     deps: [statusFilter, searchText],
   })
 
+  const { displayedData, displayedTotal } = useMemo(() => {
+    let rows = data
+    let nextTotal = total
+
+    if (
+      createdPurchaseOrderFallback &&
+      searchText === createdPurchaseOrderFallback.orderNo &&
+      !statusFilter &&
+      page === 1 &&
+      !rows.some(row => row.id === createdPurchaseOrderFallback.id || row.orderNo === createdPurchaseOrderFallback.orderNo)
+    ) {
+      rows = [createdPurchaseOrderFallback, ...rows]
+      nextTotal = Math.max(nextTotal + 1, rows.length)
+    }
+
+    if (
+      cancelledPurchaseOrderFallback &&
+      searchText === cancelledPurchaseOrderFallback.orderNo &&
+      statusFilter === 'cancelled' &&
+      page === 1
+    ) {
+      const hasCancelledRow = rows.some(row => row.id === cancelledPurchaseOrderFallback.id || row.orderNo === cancelledPurchaseOrderFallback.orderNo)
+      rows = hasCancelledRow
+        ? rows.map(row => (row.id === cancelledPurchaseOrderFallback.id || row.orderNo === cancelledPurchaseOrderFallback.orderNo ? cancelledPurchaseOrderFallback : row))
+        : [cancelledPurchaseOrderFallback, ...rows]
+      if (!hasCancelledRow) nextTotal = Math.max(nextTotal + 1, rows.length)
+    }
+
+    return { displayedData: rows, displayedTotal: nextTotal }
+  }, [cancelledPurchaseOrderFallback, createdPurchaseOrderFallback, data, page, searchText, statusFilter, total])
+
+  useEffect(() => {
+    if (!createdPurchaseOrderFallback) return
+    if (data.some(row => isSamePurchaseOrder(row, createdPurchaseOrderFallback))) {
+      setCreatedPurchaseOrderFallback(null)
+    }
+  }, [createdPurchaseOrderFallback, data])
+
+  useEffect(() => {
+    if (!cancelledPurchaseOrderFallback) return
+    if (data.some(row => isSamePurchaseOrder(row, cancelledPurchaseOrderFallback) && row.status === 'cancelled')) {
+      setCancelledPurchaseOrderFallback(null)
+    }
+  }, [cancelledPurchaseOrderFallback, data])
+
   const resetForm = () => {
-    setForm({ materialId: '', supplierId: '', orderedQty: 1, unitPrice: 0, unit: '个', expectedDate: '', remark: '' })
+    setForm(DEFAULT_PURCHASE_FORM)
     setEditingOrder(null)
   }
 
-  const openCreateModal = () => {
-    fetchRefs()
-    resetForm()
+  const openCreateModal = async (draft: CreateDraft = {}) => {
+    const refs = await fetchRefs()
+    setEditingOrder(null)
+    const baseForm: PurchaseOrderForm = {
+      ...DEFAULT_PURCHASE_FORM,
+      materialId: draft.materialId || '',
+      orderedQty: draft.orderedQty || DEFAULT_PURCHASE_FORM.orderedQty,
+      remark: draft.remark || '',
+    }
+    const material = refs.materials.find((item: Material) => item.id === draft.materialId)
+    setForm(applySelectedMaterialToPurchaseForm(baseForm, material))
     setModalOpen(true)
   }
+
+  useEffect(() => {
+    if (handledCreateFromQuery.current) return
+    if (new URLSearchParams(window.location.search).get('action') !== 'create') return
+
+    handledCreateFromQuery.current = true
+    if (canWrite) {
+      void openCreateModal(getCreateDraftFromUrl())
+    }
+  }, [canWrite])
 
   const openEditModal = (order: PurchaseOrder) => {
     if (!canEditPurchaseOrder(role, order)) {
@@ -158,6 +319,18 @@ export default function PurchaseOrders() {
   const closeFormModal = () => {
     setModalOpen(false)
     resetForm()
+  }
+
+  const focusCreatedPurchaseOrder = (orderNo: string) => {
+    setSearchText(orderNo)
+    setStatusFilter('')
+    setPage(1)
+  }
+
+  const focusCancelledPurchaseOrder = (orderNo: string) => {
+    setSearchText(orderNo)
+    setStatusFilter('cancelled')
+    setPage(1)
   }
 
   const handleSave = async () => {
@@ -178,15 +351,26 @@ export default function PurchaseOrders() {
       }
       if (editingOrder) {
         await purchaseOrderApi.update(editingOrder.id, payload)
-        toast.success('采购订单已更新')
+        toast.success('采购订单已更新', {
+          description: '后续收货会按最新订单信息进入入库、库存和审计链路',
+        })
       } else {
-        await purchaseOrderApi.create(payload)
-        toast.success('采购订单创建成功')
+        const res: any = await purchaseOrderApi.create(payload)
+        const created = res?.data ?? res
+        if (created?.orderNo) {
+          setCreatedPurchaseOrderFallback(buildCreatedPurchaseOrderRecord(created, form, { materials, suppliers }))
+          focusCreatedPurchaseOrder(created.orderNo)
+        }
+        toast.success('采购订单创建成功', {
+          description: created?.orderNo
+            ? `已生成 ${created.orderNo}，后续收货会进入入库、库存、预警记录和审计链路`
+            : '后续收货会进入入库、库存、预警记录和审计链路',
+        })
       }
       closeFormModal()
       refresh()
     } catch (e) {
-      toast.error(editingOrder ? '编辑失败' : '创建失败')
+      toast.error(getPurchaseOrderErrorMessage(e, editingOrder ? '编辑失败' : '创建失败'))
     }
   }
 
@@ -200,14 +384,23 @@ export default function PurchaseOrders() {
       action: 'create',
       type: 'purchase',
       purchaseOrderId: selectedOrder.id,
+      purchaseOrderNo: selectedOrder.orderNo,
       materialId: selectedOrder.materialId,
       quantity: String(receiveQty),
+      remainingQty: String(selectedOrder.remainingQty),
       price: String(selectedOrder.unitPrice || 0),
     })
     if (selectedOrder.supplierId) params.set('supplierId', selectedOrder.supplierId)
+    if (selectedOrder.materialName) params.set('materialName', selectedOrder.materialName)
+    if (selectedOrder.supplierName) params.set('supplierName', selectedOrder.supplierName)
+    if (selectedOrder.unit) params.set('unit', selectedOrder.unit)
     setReceiveModalOpen(false)
     setSelectedOrder(null)
     navigate(`/inbound?${params.toString()}`)
+  }
+
+  const openAuditEvidence = (orderNo: string) => {
+    navigate(`/logs?keyword=${encodeURIComponent(orderNo)}`)
   }
 
   const openCancelConfirm = (order: PurchaseOrder) => {
@@ -229,13 +422,39 @@ export default function PurchaseOrders() {
     }
     try {
       await purchaseOrderApi.cancel(orderToCancel.id)
-      toast.success('订单已取消')
+      setCancelledPurchaseOrderFallback({
+        ...orderToCancel,
+        status: 'cancelled',
+        updatedAt: new Date().toISOString(),
+      })
+      focusCancelledPurchaseOrder(orderToCancel.orderNo)
+      toast.success('订单已取消', {
+        description: `${orderToCancel.orderNo} 的待入库数量已从入库候选移除；库存、批次和成本不产生回退，审计记录可按单号回看`,
+      })
       closeCancelConfirm()
       refresh()
     } catch (e) {
       toast.error('取消失败')
     }
   }
+
+  const selectedFormMaterial = materials.find(item => item.id === form.materialId)
+  const selectedFormSupplier = suppliers.find(item => item.id === form.supplierId)
+  const purchaseCreateAmount = Number(form.orderedQty || 0) * Number(form.unitPrice || 0)
+  const purchaseCreateExpectedDateText = form.expectedDate || '待补充'
+  const purchaseCreateNextStepText = form.expectedDate
+    ? '到货后进入入库收货队列'
+    : '补充预计到货后，仓库可按计划收货入库'
+  const purchaseCreateDownstreamFacts = '采购订单、入库、库存、预警记录、审计记录'
+  const purchaseReceiveDownstreamFacts = '采购订单、入库单、库存批次、库位、成本、审计记录'
+  const receiveValidationMessage = selectedOrder
+    ? receiveQty <= 0
+      ? '请输入本次实际收货数量，系统会把它带入入库单。'
+      : receiveQty > selectedOrder.remainingQty
+        ? `本次收货数量超过剩余可收货 ${selectedOrder.remainingQty}，请按实收数量修改。`
+        : ''
+    : ''
+  const canNavigateToInbound = !receiveValidationMessage
 
   return (
     <div className="space-y-6">
@@ -246,7 +465,7 @@ export default function PurchaseOrders() {
         </div>
         {canWrite && (
           <button
-            onClick={openCreateModal}
+            onClick={() => void openCreateModal()}
             className="inline-flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 text-sm font-medium transition-all duration-150"
           >
             <Plus className="w-4 h-4" />
@@ -274,6 +493,7 @@ export default function PurchaseOrders() {
               onChange={val => setStatusFilter(val)}
               options={[
                 { value: '', label: '全部状态' },
+                { value: 'pending,partial', label: '待收货/部分收货' },
                 { value: 'pending', label: '待收货' },
                 { value: 'partial', label: '部分收货' },
                 { value: 'completed', label: '已完成' },
@@ -303,16 +523,16 @@ export default function PurchaseOrders() {
                 <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">单价</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">总金额</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状态</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-[140px]">操作</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-[180px]">操作</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {loading ? (
                 <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-400">加载中...</td></tr>
-              ) : data.length === 0 ? (
+              ) : displayedData.length === 0 ? (
                 <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-400">暂无数据</td></tr>
               ) : (
-                data.map(row => {
+                displayedData.map(row => {
                   const cfg = statusConfig[row.status] || statusConfig.pending
                   const supplier = suppliers.find(s => s.id === row.supplierId)
                   return (
@@ -336,6 +556,15 @@ export default function PurchaseOrders() {
                             className="px-2 py-1 text-xs text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors duration-150"
                           >
                             详情
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`审计证据 ${row.orderNo}`}
+                            onClick={() => openAuditEvidence(row.orderNo)}
+                            className="inline-flex items-center gap-1 px-2 py-1 text-xs text-gray-600 hover:text-indigo-700 hover:bg-indigo-50 rounded transition-colors duration-150"
+                          >
+                            <FileSearch className="h-3.5 w-3.5" />
+                            证据
                           </button>
                           {canReceive && (row.status === 'pending' || row.status === 'partial') && (
                             <button
@@ -372,8 +601,8 @@ export default function PurchaseOrders() {
         </div>
 
         <div className="flex items-center justify-between px-4 py-3 border-t border-gray-200">
-          <span className="text-sm text-gray-500">共 {total} 条记录</span>
-          <Pagination page={page} pageSize={pageSize} total={total} onChangePage={setPage} onChangePageSize={setPageSize} />
+          <span className="text-sm text-gray-500">共 {displayedTotal} 条记录</span>
+          <Pagination page={page} pageSize={pageSize} total={displayedTotal} onChangePage={setPage} onChangePageSize={setPageSize} />
         </div>
       </div>
 
@@ -462,6 +691,22 @@ export default function PurchaseOrders() {
                 className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
+            {!editingOrder && form.materialId && (
+              <div className="rounded-md border border-emerald-100 bg-emerald-50 px-3 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <h4 className="text-sm font-semibold text-emerald-900">采购创建确认</h4>
+                  <div className="text-xs text-emerald-700">确认后将接住：{purchaseCreateDownstreamFacts}</div>
+                </div>
+                <div className="mt-3 grid grid-cols-1 gap-2 text-xs text-emerald-700 sm:grid-cols-2">
+                  <div>物料 {selectedFormMaterial?.name || '-'}</div>
+                  <div>供应商 {selectedFormSupplier?.name || '待选择'}</div>
+                  <div>采购数量 {form.orderedQty || 0} {form.unit || selectedFormMaterial?.unit || ''}</div>
+                  <div>预计金额 {formatCurrency(purchaseCreateAmount)}</div>
+                  <div>预计到货 {purchaseCreateExpectedDateText}</div>
+                  <div>{purchaseCreateNextStepText}</div>
+                </div>
+              </div>
+            )}
           </div>
           <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-gray-200">
             <button onClick={closeFormModal} className="px-4 h-10 text-sm text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors">取消</button>
@@ -533,6 +778,14 @@ export default function PurchaseOrders() {
             </div>
           </div>
           <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-gray-200">
+            <button
+              type="button"
+              onClick={() => openAuditEvidence(selectedOrder.orderNo)}
+              className="inline-flex h-10 items-center gap-1.5 rounded-md border border-gray-300 bg-white px-4 text-sm text-gray-600 hover:bg-gray-50 transition-colors"
+            >
+              <FileSearch className="h-4 w-4" />
+              审计证据
+            </button>
             <button onClick={() => setDetailModalOpen(false)} className="px-4 h-10 text-sm text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors">关闭</button>
           </div>
         </Modal>
@@ -557,24 +810,47 @@ export default function PurchaseOrders() {
               </div>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">本次收货数量 <span className="text-red-500">*</span></label>
+              <label htmlFor="purchase-receive-qty" className="block text-sm font-medium text-gray-700 mb-1">本次收货数量 <span className="text-red-500">*</span></label>
               <input
+                id="purchase-receive-qty"
                 type="number"
                 min={1}
                 max={selectedOrder.remainingQty}
                 value={receiveQty}
                 onChange={e => setReceiveQty(Number(e.target.value))}
+                aria-describedby="purchase-receive-qty-help"
                 className="w-full h-10 px-3 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
-              <p className="text-xs text-gray-400 mt-1">剩余可收货：{selectedOrder.remainingQty} {selectedOrder.unit}</p>
+              <p id="purchase-receive-qty-help" className="text-xs text-gray-400 mt-1">剩余可收货：{selectedOrder.remainingQty} {selectedOrder.unit}</p>
             </div>
+            {receiveValidationMessage && (
+              <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                {receiveValidationMessage}
+              </div>
+            )}
             <div className="rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-700">
               收货需要创建入库记录并填写批号、库位和有效期；确认后将跳转到入库页面，库存和采购订单收货数量会在入库成功后同步更新。
+            </div>
+            <div className="rounded-md border border-emerald-100 bg-emerald-50 px-3 py-2">
+              <div className="mb-2 text-sm font-medium text-emerald-800">入库带入确认</div>
+              <div className="mb-2 text-xs text-emerald-700">确认后将接住：{purchaseReceiveDownstreamFacts}</div>
+              <div className="grid grid-cols-1 gap-2 text-xs text-emerald-700 sm:grid-cols-2">
+                <div>物料 {selectedOrder.materialName}</div>
+                <div>供应商 {selectedOrder.supplierName || '待补充'}</div>
+                <div>本次入库 {receiveQty || 0} {selectedOrder.unit}</div>
+                <div>入库单价 ¥{Number(selectedOrder.unitPrice || 0).toFixed(2)}</div>
+              </div>
             </div>
           </div>
           <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-gray-200">
             <button onClick={() => setReceiveModalOpen(false)} className="px-4 h-10 text-sm text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors">取消</button>
-            <button onClick={handleReceive} className="px-4 h-10 text-sm text-white bg-blue-500 rounded-md hover:bg-blue-600 transition-colors">去入库</button>
+            <button
+              onClick={handleReceive}
+              disabled={!canNavigateToInbound}
+              className="px-4 h-10 text-sm text-white bg-blue-500 rounded-md hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60 transition-colors"
+            >
+              去入库
+            </button>
           </div>
         </Modal>
       )}

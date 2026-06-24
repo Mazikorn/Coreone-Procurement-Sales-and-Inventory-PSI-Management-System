@@ -1,6 +1,7 @@
 import React from 'react'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
+import { MemoryRouter, useLocation } from 'react-router-dom'
 import type { AlertItem } from '../hooks/useAlertsPage'
 import { AlertConsumptionDetailModal } from './AlertConsumptionDetailModal'
 
@@ -19,17 +20,29 @@ const stagnantAlert: AlertItem = {
   projectName: '免疫组化项目',
 }
 
-describe('AlertConsumptionDetailModal', () => {
-  it('renders actual alert facts instead of hard-coded demo metrics', () => {
-    render(
+function LocationProbe() {
+  const location = useLocation()
+  return <div data-testid="location">{location.pathname}{location.search}</div>
+}
+
+function renderConsumptionDetail(alert: AlertItem = stagnantAlert) {
+  render(
+    <MemoryRouter initialEntries={['/alerts']}>
+      <LocationProbe />
       <AlertConsumptionDetailModal
         open
-        alert={stagnantAlert}
+        alert={alert}
         onClose={vi.fn()}
         onHandle={vi.fn()}
         formatDate={(value) => value}
       />
-    )
+    </MemoryRouter>
+  )
+}
+
+describe('AlertConsumptionDetailModal', () => {
+  it('renders actual alert facts instead of hard-coded demo metrics', () => {
+    renderConsumptionDetail()
 
     expect(screen.getByText('DAB显色液')).toBeInTheDocument()
     expect(screen.getByText('免疫组化项目')).toBeInTheDocument()
@@ -41,16 +54,22 @@ describe('AlertConsumptionDetailModal', () => {
   })
 
   it('does not invent a source rule when backend did not provide one', () => {
-    render(
-      <AlertConsumptionDetailModal
-        open
-        alert={{ ...stagnantAlert, ruleId: undefined }}
-        onClose={vi.fn()}
-        onHandle={vi.fn()}
-        formatDate={(value) => value}
-      />
-    )
+    renderConsumptionDetail({ ...stagnantAlert, ruleId: undefined })
 
     expect(screen.queryByText('RULE-003')).not.toBeInTheDocument()
+  })
+
+  it('opens audit evidence for a processed consumption alert handling record', () => {
+    renderConsumptionDetail({
+      ...stagnantAlert,
+      status: 'processed',
+      handledBy: 'warehouse',
+      handledAt: '2026-06-23T10:00:00Z',
+      remark: '处理结论：标记为正常波动',
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '审计证据' }))
+
+    expect(screen.getByTestId('location')).toHaveTextContent('/logs?keyword=alert-stagnant-1')
   })
 })

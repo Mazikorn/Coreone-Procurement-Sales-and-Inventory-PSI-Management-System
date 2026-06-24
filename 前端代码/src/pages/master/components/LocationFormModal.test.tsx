@@ -63,4 +63,39 @@ describe('LocationFormModal', () => {
     expect(screen.queryByText('📦 当前子库位 (A区)')).not.toBeInTheDocument()
     expect(screen.queryByText('📦 停用库位 (A区)')).not.toBeInTheDocument()
   })
+
+  it('summarizes location result and downstream chains before saving', () => {
+    const parent = location({ id: 'parent', code: 'LOC-P', name: '父级库位', zone: 'B区' })
+    const form: FormData = {
+      ...baseForm,
+      name: '当前库位',
+      parentId: 'parent',
+      levelData: ['B区', '02架', '03位'],
+      capacity: 200,
+    }
+
+    render(
+      <LocationFormModal
+        open
+        type="create"
+        form={form}
+        editingId={null}
+        data={[parent]}
+        flatLocations={new Map([[parent.id, parent]])}
+        levelConfigs={{ shelf: ['库区', '货架', '库位'] }}
+        onClose={vi.fn()}
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('库位结果确认')).toBeInTheDocument()
+    expect(screen.getByText('确认后将接住：入库、库存、批次、调拨、盘点、预警、审计记录')).toBeInTheDocument()
+    expect(screen.getByText('库位 当前库位')).toBeInTheDocument()
+    expect(screen.getByText('类型 货架')).toBeInTheDocument()
+    expect(screen.getByText('上级库位 父级库位')).toBeInTheDocument()
+    expect(screen.getByText('层级路径 B区 / 02架 / 03位')).toBeInTheDocument()
+    expect(screen.getByText('容量 200')).toBeInTheDocument()
+    expect(screen.getByText('状态 启用')).toBeInTheDocument()
+  })
 })

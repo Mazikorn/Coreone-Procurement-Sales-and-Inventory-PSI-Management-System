@@ -153,6 +153,18 @@ describe('useLogsPage', () => {
     })))
   })
 
+  it('uses URL keyword to open a filtered unified audit timeline from business evidence links', async () => {
+    window.history.replaceState(null, '', '/logs?keyword=IN-DEEP-001')
+
+    renderHook(() => useLogsPage())
+
+    await waitFor(() => expect(logsApi.getUnifiedList).toHaveBeenCalledWith(expect.objectContaining({
+      page: 1,
+      pageSize: 20,
+      keyword: 'IN-DEEP-001',
+    })))
+  })
+
   it('loads recent archive credentials so administrators can review cleanup evidence after the toast disappears', async () => {
     const { result } = renderHook(() => useLogsPage())
 

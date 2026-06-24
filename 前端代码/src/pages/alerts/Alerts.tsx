@@ -65,6 +65,7 @@ export default function Alerts() {
         quickFilter={page.quickFilter}
         selectedIds={page.selectedIds}
         canHandle={page.canHandle}
+        canCreatePurchaseOrders={page.canCreatePurchaseOrders}
         onFilterChange={(filter) => { page.setFilter(filter); page.setPage(1) }}
         onQuickFilterChange={(v) => { page.setQuickFilter(v); page.setPage(1) }}
         onResetFilters={page.resetFilters}
@@ -111,6 +112,7 @@ export default function Alerts() {
         alert={page.modal.alert}
         onClose={page.closeModal}
         canHandle={page.canHandle}
+        canCreatePurchaseOrders={page.canCreatePurchaseOrders}
         onHandle={() => {
           if (page.modal.alert) page.openModal('handle', page.modal.alert)
         }}

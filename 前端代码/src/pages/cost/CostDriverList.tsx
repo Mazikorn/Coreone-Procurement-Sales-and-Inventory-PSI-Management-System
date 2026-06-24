@@ -115,11 +115,11 @@ export function CostDriverList() {
     loadCostDrivers()
   }, [])
 
-  const loadCostDrivers = async () => {
+  const loadCostDrivers = async (keywordOverride = searchKeyword) => {
     try {
       setLoading(true)
       const params = new URLSearchParams()
-      const keyword = searchKeyword.trim()
+      const keyword = keywordOverride.trim()
       if (keyword) params.set('keyword', keyword)
       const url = `/api/v1/abc/cost-drivers${params.toString() ? `?${params.toString()}` : ''}`
       const response = await fetch(url, {
@@ -242,9 +242,17 @@ export function CostDriverList() {
 
       const data = await response.json()
       if (data.success) {
+        const nextKeyword = editingDriver
+          ? searchKeyword
+          : String(data.data?.code || payload.code || '').trim()
         toast.success(editingDriver ? '更新成功' : '创建成功')
         setShowDialog(false)
-        loadCostDrivers()
+        if (!editingDriver && nextKeyword) {
+          setSearchKeyword(nextKeyword)
+          await loadCostDrivers(nextKeyword)
+        } else {
+          await loadCostDrivers()
+        }
       } else {
         toast.error(data.error?.message || '操作失败')
       }
@@ -293,6 +301,13 @@ export function CostDriverList() {
     formatTierRulesForDisplay(driver.tierRules, driver.unit).includes(searchKeyword) ||
     driver.description?.includes(searchKeyword)
   )
+  const selectedCalculationMethodLabel =
+    CALCULATION_METHODS.find(method => method.value === formData.calculationMethod)?.label || formData.calculationMethod
+  const tierRulesPreview = (() => {
+    if (formData.calculationMethod !== 'tiered') return '不适用'
+    const normalized = normalizeTierRulesForSubmit(formData.tierRules, formData.unit.trim())
+    return normalized.ok ? formatTierRulesForDisplay(normalized.tierRules, formData.unit.trim()) : '阶梯口径待补齐'
+  })()
 
   return (
     <div className="p-6 space-y-6">
@@ -450,6 +465,20 @@ export function CostDriverList() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">描述</label>
               <textarea value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })} placeholder="成本动因的详细描述" rows={3} className="w-full px-3 py-2 border border-gray-200 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500" />
+            </div>
+            <div className="rounded-md border border-emerald-100 bg-emerald-50 px-3 py-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm font-semibold text-emerald-900">成本动因结果确认</div>
+                <div className="text-xs text-emerald-700">确认后将接住：成本动因、作业中心、成本池、动因费率、项目成本、审计记录</div>
+              </div>
+              <div className="mt-3 grid grid-cols-1 gap-2 text-xs text-emerald-700 sm:grid-cols-2">
+                <div>代码 {formData.code.trim() || '-'}</div>
+                <div>名称 {formData.name.trim() || '-'}</div>
+                <div>单位 {formData.unit.trim() || '-'}</div>
+                <div>计算方法 {selectedCalculationMethodLabel}</div>
+                <div>状态 {formData.status === 'active' ? '启用' : '禁用'}</div>
+                <div>阶梯口径 {tierRulesPreview}</div>
+              </div>
             </div>
           </div>
           <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-gray-200">

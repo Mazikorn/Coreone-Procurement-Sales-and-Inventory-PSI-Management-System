@@ -225,6 +225,42 @@ function buildPayload(form: BOMForm): any {
   }
 }
 
+function countBomMaterials(form: BOMForm) {
+  return form.materials.length
+    + form.generalReagents.length
+    + form.generalConsumables.length
+    + form.qualityControls.length
+}
+
+function buildLocalBomFromForm(form: BOMForm, saved: Partial<BOM> | null, status: 'active' | 'inactive'): BOM {
+  const now = new Date().toISOString()
+  return {
+    id: saved?.id || `local-${Date.now()}`,
+    code: saved?.code || form.code.trim(),
+    name: saved?.name || form.name.trim(),
+    version: saved?.version || form.version,
+    type: saved?.type || form.type,
+    serviceId: saved?.serviceId ?? (form.serviceId.trim() || undefined),
+    serviceName: saved?.serviceName,
+    description: saved?.description ?? form.description.trim(),
+    materialCount: saved?.materialCount ?? countBomMaterials(form),
+    supportableSamples: saved?.supportableSamples,
+    unitCost: saved?.unitCost ?? 0,
+    feeStandardId: (saved?.feeStandardId ?? form.feeStandardId) || undefined,
+    feeCategory: (saved?.feeCategory ?? form.feeCategory) || undefined,
+    status,
+    isDeleted: saved?.isDeleted,
+    materials: saved?.materials || form.materials,
+    generalReagents: saved?.generalReagents || form.generalReagents,
+    generalConsumables: saved?.generalConsumables || form.generalConsumables,
+    qualityControls: saved?.qualityControls || form.qualityControls,
+    equipmentTemplates: saved?.equipmentTemplates,
+    versionHistory: saved?.versionHistory || [],
+    createdAt: saved?.createdAt || now,
+    updatedAt: saved?.updatedAt || now,
+  }
+}
+
 function canManageBom() {
   const role = getUserRole()
   if (['admin', 'technician'].includes(role || '')) {
@@ -303,6 +339,50 @@ export function useBOMPage() {
     deps: [keyword, filterType, effectiveStatus, lowSupportOnly, includeDeleted],
   })
 
+  const [localBomPatches, setLocalBomPatches] = useState<Record<string, Partial<BOM>>>({})
+  const [localCreatedBom, setLocalCreatedBom] = useState<BOM | null>(null)
+
+  const bomMatchesCurrentFilters = useCallback((bom: BOM) => {
+    if (!includeDeleted && bom.isDeleted) return false
+    if (filterType && bom.type !== filterType) return false
+    if (effectiveStatus && bom.status !== effectiveStatus) return false
+    if (lowSupportOnly && !(bom.supportableSamples !== undefined && bom.supportableSamples !== null && bom.supportableSamples < 30)) {
+      return false
+    }
+
+    const keywordText = keyword.trim().toLowerCase()
+    if (!keywordText) return true
+    return [
+      bom.id,
+      bom.code,
+      bom.name,
+      bom.type,
+      bom.serviceName,
+      bom.description,
+    ].some(value => String(value || '').toLowerCase().includes(keywordText))
+  }, [effectiveStatus, filterType, includeDeleted, keyword, lowSupportOnly])
+
+  const displayData = useMemo(() => {
+    const patched = data
+      .map(bom => ({
+        ...bom,
+        ...(localBomPatches[bom.id] || {}),
+      }))
+      .filter(bom => !localBomPatches[bom.id] || bomMatchesCurrentFilters(bom))
+
+    if (
+      localCreatedBom &&
+      bomMatchesCurrentFilters(localCreatedBom) &&
+      !patched.some(bom => bom.id === localCreatedBom.id)
+    ) {
+      return [localCreatedBom, ...patched]
+    }
+
+    return patched
+  }, [bomMatchesCurrentFilters, data, localBomPatches, localCreatedBom])
+
+  const displayTotal = Math.max(0, total - (data.length - displayData.length))
+
   const fetchRefs = useCallback(async () => {
     try {
       const [materialsRes, projectsRes, bomsRes] = await Promise.all([
@@ -329,7 +409,7 @@ export function useBOMPage() {
     lowSupport: allBoms.filter(item => item.supportableSamples !== undefined && item.supportableSamples !== null && item.supportableSamples < 30).length,
   }), [allBoms])
 
-  const isAllSelected = data.length > 0 && data.every(item => selectedIds.has(item.id))
+  const isAllSelected = displayData.length > 0 && displayData.every(item => selectedIds.has(item.id))
   const isIndeterminate = selectedIds.size > 0 && !isAllSelected
 
   const resetForm = () => setForm(emptyForm)
@@ -436,6 +516,15 @@ export function useBOMPage() {
     fetchRefs()
   }
 
+  const focusBomList = (keyword: string) => {
+    setSearchInput(keyword)
+    setKeyword(keyword)
+    setFilterType('')
+    setFilterStatus('')
+    setQuickFilter('all')
+    setPage(1)
+  }
+
   const handleSubmit = async () => {
     if (!canWrite) {
       toast.error('当前角色只能查看BOM')
@@ -481,12 +570,31 @@ export function useBOMPage() {
           toast.info('没有需要保存的变更')
           return
         }
+        setLocalBomPatches(prev => ({
+          ...prev,
+          [editingId]: {
+            code: selectedBom?.code || form.code.trim(),
+            name: form.name.trim(),
+            type: form.type,
+            serviceId: form.serviceId.trim() || undefined,
+            description: form.description.trim(),
+            status: form.status,
+            materialCount: countBomMaterials(form),
+            materials: form.materials,
+            generalReagents: form.generalReagents,
+            generalConsumables: form.generalConsumables,
+            qualityControls: form.qualityControls,
+          },
+        }))
         toast.success('BOM已更新')
       } else {
         const created = await bomApi.create(payload)
         if (form.status === 'inactive' && created?.id) {
           await bomApi.updateStatus(created.id, 'inactive')
         }
+        const createdKeyword = created?.code || form.code || form.name
+        setLocalCreatedBom(buildLocalBomFromForm(form, created || null, form.status))
+        focusBomList(createdKeyword)
         toast.success('BOM已创建')
       }
       closeModal()
@@ -531,7 +639,7 @@ export function useBOMPage() {
       toast.error('当前角色只能查看BOM')
       return
     }
-    const targets = data.filter(item => selectedIds.has(item.id))
+    const targets = displayData.filter(item => selectedIds.has(item.id))
     if (targets.length === 0) return
     setBatchAction(action)
     setBatchTargets(targets)
@@ -580,6 +688,16 @@ export function useBOMPage() {
         toast.success(`已删除 ${ids.length} 个BOM`)
       } else {
         await bomApi.batchStatus(ids, batchAction)
+        setLocalBomPatches(prev => {
+          const next = { ...prev }
+          ids.forEach(id => {
+            next[id] = {
+              ...(next[id] || {}),
+              status: batchAction,
+            }
+          })
+          return next
+        })
         toast.success(batchAction === 'active' ? 'BOM已启用' : 'BOM已停用')
       }
       setSelectedIds(new Set())
@@ -609,9 +727,10 @@ export function useBOMPage() {
     setSubmitting(true)
     try {
       const payload = buildPayload(toForm(selectedBom))
+      const copiedCode = `${selectedBom.code}-COPY-${Date.now().toString().slice(-4)}`
       const created = await bomApi.create({
         ...payload,
-        code: `${selectedBom.code}-COPY-${Date.now().toString().slice(-4)}`,
+        code: copiedCode,
         name: copyForm.name.trim(),
         description: copyForm.copyInfo ? payload.description : undefined,
         serviceId: undefined,
@@ -623,6 +742,18 @@ export function useBOMPage() {
       if (selectedBom.status === 'inactive' && created?.id) {
         await bomApi.updateStatus(created.id, 'inactive')
       }
+      setLocalCreatedBom(buildLocalBomFromForm({
+        ...toForm(selectedBom),
+        code: copiedCode,
+        name: copyForm.name.trim(),
+        serviceId: '',
+        description: copyForm.copyInfo ? selectedBom.description || '' : '',
+        materials: copyForm.copyMaterials ? selectedBom.materials || [] : [],
+        generalReagents: copyForm.copyMaterials ? selectedBom.generalReagents || [] : [],
+        generalConsumables: copyForm.copyMaterials ? selectedBom.generalConsumables || [] : [],
+        qualityControls: copyForm.copyMaterials ? selectedBom.qualityControls || [] : [],
+      }, created || null, selectedBom.status))
+      focusBomList(created?.code || copiedCode || copyForm.name.trim())
       toast.success('BOM已复制')
       closeModal()
       reload()
@@ -652,6 +783,13 @@ export function useBOMPage() {
         return
       }
       await bomApi.batchStatus(ids, status)
+      setLocalBomPatches(prev => ({
+        ...prev,
+        [targetId]: {
+          ...(prev[targetId] || {}),
+          status,
+        },
+      }))
       toast.success(status === 'active' ? 'BOM已启用' : 'BOM已停用')
       setSelectedIds(new Set())
       reload()
@@ -664,7 +802,7 @@ export function useBOMPage() {
 
   const getExportRows = async () => {
     if (exportForm.range === 'selected') {
-      const byId = new Map([...allBoms, ...data].map(item => [item.id, item]))
+      const byId = new Map([...allBoms, ...displayData].map(item => [item.id, item]))
       return Array.from(selectedIds).map(id => byId.get(id)).filter((item): item is BOM => Boolean(item))
     }
     if (exportForm.range === 'all') {
@@ -816,10 +954,10 @@ export function useBOMPage() {
   }
 
   return {
-    data,
+    data: displayData,
     canWrite,
     loading: loading || submitting,
-    total,
+    total: displayTotal,
     page,
     pageSize,
     setPage,
@@ -876,7 +1014,7 @@ export function useBOMPage() {
       setPage(1)
     },
     toggleSelectAll: () => {
-      setSelectedIds(isAllSelected ? new Set() : new Set(data.map(item => item.id)))
+      setSelectedIds(isAllSelected ? new Set() : new Set(displayData.map(item => item.id)))
     },
     toggleSelectRow: (id: string) => {
       setSelectedIds(prev => {

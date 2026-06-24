@@ -13,6 +13,12 @@ interface Props {
 export function LogDetailModal({ open, log, getLogType, getModuleLabel, onClose }: Props) {
   if (!open || !log) return null
 
+  const evidenceBusinessId = log.businessId || log.auditEvent?.businessId || log.auditEvent?.subjectId || ''
+  const evidenceBusinessUrl = log.businessUrl || log.auditEvent?.businessUrl || ''
+  const evidenceTimelineUrl = evidenceBusinessId
+    ? `/logs?keyword=${encodeURIComponent(evidenceBusinessId)}`
+    : ''
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
       onClick={e => { if (e.target === e.currentTarget) onClose() }}
@@ -63,6 +69,31 @@ export function LogDetailModal({ open, log, getLogType, getModuleLabel, onClose 
               )}
             </div>
           </div>
+
+          {evidenceBusinessId && (
+            <div className="mb-6 rounded-lg border border-blue-100 bg-blue-50 p-4">
+              <h4 className="text-sm font-semibold text-blue-950">业务证据回看</h4>
+              <p className="mt-1 text-sm text-blue-800">
+                先回业务单据核对原始事实，再按同一业务标识查看完整审计时间线。
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {evidenceBusinessUrl && (
+                  <a
+                    href={evidenceBusinessUrl}
+                    className="inline-flex h-8 items-center rounded-md border border-blue-200 bg-white px-3 text-xs font-medium text-blue-700 hover:bg-blue-50"
+                  >
+                    回到业务单据
+                  </a>
+                )}
+                <a
+                  href={evidenceTimelineUrl}
+                  className="inline-flex h-8 items-center rounded-md border border-blue-200 bg-white px-3 text-xs font-medium text-blue-700 hover:bg-blue-50"
+                >
+                  查看同一单据审计时间线
+                </a>
+              </div>
+            </div>
+          )}
 
           {log.auditEvent && (
             <div className="mb-6">

@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from 'react'
-import { ArrowRightLeft, RotateCcw, Search, Trash2 } from 'lucide-react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { ArrowRightLeft, FileSearch, RotateCcw, Search, Trash2 } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import { usePagination } from '@/hooks/usePagination'
 import { Pagination } from '@/components/ui/Pagination'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
@@ -18,6 +19,40 @@ export interface TransferFormState {
   fromLocationId: string
   toLocationId: string
   remark: string
+}
+
+interface TransferRefs {
+  materials: Material[]
+  locations: Location[]
+}
+
+function buildCreatedTransferRecord(
+  payload: Partial<TransferRecord>,
+  form: TransferFormState,
+  refs: TransferRefs,
+): TransferRecord | null {
+  if (!payload.id || !payload.inboundNo) return null
+
+  const material = refs.materials.find(item => item.id === (payload.materialId || form.materialId))
+  const fromLocation = refs.locations.find(item => item.id === (payload.fromLocationId || form.fromLocationId))
+  const toLocation = refs.locations.find(item => item.id === (payload.toLocationId || form.toLocationId))
+
+  return {
+    id: payload.id,
+    inboundNo: payload.inboundNo,
+    materialId: payload.materialId || form.materialId,
+    materialName: payload.materialName || material?.name,
+    batchNo: payload.batchNo || form.batchNo || undefined,
+    quantity: Number(payload.quantity ?? form.quantity),
+    fromLocationId: payload.fromLocationId || form.fromLocationId || undefined,
+    fromLocationName: payload.fromLocationName || fromLocation?.name,
+    toLocationId: payload.toLocationId || form.toLocationId,
+    toLocationName: payload.toLocationName || toLocation?.name,
+    operator: payload.operator || 'system',
+    status: payload.status || 'completed',
+    remark: (payload.remark ?? form.remark) || undefined,
+    createdAt: payload.createdAt || new Date().toISOString(),
+  }
 }
 
 export function validateTransferForm(
@@ -48,7 +83,11 @@ export function validateTransferForm(
     }
   }
 
-  const stockLimit = sourceLocationStock ?? selectedMaterial.stock
+  if (sourceLocationStock === null) {
+    return '来源库位库存暂未确认，请重新选择来源库位或刷新后再调拨'
+  }
+
+  const stockLimit = sourceLocationStock
   if (form.quantity > stockLimit) {
     return `调拨数量不能超过来源库位可用库存 ${stockLimit} ${selectedMaterial.unit}`
   }
@@ -60,6 +99,7 @@ export function validateTransferForm(
 }
 
 export default function Transfers() {
+  const navigate = useNavigate()
   const initialKeyword = new URLSearchParams(window.location.search).get('keyword') || ''
   const [materials, setMaterials] = useState<Material[]>([])
   const [locations, setLocations] = useState<Location[]>([])
@@ -68,10 +108,13 @@ export default function Transfers() {
   const [modalOpen, setModalOpen] = useState(false)
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [recordToDelete, setRecordToDelete] = useState<TransferRecord | null>(null)
+  const [createdTransferFallback, setCreatedTransferFallback] = useState<TransferRecord | null>(null)
+  const [cancelledTransferIds, setCancelledTransferIds] = useState<string[]>([])
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [sourceLocationStock, setSourceLocationStock] = useState<number | null>(null)
   const [sourceStockLoading, setSourceStockLoading] = useState(false)
   const [materialBatches, setMaterialBatches] = useState<Batch[]>([])
+  const createDraftHandledRef = useRef(false)
   const [form, setForm] = useState<TransferFormState>({
     materialId: '',
     batchNo: '',
@@ -93,6 +136,25 @@ export default function Transfers() {
   }
 
   useEffect(() => { fetchRefs() }, [])
+
+  useEffect(() => {
+    if (createDraftHandledRef.current) return
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('action') !== 'create') return
+
+    createDraftHandledRef.current = true
+    const quantity = Number(params.get('quantity') || 1)
+    setForm(prev => ({
+      ...prev,
+      materialId: params.get('materialId') || prev.materialId,
+      batchNo: params.get('batchNo') || prev.batchNo,
+      quantity: Number.isFinite(quantity) && quantity > 0 ? quantity : prev.quantity,
+      fromLocationId: params.get('fromLocationId') || prev.fromLocationId,
+      toLocationId: params.get('toLocationId') || prev.toLocationId,
+      remark: params.get('remark') || prev.remark,
+    }))
+    setModalOpen(true)
+  }, [])
 
   const fetchFn = useCallback(
     async ({ page, pageSize }: { page: number; pageSize: number }) => {
@@ -122,6 +184,32 @@ export default function Transfers() {
 
   const selectedMaterial = materials.find(m => m.id === form.materialId)
   const locationNameById = new Map(locations.map(location => [location.id, location.name]))
+
+  const { displayedData, displayedTotal } = useMemo(() => {
+    let rows = data
+    let nextTotal = total
+
+    if (cancelledTransferIds.length > 0) {
+      const filteredRows = rows.filter(row => !cancelledTransferIds.includes(row.id))
+      if (filteredRows.length !== rows.length) {
+        nextTotal = Math.max(0, nextTotal - (rows.length - filteredRows.length))
+        rows = filteredRows
+      }
+    }
+
+    if (
+      createdTransferFallback
+      && !cancelledTransferIds.includes(createdTransferFallback.id)
+      && keyword === createdTransferFallback.inboundNo
+      && page === 1
+      && !rows.some(row => row.id === createdTransferFallback.id || row.inboundNo === createdTransferFallback.inboundNo)
+    ) {
+      rows = [createdTransferFallback, ...rows]
+      nextTotal = Math.max(nextTotal + 1, rows.length)
+    }
+
+    return { displayedData: rows, displayedTotal: nextTotal }
+  }, [cancelledTransferIds, createdTransferFallback, data, keyword, page, total])
 
   const handleMaterialChange = (materialId: string) => {
     const nextMaterial = materials.find(m => m.id === materialId)
@@ -212,8 +300,17 @@ export default function Transfers() {
     }
     setIsSubmitting(true)
     try {
-      await transferApi.createInbound(form)
-      toast.success('调拨入库登记成功')
+      const submittedForm = { ...form }
+      const createdTransfer = await transferApi.createInbound(submittedForm)
+      if (createdTransfer?.inboundNo) {
+        setCreatedTransferFallback(buildCreatedTransferRecord(createdTransfer, submittedForm, { materials, locations }))
+        focusCreatedTransfer(createdTransfer.inboundNo)
+      }
+      toast.success('调拨入库登记成功', {
+        description: createdTransfer?.inboundNo
+          ? `已生成 ${createdTransfer.inboundNo}，来源库位、目标库位、批次、库存流水和审计链路可按单号回看`
+          : '来源库位、目标库位、批次、库存流水和审计链路可回看',
+      })
       setModalOpen(false)
       setForm({ materialId: '', batchNo: '', quantity: 1, fromLocationId: '', toLocationId: '', remark: '' })
       setMaterialBatches([])
@@ -236,6 +333,12 @@ export default function Transfers() {
     setPage(1)
   }
 
+  const focusCreatedTransfer = (inboundNo: string) => {
+    setKeywordInput(inboundNo)
+    setKeyword(inboundNo)
+    setPage(1)
+  }
+
   const openDelete = (row: TransferRecord) => {
     setRecordToDelete(row)
     setDeleteConfirmOpen(true)
@@ -245,6 +348,7 @@ export default function Transfers() {
     if (!recordToDelete) return
     try {
       await transferApi.delete(recordToDelete.id)
+      setCancelledTransferIds(prev => prev.includes(recordToDelete.id) ? prev : [...prev, recordToDelete.id])
       toast.success('调拨记录已撤销')
       setDeleteConfirmOpen(false)
       setRecordToDelete(null)
@@ -254,7 +358,45 @@ export default function Transfers() {
     }
   }
 
+  const openAuditEvidence = (inboundNo: string) => {
+    navigate(`/logs?keyword=${encodeURIComponent(inboundNo)}`)
+  }
+
   const sourceStockLimit = sourceLocationStock ?? selectedMaterial?.stock
+  const selectedBatch = materialBatches.find(batch => batch.batchNo === form.batchNo)
+  const fromLocation = locations.find(location => location.id === form.fromLocationId)
+  const toLocation = locations.find(location => location.id === form.toLocationId)
+  const transferUnit = selectedMaterial?.unit || ''
+  const transferQuantityText = `${form.quantity || 0} ${transferUnit}`.trim()
+  const showTransferPreview = Boolean(
+    selectedMaterial &&
+    form.quantity > 0 &&
+    form.fromLocationId &&
+    form.toLocationId &&
+    form.fromLocationId !== form.toLocationId
+  )
+  const downstreamFacts = '库存、批次、库位、库存流水、审计记录'
+  const transferValidationMessage = (() => {
+    const validationError = validateTransferForm(form, selectedMaterial, sourceLocationStock, materialBatches)
+    if (!validationError) return ''
+    if (validationError.startsWith('调拨数量不能超过所选批次剩余量')) {
+      return `${validationError}，请按实际可调拨数量修改。`
+    }
+    if (validationError.startsWith('调拨数量不能超过来源库位可用库存')) {
+      return `${validationError}，请调整数量或来源库位。`
+    }
+    if (validationError === '请选择调拨批次') {
+      return '请选择调拨批次，系统才能扣减正确批次并保留库存流水。'
+    }
+    if (validationError === '来源库位库存暂未确认，请重新选择来源库位或刷新后再调拨') {
+      return '来源库位库存暂未确认，系统需要确认来源库位余额后才能调拨。'
+    }
+    if (validationError === '请填写物料、数量、来源库位和目标库位') {
+      return '请先选择物料、数量、来源库位和目标库位。'
+    }
+    return validationError
+  })()
+  const canConfirmTransfer = !isSubmitting && !sourceStockLoading && !transferValidationMessage
 
   return (
     <div className="space-y-6">
@@ -323,12 +465,12 @@ export default function Transfers() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {loading ? (
+              {loading && displayedData.length === 0 ? (
                 <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-400">加载中...</td></tr>
-              ) : data.length === 0 ? (
+              ) : displayedData.length === 0 ? (
                 <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-400">暂无数据</td></tr>
               ) : (
-                data.map(row => {
+                displayedData.map(row => {
                   const mat = materials.find(m => m.id === row.materialId)
                   const sourceLocationName = row.fromLocationName || (row.fromLocationId ? locationNameById.get(row.fromLocationId) : '') || '-'
                   const targetLocationName = row.toLocationName || (row.toLocationId ? locationNameById.get(row.toLocationId) : '') || row.toLocationId
@@ -347,13 +489,24 @@ export default function Transfers() {
                       <td className="px-4 py-3 text-gray-500">{formatDate(row.createdAt)}</td>
                       <td className="px-4 py-3 text-gray-500">{row.remark || '-'}</td>
                       <td className="px-4 py-3">
-                        <button
-                          onClick={() => openDelete(row)}
-                          className="text-gray-400 hover:text-red-600 transition-colors"
-                          title="撤销"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        <div className="inline-flex items-center gap-2">
+                          <button
+                            type="button"
+                            aria-label={`审计证据 ${row.inboundNo}`}
+                            onClick={() => openAuditEvidence(row.inboundNo)}
+                            className="text-gray-400 hover:text-indigo-600 transition-colors"
+                            title="审计证据"
+                          >
+                            <FileSearch className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => openDelete(row)}
+                            className="text-gray-400 hover:text-red-600 transition-colors"
+                            title="撤销"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   )
@@ -364,8 +517,8 @@ export default function Transfers() {
         </div>
 
         <div className="flex items-center justify-between px-4 py-3 border-t border-gray-200">
-          <span className="text-sm text-gray-500">共 {total} 条记录</span>
-          <Pagination page={page} pageSize={pageSize} total={total} onChangePage={setPage} onChangePageSize={setPageSize} />
+          <span className="text-sm text-gray-500">共 {displayedTotal} 条记录</span>
+          <Pagination page={page} pageSize={pageSize} total={displayedTotal} onChangePage={setPage} onChangePageSize={setPageSize} />
         </div>
       </div>
 
@@ -456,6 +609,41 @@ export default function Transfers() {
                 />
               </div>
             </div>
+            {showTransferPreview && (
+              <div className="border border-gray-200 rounded-lg overflow-hidden">
+                <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
+                  <h4 className="text-sm font-semibold text-gray-900">调拨结果确认</h4>
+                  <div className="text-xs text-gray-500 mt-0.5">确认后将接住：{downstreamFacts}</div>
+                </div>
+                <div className="p-4 grid grid-cols-2 md:grid-cols-4 gap-4">
+                  {[
+                    { label: '物料', value: selectedMaterial?.name || '-' },
+                    { label: '批次', value: selectedBatch?.batchNo || form.batchNo || '-' },
+                    { label: '来源库位', value: fromLocation?.name || form.fromLocationId || '-' },
+                    { label: '目标库位', value: toLocation?.name || form.toLocationId || '-' },
+                    { label: '调拨数量', value: transferQuantityText || '-' },
+                    { label: '来源动作', value: `来源调出 ${transferQuantityText}` },
+                    { label: '目标动作', value: `目标调入 ${transferQuantityText}` },
+                    {
+                      label: '来源余量',
+                      value: sourceLocationStock === null
+                        ? '待确认'
+                        : `${Math.max(0, sourceLocationStock - form.quantity)} ${transferUnit}`.trim(),
+                    },
+                  ].map(item => (
+                    <div key={item.label} className="min-w-0">
+                      <div className="text-xs text-gray-500 mb-1">{item.label}</div>
+                      <div className="text-sm font-medium text-gray-900 truncate">{item.value}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {transferValidationMessage && (
+              <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                {transferValidationMessage}
+              </div>
+            )}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">备注</label>
               <textarea
@@ -469,7 +657,7 @@ export default function Transfers() {
           </div>
           <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-gray-200">
             <button onClick={() => setModalOpen(false)} className="px-4 h-10 text-sm text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors">取消</button>
-            <button data-testid="transfer-confirm-btn" onClick={handleCreate} disabled={isSubmitting || sourceStockLoading} className="px-4 h-10 text-sm text-white bg-blue-500 rounded-md hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">{isSubmitting ? '提交中...' : '确认调拨'}</button>
+            <button data-testid="transfer-confirm-btn" onClick={handleCreate} disabled={!canConfirmTransfer} className="px-4 h-10 text-sm text-white bg-blue-500 rounded-md hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">{isSubmitting ? '提交中...' : '确认调拨'}</button>
           </div>
         </Modal>
       )}
@@ -478,7 +666,7 @@ export default function Transfers() {
       <ConfirmDialog
         open={deleteConfirmOpen && !!recordToDelete}
         title="确认撤销"
-        description={`确定要撤销调拨记录 ${recordToDelete?.inboundNo} 吗？撤销后库存将自动回滚。`}
+        description={`确定要撤销调拨记录 ${recordToDelete?.inboundNo} 吗？撤销后不会改变物料总库存，目标库位将调回来源库位，同步回滚批次库位余量，并写入库存流水和审计记录。`}
         confirmText="确认撤销"
         confirmVariant="danger"
         onConfirm={handleDelete}

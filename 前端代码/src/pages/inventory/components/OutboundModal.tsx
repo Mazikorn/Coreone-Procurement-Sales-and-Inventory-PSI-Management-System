@@ -1,3 +1,4 @@
+import React from 'react'
 import { X, Trash2, Plus } from 'lucide-react'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { Project } from '@/types'
@@ -55,6 +56,21 @@ export function OutboundModal({
 }: Props) {
   if (!open) return null
 
+  const selectedProjects = Array.from(new Set(materials.map(item => item.project).filter(Boolean)))
+  const selectedProject = selectedProjects.length === 1
+    ? projectList.find(project => project.id === selectedProjects[0])
+    : undefined
+  const projectSummary = selectedProjects.length > 1
+    ? '待拆分为单项目出库'
+    : selectedProject?.name || '待选择'
+  const outboundLines = materials.map(item => {
+    const target = item.usage === 'external' ? item.receiver.trim() : item.user.trim()
+    return `${item.name}${item.batch ? ` / ${item.batch}` : ''} -${item.quantity || 0}${item.unit}${target ? ` -> ${target}` : ''}`
+  })
+  const downstreamFacts = '库存、批次、项目成本、项目消耗对账、审计记录'
+  const unavailableBatchRows = materials.filter(item => Number(item.stock || 0) <= 0)
+  const hasUnavailableBatchRows = unavailableBatchRows.length > 0
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/[0.6]"
@@ -101,7 +117,7 @@ export function OutboundModal({
                   <thead>
                     <tr>
                       <th className="bg-gray-50 px-4 py-3 text-left text-xs font-medium text-gray-700 tracking-wide border-b border-gray-200">物料名称</th>
-                      <th className="bg-gray-50 px-4 py-3 text-left text-xs font-medium text-gray-700 tracking-wide border-b border-gray-200">关联项目</th>
+                      <th className="bg-gray-50 px-4 py-3 text-left text-xs font-medium text-gray-700 tracking-wide border-b border-gray-200">关联项目 *</th>
                       <th className="bg-gray-50 px-4 py-3 text-left text-xs font-medium text-gray-700 tracking-wide border-b border-gray-200">批次号</th>
                       <th className="bg-gray-50 px-4 py-3 text-left text-xs font-medium text-gray-700 tracking-wide border-b border-gray-200">库存</th>
                       <th className="bg-gray-50 px-4 py-3 text-left text-xs font-medium text-gray-700 tracking-wide border-b border-gray-200 w-[90px]">出库数量</th>
@@ -123,18 +139,26 @@ export function OutboundModal({
                             value={m.project}
                             onChange={val => onUpdateProject(m.rowId, val)}
                             options={[
-                              { value: '', label: '公共成本' },
+                              { value: '', label: '选择检测项目' },
                               ...projectList.map(p => ({
-                                value: p.name,
-                                label: p.name,
+                                value: p.id,
+                                label: p.code ? `${p.name} (${p.code})` : p.name,
                               })),
                             ]}
-                            placeholder="公共成本"
+                            placeholder="选择检测项目"
                             className="w-36"
+                            testId={`outbound-project-${m.rowId}`}
                           />
                         </td>
-                        <td className="px-4 py-3 text-gray-600">{m.batch || '-'}</td>
-                        <td className="px-4 py-3 text-gray-900">{m.stock}</td>
+                        <td className="px-4 py-3 text-gray-600">{m.batch || '无可用批次'}</td>
+                        <td className="px-4 py-3">
+                          <div className="text-gray-900">{m.stock}</div>
+                          {Number(m.stock || 0) <= 0 && (
+                            <div className="mt-1 text-xs text-red-600">
+                              {m.name}没有可扣减批次，不能直接出库
+                            </div>
+                          )}
+                        </td>
                         <td className="px-4 py-3">
                           <input
                             data-testid={`outbound-quantity-${m.rowId}`}
@@ -200,6 +224,31 @@ export function OutboundModal({
             )}
           </div>
 
+          {hasUnavailableBatchRows && (
+            <div className="mb-5 rounded-md border border-red-200 bg-red-50 px-4 py-3">
+              <div className="text-sm font-semibold text-red-900">快捷出库缺少可扣减批次</div>
+              <div className="mt-1 text-sm text-red-800">
+                下一步：先补入库或调拨可用批次，再回到库存列表出库。
+              </div>
+              <div className="mt-1 text-sm text-red-800">
+                系统会保留已选物料、项目和领用信息，避免重新登记。
+              </div>
+            </div>
+          )}
+
+          {materials.length > 0 && (
+            <div className="rounded-md border border-emerald-100 bg-emerald-50 px-4 py-3">
+              <div className="mb-2 text-sm font-medium text-emerald-800">出库结果确认</div>
+              <div className="space-y-1.5 text-xs text-emerald-700">
+                <div>关联项目 {projectSummary}</div>
+                <div>确认后将接住：{downstreamFacts}</div>
+                {outboundLines.map((line, index) => (
+                  <div key={`${line}-${index}`}>{line}</div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="mt-5">
             <label className="block text-[13px] font-medium text-gray-700 mb-1.5">备注</label>
             <textarea
@@ -221,7 +270,7 @@ export function OutboundModal({
           </button>
           <button
             onClick={onConfirm}
-            disabled={materials.length === 0}
+            disabled={materials.length === 0 || hasUnavailableBatchRows}
             data-testid="outbound-confirm-btn"
             className="px-4 py-2 bg-blue-500 text-white rounded-md text-sm font-medium hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-150 ease shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30"
           >

@@ -707,6 +707,10 @@ export interface SupplierCostReport {
     id: string
     name: string
     amount: number
+    grossAmount: number
+    refundedAmount: number
+    refundedReturnCount: number
+    supplierReturnUrl: string
     ratio: number
     orderCount: number
     status: string
@@ -821,6 +825,7 @@ export interface SupplierReturnRecord {
   status: 'pending' | 'shipped' | 'received' | 'refunded' | 'cancelled'
   operator: string
   remark?: string
+  isDeleted?: boolean
   createdAt: string
   updatedAt: string
 }
@@ -850,9 +855,9 @@ export interface ReturnRecord {
   batchId?: string
   batchNo?: string
   quantity: number
+  unit?: string
   unitCost: number
   totalCost: number
-  outboundItemId?: string
   reason: string
   operator: string
   status: string

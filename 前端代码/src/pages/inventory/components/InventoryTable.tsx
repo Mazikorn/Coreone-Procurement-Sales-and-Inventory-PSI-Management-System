@@ -1,5 +1,5 @@
 import React, { Fragment } from 'react'
-import { Search, ArrowUpDown, ArrowUp, ArrowDown, X, Trash2, Upload, ChevronRight } from 'lucide-react'
+import { Search, ArrowUpDown, ArrowUp, ArrowDown, X, Trash2, Upload, ChevronRight, Plus, ClipboardList, CornerUpLeft, ArrowRightLeft } from 'lucide-react'
 import { Pagination } from '@/components/ui/Pagination'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import { StockLevelIndicator } from './StockLevelIndicator'
@@ -59,6 +59,7 @@ interface Props {
   onBatchOutbound: () => void
   onBatchScrap: () => void
   canManageInventoryActions?: boolean
+  canCreatePurchaseOrders?: boolean
 }
 
 function getStatusInfo(item: InventoryRow) {
@@ -83,6 +84,68 @@ function getStatusInfo(item: InventoryRow) {
 
 function getInventoryGroupKey(item: InventoryRow) {
   return item.materialId || item.code || item.id || item.name
+}
+
+function buildInventoryPurchaseOrderUrl(item: InventoryRow, currentStock: number, minStock: number) {
+  const orderedQty = Math.max(1, minStock - currentStock)
+  const remark = `来自库存不足：${item.name}，当前库存 ${currentStock}，最低库存 ${minStock}`
+  const params = [
+    `action=create`,
+    `materialId=${encodeURIComponent(item.materialId)}`,
+    `orderedQty=${orderedQty}`,
+    `remark=${encodeURIComponent(remark)}`,
+  ]
+  return `/purchase-orders?${params.join('&')}`
+}
+
+function buildInventoryStocktakingUrl(item: InventoryRow) {
+  const params = new URLSearchParams({
+    action: 'create',
+    materialId: item.materialId,
+    scopeType: item.batchId ? 'batch' : 'material',
+  })
+  if (item.batchId) params.set('batchId', item.batchId)
+  if (item.locationId) params.set('locationId', item.locationId)
+  params.set('systemStock', String(Number(item.stock || 0)))
+  params.set('remark', '来自库存列表现场盘点')
+  return `/stocktaking?${params.toString()}`
+}
+
+function buildInventorySupplierReturnUrl(item: InventoryRow) {
+  const params = new URLSearchParams({
+    action: 'create',
+    materialId: item.materialId,
+    quantity: '1',
+    reason: 'quality_issue',
+  })
+  if (item.batchId) params.set('batchId', item.batchId)
+  params.set('remark', `来自库存列表退供：${item.name} / ${item.batch || item.batchNo || '无批次'}`)
+  return `/supplier-returns?${params.toString()}`
+}
+
+function buildInventoryTransferUrl(item: InventoryRow) {
+  const params = new URLSearchParams({
+    action: 'create',
+    materialId: item.materialId,
+    quantity: '1',
+  })
+  const batchNo = item.batch || item.batchNo
+  if (batchNo) params.set('batchNo', batchNo)
+  if (item.locationId) params.set('fromLocationId', item.locationId)
+  params.set('remark', `来自库存列表调拨：${item.name} / ${batchNo || '无批次'} / ${item.locationName || item.locationId || '无库位'}`)
+  return `/transfers?${params.toString()}`
+}
+
+function buildInventoryScrapUrl(item: InventoryRow) {
+  const params = new URLSearchParams({
+    action: 'create',
+    materialId: item.materialId,
+    quantity: '1',
+    reason: 'damaged',
+  })
+  if (item.batchId) params.set('batchId', item.batchId)
+  params.set('remark', `来自库存列表报废：${item.name} / ${item.batch || item.batchNo || '无批次'}`)
+  return `/scraps?${params.toString()}`
 }
 
 export function InventoryTable({
@@ -121,6 +184,7 @@ export function InventoryTable({
   onBatchOutbound,
   onBatchScrap,
   canManageInventoryActions = true,
+  canCreatePurchaseOrders = false,
 }: Props) {
   const navigate = useNavigate()
   const sortedData = [...data]
@@ -313,7 +377,7 @@ export function InventoryTable({
                   </button>
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 tracking-wide">状态</th>
-                <th className="w-[140px] px-4 py-3 text-left text-xs font-medium text-gray-500 tracking-wide">操作</th>
+                <th className="w-[200px] px-4 py-3 text-left text-xs font-medium text-gray-500 tracking-wide">操作</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -360,6 +424,7 @@ export function InventoryTable({
                   const first = batches[0]
                   const totalStock = batches.reduce((sum, b) => sum + (b.stock || 0), 0)
                   const minStock = first?.minStock || 0
+                  const canReplenish = canCreatePurchaseOrders && !!first?.materialId && totalStock < minStock
                   const isGroupSelected = batches.every(row => selectedIds.has(row.id))
                   const toggleGroupSelection = () => {
                     const shouldSelect = !isGroupSelected
@@ -415,6 +480,19 @@ export function InventoryTable({
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
                             <button onClick={(e) => { e.stopPropagation(); onDetail(first!) }} className="text-sm text-gray-600 hover:text-gray-900 transition-colors">详情</button>
+                            {canReplenish && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  navigate(buildInventoryPurchaseOrderUrl(first!, totalStock, minStock))
+                                }}
+                                className="inline-flex items-center gap-1 text-sm text-blue-500 hover:text-blue-600 transition-colors"
+                              >
+                                <Plus className="h-3.5 w-3.5" />
+                                补采购
+                              </button>
+                            )}
                             {canManageInventoryActions && (
                               <button onClick={(e) => { e.stopPropagation(); onOutbound(first!) }} className="text-sm text-blue-500 hover:text-blue-600 transition-colors">出库</button>
                             )}
@@ -462,7 +540,41 @@ export function InventoryTable({
                               <div className="flex items-center gap-2">
                                 <button onClick={() => onDetail(row)} className="text-sm text-gray-600 hover:text-gray-900 transition-colors">详情</button>
                                 {canManageInventoryActions && (
-                                  <button onClick={() => onOutbound(row)} className="text-sm text-blue-500 hover:text-blue-600 transition-colors">出库</button>
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => navigate(buildInventoryStocktakingUrl(row))}
+                                      className="inline-flex items-center gap-1 text-sm text-indigo-500 hover:text-indigo-600 transition-colors"
+                                    >
+                                      <ClipboardList className="h-3.5 w-3.5" />
+                                      盘点
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => navigate(buildInventorySupplierReturnUrl(row))}
+                                      className="inline-flex items-center gap-1 text-sm text-orange-600 hover:text-orange-700 transition-colors"
+                                    >
+                                      <CornerUpLeft className="h-3.5 w-3.5" />
+                                      退供
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => navigate(buildInventoryTransferUrl(row))}
+                                      className="inline-flex items-center gap-1 text-sm text-emerald-600 hover:text-emerald-700 transition-colors"
+                                    >
+                                      <ArrowRightLeft className="h-3.5 w-3.5" />
+                                      调拨
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => navigate(buildInventoryScrapUrl(row))}
+                                      className="inline-flex items-center gap-1 text-sm text-red-600 hover:text-red-700 transition-colors"
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                      报废
+                                    </button>
+                                    <button onClick={() => onOutbound(row)} className="text-sm text-blue-500 hover:text-blue-600 transition-colors">出库</button>
+                                  </>
                                 )}
                               </div>
                             </td>

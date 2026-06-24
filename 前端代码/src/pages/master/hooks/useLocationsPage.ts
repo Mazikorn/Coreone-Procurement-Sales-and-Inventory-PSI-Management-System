@@ -83,6 +83,26 @@ export function getTypeLabel(type?: string) {
 
 export type ModalType = 'create' | 'edit' | 'levelConfig' | null
 
+function buildCreatedLocation(payload: Partial<Location>, form: FormData): Location | null {
+  const code = String(payload.code || form.code || '').trim()
+  if (!payload.id || !code) return null
+
+  return {
+    id: String(payload.id),
+    code,
+    name: String(payload.name || form.name),
+    type: (payload.type || form.type) as Location['type'],
+    parentId: (payload.parentId ?? form.parentId) || null,
+    zone: payload.zone ?? form.levelData[0] ?? '',
+    shelf: payload.shelf ?? form.levelData[1] ?? '',
+    position: payload.position ?? form.levelData[2] ?? '',
+    capacity: Number(payload.capacity ?? form.capacity),
+    used: Number(payload.used ?? 0),
+    status: (payload.status || form.status) as Location['status'],
+    createdAt: payload.createdAt || new Date().toISOString(),
+  }
+}
+
 export function useLocationsPage() {
   const initialParams = new URLSearchParams(window.location.search)
   const initialKeyword = initialParams.get('keyword') || ''
@@ -103,11 +123,34 @@ export function useLocationsPage() {
   const [searchStatus, setSearchStatus] = useState<string>('all')
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+  const [createdLocationFallback, setCreatedLocationFallback] = useState<Location | null>(null)
+  const displayedData = useMemo(() => {
+    if (
+      createdLocationFallback &&
+      keyword === createdLocationFallback.code &&
+      statusFilter === 'all' &&
+      !data.some(row => row.id === createdLocationFallback.id || row.code === createdLocationFallback.code)
+    ) {
+      return [createdLocationFallback, ...data]
+    }
+
+    return data
+  }, [createdLocationFallback, data, keyword, statusFilter])
+  const displayedAllLocations = useMemo(() => {
+    if (
+      createdLocationFallback &&
+      !allLocations.some(row => row.id === createdLocationFallback.id || row.code === createdLocationFallback.code)
+    ) {
+      return [createdLocationFallback, ...allLocations]
+    }
+
+    return allLocations
+  }, [allLocations, createdLocationFallback])
   const flatLocations = useMemo(() => {
     const map = new Map<string, Location>()
-    allLocations.forEach(d => map.set(d.id, d))
+    displayedAllLocations.forEach(d => map.set(d.id, d))
     return map
-  }, [allLocations])
+  }, [displayedAllLocations])
   const [modalType, setModalType] = useState<ModalType>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Location | null>(null)
@@ -197,7 +240,7 @@ export function useLocationsPage() {
   }, [])
 
   const displayLocations = useMemo(() => {
-    if (!selectedNodeId) return data
+    if (!selectedNodeId) return displayedData
     const findNode = (nodes: TreeNode[]): TreeNode | null => {
       for (const n of nodes) {
         if (n.id === selectedNodeId) return n
@@ -206,10 +249,10 @@ export function useLocationsPage() {
       return null
     }
     const node = findNode(treeData)
-    if (!node) return data
+    if (!node) return displayedData
     const ids = new Set(getDescendantIds(node))
-    return data.filter(d => ids.has(d.id))
-  }, [data, selectedNodeId, treeData, getDescendantIds])
+    return displayedData.filter(d => ids.has(d.id))
+  }, [displayedData, selectedNodeId, treeData, getDescendantIds])
 
   const handleSearch = () => {
     setKeyword(searchKeyword)
@@ -278,22 +321,35 @@ export function useLocationsPage() {
     try {
       if (editingId) {
         await locationApi.update(editingId, payload)
+        toast.success('保存成功')
+        setModalType(null)
+        if (form.parentId) {
+          setExpandedIds(prev => new Set(prev).add(form.parentId))
+        }
+        await fetchData()
       } else {
-        await locationApi.create(payload)
+        const res: any = await locationApi.create(payload)
+        const created = res?.data ?? res
+        const createdKeyword = created?.code || form.code || form.name
+        setCreatedLocationFallback(buildCreatedLocation(created, form))
+        toast.success('保存成功')
+        setModalType(null)
+        setSearchKeyword(createdKeyword)
+        setKeyword(createdKeyword)
+        setSearchStatus('all')
+        setStatusFilter('all')
+        setSelectedNodeId(null)
+        if (form.parentId) {
+          setExpandedIds(prev => new Set(prev).add(form.parentId))
+        }
       }
-      toast.success('保存成功')
-      setModalType(null)
-      if (form.parentId) {
-        setExpandedIds(prev => new Set(prev).add(form.parentId))
-      }
-      await fetchData()
     } catch (e) {
       toast.error((e as any)?.response?.data?.error?.message || '保存失败')
     }
   }
 
   const handleDelete = async (id: string) => {
-    setDeleteTarget(data.find(item => item.id === id) || ({ id, name: '该库位' } as Location))
+    setDeleteTarget(displayedData.find(item => item.id === id) || ({ id, name: '该库位' } as Location))
     setDeleteCheck(null)
     setCheckingDelete(true)
     try {
@@ -386,8 +442,8 @@ export function useLocationsPage() {
   }
 
   return {
-    data,
-    allLocations,
+    data: displayedData,
+    allLocations: displayedAllLocations,
     treeData,
     loading,
     keyword,

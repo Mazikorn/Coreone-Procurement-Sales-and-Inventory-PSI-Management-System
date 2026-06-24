@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { supplierApi } from '@/api/master'
 import type { Supplier } from '@/types'
@@ -40,6 +40,49 @@ const avatarColors = [
   { bg: '#ede9fe', text: '#6d28d9' },
 ]
 
+function getSupplierStatusImpact(status: 'active' | 'inactive', batch = false) {
+  if (status === 'active') {
+    return batch
+      ? '批量启用后这些供应商可重新用于新采购订单、入库收货、供应商退货和物料默认供应商选择；历史业务和审计记录不变。'
+      : '启用后该供应商可重新用于新采购订单、入库收货、供应商退货和物料默认供应商选择；历史采购、入库、退货、成本和审计记录不变。'
+  }
+
+  return batch
+    ? '批量停用后这些供应商不会出现在新采购订单、入库收货、供应商退货和物料默认供应商选择中；已有业务和审计记录保留。'
+    : '停用后该供应商不会出现在新采购订单、入库收货、供应商退货和物料默认供应商选择中；已有采购、入库、退货、成本和审计记录保留。'
+}
+
+function getSupplierDeleteImpact(batch = false) {
+  return batch
+    ? '删除后这些供应商不会再用于新采购订单、入库收货、供应商退货、供应商成本净额和物料默认供应商选择；已有采购、入库、退货、成本和审计记录仍保留可回看。'
+    : '删除后该供应商不会再用于新采购订单、入库收货、供应商退货、供应商成本净额和物料默认供应商选择；已有采购、入库、退货、成本和审计记录仍保留可回看。'
+}
+
+function buildCreatedSupplier(payload: Partial<Supplier>, form: FormData): Supplier | null {
+  const code = String(payload.code || form.code || '').trim()
+  if (!payload.id || !code) return null
+
+  const now = new Date().toISOString()
+  return {
+    id: String(payload.id),
+    code,
+    name: String(payload.name || form.name),
+    contact: payload.contact ?? form.contact,
+    phone: payload.phone ?? form.phone,
+    email: payload.email ?? form.email,
+    address: payload.address ?? form.address,
+    taxNo: payload.taxNo ?? form.taxNo,
+    bankName: payload.bankName ?? form.bankName,
+    bankAccount: payload.bankAccount ?? form.bankAccount,
+    status: (payload.status || form.status) as Supplier['status'],
+    cooperationCount: Number(payload.cooperationCount ?? 0),
+    totalAmount: Number(payload.totalAmount ?? 0),
+    rating: Number(payload.rating ?? 0),
+    createdAt: payload.createdAt || now,
+    updatedAt: payload.updatedAt || now,
+  }
+}
+
 export function useSuppliersPage() {
   const initialParams = new URLSearchParams(window.location.search)
   const initialKeyword = initialParams.get('keyword') || ''
@@ -64,6 +107,22 @@ export function useSuppliersPage() {
     confirmVariant?: 'danger' | 'primary'
     onConfirm: () => void
   } | null>(null)
+  const [createdSupplierFallback, setCreatedSupplierFallback] = useState<Supplier | null>(null)
+
+  const displayedPage = useMemo(() => {
+    if (
+      createdSupplierFallback &&
+      searchKeyword === createdSupplierFallback.code &&
+      searchStatus === 'all' &&
+      page === 1 &&
+      !data.some(row => row.id === createdSupplierFallback.id || row.code === createdSupplierFallback.code)
+    ) {
+      const rows = [createdSupplierFallback, ...data]
+      return { data: rows, total: Math.max(total + 1, rows.length) }
+    }
+
+    return { data, total }
+  }, [createdSupplierFallback, data, page, searchKeyword, searchStatus, total])
 
   const loadData = useCallback(async () => {
     try {
@@ -159,12 +218,16 @@ export function useSuppliersPage() {
       if (modalType === 'edit' && form.id) {
         await supplierApi.update(form.id, payload)
         toast.success('供应商已更新')
+        await loadData()
       } else {
-        await supplierApi.create(payload)
+        const created: any = await supplierApi.create(payload)
+        setCreatedSupplierFallback(buildCreatedSupplier(created, form))
+        setSearchKeyword(created?.code || payload.name)
+        setSearchStatus('all')
+        setPage(1)
         toast.success('供应商已创建')
       }
       setModalType(null)
-      await loadData()
     } catch {
       toast.error('保存供应商失败')
     }
@@ -181,9 +244,9 @@ export function useSuppliersPage() {
 
   const toggleSelectAll = () => {
     setSelectedIds(prev => (
-      data.length > 0 && prev.size === data.length
+      displayedPage.data.length > 0 && prev.size === displayedPage.data.length
         ? new Set()
-        : new Set(data.map(item => item.id))
+        : new Set(displayedPage.data.map(item => item.id))
     ))
   }
 
@@ -207,7 +270,7 @@ export function useSuppliersPage() {
   const handleDelete = (id: string) => {
     askConfirm({
       title: '删除供应商',
-      description: '删除后无法恢复，确认继续？',
+      description: getSupplierDeleteImpact(),
       confirmText: '删除',
       confirmVariant: 'danger',
       onConfirm: () => deleteSupplier(id),
@@ -218,7 +281,7 @@ export function useSuppliersPage() {
     const nextStatus = row.status === 'active' ? 'inactive' : 'active'
     askConfirm({
       title: nextStatus === 'active' ? '启用供应商' : '停用供应商',
-      description: `确认将“${row.name}”改为${nextStatus === 'active' ? '合作中' : '已终止'}？`,
+      description: getSupplierStatusImpact(nextStatus),
       confirmText: '确认',
       confirmVariant: 'primary',
       onConfirm: async () => {
@@ -236,7 +299,7 @@ export function useSuppliersPage() {
   const batchToggleStatus = (status: 'active' | 'inactive') => {
     askConfirm({
       title: status === 'active' ? '批量启用供应商' : '批量停用供应商',
-      description: `确认处理 ${selectedIds.size} 个供应商？`,
+      description: getSupplierStatusImpact(status, true),
       confirmText: '确认',
       confirmVariant: 'primary',
       onConfirm: async () => {
@@ -255,7 +318,7 @@ export function useSuppliersPage() {
   const batchDelete = () => {
     askConfirm({
       title: '批量删除供应商',
-      description: `确认删除 ${selectedIds.size} 个供应商？`,
+      description: `确认删除 ${selectedIds.size} 个供应商？${getSupplierDeleteImpact(true)}`,
       confirmText: '删除',
       confirmVariant: 'danger',
       onConfirm: async () => {
@@ -283,9 +346,9 @@ export function useSuppliersPage() {
   }
 
   return {
-    data,
+    data: displayedPage.data,
     loading,
-    total,
+    total: displayedPage.total,
     page,
     pageSize,
     selectedIds,

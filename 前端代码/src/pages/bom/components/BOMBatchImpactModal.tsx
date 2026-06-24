@@ -132,7 +132,11 @@ export function BOMBatchImpactModal({
           </div>
         ) : (
           <div className="rounded-md bg-green-50 px-3 py-2 text-sm text-green-700">
-            检查通过，确认后将通过后端批量接口一次性执行。
+            {isDelete
+              ? '检查通过；删除后这些BOM不会再用于新检测服务绑定、项目出库、LIS对账、ABC成本计算、项目成本归集和审计筛选。'
+              : isDisabling
+                ? '检查通过；停用后这些BOM不会再用于新检测服务绑定、项目出库、LIS对账、ABC成本计算和项目成本归集，历史成本和审计记录保留。'
+                : '检查通过；启用后这些BOM可重新用于新检测服务绑定、项目出库、LIS对账、ABC成本计算和项目成本归集，历史成本和审计记录不变。'}
           </div>
         )}
       </div>

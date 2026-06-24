@@ -83,11 +83,11 @@ export function ActivityCenterList() {
     }
   }
 
-  const loadActivityCenters = async () => {
+  const loadActivityCenters = async (keywordOverride = searchKeyword) => {
     try {
       setLoading(true)
       const params = new URLSearchParams()
-      const keyword = searchKeyword.trim()
+      const keyword = keywordOverride.trim()
       if (keyword) params.set('keyword', keyword)
       const url = `/api/v1/abc/activity-centers${params.toString() ? `?${params.toString()}` : ''}`
       const response = await fetch(url, {
@@ -160,9 +160,17 @@ export function ActivityCenterList() {
 
       const data = await response.json()
       if (data.success) {
+        const nextKeyword = editingCenter
+          ? searchKeyword
+          : String(data.data?.code || formData.code || '').trim()
         toast.success(editingCenter ? '更新成功' : '创建成功')
         setShowDialog(false)
-        loadActivityCenters()
+        if (!editingCenter && nextKeyword) {
+          setSearchKeyword(nextKeyword)
+          await loadActivityCenters(nextKeyword)
+        } else {
+          await loadActivityCenters()
+        }
       } else {
         toast.error(data.error?.message || '操作失败')
       }

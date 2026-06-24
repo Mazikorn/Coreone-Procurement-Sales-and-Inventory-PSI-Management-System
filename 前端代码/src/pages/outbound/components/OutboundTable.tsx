@@ -1,4 +1,4 @@
-import { AlertTriangle, Download, Printer, X } from 'lucide-react'
+import { AlertTriangle, Download, FileSearch, GitCompare, Printer, X } from 'lucide-react'
 import { Pagination } from '@/components/ui/Pagination'
 import type { OutboundRecord } from '@/types'
 import { formatDate } from '@/lib/utils'
@@ -122,7 +122,7 @@ export default function OutboundTable({
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">收费金额</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">利润</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状态</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-[140px]">操作</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-[180px]">操作</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
@@ -243,6 +243,26 @@ export default function OutboundTable({
                         >
                           打印
                         </button>
+                        <button
+                          type="button"
+                          aria-label={`审计证据 ${row.outboundNo}`}
+                          title="审计证据"
+                          onClick={() => navigate(`/logs?keyword=${encodeURIComponent(row.outboundNo)}`)}
+                          className="inline-flex h-7 w-7 items-center justify-center rounded text-gray-500 transition-colors duration-150 hover:bg-blue-50 hover:text-blue-600"
+                        >
+                          <FileSearch className="h-4 w-4" />
+                        </button>
+                        {row.projectId && (
+                          <button
+                            type="button"
+                            aria-label={`项目对账 ${row.projectName || row.projectId}`}
+                            title="项目对账"
+                            onClick={() => navigate(`/reconciliation?projectId=${encodeURIComponent(row.projectId || '')}`)}
+                            className="inline-flex h-7 w-7 items-center justify-center rounded text-gray-500 transition-colors duration-150 hover:bg-blue-50 hover:text-blue-600"
+                          >
+                            <GitCompare className="h-4 w-4" />
+                          </button>
+                        )}
                         {row.status === 'completed' && (
                           <>
                             {canEdit && (

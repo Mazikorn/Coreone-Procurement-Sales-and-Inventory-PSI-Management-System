@@ -469,6 +469,7 @@ describe('库存盘点 API', () => {
   it('ST-006: 盘亏确认会同步扣减批次，撤销后恢复批次剩余量', async () => {
     const suffix = `batch-loss-${Date.now()}`
     const { materialId, recordId, batchId } = seedStocktakingFixtureWithBatch(db, suffix, 10)
+    const stocktakingNo = `ST-TEST-${suffix}`
 
     const confirmRes = await request(app)
       .post(`/api/v1/stocktaking/${recordId}/confirm`)
@@ -484,6 +485,67 @@ describe('库存盘点 API', () => {
     expect(batchAfterConfirm.remaining).toBe(8)
     expect(batchAfterConfirm.status).toBe(1)
     expect(adjustment.quantity_delta).toBe(-2)
+
+    const unified = await request(app)
+      .get('/api/v1/logs/unified')
+      .query({ keyword: stocktakingNo, pageSize: 50 })
+      .set('Authorization', `Bearer ${adminToken}`)
+
+    expect(unified.status).toBe(200)
+    expect(unified.body.data.list).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourceType: 'operation',
+        module: 'stocktaking',
+        operation: 'POST /stocktaking/:id/confirm',
+        businessId: stocktakingNo,
+        businessUrl: `/stocktaking?keyword=${encodeURIComponent(stocktakingNo)}`,
+        requestData: expect.objectContaining({
+          stocktakingNo,
+          difference: -2,
+          reason: 'physical',
+          remark: '盘亏复核',
+        }),
+        auditEvent: expect.objectContaining({
+          businessId: stocktakingNo,
+          businessUrl: `/stocktaking?keyword=${encodeURIComponent(stocktakingNo)}`,
+          evidenceSource: 'operation_logs',
+        }),
+      }),
+      expect.objectContaining({
+        sourceType: 'stock',
+        module: 'stocktaking',
+        businessId: stocktakingNo,
+        businessUrl: `/stocktaking?keyword=${encodeURIComponent(stocktakingNo)}`,
+        requestData: expect.objectContaining({
+          relatedId: recordId,
+          relatedDocumentNo: stocktakingNo,
+          quantity: -2,
+          beforeStock: 10,
+          afterStock: 8,
+        }),
+        auditEvent: expect.objectContaining({
+          businessId: stocktakingNo,
+          evidenceSource: 'stock_logs',
+        }),
+      }),
+      expect.objectContaining({
+        sourceType: 'batch_location',
+        module: 'stocktaking',
+        businessId: stocktakingNo,
+        businessUrl: `/stocktaking?keyword=${encodeURIComponent(stocktakingNo)}`,
+        requestData: expect.objectContaining({
+          relatedId: recordId,
+          relatedDocumentNo: stocktakingNo,
+          batchId,
+          materialId,
+          quantityDelta: -2,
+        }),
+        auditEvent: expect.objectContaining({
+          businessId: stocktakingNo,
+          evidenceSource: 'batch_location_adjustments',
+        }),
+      }),
+    ]))
 
     const deleteRes = await request(app)
       .delete(`/api/v1/stocktaking/${recordId}`)

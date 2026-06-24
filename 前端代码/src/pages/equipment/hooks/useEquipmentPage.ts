@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { usePagination } from '@/hooks/usePagination'
 import { equipmentApi } from '@/api/master'
 import { getUserPermissions, getUserRole } from '@/lib/permissions'
@@ -33,6 +33,48 @@ function canManageEquipment() {
     || permissions.some(permission => ['equipment:add', 'equipment:edit', 'equipment:delete'].includes(permission))
 }
 
+function calculateAnnualDepreciation(form: EquipmentForm) {
+  const depreciableAmount = Math.max(0, Number(form.purchasePrice || 0) - Number(form.residualValue || 0))
+  if (form.depreciationMethod === 'units_of_production') {
+    return 0
+  }
+  return form.depreciableLifeYears > 0 ? depreciableAmount / form.depreciableLifeYears : 0
+}
+
+function buildCreatedEquipment(payload: Partial<Equipment>, form: EquipmentForm): Equipment | null {
+  const code = String(payload.code || form.code || '').trim()
+  if (!payload.id || !code) return null
+
+  const now = new Date().toISOString()
+  const annualDepreciation = Number(payload.annualDepreciation ?? calculateAnnualDepreciation(form))
+  const purchasePrice = Number(payload.purchasePrice ?? form.purchasePrice)
+  const accumulatedDepreciation = Number(payload.accumulatedDepreciation ?? 0)
+
+  return {
+    id: String(payload.id),
+    code,
+    name: String(payload.name || form.name),
+    model: payload.model ?? form.model,
+    manufacturer: payload.manufacturer ?? form.manufacturer,
+    purchasePrice,
+    purchaseDate: payload.purchaseDate ?? form.purchaseDate,
+    depreciableLifeYears: Number(payload.depreciableLifeYears ?? form.depreciableLifeYears),
+    residualValue: Number(payload.residualValue ?? form.residualValue),
+    depreciationMethod: (payload.depreciationMethod || form.depreciationMethod) as Equipment['depreciationMethod'],
+    totalCapacity: Number(payload.totalCapacity ?? form.totalCapacity),
+    capacityUnit: payload.capacityUnit ?? form.capacityUnit,
+    status: (payload.status || form.status) as Equipment['status'],
+    locationId: payload.locationId ?? form.locationId,
+    typeId: payload.typeId ?? form.typeId,
+    typeName: payload.typeName ?? null,
+    annualDepreciation,
+    accumulatedDepreciation,
+    netBookValue: Number(payload.netBookValue ?? Math.max(0, purchasePrice - accumulatedDepreciation)),
+    createdAt: payload.createdAt || now,
+    updatedAt: payload.updatedAt || now,
+  }
+}
+
 export function useEquipmentPage() {
   const canManageEquipmentAssets = canManageEquipment()
   const initialParams = new URLSearchParams(window.location.search)
@@ -48,6 +90,7 @@ export function useEquipmentPage() {
   const [modalType, setModalType] = useState<null | 'create' | 'edit' | 'detail' | 'delete'>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [detailRow, setDetailRow] = useState<Equipment | null>(null)
+  const [createdEquipmentFallback, setCreatedEquipmentFallback] = useState<Equipment | null>(null)
 
   const [form, setForm] = useState<EquipmentForm>({
     code: '',
@@ -91,6 +134,23 @@ export function useEquipmentPage() {
   const { data, loading, page, pageSize, total, setPage, setPageSize, refresh } =
     usePagination<Equipment>({ fetchFn, initialPage: 1, initialPageSize: 20, deps: [keyword, filterStatus, filterTypeId, includeDeleted] })
 
+  const displayedPage = useMemo(() => {
+    if (
+      createdEquipmentFallback &&
+      keyword === createdEquipmentFallback.code &&
+      !filterStatus &&
+      !filterTypeId &&
+      !includeDeleted &&
+      page === 1 &&
+      !data.some(row => row.id === createdEquipmentFallback.id || row.code === createdEquipmentFallback.code)
+    ) {
+      const rows = [createdEquipmentFallback, ...data]
+      return { data: rows, total: Math.max(total + 1, rows.length) }
+    }
+
+    return { data, total }
+  }, [createdEquipmentFallback, data, filterStatus, filterTypeId, includeDeleted, keyword, page, total])
+
   useEffect(() => {
     equipmentApi.getStats({
       keyword: keyword || undefined,
@@ -129,6 +189,16 @@ export function useEquipmentPage() {
 
   const handleTypeChange = useCallback((value: string) => {
     setFilterTypeId(value)
+    setPage(1)
+  }, [setPage])
+
+  const focusEquipmentList = useCallback((value: string) => {
+    const nextKeyword = value.trim()
+    setSearchInput(nextKeyword)
+    setKeyword(nextKeyword)
+    setFilterStatus('')
+    setFilterTypeId('')
+    setIncludeDeleted(false)
     setPage(1)
   }, [setPage])
 
@@ -217,12 +287,14 @@ export function useEquipmentPage() {
     try {
       const payload = { ...form }
       if (editingId) {
-        const current = data.find(item => item.id === editingId)
+        const current = displayedPage.data.find(item => item.id === editingId)
         if (current) payload.code = current.code
         await equipmentApi.update(editingId, payload)
         toast.success('设备更新成功')
       } else {
-        await equipmentApi.create(payload)
+        const created: any = await equipmentApi.create(payload)
+        setCreatedEquipmentFallback(buildCreatedEquipment(created, form))
+        focusEquipmentList(String(created?.code || form.code || form.name || ''))
         toast.success('设备创建成功')
       }
       setModalType(null)
@@ -247,11 +319,11 @@ export function useEquipmentPage() {
 
   return {
     canManageEquipmentAssets,
-    data,
+    data: displayedPage.data,
     loading,
     page,
     pageSize,
-    total,
+    total: displayedPage.total,
     setPage,
     setPageSize,
     refresh,

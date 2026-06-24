@@ -251,6 +251,39 @@ describe('成本对账异常闭环', () => {
         status: 'modified',
       },
     })
+
+    const unifiedRes = await request(app)
+      .get('/api/v1/logs/unified')
+      .query({ sourceType: 'reconciliation', keyword: caseNo, pageSize: 20 })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(unifiedRes.status).toBe(200)
+    expect(unifiedRes.body.data.list).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourceType: 'reconciliation',
+        module: 'reconciliation',
+        operation: 'case_edit',
+        businessId: caseNo,
+        businessUrl: `/reconciliation?keyword=${encodeURIComponent(caseNo)}`,
+        requestData: expect.objectContaining({
+          targetName: caseNo,
+          oldSnapshot: expect.objectContaining({
+            projectId: sourceProjectId,
+            projectName: '导入匹配项目',
+          }),
+          newSnapshot: expect.objectContaining({
+            projectId: targetProjectId,
+            projectName: '编辑后项目',
+            status: 'modified',
+          }),
+        }),
+        auditEvent: expect.objectContaining({
+          businessId: caseNo,
+          businessUrl: `/reconciliation?keyword=${encodeURIComponent(caseNo)}`,
+          evidenceSource: 'reconciliation_logs',
+        }),
+      }),
+    ]))
   })
 
   it('病例编辑、列表筛选和导出必须拒绝非法病例状态', async () => {

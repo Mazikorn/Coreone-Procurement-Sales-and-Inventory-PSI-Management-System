@@ -1,4 +1,6 @@
+import React from 'react'
 import { ArrowDownToLine, ArrowUpFromLine, AlertTriangle } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import type { ActivityItem as ActivityItemType } from '../hooks/useDashboardPage'
 
 interface Props {
@@ -29,9 +31,9 @@ const config = {
 export function ActivityItem({ item }: Props) {
   const c = config[item.type]
   const Icon = c.icon
-
-  return (
-    <div className="flex items-start gap-3 py-3 border-b border-gray-100 last:border-0">
+  const navigate = useNavigate()
+  const content = (
+    <>
       <div className={`w-8 h-8 rounded-md flex items-center justify-center flex-shrink-0 mt-0.5 ${c.bg}`}>
         <Icon className={`w-4 h-4 ${c.color}`} />
       </div>
@@ -40,6 +42,24 @@ export function ActivityItem({ item }: Props) {
         <p className="text-xs text-gray-500 mt-0.5">{item.desc}</p>
       </div>
       <span className="text-xs text-gray-400 flex-shrink-0 whitespace-nowrap">{item.time}</span>
+    </>
+  )
+
+  if (item.href) {
+    return (
+      <button
+        type="button"
+        onClick={() => navigate(item.href!)}
+        className="flex w-full items-start gap-3 border-b border-gray-100 py-3 text-left transition-colors last:border-0 hover:bg-gray-50"
+      >
+        {content}
+      </button>
+    )
+  }
+
+  return (
+    <div className="flex items-start gap-3 py-3 border-b border-gray-100 last:border-0">
+      {content}
     </div>
   )
 }

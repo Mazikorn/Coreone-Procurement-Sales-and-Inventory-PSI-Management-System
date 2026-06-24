@@ -154,6 +154,8 @@ export default function Reconciliation() {
           projects={page.projects}
           expandedProject={page.expandedProject}
           projectMaterials={page.projectMaterials}
+          projectAuditExceptions={page.projectAuditExceptions}
+          dateParams={page.dateParams}
           onToggleProject={page.loadProjectMaterials}
           getDiffClass={page.getDiffClass}
           canFixBom={canFixBom}

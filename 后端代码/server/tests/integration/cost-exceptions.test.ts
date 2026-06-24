@@ -117,9 +117,9 @@ function seedBomProject(db: any, suffix: string, materialId: string) {
 function seedFeeMapping(db: any, suffix: string, bomId: string, feePerSlide = 80) {
   const feeStandardId = `fee-${suffix}`
   db.prepare(`
-    INSERT INTO fee_standards (id, code, name, category, project_type, fee_per_slide, status)
-    VALUES (?, ?, ?, 'test', 'ihc', ?, 'active')
-  `).run(feeStandardId, `FEE-${suffix}`, '成本异常测试收费', feePerSlide)
+    INSERT INTO fee_standards (id, code, name, category, project_type, fee_per_slide, base_price, status)
+    VALUES (?, ?, ?, 'test', 'ihc', ?, ?, 'active')
+  `).run(feeStandardId, `FEE-${suffix}`, '成本异常测试收费', feePerSlide, feePerSlide)
   db.prepare(`
     INSERT INTO bom_fee_mappings (id, bom_id, fee_standard_id, quantity_multiplier, aggregation_scope, sort_order, status)
     VALUES (?, ?, ?, 1, 'outbound', 0, 'active')
@@ -291,6 +291,30 @@ describe('成本异常台账', () => {
     expect(exception.source_type).toBe('bom_outbound')
     expect(JSON.parse(exception.details).action).toBe('configure_bom_fee_mapping')
 
+    const audit = await request(app)
+      .get('/api/v1/logs/unified')
+      .query({ sourceType: 'abc', keyword: res.body.data.outboundNo, pageSize: 20 })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(audit.status).toBe(200)
+    expect(audit.body.data.list).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourceType: 'abc',
+        module: 'outbound',
+        businessId: res.body.data.outboundNo,
+        businessUrl: `/outbound?keyword=${encodeURIComponent(res.body.data.outboundNo)}`,
+        requestData: expect.objectContaining({
+          outboundId: res.body.data.id,
+          outboundNo: res.body.data.outboundNo,
+          bomId,
+          projectId,
+          costStatus: 'cost_exception',
+          exceptionNo: exception.exception_no,
+          exceptionType: 'missing_fee_mapping',
+        }),
+      }),
+    ]))
+
     const retryRes = await request(app)
       .post(`/api/v1/abc/exceptions/${exception.id}/retry`)
       .set('Authorization', `Bearer ${token}`)
@@ -322,6 +346,61 @@ describe('成本异常台账', () => {
 
     expect(blockedClose.status).toBe(422)
     expect(blockedClose.body.error.code).toBe('OPEN_FEE_MAPPING_EXCEPTIONS')
+  })
+
+  it('BOM出库ABC成本结果可按出库单号进入统一审计回看', async () => {
+    const suffix = unique('bom-audit')
+    const base = seedBase(db, suffix)
+    const materialId = seedMaterialWithStock(db, `${suffix}-core`, base, 20, 25)
+    const { bomId, projectId } = seedBomProject(db, suffix, materialId)
+    seedFeeMapping(db, suffix, bomId, 80)
+
+    const res = await request(app)
+      .post('/api/v1/outbound/bom')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ projectId, bomId, sampleCount: 2 })
+
+    expect(res.status).toBe(201)
+
+    const detail = db.prepare(`
+      SELECT cost_status, fee_amount, profit
+      FROM outbound_abc_details
+      WHERE outbound_id = ?
+    `).get(res.body.data.id) as any
+    expect(detail).toMatchObject({
+      cost_status: 'costed',
+      fee_amount: 160,
+      profit: 110,
+    })
+
+    const audit = await request(app)
+      .get('/api/v1/logs/unified')
+      .query({ sourceType: 'abc', keyword: res.body.data.outboundNo, pageSize: 20 })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(audit.status).toBe(200)
+    expect(audit.body.data.list).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourceType: 'abc',
+        module: 'outbound',
+        businessId: res.body.data.outboundNo,
+        businessUrl: `/outbound?keyword=${encodeURIComponent(res.body.data.outboundNo)}`,
+        requestData: expect.objectContaining({
+          outboundId: res.body.data.id,
+          outboundNo: res.body.data.outboundNo,
+          bomId,
+          projectId,
+          costStatus: 'costed',
+          feeAmount: 160,
+          profit: 110,
+        }),
+        auditEvent: expect.objectContaining({
+          evidenceSource: 'abc_audit_logs',
+          businessId: res.body.data.outboundNo,
+          businessUrl: `/outbound?keyword=${encodeURIComponent(res.body.data.outboundNo)}`,
+        }),
+      }),
+    ]))
   })
 
   it('成本异常可处理且期间关账会校验错误级开放异常', async () => {
@@ -751,6 +830,24 @@ describe('成本异常台账', () => {
       operator: 'sunli',
     })
     expect(JSON.parse(filteredAudit.body.data.list[0].detail).adjustmentNo).toBe(adjustmentRes.body.data.adjustmentNo)
+
+    const keywordAudit = await request(app)
+      .get('/api/v1/abc/audit-logs')
+      .query({
+        keyword: adjustmentRes.body.data.adjustmentNo,
+        pageSize: 5,
+      })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(keywordAudit.status).toBe(200)
+    expect(keywordAudit.body.data.list.length).toBeGreaterThanOrEqual(1)
+    expect(keywordAudit.body.data.list.every((row: any) => row.targetId === adjustmentRes.body.data.id)).toBe(true)
+    expect(keywordAudit.body.data.list[0]).toMatchObject({
+      module: 'cost_adjustment',
+      targetType: 'cost_adjustment',
+      targetId: adjustmentRes.body.data.id,
+    })
+    expect(keywordAudit.body.data.list.every((row: any) => JSON.parse(row.detail).adjustmentNo === adjustmentRes.body.data.adjustmentNo)).toBe(true)
   })
 
   it('同一病例多个BOM按病例聚合阶梯收费', async () => {
@@ -1675,9 +1772,9 @@ describe('成本异常台账', () => {
       .set('Authorization', `Bearer ${token}`)
 
     expect(monthly.status).toBe(200)
-    expect(monthly.body.data).toHaveLength(2)
-    expect(monthly.body.data.map((row: any) => row.month)).toEqual(['2099-01', '2099-02'])
-    expect(monthly.body.data[0]).toMatchObject({
+    expect(monthly.body.data.trend).toHaveLength(2)
+    expect(monthly.body.data.trend.map((row: any) => row.month)).toEqual(['2099-01', '2099-02'])
+    expect(monthly.body.data.trend[0]).toMatchObject({
       bomId: heBomId,
       bomName: '细胞趋势BOM',
       projectType: 'cyto',
@@ -1687,7 +1784,7 @@ describe('成本异常台账', () => {
       profit: 80,
       marginRate: 0.4,
     })
-    expect(monthly.body.data[1]).toMatchObject({
+    expect(monthly.body.data.trend[1]).toMatchObject({
       sampleCount: 3,
       totalCost: 180,
       feeAmount: 300,

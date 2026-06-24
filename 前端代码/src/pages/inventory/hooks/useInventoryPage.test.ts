@@ -3,10 +3,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useInventoryPage } from './useInventoryPage'
 import { bomApi, categoryApi, locationApi, materialApi, projectApi, userApi } from '@/api/master'
 import { depletionApi, inventoryApi, outboundApi, scrapApi } from '@/api/inventory'
+import { toast } from 'sonner'
 
 vi.mock('@/api/master')
 vi.mock('@/api/inventory')
-vi.mock('sonner')
+vi.mock('sonner', () => ({
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+  },
+}))
 
 describe('useInventoryPage', () => {
   beforeEach(() => {
@@ -39,7 +45,10 @@ describe('useInventoryPage', () => {
     } as any)
     vi.mocked(depletionApi.getTracking).mockResolvedValue({ list: [] } as any)
     vi.mocked(depletionApi.getDepletion).mockResolvedValue({ list: [] } as any)
-    vi.mocked(projectApi.getList).mockResolvedValue({ list: [], pagination: { total: 0 } } as any)
+    vi.mocked(projectApi.getList).mockResolvedValue({
+      list: [{ id: 'PROJECT-001', code: 'PRJ001', name: 'HE制片', status: 'active' }],
+      pagination: { total: 1 },
+    } as any)
     vi.mocked(categoryApi.getList).mockResolvedValue({ list: [], pagination: { total: 0 } } as any)
     vi.mocked(locationApi.getList).mockResolvedValue({ list: [], pagination: { total: 0 } } as any)
     vi.mocked(userApi.getList).mockResolvedValue({ list: [{ id: 'USER-001', realName: '管理员' }], pagination: { total: 1 } } as any)
@@ -130,6 +139,117 @@ describe('useInventoryPage', () => {
       endDate: '2026-06-22',
       actualDays: 21,
     }))
+  })
+
+  it('keeps adjusted remaining visible after updating depletion remain even when the follow-up refresh fails', async () => {
+    vi.mocked(depletionApi.getTracking)
+      .mockResolvedValueOnce({
+        list: [
+          {
+            id: 'tracking-remain-1',
+            material_name: 'DAB染色液',
+            batch: 'BATCH-REMAIN-001',
+            spec: '1ml',
+            total_qty: 10,
+            remaining: 6,
+            unit: 'ml',
+            days_used: 4,
+            expected_days: 12,
+            status: 'in-use',
+          },
+        ],
+      } as any)
+      .mockRejectedValueOnce(new Error('refresh failed'))
+
+    const { result } = renderHook(() => useInventoryPage())
+
+    await waitFor(() => expect(result.current.depletionTracking).toHaveLength(1))
+
+    act(() => {
+      result.current.setSelectedDepletionItem(result.current.depletionTracking[0])
+      result.current.setEditRemainValue('2')
+      result.current.setEditRemainReason('现场复核剩余量')
+      result.current.setEditRemainModalOpen(true)
+    })
+
+    await act(async () => {
+      await result.current.confirmEditRemain()
+    })
+
+    expect(depletionApi.updateRemain).toHaveBeenCalledWith('tracking-remain-1', {
+      remaining: 2,
+      reason: '现场复核剩余量',
+    })
+    expect(result.current.depletionTracking[0]).toEqual(expect.objectContaining({
+      id: 'tracking-remain-1',
+      remaining: 2,
+      progress: 80,
+    }))
+    expect(result.current.editRemainModalOpen).toBe(false)
+    expect(toast.success).toHaveBeenCalledWith('剩余量已更新', {
+      description: '使用中记录、批次余量、耗材消耗和审计链路已同步',
+    })
+    expect(toast.error).not.toHaveBeenCalledWith('剩余量更新失败')
+  })
+
+  it('keeps a confirmed depletion in completed records when the follow-up refresh fails', async () => {
+    vi.mocked(depletionApi.getTracking)
+      .mockResolvedValueOnce({
+        list: [
+          {
+            id: 'tracking-deplete-1',
+            material_name: '苏木素染液',
+            batch: 'BATCH-DPL-DONE',
+            spec: '500ml',
+            total_qty: 8,
+            remaining: 3,
+            unit: 'ml',
+            days_used: 6,
+            expected_days: 10,
+            status: 'in-use',
+          },
+        ],
+      } as any)
+      .mockRejectedValueOnce(new Error('refresh failed'))
+
+    const { result } = renderHook(() => useInventoryPage())
+
+    await waitFor(() => expect(result.current.depletionTracking).toHaveLength(1))
+
+    act(() => {
+      result.current.setSelectedDepletionItem(result.current.depletionTracking[0])
+      result.current.setDepleteType('abnormal')
+      result.current.setDepleteRemainValue('1')
+      result.current.setExpiredReason('瓶口污染')
+      result.current.setConfirmDepleteModalOpen(true)
+    })
+
+    await act(async () => {
+      await result.current.confirmDeplete()
+    })
+
+    expect(depletionApi.deplete).toHaveBeenCalledWith('tracking-deplete-1', {
+      remain_qty: 1,
+      deplete_type: 'abnormal',
+      deplete_reason: '瓶口污染',
+    })
+    expect(result.current.depletionTracking).toHaveLength(0)
+    expect(result.current.depletedRecords[0]).toEqual(expect.objectContaining({
+      id: 'tracking-deplete-1',
+      materialName: '苏木素染液',
+      batch: 'BATCH-DPL-DONE',
+      depleteType: '异常耗尽',
+      depleteReason: '瓶口污染',
+      totalQty: 8,
+      remainQty: 1,
+      unit: 'ml',
+      actualDays: 6,
+    }))
+    expect(result.current.confirmDepleteModalOpen).toBe(false)
+    expect(toast.success).toHaveBeenCalledWith('已确认耗尽', {
+      description: '使用中记录已归档，批次、耗尽记录、库存状态和审计链路已同步',
+    })
+    expect(toast.error).not.toHaveBeenCalledWith('确认耗尽失败')
   })
 
   it('keeps pathologist depletion access read-only', async () => {
@@ -247,6 +367,19 @@ describe('useInventoryPage', () => {
     expect(result.current.keyword).toBe('BATCH-URL-001')
   })
 
+  it('uses quick low-stock URL parameter so dashboard todos land on the shortage list', async () => {
+    window.history.replaceState(null, '', '/inventory?quick=low-stock')
+
+    const { result } = renderHook(() => useInventoryPage())
+
+    await waitFor(() => {
+      expect(inventoryApi.getList).toHaveBeenCalledWith(expect.objectContaining({
+        status: 'low-stock',
+      }))
+    })
+    expect(result.current.quickFilter).toBe('low-stock')
+  })
+
   it('opens and stores inventory consistency check results', async () => {
     const { result } = renderHook(() => useInventoryPage())
 
@@ -327,6 +460,115 @@ describe('useInventoryPage', () => {
     ])
   })
 
+  it('keeps scrapped stock visible after batch scrap even when the follow-up inventory refresh fails', async () => {
+    vi.mocked(inventoryApi.getList)
+      .mockResolvedValueOnce({
+        list: [
+          {
+            id: 'INV-MAT-006-BATCH-006',
+            materialId: 'MAT-006',
+            batchId: 'BATCH-006',
+            batch: 'B-006',
+            code: 'MAT-006',
+            name: '即时报废物料',
+            spec: '5ml',
+            unit: '盒',
+            stock: 3,
+            totalStock: 3,
+            minStock: 1,
+            maxStock: 100,
+            availableStock: 3,
+            status: 'normal',
+          },
+        ],
+        pagination: { total: 1 },
+      } as any)
+      .mockRejectedValueOnce(new Error('refresh failed'))
+
+    const { result } = renderHook(() => useInventoryPage())
+
+    await waitFor(() => expect(result.current.data).toHaveLength(1))
+
+    act(() => {
+      result.current.toggleSelectOne('INV-MAT-006-BATCH-006')
+      result.current.setScrapReason('damaged')
+      result.current.setScrapResponsiblePerson(' 李四 ')
+      result.current.setScrapResponsibleDepartment(' 仓库 ')
+    })
+
+    await act(async () => {
+      await result.current.confirmBatchScrap()
+    })
+
+    expect(scrapApi.batchCreate).toHaveBeenCalledWith([
+      expect.objectContaining({
+        materialId: 'MAT-006',
+        batchId: 'BATCH-006',
+        quantity: 3,
+        reason: 'damaged',
+        responsiblePerson: '李四',
+        responsibleDepartment: '仓库',
+      }),
+    ])
+    expect(result.current.data[0]).toEqual(expect.objectContaining({
+      id: 'INV-MAT-006-BATCH-006',
+      stock: 0,
+      availableStock: 0,
+    }))
+    expect(toast.success).toHaveBeenCalledWith('报废登记成功', {
+      description: '已报废 1 项物料，库存和批次已扣减，报废记录进入成本、库存流水和审计链路',
+    })
+    expect(toast.error).not.toHaveBeenCalledWith('报废登记失败')
+  })
+
+  it('shows the backend reason when quick batch scrap fails', async () => {
+    vi.mocked(inventoryApi.getList).mockResolvedValue({
+      list: [
+        {
+          id: 'INV-MAT-SCRAP-LOCKED-BATCH',
+          materialId: 'MAT-SCRAP-LOCKED',
+          batchId: 'BATCH-SCRAP-LOCKED',
+          batch: 'B-SCRAP-LOCKED',
+          code: 'MAT-SCRAP-LOCKED',
+          name: '锁定报废物料',
+          spec: '5ml',
+          unit: '盒',
+          stock: 3,
+          totalStock: 3,
+          minStock: 1,
+          maxStock: 100,
+          availableStock: 3,
+          status: 'normal',
+        },
+      ],
+      pagination: { total: 1 },
+    } as any)
+    vi.mocked(scrapApi.batchCreate).mockRejectedValueOnce({
+      response: {
+        data: {
+          message: '该批次已被盘点锁定，不能报废',
+        },
+      },
+    })
+
+    const { result } = renderHook(() => useInventoryPage())
+
+    await waitFor(() => expect(result.current.data).toHaveLength(1))
+
+    act(() => {
+      result.current.toggleSelectOne('INV-MAT-SCRAP-LOCKED-BATCH')
+      result.current.setScrapReason('damaged')
+    })
+
+    await act(async () => {
+      await result.current.confirmBatchScrap()
+    })
+
+    expect(toast.error).toHaveBeenCalledWith('该批次已被盘点锁定，不能报废')
+    expect(result.current.selectedIds.has('INV-MAT-SCRAP-LOCKED-BATCH')).toBe(true)
+    expect(result.current.scrapReason).toBe('damaged')
+  })
+
   it('passes the selected batch id when confirming outbound from an inventory batch row', async () => {
     vi.mocked(inventoryApi.getList).mockResolvedValue({
       list: [
@@ -352,7 +594,10 @@ describe('useInventoryPage', () => {
 
     const { result } = renderHook(() => useInventoryPage())
 
-    await waitFor(() => expect(result.current.data).toHaveLength(1))
+    await waitFor(() => {
+      expect(result.current.data).toHaveLength(1)
+      expect(result.current.projectList).toHaveLength(1)
+    })
 
     act(() => {
       result.current.openOutboundModal(result.current.data[0])
@@ -361,6 +606,7 @@ describe('useInventoryPage', () => {
     const rowId = result.current.outboundMaterials[0].rowId
     act(() => {
       result.current.updateOutboundUser(rowId, '王坤强')
+      result.current.updateOutboundProject(rowId, 'PROJECT-001')
     })
 
     await act(async () => {
@@ -368,6 +614,7 @@ describe('useInventoryPage', () => {
     })
 
     expect(outboundApi.create).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: 'PROJECT-001',
       items: [
         expect.objectContaining({
           materialId: 'MAT-002',
@@ -376,5 +623,228 @@ describe('useInventoryPage', () => {
         }),
       ],
     }))
+  })
+
+  it('keeps the deducted stock visible after outbound even when the follow-up inventory refresh fails', async () => {
+    vi.mocked(inventoryApi.getList)
+      .mockResolvedValueOnce({
+        list: [
+          {
+            id: 'INV-MAT-005-BATCH-005',
+            materialId: 'MAT-005',
+            batchId: 'BATCH-005',
+            batch: 'B-005',
+            code: 'MAT-005',
+            name: '即时扣减物料',
+            spec: '5ml',
+            unit: '盒',
+            stock: 6,
+            totalStock: 6,
+            minStock: 1,
+            maxStock: 100,
+            availableStock: 6,
+            status: 'normal',
+          },
+        ],
+        pagination: { total: 1 },
+      } as any)
+      .mockRejectedValueOnce(new Error('refresh failed'))
+    vi.mocked(outboundApi.create).mockResolvedValueOnce({
+      id: 'outbound-quick-visible',
+      outboundNo: 'OUT-QUICK-VISIBLE-001',
+    } as any)
+
+    const { result } = renderHook(() => useInventoryPage())
+
+    await waitFor(() => {
+      expect(result.current.data).toHaveLength(1)
+      expect(result.current.projectList).toHaveLength(1)
+    })
+
+    act(() => {
+      result.current.openOutboundModal(result.current.data[0])
+    })
+
+    const rowId = result.current.outboundMaterials[0].rowId
+    act(() => {
+      result.current.updateOutboundQuantity(rowId, '2')
+      result.current.updateOutboundUser(rowId, '王坤强')
+      result.current.updateOutboundProject(rowId, 'PROJECT-001')
+    })
+
+    await act(async () => {
+      await result.current.confirmOutbound()
+    })
+
+    expect(outboundApi.create).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: 'PROJECT-001',
+      items: [
+        expect.objectContaining({
+          materialId: 'MAT-005',
+          batchId: 'BATCH-005',
+          quantity: 2,
+        }),
+      ],
+    }))
+    expect(result.current.data[0]).toEqual(expect.objectContaining({
+      id: 'INV-MAT-005-BATCH-005',
+      stock: 4,
+      availableStock: 4,
+    }))
+    expect(toast.success).toHaveBeenCalledWith('出库登记成功', {
+      description: '已生成 OUT-QUICK-VISIBLE-001，库存和批次已扣减；成本和审计可按单号回看，项目对账请按项目进入消耗对账查看实际出库影响',
+    })
+    expect(toast.error).not.toHaveBeenCalledWith('出库登记失败')
+  })
+
+  it('shows the backend reason when quick outbound fails', async () => {
+    vi.mocked(inventoryApi.getList).mockResolvedValue({
+      list: [
+        {
+          id: 'INV-MAT-OUTBOUND-LOCKED-BATCH',
+          materialId: 'MAT-OUTBOUND-LOCKED',
+          batchId: 'BATCH-OUTBOUND-LOCKED',
+          batch: 'B-OUTBOUND-LOCKED',
+          code: 'MAT-OUTBOUND-LOCKED',
+          name: '锁定出库物料',
+          spec: '5ml',
+          unit: '盒',
+          stock: 3,
+          totalStock: 3,
+          minStock: 1,
+          maxStock: 100,
+          availableStock: 3,
+          status: 'normal',
+        },
+      ],
+      pagination: { total: 1 },
+    } as any)
+    vi.mocked(outboundApi.create).mockRejectedValueOnce({
+      response: {
+        data: {
+          error: {
+            message: '批次库存不足：需要 4盒，可用 3盒',
+          },
+        },
+      },
+    })
+
+    const { result } = renderHook(() => useInventoryPage())
+
+    await waitFor(() => {
+      expect(result.current.data).toHaveLength(1)
+      expect(result.current.projectList).toHaveLength(1)
+    })
+
+    act(() => {
+      result.current.openOutboundModal(result.current.data[0])
+    })
+
+    const rowId = result.current.outboundMaterials[0].rowId
+    act(() => {
+      result.current.updateOutboundQuantity(rowId, '2')
+      result.current.updateOutboundUser(rowId, '王坤强')
+      result.current.updateOutboundProject(rowId, 'PROJECT-001')
+    })
+
+    await act(async () => {
+      await result.current.confirmOutbound()
+    })
+
+    expect(toast.error).toHaveBeenCalledWith('批次库存不足：需要 4盒，可用 3盒')
+    expect(result.current.outboundModalOpen).toBe(true)
+  })
+
+  it('blocks quick outbound from inventory when project ownership is missing or mixed', async () => {
+    vi.mocked(inventoryApi.getList).mockResolvedValue({
+      list: [
+        {
+          id: 'INV-MAT-003-BATCH-A',
+          materialId: 'MAT-003',
+          batchId: 'BATCH-A',
+          batch: 'B-A',
+          code: 'MAT-003',
+          name: '快捷出库物料A',
+          spec: '2ml',
+          unit: '盒',
+          stock: 6,
+          totalStock: 6,
+          minStock: 1,
+          maxStock: 100,
+          availableStock: 6,
+          status: 'normal',
+        },
+        {
+          id: 'INV-MAT-004-BATCH-B',
+          materialId: 'MAT-004',
+          batchId: 'BATCH-B',
+          batch: 'B-B',
+          code: 'MAT-004',
+          name: '快捷出库物料B',
+          spec: '2ml',
+          unit: '盒',
+          stock: 6,
+          totalStock: 6,
+          minStock: 1,
+          maxStock: 100,
+          availableStock: 6,
+          status: 'normal',
+        },
+      ],
+      pagination: { total: 2 },
+    } as any)
+    vi.mocked(projectApi.getList).mockResolvedValue({
+      list: [
+        { id: 'PROJECT-001', code: 'PRJ001', name: 'HE制片', status: 'active' },
+        { id: 'PROJECT-002', code: 'PRJ002', name: 'IHC染色', status: 'active' },
+      ],
+      pagination: { total: 2 },
+    } as any)
+
+    const { result } = renderHook(() => useInventoryPage())
+
+    await waitFor(() => {
+      expect(result.current.data).toHaveLength(2)
+      expect(result.current.projectList).toHaveLength(2)
+    })
+
+    act(() => {
+      result.current.openOutboundModal(result.current.data[0])
+    })
+
+    const firstRowId = result.current.outboundMaterials[0].rowId
+    act(() => {
+      result.current.updateOutboundUser(firstRowId, '王坤强')
+    })
+
+    await act(async () => {
+      await result.current.confirmOutbound()
+    })
+
+    expect(outboundApi.create).not.toHaveBeenCalled()
+    expect(toast.error).toHaveBeenCalledWith('请选择检测项目，快捷出库必须归属到项目才能进入成本和对账')
+
+    act(() => {
+      result.current.toggleSelectOne('INV-MAT-003-BATCH-A')
+      result.current.toggleSelectOne('INV-MAT-004-BATCH-B')
+    })
+    act(() => {
+      result.current.confirmBatchOutboundOnly()
+    })
+    const rowIds = result.current.outboundMaterials.map(item => item.rowId)
+    expect(rowIds).toHaveLength(2)
+    act(() => {
+      result.current.updateOutboundUser(rowIds[0], '王坤强')
+      result.current.updateOutboundProject(rowIds[0], 'PROJECT-001')
+      result.current.updateOutboundUser(rowIds[1], '王坤强')
+      result.current.updateOutboundProject(rowIds[1], 'PROJECT-002')
+    })
+
+    await act(async () => {
+      await result.current.confirmOutbound()
+    })
+
+    expect(outboundApi.create).not.toHaveBeenCalled()
+    expect(toast.error).toHaveBeenCalledWith('一次快捷出库只能关联一个检测项目，请分项目分别出库')
   })
 })

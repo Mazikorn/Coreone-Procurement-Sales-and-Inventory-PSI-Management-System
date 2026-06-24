@@ -114,4 +114,107 @@ describe('useEquipmentTypePage', () => {
       expect.objectContaining({ id: 'type-deleted-001', isDeleted: true }),
     ]))
   })
+
+  it('focuses the newly created equipment type so equipment users can confirm the default costing口径', async () => {
+    window.history.replaceState(null, '', '/equipment/types?keyword=old-type')
+    vi.mocked(equipmentApi.createType).mockResolvedValue({
+      id: 'type-created',
+      code: 'EQT-CREATED-001',
+      name: '新建切片设备',
+    } as any)
+
+    const { result } = renderHook(() => useEquipmentTypePage())
+    await waitFor(() => expect(equipmentApi.getTypes).toHaveBeenCalled())
+
+    act(() => {
+      result.current.handleStatusChange('inactive')
+      result.current.openCreate()
+      result.current.setForm({
+        code: 'EQT-DRAFT-001',
+        name: '新建切片设备',
+        description: '用于切片设备默认折旧',
+        status: 'active',
+        defaultPurchasePrice: 120000,
+        defaultDepreciableLifeYears: 6,
+        defaultValue: 12000,
+        defaultDepreciationMethod: 'straight_line',
+        defaultTotalCapacity: 0,
+        defaultCapacityUnit: 'minutes',
+      })
+    })
+
+    await act(async () => {
+      await result.current.handleSubmit()
+    })
+
+    expect(equipmentApi.createType).toHaveBeenCalledWith(expect.objectContaining({
+      code: 'EQT-DRAFT-001',
+      name: '新建切片设备',
+      defaultPurchasePrice: 120000,
+      defaultDepreciableLifeYears: 6,
+      defaultValue: 12000,
+      defaultDepreciationMethod: 'straight_line',
+      status: 'active',
+    }))
+    expect(result.current.keyword).toBe('EQT-CREATED-001')
+    expect(result.current.searchInput).toBe('EQT-CREATED-001')
+    expect(result.current.statusFilter).toBe('')
+    await waitFor(() => expect(equipmentApi.getTypes).toHaveBeenCalledWith(expect.objectContaining({
+      page: 1,
+      pageSize: 20,
+      keyword: 'EQT-CREATED-001',
+    })))
+  })
+
+  it('keeps the newly created equipment type visible when the focused refresh fails', async () => {
+    vi.mocked(equipmentApi.getTypes)
+      .mockResolvedValueOnce({ list: [], pagination: { page: 1, pageSize: 20, total: 0 } } as any)
+      .mockRejectedValueOnce(new Error('refresh failed'))
+    vi.mocked(equipmentApi.createType).mockResolvedValueOnce({
+      id: 'type-visible',
+      code: 'EQT-VISIBLE-001',
+      name: '可回看包埋设备',
+      description: '默认折旧进入设备成本',
+      status: 'active',
+      defaultPurchasePrice: 90000,
+      defaultDepreciableLifeYears: 5,
+      defaultValue: 9000,
+      defaultDepreciationMethod: 'straight_line',
+      defaultTotalCapacity: 0,
+      defaultCapacityUnit: 'minutes',
+    } as any)
+
+    const { result } = renderHook(() => useEquipmentTypePage())
+    await waitFor(() => expect(equipmentApi.getTypes).toHaveBeenCalled())
+
+    act(() => {
+      result.current.openCreate()
+      result.current.setForm({
+        code: 'EQT-DRAFT-VISIBLE',
+        name: '可回看包埋设备',
+        description: '默认折旧进入设备成本',
+        status: 'active',
+        defaultPurchasePrice: 90000,
+        defaultDepreciableLifeYears: 5,
+        defaultValue: 9000,
+        defaultDepreciationMethod: 'straight_line',
+        defaultTotalCapacity: 0,
+        defaultCapacityUnit: 'minutes',
+      })
+    })
+
+    await act(async () => {
+      await result.current.handleSubmit()
+    })
+
+    expect(result.current.keyword).toBe('EQT-VISIBLE-001')
+    expect(result.current.data).toEqual([
+      expect.objectContaining({
+        id: 'type-visible',
+        code: 'EQT-VISIBLE-001',
+        name: '可回看包埋设备',
+      }),
+    ])
+    expect(result.current.total).toBe(1)
+  })
 })

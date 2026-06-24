@@ -192,6 +192,7 @@ describe('报废管理 API', () => {
 
     expect(res.status).toBe(200)
     expect(res.body.success).toBe(true)
+    expect(res.body.data.scrapNo).toMatch(/^SC-/)
     const record = db.prepare('SELECT operator, quantity FROM scrap_records WHERE id = ?').get(res.body.data.id) as any
     const inventory = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
     const log = db.prepare('SELECT operator, quantity, before_stock, after_stock FROM stock_logs WHERE related_id = ? AND related_type = ?')
@@ -212,10 +213,110 @@ describe('报废管理 API', () => {
     expect(listRes.status).toBe(200)
     const listedRecord = listRes.body.data.list.find((row: any) => row.id === res.body.data.id)
     expect(listedRecord).toMatchObject({
+      scrapNo: res.body.data.scrapNo,
       materialId,
       materialName: '报废测试物料',
       unit: '瓶',
     })
+  })
+
+  it('SC-002B: 创建报废后统一日志可按报废单号回看库存扣减证据', async () => {
+    const suffix = `unified-${Date.now()}`
+    const { materialId, batchId, locationId } = seedScrapMaterialWithBatch(db, suffix, 10)
+    seedScrapBatchLocation(db, { materialId, batchId, locationId }, 10)
+
+    const createRes = await request(app)
+      .post('/api/v1/scraps')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        materialId,
+        batchId,
+        quantity: 3,
+        reason: 'damaged',
+        remark: '统一日志回看报废扣减',
+      })
+
+    expect(createRes.status).toBe(200)
+    const { id, scrapNo } = createRes.body.data
+
+    const unifiedRes = await request(app)
+      .get('/api/v1/logs/unified')
+      .query({ keyword: scrapNo, pageSize: 50 })
+      .set('Authorization', `Bearer ${adminToken}`)
+
+    expect(unifiedRes.status).toBe(200)
+    expect(unifiedRes.body.data.list).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourceType: 'operation',
+        module: 'scraps',
+        operation: 'POST /scraps',
+        businessId: scrapNo,
+        businessUrl: `/scraps?keyword=${encodeURIComponent(scrapNo)}`,
+        requestData: expect.objectContaining({
+          module: 'scraps',
+          id,
+          scrapNo,
+          materialId,
+          batchId,
+          quantity: 3,
+          reason: 'damaged',
+        }),
+        responseData: expect.objectContaining({ id, scrapNo }),
+        auditEvent: expect.objectContaining({
+          eventCode: 'operation.scraps.create',
+          subjectType: 'scraps',
+          subjectId: scrapNo,
+          businessId: scrapNo,
+          businessUrl: `/scraps?keyword=${encodeURIComponent(scrapNo)}`,
+          evidenceSource: 'operation_logs',
+        }),
+      }),
+      expect.objectContaining({
+        sourceType: 'stock',
+        module: 'scraps',
+        businessId: scrapNo,
+        businessUrl: `/scraps?keyword=${encodeURIComponent(scrapNo)}`,
+        requestData: expect.objectContaining({
+          relatedId: id,
+          relatedDocumentNo: scrapNo,
+          relatedType: 'scrap',
+          quantity: -3,
+          beforeStock: 10,
+          afterStock: 7,
+        }),
+        auditEvent: expect.objectContaining({
+          eventCode: 'stock.scraps.create',
+          subjectType: 'scraps',
+          subjectId: scrapNo,
+          businessId: scrapNo,
+          businessUrl: `/scraps?keyword=${encodeURIComponent(scrapNo)}`,
+          evidenceSource: 'stock_logs',
+        }),
+      }),
+      expect.objectContaining({
+        sourceType: 'batch_location',
+        module: 'scraps',
+        businessId: scrapNo,
+        businessUrl: `/scraps?keyword=${encodeURIComponent(scrapNo)}`,
+        requestData: expect.objectContaining({
+          relatedId: id,
+          relatedDocumentNo: scrapNo,
+          relatedType: 'scrap',
+          batchId,
+          materialId,
+          locationId,
+          quantityDelta: -3,
+        }),
+        auditEvent: expect.objectContaining({
+          eventCode: 'batch_location.scraps.update',
+          subjectType: 'scraps',
+          subjectId: scrapNo,
+          businessId: scrapNo,
+          businessUrl: `/scraps?keyword=${encodeURIComponent(scrapNo)}`,
+          evidenceSource: 'batch_location_adjustments',
+        }),
+      }),
+    ]))
   })
 
   it('SC-003: 撤销报废会软删除记录、回退库存并写入撤销日志', async () => {

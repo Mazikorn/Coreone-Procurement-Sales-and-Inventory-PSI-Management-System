@@ -99,6 +99,11 @@ export function getInboundImportActionState({
   return { disabled: false, label: '开始导入' }
 }
 
+function getImportErrorMessage(error: unknown, fallback: string): string {
+  const data = (error as any)?.response?.data
+  return data?.error?.message || data?.message || (error as any)?.message || fallback
+}
+
 export default function ImportInboundModal({
   onClose,
   onSuccess,
@@ -114,6 +119,13 @@ export default function ImportInboundModal({
   const validRows = rows.filter(row => row.errors.length === 0)
   const invalidRows = rows.length - validRows.length
   const previewRows = rows.slice(0, 20)
+  const importSummary = {
+    materialCount: new Set(validRows.map(row => row.materialId || row.materialCode).filter(Boolean)).size,
+    batchCount: new Set(validRows.map(row => row.batchNo).filter(Boolean)).size,
+    locationCount: new Set(validRows.map(row => row.locationId || row.locationName).filter(Boolean)).size,
+    totalQuantity: validRows.reduce((sum, row) => sum + Number(row.quantity || 0), 0),
+    totalAmount: validRows.reduce((sum, row) => sum + Number(row.quantity || 0) * Number(row.price || 0), 0),
+  }
   const actionState = getInboundImportActionState({
     importing,
     totalRows: rows.length,
@@ -272,8 +284,8 @@ export default function ImportInboundModal({
         description: `成功导入 ${res.createdCount} 条`,
       })
       onSuccess()
-    } catch {
-      toast.error('导入失败')
+    } catch (e) {
+      toast.error(getImportErrorMessage(e, '导入失败'))
     } finally {
       setImporting(false)
     }
@@ -351,6 +363,22 @@ export default function ImportInboundModal({
                 ))}
               </tbody>
             </table>
+          </div>
+          <div className="mt-4 rounded-lg border border-emerald-100 bg-emerald-50 px-4 py-3">
+            <div className="text-sm font-semibold text-emerald-900">入库导入结果确认</div>
+            <div className="mt-1 text-xs text-emerald-800">
+              确认后将接住：入库单、库存、批次、库位、成本、库存流水、审计记录
+            </div>
+            <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-emerald-900 sm:grid-cols-4">
+              <div>可导入 {validRows.length} 条</div>
+              <div>需修正 {invalidRows} 条</div>
+              <div>批次数 {importSummary.batchCount} 个</div>
+              <div>物料数 {importSummary.materialCount} 个</div>
+              <div>库位数 {importSummary.locationCount} 个</div>
+              <div>入库数量 {Number(importSummary.totalQuantity.toFixed(6)).toString()}</div>
+              <div>入库金额 ¥{importSummary.totalAmount.toFixed(2)}</div>
+              <div>{invalidRows > 0 ? '整批导入将被阻断' : '可整批导入'}</div>
+            </div>
           </div>
         </div>
       )}

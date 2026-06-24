@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { stocktakingApi } from '@/api/stocktaking'
 import { inventoryApi } from '@/api/inventory'
 import { materialApi } from '@/api/master'
@@ -44,14 +44,93 @@ export interface FormData {
   remark: string
 }
 
+type StocktakingCreateDraft = Partial<FormData>
+
+export interface CreatedStocktakingRecord {
+  id?: string
+  stocktakingNo?: string
+  status?: string
+}
+
 export const statusOptions = [
   { value: '', label: '全部状态' },
   { value: 'completed', label: '已完成' },
   { value: 'confirmed', label: '已确认' },
 ]
 
+function buildCreatedStocktakingRow(
+  payload: CreatedStocktakingRecord & Partial<StocktakingRecord>,
+  form: FormData,
+  materials: Material[],
+  inventoryRows: StocktakingScopeRow[],
+): StocktakingRecord | null {
+  if (!payload.id || !payload.stocktakingNo) return null
+
+  const material = materials.find(item => item.id === form.materialId)
+  const selectedBatchRow = inventoryRows.find(row => row.batchId === form.batchId)
+  const selectedLocationRow = inventoryRows.find(row => row.locationId === form.locationId)
+  const actualStock = Number(form.actualStock)
+
+  return {
+    id: payload.id,
+    stocktakingNo: payload.stocktakingNo,
+    materialId: form.materialId,
+    locationId: form.locationId || selectedBatchRow?.locationId || null,
+    batchId: form.batchId || null,
+    batchNo: payload.batchNo || selectedBatchRow?.batchNo || null,
+    materialName: payload.materialName || material?.name || form.materialId,
+    materialCode: payload.materialCode || material?.code,
+    materialUnit: payload.materialUnit || material?.unit,
+    categoryName: payload.categoryName || (material as any)?.categoryName || (material as any)?.categoryPath,
+    locationName: payload.locationName || selectedBatchRow?.locationName || selectedLocationRow?.locationName,
+    systemStock: Number(form.systemStock || 0),
+    actualStock,
+    difference: Number((actualStock - Number(form.systemStock || 0)).toFixed(6)),
+    operator: payload.operator || 'system',
+    status: payload.status || 'completed',
+    createdAt: payload.createdAt || new Date().toISOString(),
+    remark: (payload.remark ?? form.remark) || undefined,
+  }
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  const data = (error as any)?.response?.data
+  return data?.error?.message || data?.message || (error as any)?.message || fallback
+}
+
+function formatStocktakingQuantity(value: number): string {
+  return String(Number(Number(value || 0).toFixed(6)))
+}
+
+function getStocktakingCreateSuccessDescription(stocktakingNo?: string): string {
+  const prefix = stocktakingNo ? `已生成 ${stocktakingNo}，` : ''
+  return `${prefix}当前只记录盘点差异；确认差异后才会调整库存、库位/批次、预警和审计链路`
+}
+
+function getStocktakingConfirmSuccessDescription(record: StocktakingRecord): string {
+  const difference = Number(record.difference || 0)
+  if (difference === 0) {
+    return `${record.stocktakingNo} 已确认无差异；盘点状态和审计记录已按单号接住，库存、库位/批次和预警不产生调整`
+  }
+  return `${record.stocktakingNo} 已确认差异 ${formatStocktakingQuantity(difference)}；库存、库位/批次、预警、库存流水和审计记录已按单号接住`
+}
+
+function getStocktakingDeleteSuccessDescription(record: StocktakingRecord): string {
+  const hasConfirmedDifference = record.status === 'confirmed' && Number(record.difference || 0) !== 0
+  if (hasConfirmedDifference) {
+    return `${record.stocktakingNo} 已撤销；库存、库位/批次、预警和库存流水已回退，审计记录可按单号回看`
+  }
+  return `${record.stocktakingNo} 已撤销；未确认盘点不会改动库存、批次、预警或成本，审计记录可按单号回看`
+}
+
+function normalizeScopeType(value: string): StocktakingScopeType {
+  if (value === 'location' || value === 'batch') return value
+  return 'material'
+}
+
 export function useStocktakingPage() {
   const url = useUrlParams()
+  const handledCreateFromQuery = useRef(false)
 
   const initialPage = Math.max(1, url.getNumber('page', 1))
   const initialPageSize = [10, 20, 50, 100].includes(url.getNumber('pageSize', 20))
@@ -70,6 +149,10 @@ export function useStocktakingPage() {
 
   const [modalType, setModalType] = useState<'create' | 'detail' | 'adjust' | null>(null)
   const [detailRow, setDetailRow] = useState<StocktakingRecord | null>(null)
+  const [createdRecord, setCreatedRecord] = useState<CreatedStocktakingRecord | null>(null)
+  const [createdRecordFallback, setCreatedRecordFallback] = useState<StocktakingRecord | null>(null)
+  const [confirmedRecordFallback, setConfirmedRecordFallback] = useState<StocktakingRecord | null>(null)
+  const [deletedRecordIds, setDeletedRecordIds] = useState<Set<string>>(new Set())
   const [createStep, setCreateStep] = useState(1)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
@@ -107,6 +190,49 @@ export function useStocktakingPage() {
     deps: [debouncedKeyword, statusFilter],
   })
 
+  const displayedPage = useMemo(() => {
+    const filteredData = deletedRecordIds.size
+      ? data.filter(row => !deletedRecordIds.has(row.id))
+      : data
+    let nextTotal = Math.max(0, total - (data.length - filteredData.length))
+
+    if (
+      confirmedRecordFallback &&
+      !deletedRecordIds.has(confirmedRecordFallback.id) &&
+      keyword === confirmedRecordFallback.stocktakingNo &&
+      debouncedKeyword === confirmedRecordFallback.stocktakingNo &&
+      statusFilter === 'confirmed' &&
+      page === 1
+    ) {
+      if (filteredData.some(row => row.id === confirmedRecordFallback.id || row.stocktakingNo === confirmedRecordFallback.stocktakingNo)) {
+        const rows = filteredData.map(row =>
+          row.id === confirmedRecordFallback.id || row.stocktakingNo === confirmedRecordFallback.stocktakingNo
+            ? confirmedRecordFallback
+            : row
+        )
+        return { data: rows, total: nextTotal }
+      }
+      const rows = [confirmedRecordFallback, ...filteredData]
+      return { data: rows, total: Math.max(nextTotal + 1, rows.length) }
+    }
+
+    if (!createdRecordFallback || deletedRecordIds.has(createdRecordFallback.id)) {
+      return { data: filteredData, total: nextTotal }
+    }
+    if (
+      keyword !== createdRecordFallback.stocktakingNo ||
+      debouncedKeyword !== createdRecordFallback.stocktakingNo ||
+      statusFilter ||
+      page !== 1
+    ) return { data: filteredData, total: nextTotal }
+    if (filteredData.some(row => row.id === createdRecordFallback.id || row.stocktakingNo === createdRecordFallback.stocktakingNo)) {
+      return { data: filteredData, total: nextTotal }
+    }
+
+    const rows = [createdRecordFallback, ...filteredData]
+    return { data: rows, total: Math.max(nextTotal, rows.length) }
+  }, [confirmedRecordFallback, createdRecordFallback, data, debouncedKeyword, deletedRecordIds, keyword, page, statusFilter, total])
+
   useEffect(() => {
     url.setMultiple({
       page: page > 1 ? page : null,
@@ -142,16 +268,57 @@ export function useStocktakingPage() {
     loadStats()
   }, [loadStats])
 
-  const openCreate = async () => {
+  const getCreateDraftFromUrl = useCallback((): StocktakingCreateDraft => {
+    const systemStock = url.getNumber('systemStock', 0)
+    return {
+      materialId: url.get('materialId', ''),
+      scopeType: normalizeScopeType(url.get('scopeType', 'material')),
+      locationId: url.get('locationId', ''),
+      batchId: url.get('batchId', ''),
+      systemStock: Number.isFinite(systemStock) ? systemStock : 0,
+      remark: url.get('remark', '来自库存列表现场盘点'),
+    }
+  }, [url])
+
+  const openCreate = useCallback(async (draft: StocktakingCreateDraft = {}) => {
     const res: any = await materialApi.getList({ page: 1, pageSize: 999, status: 'active' })
     setMaterials(res?.list || [])
-    setInventoryRows([])
+    let nextInventoryRows: StocktakingScopeRow[] = []
+    if (draft.materialId) {
+      try {
+        const inventoryRes: any = await inventoryApi.getList({
+          materialId: draft.materialId,
+          page: 1,
+          pageSize: STOCKTAKING_SCOPE_PAGE_SIZE,
+        })
+        const payload = inventoryRes?.data ?? inventoryRes
+        nextInventoryRows = payload?.list || []
+      } catch {
+        nextInventoryRows = []
+      }
+    }
+    setInventoryRows(nextInventoryRows)
     setForm({
-      materialId: '', scopeType: 'material', locationId: '', batchId: '', systemStock: 0, actualStock: '', remark: '',
+      materialId: draft.materialId || '',
+      scopeType: draft.scopeType || 'material',
+      locationId: draft.locationId || '',
+      batchId: draft.batchId || '',
+      systemStock: Number(draft.systemStock || 0),
+      actualStock: draft.actualStock ?? '',
+      remark: draft.remark || '',
     })
+    setCreatedRecord(null)
     setCreateStep(1)
     setModalType('create')
-  }
+  }, [])
+
+  useEffect(() => {
+    if (handledCreateFromQuery.current) return
+    if (url.get('action', '') !== 'create') return
+
+    handledCreateFromQuery.current = true
+    void openCreate(getCreateDraftFromUrl())
+  }, [getCreateDraftFromUrl, openCreate, url])
 
   const handleSubmit = async () => {
     if (!form.materialId) { toast.error('请选择物料'); return }
@@ -169,7 +336,9 @@ export function useStocktakingPage() {
         actualStock: Number(form.actualStock),
         remark: form.remark
       })
-      toast.success('盘点记录已创建')
+      toast.success('盘点记录已创建', {
+        description: getStocktakingCreateSuccessDescription(),
+      })
       setModalType(null)
       refresh()
       loadStats()
@@ -182,9 +351,17 @@ export function useStocktakingPage() {
       toast.error('请输入实盘数量')
       return
     }
+    if (form.scopeType === 'location' && !form.locationId) {
+      toast.error('请选择盘点库位，库位盘点必须明确库存归属')
+      return
+    }
+    if (form.scopeType === 'batch' && !form.batchId) {
+      toast.error('请选择盘点批次，批次盘点必须接住批次追溯链路')
+      return
+    }
     setIsSubmitting(true)
     try {
-      await stocktakingApi.create({
+      const res: any = await stocktakingApi.create({
         materialId: form.materialId,
         locationId: form.locationId || undefined,
         batchId: form.batchId || undefined,
@@ -192,12 +369,27 @@ export function useStocktakingPage() {
         actualStock: Number(form.actualStock),
         remark: form.remark,
       })
-      toast.success('盘点任务已创建')
+      const payload = res?.data ?? res
+      setCreatedRecord({
+        id: payload?.id,
+        stocktakingNo: payload?.stocktakingNo,
+        status: payload?.status,
+      })
+      if (payload?.stocktakingNo) {
+        setCreatedRecordFallback(buildCreatedStocktakingRow(payload, form, materials, inventoryRows))
+        setKeyword(payload.stocktakingNo)
+        setDebouncedKeyword(payload.stocktakingNo)
+        setStatusFilter('')
+        setPage(1)
+      }
+      toast.success('盘点任务已创建', {
+        description: getStocktakingCreateSuccessDescription(payload?.stocktakingNo),
+      })
       setCreateStep(3)
       refresh()
       loadStats()
     } catch (e) {
-      toast.error('创建失败，请重试')
+      toast.error(getErrorMessage(e, '创建失败，请重试'))
     } finally {
       setIsSubmitting(false)
     }
@@ -222,7 +414,14 @@ export function useStocktakingPage() {
     if (!recordToDelete) return
     try {
       await stocktakingApi.delete(recordToDelete.id)
-      toast.success('盘点记录已撤销')
+      setDeletedRecordIds(prev => {
+        const next = new Set(prev)
+        next.add(recordToDelete.id)
+        return next
+      })
+      toast.success('盘点记录已撤销', {
+        description: getStocktakingDeleteSuccessDescription(recordToDelete),
+      })
       setDeleteConfirmOpen(false)
       setRecordToDelete(null)
       refresh()
@@ -241,13 +440,25 @@ export function useStocktakingPage() {
     setIsSubmitting(true)
     try {
       await stocktakingApi.confirm(detailRow.id, payload)
-      toast.success('盘点差异已确认')
+      const confirmedRecord: StocktakingRecord = {
+        ...detailRow,
+        status: 'confirmed',
+        remark: payload.remark || detailRow.remark,
+      }
+      setConfirmedRecordFallback(confirmedRecord)
+      setKeyword(detailRow.stocktakingNo)
+      setDebouncedKeyword(detailRow.stocktakingNo)
+      setStatusFilter('confirmed')
+      setPage(1)
+      toast.success('盘点差异已确认', {
+        description: getStocktakingConfirmSuccessDescription(detailRow),
+      })
       setModalType(null)
       setDetailRow(null)
       refresh()
       loadStats()
     } catch (e) {
-      toast.error('确认失败')
+      toast.error(getErrorMessage(e, '确认失败'))
     } finally {
       setIsSubmitting(false)
     }
@@ -274,10 +485,11 @@ export function useStocktakingPage() {
   const selectedMaterial = materials.find(m => m.id === form.materialId)
 
   return {
-    data, loading, page, pageSize, total, setPage, setPageSize, refresh,
+    data: displayedPage.data, loading, page, pageSize, total: displayedPage.total, setPage, setPageSize, refresh,
     keyword, setKeyword, statusFilter, setStatusFilter,
     modalType, setModalType,
     detailRow, setDetailRow,
+    createdRecord,
     createStep, setCreateStep,
     isSubmitting, setIsSubmitting,
     deleteConfirmOpen, setDeleteConfirmOpen,

@@ -1,5 +1,5 @@
 import { useState, useMemo, Fragment } from 'react'
-import { X, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react'
+import { X, ChevronDown, ChevronRight, AlertTriangle, FileSearch, RotateCcw } from 'lucide-react'
 import type { OutboundRecord, OutboundItem } from '@/types'
 import { formatDate, formatCurrency } from '@/lib/utils'
 import { useNavigate } from 'react-router-dom'
@@ -32,6 +32,24 @@ interface MaterialGroup {
   totalCost: number
   avgUnitCost: number
   items: OutboundItem[]
+}
+
+const usageLabels: Record<string, string> = {
+  self: '自用',
+  external: '外给',
+}
+
+function formatUsage(item: Pick<OutboundItem, 'usage'>) {
+  return usageLabels[item.usage || 'self'] || '自用'
+}
+
+function formatReceiver(item: Pick<OutboundItem, 'receiver'>) {
+  return item.receiver?.trim() || '-'
+}
+
+function summarizeItems<T>(items: T[], formatter: (item: T) => string) {
+  const values = Array.from(new Set(items.map(formatter).filter(Boolean)))
+  return values.length > 0 ? values.join('、') : '-'
 }
 
 export default function OutboundDetailModal({ open, record, onClose, onPrint }: OutboundDetailModalProps) {
@@ -78,9 +96,45 @@ export default function OutboundDetailModal({ open, record, onClose, onPrint }: 
     })
   }
 
+  const openAuditEvidence = () => {
+    onClose()
+    navigate(`/logs?keyword=${encodeURIComponent(record.outboundNo)}`)
+  }
+
   if (!open || !record) return null
 
   const costCfg = costStatusConfig[record.costStatus || 'pending_cost'] || costStatusConfig.pending_cost
+  const buildReturnDraftUrl = (item: OutboundItem) => {
+    const params = new URLSearchParams({
+      action: 'create',
+      outboundItemId: item.id,
+      quantity: '1',
+      reason: 'unused',
+      remark: `来自出库详情退库：${record.outboundNo} / ${item.materialName || item.materialId} / ${item.batchNo || '无批次'}`,
+    })
+    return `/returns?${params.toString()}`
+  }
+  const openReturnDraft = (item: OutboundItem) => {
+    onClose()
+    navigate(buildReturnDraftUrl(item))
+  }
+  const renderReturnAction = (item: OutboundItem) => {
+    if (record.status !== 'completed') {
+      return <span className="text-xs text-gray-400">-</span>
+    }
+
+    return (
+      <button
+        type="button"
+        aria-label={`退库 ${item.materialName || item.materialId} ${item.batchNo || '无批次'}`}
+        onClick={() => openReturnDraft(item)}
+        className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700"
+      >
+        <RotateCcw className="h-3.5 w-3.5" />
+        退库
+      </button>
+    )
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -177,76 +231,94 @@ export default function OutboundDetailModal({ open, record, onClose, onPrint }: 
             </div>
           </div>
 
-          <table className="w-full text-sm border border-gray-200 rounded-md overflow-hidden">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">物料名称</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">批号</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">出库数量</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">单位</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">单价</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">金额</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {groupedItems.map((group) => {
-                const isExpanded = expandedIds.has(group.materialId)
-                const hasMultiple = group.items.length > 1
-                return (
-                  <Fragment key={group.materialId}>
-                    <tr className={hasMultiple ? 'bg-gray-50/60' : ''}>
-                      <td className="px-4 py-2">
-                        <div className="flex items-center gap-1.5">
-                          {hasMultiple && (
-                            <button
-                              onClick={() => toggleExpand(group.materialId)}
-                              className="p-0.5 text-gray-400 hover:text-gray-600 hover:bg-gray-200 rounded transition-colors"
-                            >
-                              {isExpanded ? (
-                                <ChevronDown className="w-3.5 h-3.5" />
-                              ) : (
-                                <ChevronRight className="w-3.5 h-3.5" />
-                              )}
-                            </button>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[860px] text-sm border border-gray-200 rounded-md overflow-hidden">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">物料名称</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">批号</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">出库数量</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">用途</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">接收/领用方</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">单位</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">单价</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">金额</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">操作</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {groupedItems.map((group) => {
+                  const isExpanded = expandedIds.has(group.materialId)
+                  const hasMultiple = group.items.length > 1
+                  return (
+                    <Fragment key={group.materialId}>
+                      <tr className={hasMultiple ? 'bg-gray-50/60' : ''}>
+                        <td className="px-4 py-2">
+                          <div className="flex items-center gap-1.5">
+                            {hasMultiple && (
+                              <button
+                                onClick={() => toggleExpand(group.materialId)}
+                                className="p-0.5 text-gray-400 hover:text-gray-600 hover:bg-gray-200 rounded transition-colors"
+                              >
+                                {isExpanded ? (
+                                  <ChevronDown className="w-3.5 h-3.5" />
+                                ) : (
+                                  <ChevronRight className="w-3.5 h-3.5" />
+                                )}
+                              </button>
+                            )}
+                            <span className="font-medium text-gray-900">{group.materialName}</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-2 font-mono text-gray-500 text-xs">
+                          {hasMultiple ? `${group.items.length}个批次` : (group.items[0]?.batchNo || '-')}
+                        </td>
+                        <td className="px-4 py-2">{group.totalQuantity}</td>
+                        <td className="px-4 py-2 text-gray-700">{summarizeItems(group.items, formatUsage)}</td>
+                        <td className="px-4 py-2 text-gray-700">{summarizeItems(group.items, formatReceiver)}</td>
+                        <td className="px-4 py-2 text-gray-500">{group.unit}</td>
+                        <td className="px-4 py-2">
+                          {hasMultiple ? (
+                            <span className="text-xs text-gray-400">均价 {formatCurrency(group.avgUnitCost)}</span>
+                          ) : (
+                            formatCurrency(group.avgUnitCost)
                           )}
-                          <span className="font-medium text-gray-900">{group.materialName}</span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-2 font-mono text-gray-500 text-xs">
-                        {hasMultiple ? `${group.items.length}个批次` : (group.items[0]?.batchNo || '-')}
-                      </td>
-                      <td className="px-4 py-2">{group.totalQuantity}</td>
-                      <td className="px-4 py-2 text-gray-500">{group.unit}</td>
-                      <td className="px-4 py-2">
-                        {hasMultiple ? (
-                          <span className="text-xs text-gray-400">均价 {formatCurrency(group.avgUnitCost)}</span>
-                        ) : (
-                          formatCurrency(group.avgUnitCost)
-                        )}
-                      </td>
-                      <td className="px-4 py-2 font-medium text-gray-900">{formatCurrency(group.totalCost)}</td>
-                    </tr>
-                    {hasMultiple && isExpanded && group.items.map((item, i) => (
-                      <tr key={`${group.materialId}-${i}`} className="bg-white">
-                        <td className="px-4 py-1.5 pl-10" />
-                        <td className="px-4 py-1.5 font-mono text-gray-500 text-xs">{item.batchNo || '-'}</td>
-                        <td className="px-4 py-1.5 text-sm text-gray-600">{item.quantity}</td>
-                        <td className="px-4 py-1.5 text-sm text-gray-400">{item.unit}</td>
-                        <td className="px-4 py-1.5 text-sm text-gray-600">{formatCurrency(item.unitCost)}</td>
-                        <td className="px-4 py-1.5 text-sm text-gray-600">{formatCurrency(item.totalCost)}</td>
+                        </td>
+                        <td className="px-4 py-2 font-medium text-gray-900">{formatCurrency(group.totalCost)}</td>
+                        <td className="px-4 py-2">
+                          {hasMultiple ? (
+                            <span className="text-xs text-gray-400">展开明细退库</span>
+                          ) : (
+                            renderReturnAction(group.items[0])
+                          )}
+                        </td>
                       </tr>
-                    ))}
-                  </Fragment>
-                )
-              })}
-            </tbody>
-            <tfoot>
-              <tr className="bg-gray-50 font-semibold">
-                <td colSpan={5} className="px-4 py-2 text-right text-gray-700">合计:</td>
-                <td className="px-4 py-2 text-gray-900">{formatCurrency(record.totalCost)}</td>
-              </tr>
-            </tfoot>
-          </table>
+                      {hasMultiple && isExpanded && group.items.map((item, i) => (
+                        <tr key={`${group.materialId}-${i}`} className="bg-white">
+                          <td className="px-4 py-1.5 pl-10" />
+                          <td className="px-4 py-1.5 font-mono text-gray-500 text-xs">{item.batchNo || '-'}</td>
+                          <td className="px-4 py-1.5 text-sm text-gray-600">{item.quantity}</td>
+                          <td className="px-4 py-1.5 text-sm text-gray-600">{formatUsage(item)}</td>
+                          <td className="px-4 py-1.5 text-sm text-gray-600">{formatReceiver(item)}</td>
+                          <td className="px-4 py-1.5 text-sm text-gray-400">{item.unit}</td>
+                          <td className="px-4 py-1.5 text-sm text-gray-600">{formatCurrency(item.unitCost)}</td>
+                          <td className="px-4 py-1.5 text-sm text-gray-600">{formatCurrency(item.totalCost)}</td>
+                          <td className="px-4 py-1.5">{renderReturnAction(item)}</td>
+                        </tr>
+                      ))}
+                    </Fragment>
+                  )
+                })}
+              </tbody>
+              <tfoot>
+                <tr className="bg-gray-50 font-semibold">
+                  <td colSpan={7} className="px-4 py-2 text-right text-gray-700">合计:</td>
+                  <td className="px-4 py-2 text-gray-900">{formatCurrency(record.totalCost)}</td>
+                  <td className="px-4 py-2" />
+                </tr>
+              </tfoot>
+            </table>
+          </div>
 
           {record.projectName && (
             <div className="p-3 bg-blue-50 rounded-md border border-blue-100">
@@ -279,6 +351,13 @@ export default function OutboundDetailModal({ open, record, onClose, onPrint }: 
           )}
         </div>
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200">
+          <button
+            onClick={openAuditEvidence}
+            className="inline-flex items-center gap-1.5 px-4 py-2 text-sm text-blue-600 bg-blue-50 border border-blue-100 rounded-md hover:bg-blue-100 transition-colors duration-150"
+          >
+            <FileSearch className="h-4 w-4" />
+            审计证据
+          </button>
           <button
             onClick={onClose}
             className="px-4 py-2 text-sm text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors duration-150"

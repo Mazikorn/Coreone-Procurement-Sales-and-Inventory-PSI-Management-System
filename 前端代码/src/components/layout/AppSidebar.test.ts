@@ -48,6 +48,7 @@ describe('AppSidebar business-order navigation', () => {
       '收费映射',
       '消耗对账',
     ])
+    expect(itemLabels('finance', '成本管理')).toContain('供应商成本')
   })
 
   it('keeps managers insight-first and read-only', () => {

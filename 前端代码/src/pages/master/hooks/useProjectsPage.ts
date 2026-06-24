@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { bomApi, projectApi } from '@/api/master'
 import { usePagination } from '@/hooks/usePagination'
 import { useUrlParams } from '@/hooks/useUrlParams'
@@ -109,6 +109,7 @@ export function useProjectsPage() {
   const [editTab, setEditTab] = useState<'basic' | 'bom'>('basic')
   const [bomOption, setBomOption] = useState<'select' | 'create' | 'skip'>('select')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const handledWorkLinkRef = useRef(false)
 
   const urlPage = Math.max(1, getNumber('page', 1))
   const urlPageSize = [10, 20, 50, 100].includes(getNumber('pageSize', 20))
@@ -145,6 +146,49 @@ export function useProjectsPage() {
     initialPageSize: urlPageSize,
     deps: [keyword, typeFilter, statusFilter, bomFilter, includeDeleted],
   })
+
+  const [localProjectPatches, setLocalProjectPatches] = useState<Record<string, Partial<Project>>>({})
+  const [localCreatedProject, setLocalCreatedProject] = useState<Project | null>(null)
+
+  const projectMatchesCurrentFilters = useCallback((project: Project) => {
+    if (!includeDeleted && project.isDeleted) return false
+    if (typeFilter && project.type !== typeFilter) return false
+    if (statusFilter && project.status !== statusFilter) return false
+    if (bomFilter === 'configured' && !project.bomId) return false
+    if (bomFilter === 'unconfigured' && project.bomId) return false
+
+    const keywordText = keyword.trim().toLowerCase()
+    if (!keywordText) return true
+    return [
+      project.id,
+      project.code,
+      project.name,
+      project.typeName,
+      project.manager,
+      project.description,
+    ].some(value => String(value || '').toLowerCase().includes(keywordText))
+  }, [bomFilter, includeDeleted, keyword, statusFilter, typeFilter])
+
+  const displayData = useMemo(() => {
+    const patched = data
+      .map(project => ({
+        ...project,
+        ...(localProjectPatches[project.id] || {}),
+      }))
+      .filter(projectMatchesCurrentFilters)
+
+    if (
+      localCreatedProject &&
+      projectMatchesCurrentFilters(localCreatedProject) &&
+      !patched.some(project => project.id === localCreatedProject.id)
+    ) {
+      return [localCreatedProject, ...patched]
+    }
+
+    return patched
+  }, [data, localCreatedProject, localProjectPatches, projectMatchesCurrentFilters])
+
+  const displayTotal = Math.max(0, total - (data.length - displayData.length))
 
   useEffect(() => {
     setMultiple({
@@ -237,6 +281,19 @@ export function useProjectsPage() {
     setModalType('edit')
   }
 
+  useEffect(() => {
+    if (handledWorkLinkRef.current) return
+    if (get('action') !== 'edit') return
+    const projectId = get('projectId')
+    if (!projectId) return
+    const target = data.find(project => project.id === projectId)
+    if (!target) return
+
+    handledWorkLinkRef.current = true
+    openEdit(target)
+    if (get('tab') === 'bom') setEditTab('bom')
+  }, [data, get, openEdit])
+
   const openCopy = (row: Project) => {
     if (!canWrite) {
       toast.error('当前角色只能查看检测服务')
@@ -276,6 +333,14 @@ export function useProjectsPage() {
     setDeleteCheck(null)
     setCheckingDelete(false)
     resetForm()
+  }
+
+  const focusProjectList = (keyword: string) => {
+    setKeyword(keyword)
+    setTypeFilter('')
+    setStatusFilter('')
+    setBomFilter('')
+    setPage(1)
   }
 
   function buildPayload() {
@@ -330,9 +395,29 @@ export function useProjectsPage() {
     try {
       if (modalType === 'edit' && editingRow) {
         await projectApi.update(editingRow.id, payload)
+        setLocalProjectPatches(prev => ({
+          ...prev,
+          [editingRow.id]: {
+            ...payload,
+            bomId: payload.bomId || '',
+          },
+        }))
         toast.success('检测服务更新成功')
       } else {
-        await projectApi.create(payload)
+        const created: any = await projectApi.create(payload)
+        const createdKeyword = created?.code || payload.code || payload.name
+        setLocalCreatedProject({
+          ...payload,
+          ...created,
+          id: created?.id || `local-${Date.now()}`,
+          code: created?.code || payload.code,
+          name: created?.name || payload.name,
+          type: created?.type || payload.type,
+          status: created?.status || payload.status,
+          bomId: created?.bomId || payload.bomId || '',
+          createdAt: created?.createdAt || new Date().toISOString(),
+        } as Project)
+        focusProjectList(createdKeyword)
         toast.success(modalType === 'copy' ? '检测服务复制成功' : '检测服务创建成功')
       }
       setSelectedIds(new Set())
@@ -415,6 +500,13 @@ export function useProjectsPage() {
     try {
       if (pendingEditStatusPayload) {
         await projectApi.update(statusTarget.id, pendingEditStatusPayload)
+        setLocalProjectPatches(prev => ({
+          ...prev,
+          [statusTarget.id]: {
+            ...pendingEditStatusPayload,
+            bomId: pendingEditStatusPayload.bomId || '',
+          },
+        }))
         toast.success('检测服务更新成功')
         closeModal()
       } else {
@@ -424,6 +516,13 @@ export function useProjectsPage() {
           type: statusTarget.type,
           status: statusTargetStatus,
         })
+        setLocalProjectPatches(prev => ({
+          ...prev,
+          [statusTarget.id]: {
+            ...(prev[statusTarget.id] || {}),
+            status: statusTargetStatus,
+          },
+        }))
         toast.success(statusTargetStatus === 'active' ? '检测服务已启用' : '检测服务已停用')
       }
       setStatusTarget(null)
@@ -445,7 +544,7 @@ export function useProjectsPage() {
   }
 
   const toggleSelectAll = (checked: boolean) => {
-    setSelectedIds(checked ? new Set(data.map(project => project.id)) : new Set())
+    setSelectedIds(checked ? new Set(displayData.map(project => project.id)) : new Set())
   }
 
   const toggleSelectOne = (id: string, checked: boolean) => {
@@ -463,7 +562,7 @@ export function useProjectsPage() {
       return
     }
     if (selectedIds.size === 0) return
-    const targets = data.filter(project => selectedIds.has(project.id))
+    const targets = displayData.filter(project => selectedIds.has(project.id))
     setBatchStatusAction(status)
     setBatchStatusTargets(targets)
     setBatchStatusResults([])
@@ -500,6 +599,16 @@ export function useProjectsPage() {
     setSubmittingBatchStatus(true)
     try {
       await projectApi.batchStatus(batchStatusTargets.map(project => project.id), batchStatusAction)
+      setLocalProjectPatches(prev => {
+        const next = { ...prev }
+        batchStatusTargets.forEach(project => {
+          next[project.id] = {
+            ...(next[project.id] || {}),
+            status: batchStatusAction,
+          }
+        })
+        return next
+      })
       toast.success(batchStatusAction === 'active' ? '批量启用成功' : '批量停用成功')
       setSelectedIds(new Set())
       setBatchStatusAction(null)
@@ -523,11 +632,12 @@ export function useProjectsPage() {
     setIsSubmitting(true)
     let success = 0
     let failed = 0
+    let firstCreatedKeyword = ''
 
     try {
       for (const row of rows) {
         try {
-          await projectApi.create({
+          const created: any = await projectApi.create({
             type: row.type,
             code: row.code.trim(),
             name: row.name.trim(),
@@ -537,6 +647,9 @@ export function useProjectsPage() {
             description: row.description?.trim() || undefined,
             bomId: row.bomId || undefined,
           })
+          if (!firstCreatedKeyword) {
+            firstCreatedKeyword = created?.code || row.code.trim() || row.name.trim()
+          }
           success += 1
         } catch {
           failed += 1
@@ -545,6 +658,9 @@ export function useProjectsPage() {
 
       if (success > 0) {
         setModalType(null)
+        if (success === 1 && firstCreatedKeyword) {
+          focusProjectList(firstCreatedKeyword)
+        }
         refresh()
         fetchRefs()
         loadStats()
@@ -577,10 +693,10 @@ export function useProjectsPage() {
   }
 
   return {
-    data,
+    data: displayData,
     canWrite,
     loading,
-    total,
+    total: displayTotal,
     page,
     pageSize,
     setPage,

@@ -1,3 +1,4 @@
+import React from 'react'
 import { Plus, Search, Edit2, Trash2, Wrench } from 'lucide-react'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
@@ -184,7 +185,7 @@ export default function EquipmentTypeList() {
       <ConfirmDialog
         open={!!page.deleteTarget}
         title="删除设备类型"
-        message={`确定要删除设备类型"${page.deleteTarget?.name}"吗？此操作不可撤销。`}
+        message={`确定要删除设备类型“${page.deleteTarget?.name}”吗？删除后不会再用于新建设备的类型选择、默认折旧口径、BOM 成本计算和折旧统计；已有设备、历史 BOM 成本、使用记录和审计记录仍保留可回看。`}
         confirmText="删除"
         confirmVariant="danger"
         onConfirm={page.handleDelete}

@@ -13,6 +13,13 @@ interface Props {
   onSubmit: () => void
 }
 
+function formatCurrency(value: number) {
+  return `¥${Number(value || 0).toLocaleString('zh-CN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`
+}
+
 export default function EquipmentTypeFormModal({
   open,
   type,
@@ -27,6 +34,15 @@ export default function EquipmentTypeFormModal({
   const updateNumber = (key: keyof EquipmentTypeForm, value: string) => {
     onChange({ ...form, [key]: Number(value) || 0 })
   }
+  const depreciableAmount = Math.max(0, Number(form.defaultPurchasePrice || 0) - Number(form.defaultValue || 0))
+  const annualDepreciation = form.defaultDepreciableLifeYears > 0
+    ? depreciableAmount / form.defaultDepreciableLifeYears
+    : 0
+  const monthlyDepreciation = annualDepreciation / 12
+  const unitDepreciation = form.defaultDepreciationMethod === 'units_of_production' && form.defaultTotalCapacity > 0
+    ? depreciableAmount / form.defaultTotalCapacity
+    : 0
+  const capacityUnit = form.defaultCapacityUnit || '单位'
 
   return (
     <div
@@ -169,6 +185,53 @@ export default function EquipmentTypeFormModal({
                   { value: 'hours', label: '小时' },
                 ]}
               />
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-blue-100 bg-blue-50/60 p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h4 className="text-sm font-semibold text-gray-900">设备类型默认折旧确认</h4>
+                <p className="mt-1 text-xs text-gray-600">
+                  后续新建设备可沿用：默认采购价、残值、折旧年限、折旧方法、BOM 成本口径
+                </p>
+              </div>
+              <span className="shrink-0 rounded-md bg-white px-2 py-1 text-xs font-medium text-blue-700 border border-blue-100">
+                {form.defaultDepreciationMethod === 'straight_line' ? '直线法' : '工作量法'}
+              </span>
+            </div>
+            <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="rounded-md bg-white border border-blue-100 p-3">
+                <div className="text-xs text-gray-500">默认可折旧金额</div>
+                <div className="mt-1 text-sm font-semibold text-gray-900">{formatCurrency(depreciableAmount)}</div>
+              </div>
+              {form.defaultDepreciationMethod === 'straight_line' ? (
+                <>
+                  <div className="rounded-md bg-white border border-blue-100 p-3">
+                    <div className="text-xs text-gray-500">默认年折旧额</div>
+                    <div className="mt-1 text-sm font-semibold text-gray-900">{formatCurrency(annualDepreciation)}</div>
+                  </div>
+                  <div className="rounded-md bg-white border border-blue-100 p-3">
+                    <div className="text-xs text-gray-500">默认月折旧额</div>
+                    <div className="mt-1 text-sm font-semibold text-gray-900">{formatCurrency(monthlyDepreciation)}</div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="rounded-md bg-white border border-blue-100 p-3">
+                    <div className="text-xs text-gray-500">默认总产能</div>
+                    <div className="mt-1 text-sm font-semibold text-gray-900">
+                      {Number(form.defaultTotalCapacity || 0).toLocaleString('zh-CN')} {capacityUnit}
+                    </div>
+                  </div>
+                  <div className="rounded-md bg-white border border-blue-100 p-3">
+                    <div className="text-xs text-gray-500">默认单位折旧</div>
+                    <div className="mt-1 text-sm font-semibold text-gray-900">
+                      {formatCurrency(unitDepreciation)}/{capacityUnit}
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>

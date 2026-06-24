@@ -10,6 +10,19 @@ import { getUserRole } from '@/lib/permissions'
 export default function Logs() {
   const page = useLogsPage()
   const isAdmin = getUserRole() === 'admin'
+  const exportFilterSummary = [
+    page.keyword.trim() ? `业务标识 ${page.keyword.trim()}` : '',
+    page.sourceFilter !== 'all'
+      ? `来源 ${LOG_SOURCES.find(item => item.value === page.sourceFilter)?.label || page.sourceFilter}`
+      : '',
+    page.moduleFilter
+      ? `模块 ${MODULES.find(item => item.value === page.moduleFilter)?.label || page.moduleFilter}`
+      : '',
+    page.typeFilter
+      ? `操作 ${LOG_TYPES.find(item => item.value === page.typeFilter)?.label || page.typeFilter}`
+      : '',
+    page.userFilter ? `用户 ${page.userFilter}` : '',
+  ].filter(Boolean)
 
   return (
     <div className="space-y-6">
@@ -113,6 +126,7 @@ export default function Logs() {
       <LogExportModal
         open={page.showExport}
         form={page.exportForm}
+        filterSummary={exportFilterSummary}
         dateError={page.exportDateError}
         contentError={page.exportContentError}
         onClose={() => page.setShowExport(false)}

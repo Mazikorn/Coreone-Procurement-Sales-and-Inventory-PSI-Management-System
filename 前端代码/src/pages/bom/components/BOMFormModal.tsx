@@ -35,6 +35,31 @@ export function BOMFormModal({
       value: project.id,
       label: `${project.code} - ${project.name}`,
     }))
+  const selectedService = allProjects.find(project => project.id === form.serviceId)
+  const materialPriceById = new Map(allMaterials.map(material => [material.id, Number(material.price || 0)]))
+  const getMaterialPrice = (materialId: string) => materialPriceById.get(materialId) || 0
+  const coreMaterialCost = form.materials.reduce(
+    (sum, item) => sum + Number(item.usagePerSample || 0) * getMaterialPrice(item.materialId),
+    0,
+  )
+  const generalReagentCost = form.generalReagents.reduce(
+    (sum, item) => sum + Number(item.usagePerSample || 0) * getMaterialPrice(item.materialId),
+    0,
+  )
+  const generalConsumableCost = form.generalConsumables.reduce(
+    (sum, item) => sum + Number(item.usagePerSample || 0) * getMaterialPrice(item.materialId),
+    0,
+  )
+  const qualityControlCost = form.qualityControls.reduce((sum, item) => {
+    const coversSamples = Number(item.coversSamples || 0)
+    if (coversSamples <= 0) return sum
+    return sum + (Number(item.usagePerBatch || 0) / coversSamples) * getMaterialPrice(item.materialId)
+  }, 0)
+  const estimatedSampleMaterialCost =
+    coreMaterialCost + generalReagentCost + generalConsumableCost + qualityControlCost
+  const extensionItemCount =
+    form.generalReagents.length + form.generalConsumables.length + form.qualityControls.length
+  const typeLabel = TYPE_OPTIONS.find(item => item.value === form.type)?.label || '待选择'
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -458,6 +483,21 @@ export function BOMFormModal({
               </button>
             </div>
           )}
+
+          <div className="rounded-md border border-emerald-100 bg-emerald-50 px-4 py-3">
+            <div className="text-sm font-semibold text-emerald-900">BOM结果确认</div>
+            <div className="mt-1 text-xs text-emerald-800">
+              确认后将接住：BOM、检测服务、自动出库、LIS对账、项目成本、审计记录
+            </div>
+            <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-emerald-900 sm:grid-cols-3">
+              <div>BOM {form.name || '待填写'}</div>
+              <div>关联服务 {selectedService?.name || '未关联'}</div>
+              <div>类型 {typeLabel}</div>
+              <div>核心物料 {form.materials.length}项</div>
+              <div>扩展项 {extensionItemCount}项</div>
+              <div>预估单样本材料成本 ¥{estimatedSampleMaterialCost.toFixed(2)}</div>
+            </div>
+          </div>
         </div>
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 flex-shrink-0">
           <button

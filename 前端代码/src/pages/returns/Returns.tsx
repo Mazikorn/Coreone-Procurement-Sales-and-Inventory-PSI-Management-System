@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
-import { Plus, RotateCcw, Search } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { FileSearch, Plus, RotateCcw, Search } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { returnApi } from '@/api/inventory'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
@@ -18,7 +19,38 @@ const reasonOptions = [
   { value: 'other', label: '其他原因' },
 ]
 
+function buildCreatedReturnRecord(
+  payload: Partial<ReturnRecord>,
+  form: { outboundItemId: string; quantity: number; reason: string; remark: string },
+  source: ReturnSource,
+): ReturnRecord | null {
+  if (!payload.id || !payload.returnNo) return null
+
+  const unitCost = Number(source.unitCost || 0)
+  const quantity = Number(form.quantity || 0)
+  return {
+    id: payload.id,
+    returnNo: payload.returnNo,
+    outboundItemId: form.outboundItemId,
+    outboundNo: source.outboundNo,
+    materialId: source.materialId,
+    materialName: source.materialName,
+    batchId: source.batchId,
+    batchNo: source.batchNo,
+    quantity,
+    unit: source.unit,
+    unitCost,
+    totalCost: unitCost * quantity,
+    reason: form.reason,
+    operator: payload.operator || 'system',
+    status: payload.status || 'completed',
+    remark: form.remark || undefined,
+    createdAt: payload.createdAt || new Date().toISOString(),
+  }
+}
+
 export default function Returns() {
+  const navigate = useNavigate()
   const initialKeyword = new URLSearchParams(window.location.search).get('keyword') || ''
   const [returnSources, setReturnSources] = useState<ReturnSource[]>([])
   const [keywordInput, setKeywordInput] = useState(initialKeyword)
@@ -26,6 +58,9 @@ export default function Returns() {
   const [modalOpen, setModalOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [cancelTarget, setCancelTarget] = useState<ReturnRecord | null>(null)
+  const [createdReturnFallback, setCreatedReturnFallback] = useState<ReturnRecord | null>(null)
+  const [cancelledReturnIds, setCancelledReturnIds] = useState<string[]>([])
+  const createDraftHandledRef = useRef(false)
   const [form, setForm] = useState({
     outboundItemId: '',
     quantity: 1,
@@ -44,6 +79,24 @@ export default function Returns() {
   }, [])
 
   useEffect(() => {
+    loadReturnSources()
+  }, [loadReturnSources])
+
+  useEffect(() => {
+    if (createDraftHandledRef.current) return
+
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('action') !== 'create') return
+
+    createDraftHandledRef.current = true
+    const draftQuantity = Number(params.get('quantity'))
+    setForm({
+      outboundItemId: params.get('outboundItemId') || '',
+      quantity: Number.isFinite(draftQuantity) && draftQuantity > 0 ? draftQuantity : 1,
+      reason: params.get('reason') || '',
+      remark: params.get('remark') || '',
+    })
+    setModalOpen(true)
     loadReturnSources()
   }, [loadReturnSources])
 
@@ -68,6 +121,53 @@ export default function Returns() {
 
   const selectedSource = returnSources.find(source => source.outboundItemId === form.outboundItemId)
   const maxQuantity = Number(selectedSource?.returnableQuantity || 0)
+  const returnUnit = selectedSource?.unit || ''
+  const returnQuantityText = `${form.quantity || 0} ${returnUnit}`.trim()
+  const returnReasonLabel = reasonOptions.find(item => item.value === form.reason)?.label || (form.reason ? form.reason : '待选择')
+  const returnRestoredCost = Number(selectedSource?.unitCost || 0) * Number(form.quantity || 0)
+  const returnRemainingAfterSubmit = selectedSource
+    ? `${Math.max(0, maxQuantity - Number(form.quantity || 0))} ${returnUnit}`.trim()
+    : '-'
+  const showReturnPreview = Boolean(selectedSource && form.quantity > 0)
+  const returnDownstreamFacts = '库存、批次、出库回冲、成本、库存流水、审计记录'
+  const returnValidationMessage = !form.outboundItemId
+    ? '请选择来源出库明细，系统才能定位要回冲的出库、批次和成本。'
+    : !selectedSource
+      ? '来源出库明细不可用，请刷新后重试。'
+      : form.quantity <= 0
+        ? '请输入本次实际退回数量，系统会据此恢复库存并回冲成本。'
+        : form.quantity > maxQuantity
+          ? `退库数量不能超过可退数量 ${maxQuantity} ${returnUnit}，请按实际退回数量修改。`
+          : !form.reason
+            ? '请选择退库原因，后续审计和成本回看需要用它解释本次回冲。'
+            : ''
+  const canConfirmReturn = !submitting && !returnValidationMessage
+
+  const { displayedData, displayedTotal } = useMemo(() => {
+    let rows = data
+    let nextTotal = total
+
+    if (cancelledReturnIds.length > 0) {
+      const filteredRows = rows.filter(row => !cancelledReturnIds.includes(row.id))
+      if (filteredRows.length !== rows.length) {
+        nextTotal = Math.max(0, nextTotal - (rows.length - filteredRows.length))
+        rows = filteredRows
+      }
+    }
+
+    if (
+      createdReturnFallback
+      && !cancelledReturnIds.includes(createdReturnFallback.id)
+      && keyword === createdReturnFallback.returnNo
+      && page === 1
+      && !rows.some(row => row.id === createdReturnFallback.id || row.returnNo === createdReturnFallback.returnNo)
+    ) {
+      rows = [createdReturnFallback, ...rows]
+      nextTotal = Math.max(nextTotal + 1, rows.length)
+    }
+
+    return { displayedData: rows, displayedTotal: nextTotal }
+  }, [cancelledReturnIds, createdReturnFallback, data, keyword, page, total])
 
   const openCreate = () => {
     loadReturnSources()
@@ -90,6 +190,12 @@ export default function Returns() {
     setPage(1)
   }
 
+  const focusCreatedReturn = (returnNo: string) => {
+    setKeywordInput(returnNo)
+    setKeyword(returnNo)
+    setPage(1)
+  }
+
   const handleCreate = async () => {
     if (!form.outboundItemId || form.quantity <= 0 || !form.reason) {
       toast.error('请选择来源出库明细、填写数量和退库原因')
@@ -106,8 +212,17 @@ export default function Returns() {
 
     setSubmitting(true)
     try {
-      await returnApi.create(form)
-      toast.success('退库登记成功')
+      const submittedForm = { ...form }
+      const createdReturn = await returnApi.create(submittedForm)
+      if (createdReturn?.returnNo) {
+        setCreatedReturnFallback(buildCreatedReturnRecord(createdReturn, submittedForm, selectedSource))
+        focusCreatedReturn(createdReturn.returnNo)
+      }
+      toast.success('退库登记成功', {
+        description: createdReturn?.returnNo
+          ? `已生成 ${createdReturn.returnNo}，库存、批次、出库回冲、成本和审计链路可按单号回看`
+          : '库存、批次、出库回冲、成本和审计链路可回看',
+      })
       setModalOpen(false)
       setForm({ outboundItemId: '', quantity: 1, reason: '', remark: '' })
       refresh()
@@ -123,6 +238,7 @@ export default function Returns() {
     if (!cancelTarget) return
     try {
       await returnApi.delete(cancelTarget.id)
+      setCancelledReturnIds(prev => prev.includes(cancelTarget.id) ? prev : [...prev, cancelTarget.id])
       toast.success('退库记录已撤销')
       setCancelTarget(null)
       refresh()
@@ -133,6 +249,10 @@ export default function Returns() {
   }
 
   const getReasonLabel = (reason: string) => reasonOptions.find(item => item.value === reason)?.label || reason
+
+  const openAuditEvidence = (returnNo: string) => {
+    navigate(`/logs?keyword=${encodeURIComponent(returnNo)}`)
+  }
 
   return (
     <div className="space-y-6">
@@ -187,12 +307,12 @@ export default function Returns() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {loading ? (
+              {loading && displayedData.length === 0 ? (
                 <tr><td colSpan={10} className="px-4 py-12 text-center text-gray-400">加载中...</td></tr>
-              ) : data.length === 0 ? (
+              ) : displayedData.length === 0 ? (
                 <tr><td colSpan={10} className="px-4 py-12 text-center text-gray-400">暂无退库记录</td></tr>
               ) : (
-                data.map(row => (
+                displayedData.map(row => (
                   <tr key={row.id} className="transition-colors hover:bg-gray-50">
                     <td className="px-4 py-3 font-mono text-gray-700">{row.returnNo}</td>
                     <td className="px-4 py-3 font-mono text-xs text-gray-600">{row.outboundNo || '-'}</td>
@@ -204,13 +324,24 @@ export default function Returns() {
                     <td className="px-4 py-3 text-gray-500">{formatDate(row.createdAt)}</td>
                     <td className="max-w-[240px] truncate px-4 py-3 text-gray-500">{row.remark || '-'}</td>
                     <td className="px-4 py-3 text-center">
-                      <button
-                        onClick={() => setCancelTarget(row)}
-                        className="inline-flex items-center gap-1 text-sm text-red-600 hover:text-red-700"
-                      >
-                        <RotateCcw className="h-4 w-4" />
-                        撤销
-                      </button>
+                      <div className="flex items-center justify-center gap-2">
+                        <button
+                          type="button"
+                          aria-label={`审计证据 ${row.returnNo}`}
+                          onClick={() => openAuditEvidence(row.returnNo)}
+                          className="inline-flex items-center gap-1 text-sm text-gray-600 hover:text-indigo-700"
+                        >
+                          <FileSearch className="h-4 w-4" />
+                          证据
+                        </button>
+                        <button
+                          onClick={() => setCancelTarget(row)}
+                          className="inline-flex items-center gap-1 text-sm text-red-600 hover:text-red-700"
+                        >
+                          <RotateCcw className="h-4 w-4" />
+                          撤销
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -220,8 +351,8 @@ export default function Returns() {
         </div>
 
         <div className="flex items-center justify-between border-t border-gray-200 px-4 py-3">
-          <span className="text-sm text-gray-500">共 {total} 条记录</span>
-          <Pagination page={page} pageSize={pageSize} total={total} onChangePage={setPage} onChangePageSize={setPageSize} />
+          <span className="text-sm text-gray-500">共 {displayedTotal} 条记录</span>
+          <Pagination page={page} pageSize={pageSize} total={displayedTotal} onChangePage={setPage} onChangePageSize={setPageSize} />
         </div>
       </div>
 
@@ -280,6 +411,37 @@ export default function Returns() {
               />
             </div>
 
+            {showReturnPreview && (
+              <div className="overflow-hidden rounded-lg border border-gray-200">
+                <div className="border-b border-gray-200 bg-gray-50 px-4 py-3">
+                  <h4 className="text-sm font-semibold text-gray-900">退库结果确认</h4>
+                  <div className="mt-0.5 text-xs text-gray-500">确认后将接住：{returnDownstreamFacts}</div>
+                </div>
+                <div className="grid grid-cols-2 gap-4 p-4 md:grid-cols-4">
+                  {[
+                    { label: '物料', value: selectedSource?.materialName || selectedSource?.materialId || '-' },
+                    { label: '批次', value: selectedSource?.batchNo || '-' },
+                    { label: '来源出库', value: `来源出库 ${selectedSource?.outboundNo || '-'}` },
+                    { label: '恢复动作', value: `恢复库存 ${returnQuantityText}` },
+                    { label: '成本回冲', value: `成本回冲 ¥${returnRestoredCost.toFixed(2)}` },
+                    { label: '剩余可退', value: `剩余可退 ${returnRemainingAfterSubmit}` },
+                    { label: '退库原因', value: returnReasonLabel },
+                  ].map(item => (
+                    <div key={item.label} className="min-w-0">
+                      <div className="mb-1 text-xs text-gray-500">{item.label}</div>
+                      <div className="truncate text-sm font-medium text-gray-900">{item.value}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {returnValidationMessage && (
+              <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                {returnValidationMessage}
+              </div>
+            )}
+
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">备注</label>
               <textarea
@@ -294,7 +456,7 @@ export default function Returns() {
             <button onClick={() => setModalOpen(false)} className="h-10 rounded-md border border-gray-300 bg-white px-4 text-sm text-gray-600 hover:bg-gray-50">
               取消
             </button>
-            <button data-testid="return-confirm-btn" onClick={handleCreate} disabled={submitting} className="h-10 rounded-md bg-blue-500 px-4 text-sm text-white hover:bg-blue-600 disabled:opacity-50">
+            <button data-testid="return-confirm-btn" onClick={handleCreate} disabled={!canConfirmReturn} className="h-10 rounded-md bg-blue-500 px-4 text-sm text-white hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-50">
               {submitting ? '提交中...' : '确认退库'}
             </button>
           </div>
@@ -304,7 +466,7 @@ export default function Returns() {
       <ConfirmDialog
         open={!!cancelTarget}
         title="撤销退库记录"
-        description={`确定要撤销退库记录 ${cancelTarget?.returnNo} 吗？撤销后将扣回本次退库恢复的库存。`}
+        description={`确定要撤销退库记录 ${cancelTarget?.returnNo} 吗？撤销后将反向扣回本次退库恢复的库存和批次余量，同步回退成本回冲和库存流水，重新触发库存预警检查；审计记录将保留撤销动作。`}
         confirmText="确认撤销"
         confirmVariant="danger"
         onConfirm={handleCancel}

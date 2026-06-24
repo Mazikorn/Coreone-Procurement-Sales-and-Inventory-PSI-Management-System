@@ -199,6 +199,46 @@ describe('CostDashboard adjustment refresh', () => {
     })
   })
 
+  it('summarizes post-close adjustment impact before creating an adjustment', async () => {
+    vi.mocked(abcApi.getDashboard).mockResolvedValue({
+      ...dashboardResponse,
+      summary: {
+        ...dashboardResponse.summary,
+        pendingAdjustmentCount: 0,
+      },
+    })
+    vi.mocked(abcApi.getPeriods).mockResolvedValue({
+      list: [{ id: 'period-1', yearMonth: '2026-06', status: 'closed' }],
+    })
+    vi.mocked(abcApi.getCostRuns).mockResolvedValue(emptyListResponse)
+    vi.mocked(abcApi.getAdjustments).mockResolvedValue(emptyListResponse)
+    vi.mocked(reportsApi.getCostMonthlyComparison).mockResolvedValue(null)
+
+    render(
+      <MemoryRouter>
+        <CostDashboard />
+      </MemoryRouter>
+    )
+
+    expect(await screen.findByRole('button', { name: /^调整单$/ })).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: /^调整单$/ }))
+
+    expect(screen.getByRole('button', { name: '提交调整单' })).toBeDisabled()
+    expect(screen.getByText('请填写非 0 调整金额，系统才能重算调整后成本和利润。')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByPlaceholderText('正数增加成本，负数冲减成本'), { target: { value: '-128' } })
+    fireEvent.change(screen.getByPlaceholderText('例如：关账后发现设备折旧分摊差异，经财务复核调整'), {
+      target: { value: '关账后复核冲减折旧' },
+    })
+
+    expect(screen.getByText('调整单结果确认')).toBeInTheDocument()
+    expect(screen.getByText('确认后将接住：关账后调整、调整额、调整后利润、成本看板、审核记录、审计记录')).toBeInTheDocument()
+    expect(screen.getByText('调整期间 2026-06')).toBeInTheDocument()
+    expect(screen.getByText('调整金额 ¥-128.00')).toBeInTheDocument()
+    expect(screen.getByText('调整原因 关账后复核冲减折旧')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '提交调整单' })).toBeEnabled()
+  })
+
   it('renders backend cost run processed and succeeded counts', async () => {
     vi.mocked(abcApi.getDashboard).mockResolvedValue(dashboardResponse)
     vi.mocked(abcApi.getPeriods).mockResolvedValue(periodResponse)
@@ -228,6 +268,44 @@ describe('CostDashboard adjustment refresh', () => {
     expect(row!).toHaveTextContent('3')
     expect(row!).toHaveTextContent('2')
     expect(row!).toHaveTextContent('1')
+  })
+
+  it('shows failed cost run evidence and a filtered exception link', async () => {
+    vi.mocked(abcApi.getDashboard).mockResolvedValue(dashboardResponse)
+    vi.mocked(abcApi.getPeriods).mockResolvedValue(periodResponse)
+    vi.mocked(abcApi.getCostRuns).mockResolvedValue({
+      list: [{
+        id: 'run-failed-1',
+        yearMonth: '2026-06',
+        runType: 'recalculate',
+        status: 'completed',
+        summary: {
+          processed: 3,
+          succeeded: 2,
+          failed: 1,
+          failures: [{ outboundId: 'out-1', outboundNo: 'OUT-FAIL-001', message: '缺少 BOM，无法重算 ABC 成本' }],
+        },
+        startedAt: '2026-06-20 10:00:00',
+        finishedAt: '2026-06-20 10:05:00',
+      }],
+    })
+    vi.mocked(abcApi.getAdjustments).mockResolvedValue(emptyListResponse)
+    vi.mocked(reportsApi.getCostMonthlyComparison).mockResolvedValue(null)
+
+    render(
+      <MemoryRouter>
+        <CostDashboard />
+      </MemoryRouter>
+    )
+
+    const row = (await screen.findByText('run-failed-1')).closest('tr')
+    expect(row).not.toBeNull()
+    expect(row!).toHaveTextContent('失败出库 OUT-FAIL-001：缺少 BOM，无法重算 ABC 成本')
+    expect(row!).toHaveTextContent('修正源数据后重新执行重算')
+    expect(screen.getByRole('link', { name: '查看失败异常' })).toHaveAttribute(
+      'href',
+      '/abc/alerts?keyword=run-failed-1&yearMonth=2026-06&status=open&includeUnassigned=1',
+    )
   })
 
   it('loads adjustment records from audit deep link month and keyword on first render', async () => {

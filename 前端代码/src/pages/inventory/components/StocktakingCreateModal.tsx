@@ -3,7 +3,7 @@ import { X, CheckCircle, ArrowLeft, ArrowRight, Loader2, BarChart3 } from 'lucid
 import { toast } from 'sonner'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { Material } from '@/types'
-import type { FormData, StocktakingScopeRow, StocktakingScopeType } from '../hooks/useStocktakingPage'
+import type { CreatedStocktakingRecord, FormData, StocktakingScopeRow, StocktakingScopeType } from '../hooks/useStocktakingPage'
 
 interface Props {
   open: boolean
@@ -11,16 +11,18 @@ interface Props {
   createStep: number
   materials: Material[]
   inventoryRows: StocktakingScopeRow[]
+  createdRecord?: CreatedStocktakingRecord | null
   isSubmitting: boolean
   onClose: () => void
   onChange: (form: FormData) => void
   onSetCreateStep: (s: number) => void
   onSubmit: () => void
+  onOpenAuditEvidence?: (stocktakingNo: string) => void
 }
 
 export function StocktakingCreateModal({
-  open, form, createStep, materials, inventoryRows, isSubmitting,
-  onClose, onChange, onSetCreateStep, onSubmit,
+  open, form, createStep, materials, inventoryRows, createdRecord, isSubmitting,
+  onClose, onChange, onSetCreateStep, onSubmit, onOpenAuditEvidence,
 }: Props) {
   if (!open) return null
   const selectedMaterial = materials.find(m => m.id === form.materialId)
@@ -44,6 +46,9 @@ export function StocktakingCreateModal({
   const scopeLabel = scopeType === 'batch' ? '批次库位盘点' : scopeType === 'location' ? '库位盘点' : '整物料盘点'
   const hasActualStock = form.actualStock !== ''
   const difference = hasActualStock ? Number(form.actualStock) - form.systemStock : 0
+  const unit = selectedMaterial?.unit || ''
+  const differenceText = hasActualStock ? `${difference > 0 ? '+' : ''}${difference}${unit}` : '-'
+  const downstreamAdjustment = '库存、库位/批次、预警、库存流水和审计记录'
   const setScopeType = (nextScopeType: StocktakingScopeType) => {
     const nextStock = nextScopeType === 'material' ? Number(selectedMaterial?.stock || 0) : 0
     onChange({ ...form, scopeType: nextScopeType, locationId: '', batchId: '', systemStock: nextStock })
@@ -227,8 +232,23 @@ export function StocktakingCreateModal({
               <div className="flex items-center justify-between px-2">
                 <span className="text-sm text-gray-500">已选择 <strong>{selectedRows.length}</strong> 种物料</span>
                 <span className={`text-sm font-medium ${difference === 0 ? 'text-gray-500' : difference > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                  差异: {hasActualStock ? `${difference > 0 ? '+' : ''}${difference}${selectedMaterial?.unit || ''}` : '-'}
+                  差异: {differenceText}
                 </span>
+              </div>
+              <div className="border border-amber-200 bg-amber-50 rounded-lg p-4">
+                <div className="mb-2 text-sm font-semibold text-amber-900">盘点结果确认</div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                  {[
+                    { label: '当前动作', value: '创建后只记录盘点差异，不会立即调整库存。' },
+                    { label: '差异结果', value: differenceText },
+                    { label: '下一步', value: difference === 0 ? '无差异时可直接按单号回看审计记录。' : `处理差异后才调整${downstreamAdjustment}` },
+                  ].map(item => (
+                    <div key={item.label} className="min-w-0">
+                      <div className="text-xs text-amber-700 mb-1">{item.label}</div>
+                      <div className="text-sm font-medium text-amber-950">{item.value}</div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           )}
@@ -237,6 +257,7 @@ export function StocktakingCreateModal({
               <CheckCircle className="w-14 h-14 mx-auto mb-4 text-green-500" />
               <h3 className="text-lg font-semibold text-gray-900 mb-2">盘点任务创建成功</h3>
               <div className="bg-gray-50 rounded-lg p-4 text-left space-y-2 max-w-sm mx-auto mb-6">
+                <div className="flex justify-between text-sm"><span className="text-gray-500">盘点编号</span><span className="font-mono text-gray-900">{createdRecord?.stocktakingNo || '-'}</span></div>
                 <div className="flex justify-between text-sm"><span className="text-gray-500">盘点物料</span><span>{selectedMaterial?.name || '-'}</span></div>
                 <div className="flex justify-between text-sm"><span className="text-gray-500">盘点范围</span><span>{scopeLabel}</span></div>
                 <div className="flex justify-between text-sm"><span className="text-gray-500">库位</span><span>{selectedBatchRow?.locationName || selectedLocation?.locationName || selectedMaterial?.locationName || '-'}</span></div>
@@ -246,7 +267,15 @@ export function StocktakingCreateModal({
                 <div className="flex justify-between text-sm"><span className="text-gray-500">差异</span><span>{hasActualStock ? `${difference > 0 ? '+' : ''}${difference}${selectedMaterial?.unit || ''}` : '-'}</span></div>
               </div>
               <div className="flex items-center justify-center gap-3">
-                <button onClick={onClose} className="px-4 py-2 bg-blue-500 text-white rounded-md text-sm hover:bg-blue-600">开始盘点</button>
+                {createdRecord?.stocktakingNo && onOpenAuditEvidence && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenAuditEvidence(createdRecord.stocktakingNo!)}
+                    className="px-4 py-2 bg-blue-500 text-white rounded-md text-sm hover:bg-blue-600"
+                  >
+                    查看审计记录
+                  </button>
+                )}
                 <button onClick={onClose} className="px-4 py-2 bg-white text-gray-700 border border-gray-300 rounded-md text-sm hover:bg-gray-50">返回列表</button>
               </div>
             </div>

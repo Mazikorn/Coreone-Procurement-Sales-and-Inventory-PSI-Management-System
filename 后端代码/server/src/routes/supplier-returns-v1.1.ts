@@ -139,6 +139,7 @@ function handleSupplierReturnStockError(res: any, err: any): boolean {
 router.get('/', (req, res) => {
   try {
     let { keyword, status, supplierId, startDate, endDate, page = '1', pageSize = '20' } = req.query
+    const includeDeleted = String(req.query.includeDeleted || '').trim() === 'true'
     const normalizedStatus = String(status || '').trim()
     if (normalizedStatus && !SUPPLIER_RETURN_STATUSES.has(normalizedStatus)) {
       error(res, '供应商退货状态筛选无效', 'INVALID_PARAMETER', 400)
@@ -187,7 +188,7 @@ router.get('/', (req, res) => {
       LEFT JOIN suppliers s ON sr.supplier_id = s.id AND s.is_deleted = 0
       LEFT JOIN purchase_orders po ON sr.purchase_order_id = po.id AND po.is_deleted = 0
       LEFT JOIN inbound_records ir ON sr.inbound_record_id = ir.id AND ir.is_deleted = 0
-      WHERE sr.is_deleted = 0
+      WHERE ${includeDeleted ? '1 = 1' : 'sr.is_deleted = 0'}
     `
     const params: any[] = []
     if (status) { sql += ' AND sr.status = ?'; params.push(status) }
@@ -208,7 +209,7 @@ router.get('/', (req, res) => {
     const countSql = `
       SELECT COUNT(*) as total FROM supplier_returns sr
       LEFT JOIN materials m ON sr.material_id = m.id AND m.is_deleted = 0
-      WHERE sr.is_deleted = 0
+      WHERE ${includeDeleted ? '1 = 1' : 'sr.is_deleted = 0'}
       ${status ? ' AND sr.status = ?' : ''}
       ${supplierId ? ' AND sr.supplier_id = ?' : ''}
       ${startDate ? ' AND date(sr.created_at) >= ?' : ''}
@@ -243,6 +244,7 @@ router.get('/', (req, res) => {
       status: r.status,
       operator: r.operator,
       remark: r.remark,
+      isDeleted: Boolean(r.is_deleted),
       createdAt: r.created_at,
       updatedAt: r.updated_at,
     })), normalizedPage, limit, total)
@@ -480,6 +482,7 @@ router.put('/:id/status', (req, res) => {
     const userId = (req as any).user?.userId || null
     const record = db.prepare('SELECT * FROM supplier_returns WHERE id = ? AND is_deleted = 0').get(req.params.id) as any
     if (!record) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
+    const returnNo = record.return_no
 
     // 状态流转校验
     const flow: Record<string, string[]> = {
@@ -519,6 +522,8 @@ router.put('/:id/status', (req, res) => {
             relatedType: 'supplier_return',
             relatedId: req.params.id,
             operator,
+            restoreRelatedType: 'supplier_return_cancel',
+            preserveRestoreSourceAdjustments: true,
           })
           db.prepare(`
             UPDATE batches
@@ -534,6 +539,14 @@ router.put('/:id/status', (req, res) => {
       }
 
       db.prepare('UPDATE supplier_returns SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(status, req.params.id)
+      const statusAuditContext = {
+        id: req.params.id,
+        returnNo,
+        materialId: record.material_id,
+        supplierId: record.supplier_id,
+        quantity: Number(record.quantity),
+        refundAmount: Number(record.refund_amount || 0),
+      }
       db.prepare(`
         INSERT INTO operation_logs (id, user_id, username, operation, description, request_data, response_data)
         VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -542,9 +555,9 @@ router.put('/:id/status', (req, res) => {
         userId,
         operator,
         'supplier_return_status_update',
-        `供应商退货 ${req.params.id} 状态由 ${record.status} 变更为 ${status}`,
-        JSON.stringify({ id: req.params.id, from: record.status, to: status }),
-        JSON.stringify({ id: req.params.id, status }),
+        `供应商退货 ${returnNo || req.params.id} 状态由 ${record.status} 变更为 ${status}`,
+        JSON.stringify({ ...statusAuditContext, from: record.status, to: status }),
+        JSON.stringify({ ...statusAuditContext, status }),
       )
       db.exec('COMMIT')
       if (status === 'cancelled') {
@@ -598,6 +611,8 @@ router.delete('/:id', (req, res) => {
           relatedType: 'supplier_return',
           relatedId: req.params.id,
           operator,
+          restoreRelatedType: 'supplier_return_cancel',
+          preserveRestoreSourceAdjustments: true,
         })
         db.prepare(`
           UPDATE batches
@@ -617,9 +632,9 @@ router.delete('/:id', (req, res) => {
       checkStockAlerts(db, [record.material_id])
       logOperation(db, req as any, {
         operation: 'DELETE /supplier-returns/:id',
-        description: `删除供应商退货记录 ${req.params.id}`,
-        requestData: { id: req.params.id },
-        responseData: { id: req.params.id, materialId: record.material_id, quantity: Number(record.quantity), status: 'deleted' },
+        description: `删除供应商退货记录 ${record.return_no || req.params.id} (${req.params.id})`,
+        requestData: { id: req.params.id, returnNo: record.return_no },
+        responseData: { id: req.params.id, returnNo: record.return_no, materialId: record.material_id, quantity: Number(record.quantity), status: 'deleted' },
       })
       success(res, null, '退货记录已删除')
     } catch (e: any) {

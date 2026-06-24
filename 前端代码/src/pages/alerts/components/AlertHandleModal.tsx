@@ -1,3 +1,4 @@
+import React from 'react'
 import { X } from 'lucide-react'
 import type { AlertItem } from '../hooks/useAlertsPage'
 
@@ -12,7 +13,19 @@ interface Props {
 
 export function AlertHandleModal({ open, alert, form, onClose, onChange, onConfirm }: Props) {
   if (!open || !alert) return null
-  const canConfirm = form.opinion.trim().length > 0
+  const validationMessage = form.opinion.trim().length === 0
+    ? '请填写处理意见，系统才能说明预警处理依据并形成审计记录。'
+    : ''
+  const canConfirm = validationMessage === ''
+  const currentStock = Number(alert.currentStock)
+  const threshold = Number(alert.threshold)
+  const hasStockTarget = Number.isFinite(currentStock) && Number.isFinite(threshold)
+  const suggestedAction = alert.type === 'low-stock' && hasStockTarget
+    ? `预计补足 ${Math.max(0, threshold - currentStock)}`
+    : '记录处理结论'
+  const downstreamFacts = alert.type === 'low-stock'
+    ? '库存、批次、补货、预警记录、审计记录'
+    : '库存、批次、预警记录、审计记录'
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -28,6 +41,25 @@ export function AlertHandleModal({ open, alert, form, onClose, onChange, onConfi
           <div className="rounded-lg bg-gray-50 p-4">
             <div className="text-sm font-medium text-gray-900">{alert.materialName || '-'}</div>
             <div className="text-sm text-gray-600 mt-1">{alert.message}</div>
+          </div>
+          <div className="rounded-lg border border-blue-100 bg-blue-50/60 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <h4 className="text-sm font-semibold text-gray-900">处理前确认</h4>
+              <div className="text-xs text-blue-700">确认后将接住：{downstreamFacts}</div>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              {[
+                { label: '物料', value: alert.materialName || '-' },
+                { label: '批次', value: alert.batchNo || '-' },
+                { label: '库存/阈值', value: hasStockTarget ? `${currentStock} / ${threshold}` : '-' },
+                { label: '建议动作', value: suggestedAction },
+              ].map((item) => (
+                <div key={item.label} className="min-w-0">
+                  <div className="text-xs text-gray-500">{item.label}</div>
+                  <div className="mt-0.5 truncate text-sm font-medium text-gray-900">{item.value}</div>
+                </div>
+              ))}
+            </div>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1.5">处理结果</label>
@@ -55,6 +87,11 @@ export function AlertHandleModal({ open, alert, form, onClose, onChange, onConfi
             />
             <div className="mt-1 text-xs text-gray-400 text-right">{form.opinion.length}/500</div>
           </div>
+          {validationMessage ? (
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              {validationMessage}
+            </div>
+          ) : null}
         </div>
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50">
           <button onClick={onClose} className="px-4 py-2 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-md hover:bg-gray-50 transition-colors">

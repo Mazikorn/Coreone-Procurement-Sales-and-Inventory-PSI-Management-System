@@ -122,14 +122,46 @@ const MODULE_MATCH_ORDER = [
   'system',
 ]
 
+const MODULE_ALIASES: Record<string, string> = {
+  inbound_records: 'inbound',
+  outbound_records: 'outbound',
+  stocktaking_records: 'stocktaking',
+  return_records: 'returns',
+  scrap_records: 'scraps',
+  supplier_return: 'supplier_returns',
+  supplier_return_cancel: 'supplier_returns',
+  supplier_returns: 'supplier_returns',
+  purchase_order: 'purchase_orders',
+  purchase_orders: 'purchase_orders',
+}
+
+const BUSINESS_DOCUMENT_FIELDS = [
+  'documentNo',
+  'inboundNo',
+  'outboundNo',
+  'stocktakingNo',
+  'returnNo',
+  'scrapNo',
+  'orderNo',
+  'purchaseOrderNo',
+  'adjustmentNo',
+  'exceptionNo',
+  'runId',
+]
+
 function textMatchesAny(text: string, patterns: string[]) {
   return patterns.some(pattern => text.includes(pattern))
+}
+
+function normalizeLogModule(value: unknown) {
+  const moduleName = String(value || '').trim()
+  return MODULE_ALIASES[moduleName] || moduleName
 }
 
 function inferModule(row: any) {
   const requestData = parseJsonField(row.request_data)
   const explicit = requestData?.module || requestData?.sourceModule
-  if (explicit) return String(explicit)
+  if (explicit) return normalizeLogModule(explicit)
 
   const operation = String(row.operation || '').toLowerCase()
   const description = String(row.description || '').toLowerCase()
@@ -218,6 +250,19 @@ function normalizeBusinessIds(values: unknown): string[] {
   return Array.from(new Set(values.map(value => String(value || '').trim()).filter(Boolean)))
 }
 
+function getFirstBusinessDocumentId(...sources: any[]) {
+  for (const source of sources) {
+    if (!source) continue
+    for (const field of BUSINESS_DOCUMENT_FIELDS) {
+      const value = source[field]
+      if (value !== undefined && value !== null && String(value).trim()) {
+        return String(value).trim()
+      }
+    }
+  }
+  return ''
+}
+
 function getOperationLogBusinessIds(row: any, requestData: any, responseData: any) {
   const method = String(requestData?.method || '').toUpperCase()
   const batchIds = normalizeBusinessIds(requestData?.body?.ids || requestData?.ids)
@@ -226,6 +271,8 @@ function getOperationLogBusinessIds(row: any, requestData: any, responseData: an
   if (requestData?.documentNo) return [String(requestData.documentNo)]
   if (requestData?.body?.businessId) return [String(requestData.body.businessId)]
   if (requestData?.body?.documentNo) return [String(requestData.body.documentNo)]
+  const businessDocumentId = getFirstBusinessDocumentId(requestData, responseData, requestData?.body, responseData?.body)
+  if (businessDocumentId) return [businessDocumentId]
   if (method === 'POST') {
     if (requestData?.body?.code) return [String(requestData.body.code)]
     if (requestData?.body?.barcode) return [String(requestData.body.barcode)]
@@ -1060,11 +1107,21 @@ function moduleFromRelatedType(relatedType: unknown) {
     returns: 'returns',
     return: 'returns',
     supplier_return: 'supplier_returns',
+    supplier_return_cancel: 'supplier_returns',
     supplier_returns: 'supplier_returns',
     transfers: 'transfers',
     transfer: 'transfers',
   }
   return aliases[value] || 'inventory'
+}
+
+function inferStockLogType(type: unknown, relatedType: unknown) {
+  const value = String(type || '').trim().toLowerCase()
+  const related = String(relatedType || '').trim().toLowerCase()
+  if (value.includes('stock_update')) return 'update'
+  if (value.includes('cancel') || related.includes('cancel')) return 'delete'
+  if (['inbound', 'inbound_batch', 'outbound', 'return', 'supplier_return', 'scrap', 'transfer'].includes(related)) return 'create'
+  return inferType(value || related)
 }
 
 function mapStockLogRow(row: any) {
@@ -1074,13 +1131,14 @@ function mapStockLogRow(row: any) {
     beforeStock: Number(row.before_stock || 0),
     afterStock: Number(row.after_stock || 0),
     relatedId: row.related_id,
+    relatedDocumentNo: row.related_document_no || null,
     relatedType: row.related_type,
     remark: row.remark,
   }
   const module = moduleFromRelatedType(row.related_type)
-  const businessId = row.related_id || row.material_id || row.id
-  const businessUrl = buildBusinessUrl(module, businessId)
-  const operationType = inferType(row.type)
+  const businessId = row.related_document_no || row.related_id || row.material_id || row.id
+  const operationType = inferStockLogType(row.type, row.related_type)
+  const businessUrl = buildBusinessUrl(module, businessId, undefined, { includeDeleted: operationType === 'delete' })
   return {
     id: row.id,
     userId: row.operator,
@@ -1133,7 +1191,8 @@ function mapBatchLocationAdjustmentRow(row: any) {
   const locationLabel = row.location_name || row.location_id
   const module = moduleFromRelatedType(row.related_type)
   const businessId = row.related_document_no || row.related_id || row.id
-  const businessUrl = buildBusinessUrl(module, businessId)
+  const isCancelRelated = String(row.related_type || '').toLowerCase().includes('cancel')
+  const businessUrl = buildBusinessUrl(module, businessId, undefined, { includeDeleted: isCancelRelated })
   return {
     id: row.id,
     userId: row.operator || '',
@@ -1210,6 +1269,8 @@ function mapAbcAuditRow(row: any) {
 }
 
 function mapReconciliationRow(row: any) {
+  const oldSnapshot = parseJsonField(row.old_value)
+  const newSnapshot = parseJsonField(row.new_value)
   const requestData = {
     type: row.type,
     targetId: row.target_id,
@@ -1217,9 +1278,13 @@ function mapReconciliationRow(row: any) {
     field: row.field,
     oldValue: row.old_value,
     newValue: row.new_value,
+    oldSnapshot,
+    newSnapshot,
     reason: row.reason,
   }
-  const businessId = row.target_id || row.id
+  const businessId = row.type === 'case_edit'
+    ? (newSnapshot?.caseNo || oldSnapshot?.caseNo || row.target_name || row.target_id || row.id)
+    : (row.target_id || row.id)
   const businessUrl = buildBusinessUrl('reconciliation', businessId)
   const operationType = inferType(row.type)
   const description = row.reason || `对账修正：${row.field || row.type}`
@@ -1301,7 +1366,35 @@ function filterUnifiedRows(rows: any[], query: any) {
 
 function getUnifiedAuditRows(db: any) {
   const operationRows = (db.prepare('SELECT * FROM operation_logs').all() as any[]).map(mapLogRow)
-  const stockRows = (db.prepare('SELECT * FROM stock_logs').all() as any[]).map(mapStockLogRow)
+  const stockRows = (db.prepare(`
+    SELECT sl.*,
+           COALESCE(
+             ir.inbound_no,
+             obr.outbound_no,
+             st.stocktaking_no,
+             rr.return_no,
+             sr.return_no,
+             scr.scrap_no
+           ) as related_document_no
+    FROM stock_logs sl
+    LEFT JOIN inbound_records ir ON ir.id = sl.related_id
+      AND sl.related_type IN ('inbound', 'inbound_batch', 'transfer', 'transfer_cancel')
+      AND ir.is_deleted = 0
+    LEFT JOIN outbound_records obr ON obr.id = sl.related_id
+      AND sl.related_type = 'outbound'
+      AND obr.is_deleted = 0
+    LEFT JOIN stocktaking_records st ON st.id = sl.related_id
+      AND sl.related_type IN ('stocktaking', 'stocktaking_cancel')
+      AND st.is_deleted = 0
+    LEFT JOIN return_records rr ON rr.id = sl.related_id
+      AND sl.related_type IN ('return', 'return_cancel')
+      AND rr.is_deleted = 0
+    LEFT JOIN supplier_returns sr ON sr.id = sl.related_id
+      AND sl.related_type IN ('supplier_return', 'supplier_return_cancel')
+    LEFT JOIN scrap_records scr ON scr.id = sl.related_id
+      AND sl.related_type = 'scrap'
+      AND scr.is_deleted = 0
+  `).all() as any[]).map(mapStockLogRow)
   const batchLocationRows = (db.prepare(`
     SELECT bla.*,
            b.batch_no,
@@ -1342,8 +1435,7 @@ function getUnifiedAuditRows(db: any) {
       AND bla.related_type IN ('return', 'return_cancel')
       AND rr.is_deleted = 0
     LEFT JOIN supplier_returns sr ON sr.id = bla.related_id
-      AND bla.related_type = 'supplier_return'
-      AND sr.is_deleted = 0
+      AND bla.related_type IN ('supplier_return', 'supplier_return_cancel')
     LEFT JOIN scrap_records scr ON scr.id = bla.related_id
       AND bla.related_type = 'scrap'
       AND scr.is_deleted = 0

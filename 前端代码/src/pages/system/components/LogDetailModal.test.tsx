@@ -49,4 +49,48 @@ describe('LogDetailModal', () => {
     expect(screen.getByText('batch_location.inbound.update')).toBeInTheDocument()
     expect(screen.getByText('batch_location_adjustments')).toBeInTheDocument()
   })
+
+  it('shows business evidence review paths from the detail dialog', () => {
+    render(
+      <LogDetailModal
+        open
+        log={{
+          id: 'log-detail-review-path',
+          userId: 'u-1',
+          username: '王财务',
+          operation: 'resolve',
+          operationType: 'update',
+          module: 'cost',
+          description: '解决成本异常',
+          requestData: { exceptionNo: 'CE-REVIEW-001' },
+          sourceType: 'abc',
+          sourceLabel: '成本审计',
+          businessId: 'CE-REVIEW-001',
+          businessUrl: '/abc/alerts?keyword=CE-REVIEW-001',
+          auditEvent: {
+            eventCode: 'abc.exception.resolve',
+            action: 'update',
+            subjectType: 'cost_exception',
+            subjectId: 'CE-REVIEW-001',
+            businessId: 'CE-REVIEW-001',
+            businessUrl: '/abc/alerts?keyword=CE-REVIEW-001',
+            actor: '王财务',
+            evidenceSource: 'abc_cost_exceptions',
+            summary: '解决成本异常',
+          },
+          ip: '',
+          userAgent: '',
+          createdAt: '2026-06-20 11:00:00',
+        }}
+        getLogType={() => ({ value: 'update', label: '修改', className: 'bg-blue-100 text-blue-700' })}
+        getModuleLabel={() => '成本管理'}
+        onClose={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('业务证据回看')).toBeInTheDocument()
+    expect(screen.getByText('先回业务单据核对原始事实，再按同一业务标识查看完整审计时间线。')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '回到业务单据' })).toHaveAttribute('href', '/abc/alerts?keyword=CE-REVIEW-001')
+    expect(screen.getByRole('link', { name: '查看同一单据审计时间线' })).toHaveAttribute('href', '/logs?keyword=CE-REVIEW-001')
+  })
 })

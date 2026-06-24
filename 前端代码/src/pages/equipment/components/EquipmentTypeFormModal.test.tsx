@@ -34,4 +34,24 @@ describe('EquipmentTypeFormModal', () => {
     expect(screen.getByDisplayValue('EQT-LOCKED')).toHaveAttribute('readonly')
     expect(screen.getByText('禁用')).toBeInTheDocument()
   })
+
+  it('shows default depreciation confirmation before saving an equipment type', () => {
+    render(
+      <EquipmentTypeFormModal
+        open
+        type="create"
+        form={form}
+        onClose={vi.fn()}
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('设备类型默认折旧确认')).toBeInTheDocument()
+    expect(screen.getByText('默认可折旧金额')).toBeInTheDocument()
+    expect(screen.getByText('¥90,000.00')).toBeInTheDocument()
+    expect(screen.getByText('默认年折旧额')).toBeInTheDocument()
+    expect(screen.getByText('¥18,000.00')).toBeInTheDocument()
+    expect(screen.getByText('后续新建设备可沿用：默认采购价、残值、折旧年限、折旧方法、BOM 成本口径')).toBeInTheDocument()
+  })
 })
