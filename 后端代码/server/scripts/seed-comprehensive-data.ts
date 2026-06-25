@@ -6,7 +6,7 @@
  * - BOM 扩展表（通用试剂/耗材/质控品/设备模板）
  * - 设备管理（equipment, equipment_usage）
  * - 间接成本中心（indirect_cost_centers, indirect_cost_allocations）
- * - ABC 作业关联（abc_bom_activity_links）
+ * - ABC 作业关联（bom_activity_links）
 * - 出库 ABC 成本明细（outbound_abc_details）
  * - 切片成本快照（slide_cost_snapshots）
  * - 项目成本明细（project_cost_details）
@@ -77,10 +77,26 @@ export function seedComprehensiveData(): void {
       { code: 'EQ-012', name: '切片烤片机', model: 'HI1220', manufacturer: 'Leica', price: 25000, life: 8, method: 'straight_line', capacity: 100000, unit: '张' },
     ]
 
+    // R3：设备→作业中心映射（开箱即用，使设备折旧按动因归集到中心，否则进 unmapped 残差，ADOPT-02）。
+    const eqCenterMap: Record<string, string> = {
+      'EQ-001': 'ABC-AC-004', // 免疫组化仪 → 免疫组化(IHC)
+      'EQ-002': 'ABC-AC-003', // 全自动染色机 → HE染色
+      'EQ-003': 'ABC-AC-002', // 切片机 → 切片(SECTION)
+      'EQ-004': 'ABC-AC-002', // 包埋机 → 切片(SECTION)
+      'EQ-005': 'ABC-AC-001', // 脱水机 → 标本接收/处理(SPECIMEN)
+      'EQ-006': 'ABC-AC-006', // FISH 荧光显微镜 → 分子病理(MP)
+      'EQ-007': 'ABC-AC-006', // PCR 仪 → 分子病理(MP)
+      'EQ-008': 'ABC-AC-006', // NGS 测序仪 → 分子病理(MP)
+      'EQ-009': 'ABC-AC-006', // 离心机 → 分子病理(MP)
+      'EQ-010': 'ABC-AC-001', // 冰箱(-80℃) → 标本接收/处理(无用量，映射仅备查)
+      'EQ-011': 'ABC-AC-007', // 显微镜(常规) → 诊断(DIAGNOSIS)
+      'EQ-012': 'ABC-AC-002', // 切片烤片机 → 切片(SECTION)
+    }
+
     const insertEq = db.prepare(`
       INSERT INTO equipment (id, code, name, model, manufacturer, purchase_price, purchase_date,
-        depreciable_life_years, depreciation_method, total_capacity, capacity_unit, status, location_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+        depreciable_life_years, depreciation_method, total_capacity, capacity_unit, activity_center_id, status, location_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
     `)
 
     const locations = db.prepare('SELECT id FROM locations LIMIT 5').all() as any[]
@@ -91,6 +107,7 @@ export function seedComprehensiveData(): void {
         uuidv4(), eq.code, eq.name, eq.model, eq.manufacturer,
         eq.price, formatDate(purchaseDate), eq.life, eq.method,
         eq.capacity, eq.unit,
+        eqCenterMap[eq.code] || null,
         locations.length > 0 ? pickRandom(locations).id : null
       )
     }
@@ -102,14 +119,14 @@ export function seedComprehensiveData(): void {
   // 设备使用记录（最近 3 个月）
   const eqUsageCount = db.prepare('SELECT COUNT(*) as count FROM equipment_usage').get() as any
   if (eqUsageCount.count === 0) {
-    const equipments = db.prepare('SELECT id, code, name FROM equipment WHERE capacity_unit IS NOT NULL').all() as any[]
+    const equipments = db.prepare('SELECT id, code, name, activity_center_id FROM equipment WHERE capacity_unit IS NOT NULL').all() as any[]
     const projects = db.prepare('SELECT id, code, name FROM projects WHERE is_deleted = 0 LIMIT 20').all() as any[]
     const outbounds = db.prepare('SELECT id, outbound_no FROM outbound_records WHERE is_deleted = 0').all() as any[]
 
     if (equipments.length > 0 && projects.length > 0) {
       const insertUsage = db.prepare(`
-        INSERT INTO equipment_usage (id, equipment_id, project_id, outbound_id, usage_minutes, usage_count, depreciation_cost, operator, usage_date)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO equipment_usage (id, equipment_id, project_id, outbound_id, usage_minutes, usage_count, depreciation_cost, operator, usage_date, activity_center_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
 
       const operators = ['张伟', '王坤强', '刘玉芬', '赵明']
@@ -134,7 +151,8 @@ export function seedComprehensiveData(): void {
             insertUsage.run(
               uuidv4(), eq.id, project.id, outbound?.id || null,
               minutes, 1, depCost,
-              pickRandom(operators), formatDate(usageDate)
+              pickRandom(operators), formatDate(usageDate),
+              eq.activity_center_id || null  // R3：用量定格设备所属作业中心
             )
             usageCount++
           }
@@ -354,16 +372,18 @@ export function seedComprehensiveData(): void {
   // ============================================================
   console.log('\n【4/12】填充 ABC BOM 作业关联...')
 
-  const balCount = db.prepare('SELECT COUNT(*) as count FROM abc_bom_activity_links').get() as any
+  const balCount = db.prepare('SELECT COUNT(*) as count FROM bom_activity_links').get() as any
   if (balCount.count === 0) {
     const activityCenters = db.prepare('SELECT id, code, name, cost_driver_type FROM abc_activity_centers').all() as any[]
-    const costDrivers = db.prepare('SELECT id, code FROM abc_cost_drivers').all() as any[]
 
     if (activityCenters.length > 0 && boms.length > 0) {
+      // L2-6 统一到规范表 bom_activity_links(id, bom_id, activity_center_id, quantity, unit, sort_order)。
+      // 旧 abc_bom_activity_links 从无建表；其 cost_driver_id/description 字段去除——动因由中心 cost_driver_type 决定。
       const insertBAL = db.prepare(`
-        INSERT INTO abc_bom_activity_links (id, bom_id, activity_center_id, cost_driver_id, driver_quantity, description, sort_order)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO bom_activity_links (id, bom_id, activity_center_id, quantity, unit, sort_order)
+        VALUES (?, ?, ?, ?, ?, ?)
       `)
+      const DRIVER_UNIT: Record<string, string> = { block_count: '块', slide_count: '张', case_count: '例' }
 
       // BOM 类型与作业中心的映射
       const bomActivityMap: Record<string, string[]> = {
@@ -383,13 +403,10 @@ export function seedComprehensiveData(): void {
           const activity = activityCenters.find(a => a.code === activityCode)
           if (!activity) continue
 
-          const driver = costDrivers.find(d => d.code === activity.cost_driver_type)
-
           insertBAL.run(
             uuidv4(), bom.id, activity.id,
-            driver?.id || null,
             randomInt(1, 5),
-            `${bom.name} - ${activity.name}`,
+            DRIVER_UNIT[activity.cost_driver_type] || null,
             i
           )
           balTotal++

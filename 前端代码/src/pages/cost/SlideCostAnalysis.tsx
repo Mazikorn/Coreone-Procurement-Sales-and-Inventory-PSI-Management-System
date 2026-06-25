@@ -1,5 +1,5 @@
 import React, { Fragment, useState, useEffect, useMemo } from 'react'
-import { ChevronDown, ChevronRight, Download } from 'lucide-react'
+import { ChevronDown, ChevronRight, Download, Info } from 'lucide-react'
 import { toast } from 'sonner'
 import { abcApi } from '@/api/abc'
 import { downloadTextFile, formatCurrency } from '@/lib/utils'
@@ -33,6 +33,28 @@ const PROJECT_TYPE_OPTIONS = [
 
 function getProjectTypeLabel(projectTypeValue: string) {
   return PROJECT_TYPE_OPTIONS.find(option => option.value === projectTypeValue)?.label || projectTypeValue
+}
+
+const DRIVER_TYPE_LABELS: Record<string, string> = {
+  block_count: '蜡块数',
+  slide_count: '切片数',
+  case_count: '病例数',
+  sample_count: '样本数',
+}
+function getDriverTypeLabel(driverType?: string | null) {
+  if (!driverType) return '—'
+  return DRIVER_TYPE_LABELS[driverType] || driverType
+}
+
+interface ActivityBreakdownRow {
+  activityCenterId: string
+  activityCenterName: string
+  activityCenterCode: string
+  driverType: string | null
+  driverQuantity: number
+  driverRate: number
+  rateSource: string
+  allocatedCost: number
 }
 
 function escapeCsvValue(value: string | number) {
@@ -116,6 +138,8 @@ export default function SlideCostAnalysis() {
   const [projectType, setProjectType] = useState('all')
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7))
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [breakdowns, setBreakdowns] = useState<Record<string, ActivityBreakdownRow[]>>({})
+  const [breakdownLoading, setBreakdownLoading] = useState<string | null>(null)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
   const [exporting, setExporting] = useState(false)
@@ -127,6 +151,8 @@ export default function SlideCostAnalysis() {
   const loadData = async () => {
     try {
       setLoading(true)
+      setExpandedId(null)
+      setBreakdowns({})
       const params: Record<string, string | number> = { dimension: 'bom', startDate: month, endDate: month, pageSize: 1000 }
       if (projectType !== 'all') params.projectType = projectType
       const res = await abcApi.getProfitability(params)
@@ -154,8 +180,21 @@ export default function SlideCostAnalysis() {
     return data.slice(start, start + pageSize)
   }, [data, page, pageSize])
 
-  const toggleExpand = (bomId: string) => {
-    setExpandedId(prev => prev === bomId ? null : bomId)
+  const toggleExpand = async (bomId: string) => {
+    const next = expandedId === bomId ? null : bomId
+    setExpandedId(next)
+    if (next && !breakdowns[bomId]) {
+      try {
+        setBreakdownLoading(bomId)
+        const res: any = await abcApi.getBomActivityBreakdown({ bomId, startDate: month, endDate: month })
+        const rows = (res?.breakdown || res?.data?.breakdown || []) as ActivityBreakdownRow[]
+        setBreakdowns(prev => ({ ...prev, [bomId]: rows }))
+      } catch {
+        setBreakdowns(prev => ({ ...prev, [bomId]: [] }))
+      } finally {
+        setBreakdownLoading(null)
+      }
+    }
   }
 
   const handleExport = async () => {
@@ -233,6 +272,16 @@ export default function SlideCostAnalysis() {
         </div>
       </div>
 
+      {/* L5-4 间接费口径披露（CHAIN-09 间接诚实 / ADOPT-05 可解释）：不假装精确，明确标注为单一基准分摊估算 */}
+      <div className="flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3">
+        <Info className="h-4 w-4 text-blue-500 mt-0.5 shrink-0" />
+        <p className="text-sm text-gray-600 leading-relaxed">
+          <span className="font-medium text-gray-700">作业成本含间接费分摊估算。</span>
+          间接费用（房租/水电/管理等）无法精确追溯到单张切片，按<span className="font-medium">单一披露基准（默认：各中心直接成本占比）</span>分摊，为估算值而非精确归集；
+          材料与可追溯作业成本（人工/设备）按真实动因逐中心归集。
+        </p>
+      </div>
+
       {/* 明细表格 */}
       <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
         <table className="w-full">
@@ -282,14 +331,56 @@ export default function SlideCostAnalysis() {
                   {expandedId === item.bomId && (
                     <tr>
                       <td colSpan={9} className="px-8 py-4 bg-gray-50">
-                        <div className="max-w-xl">
-                          <h4 className="text-sm font-medium text-gray-700 mb-3">成本构成</h4>
-                          <CostWaterfall
-                            items={[
-                              { name: '物料成本', cost: item.materialCost || 0, color: 'bg-blue-500' },
-                              { name: '作业成本', cost: item.activityCost || 0, color: 'bg-emerald-500' },
-                            ]}
-                          />
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                          <div className="max-w-xl">
+                            <h4 className="text-sm font-medium text-gray-700 mb-3">成本构成</h4>
+                            <CostWaterfall
+                              items={[
+                                { name: '物料成本（真实用量×批次价）', cost: item.materialCost || 0, color: 'bg-blue-500' },
+                                { name: '作业成本（含单一基准间接估算）', cost: item.activityCost || 0, color: 'bg-emerald-500' },
+                              ]}
+                            />
+                            <p className="text-xs text-gray-400 mt-2">
+                              作业成本 = 人工/设备按真实动因逐中心归集 + 间接费按单一披露基准分摊估算。
+                            </p>
+                          </div>
+
+                          {/* L5-3 逐中心作业动因分解（CHAIN-07 可解释）：哪个作业中心按哪个动因以哪个费率消耗多少 */}
+                          <div>
+                            <h4 className="text-sm font-medium text-gray-700 mb-3">作业动因分解（逐中心）</h4>
+                            {breakdownLoading === item.bomId ? (
+                              <div className="text-sm text-gray-400 py-4">加载动因明细...</div>
+                            ) : (breakdowns[item.bomId]?.length ?? 0) === 0 ? (
+                              <div className="text-sm text-gray-400 py-4">暂无逐中心动因明细（可能为纯材料 BOM 或本期未归集）。</div>
+                            ) : (
+                              <table className="w-full text-sm">
+                                <thead>
+                                  <tr className="text-xs text-gray-500 border-b border-gray-200">
+                                    <th className="text-left font-medium py-2">作业中心</th>
+                                    <th className="text-left font-medium py-2">动因</th>
+                                    <th className="text-right font-medium py-2">动因量</th>
+                                    <th className="text-right font-medium py-2">费率</th>
+                                    <th className="text-right font-medium py-2">分摊成本</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-100">
+                                  {breakdowns[item.bomId].map(center => (
+                                    <tr key={center.activityCenterId}>
+                                      <td className="py-2 text-gray-700">{center.activityCenterName}</td>
+                                      <td className="py-2 text-gray-500">{getDriverTypeLabel(center.driverType)}</td>
+                                      <td className="py-2 text-right text-gray-500">{center.driverQuantity?.toLocaleString()}</td>
+                                      <td className="py-2 text-right text-gray-500">
+                                        {center.driverRate > 0
+                                          ? formatCurrency(center.driverRate)
+                                          : <span className="text-amber-600">无费率</span>}
+                                      </td>
+                                      <td className="py-2 text-right font-medium text-gray-900">{formatCurrency(center.allocatedCost)}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            )}
+                          </div>
                         </div>
                       </td>
                     </tr>

@@ -282,7 +282,8 @@ describe('role story 014 cross-role end-to-end fact chain', () => {
       .get('/api/v1/abc/slide-cost-trend')
       .set('Authorization', `Bearer ${financeToken}`)
     expect(trend.status).toBe(200)
-    expect(trend.body.data.some((row: any) => Number(row.totalCost) >= Number(abcDetail.total_cost))).toBe(true)
+    // slide-cost-trend 返回 { trend: [...], insightQuality }（与前端 CostTrend res?.trend 契约一致），非裸数组
+    expect(trend.body.data.trend.some((row: any) => Number(row.totalCost) >= Number(abcDetail.total_cost))).toBe(true)
 
     const batchTrace = await request(app)
       .get(`/api/v1/abc/batch-trace/${batch.id}`)

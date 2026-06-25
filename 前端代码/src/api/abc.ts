@@ -123,6 +123,10 @@ export const abcApi = {
   getProfitability: (params?: any) =>
     request.get('/abc/profitability', { params }),
 
+  // L5-3 切片成本下钻：按 BOM 聚合逐中心作业动因分解
+  getBomActivityBreakdown: (params: { bomId: string; startDate?: string; endDate?: string; month?: string }) =>
+    request.get('/abc/profitability/activity-breakdown', { params }),
+
 	  // ===== 成本看板 =====
 	  getDashboard: (month?: string) =>
 	    request.get('/abc/dashboard', { params: { month } }),

@@ -21,6 +21,8 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     globalSetup: './tests/global-setup.ts',
+    // 每文件强制独立内存库，消除跨文件 SQLite 污染（详见 tests/db-isolation.setup.ts）
+    setupFiles: ['./tests/db-isolation.setup.ts'],
     pool: 'forks',
     poolOptions: {
       forks: {

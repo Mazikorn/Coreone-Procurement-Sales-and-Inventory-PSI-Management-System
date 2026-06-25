@@ -52,6 +52,26 @@ interface SourceTotals {
   outboundCount?: number
 }
 
+interface AbsorptionInfo {
+  sumPools?: number
+  sourceTotal?: number
+  diff?: number
+  ok?: boolean
+  laborUnmapped?: number
+  equipUnmapped?: number
+  basis?: string
+}
+
+const INDIRECT_BASIS_LABELS: Record<string, string> = {
+  by_direct_cost: '按各中心直接成本占比',
+  by_driver_volume: '按动因量占比',
+  by_slide_equivalent: '按切片当量占比',
+}
+function getIndirectBasisLabel(basis?: string) {
+  if (!basis) return '单一披露基准'
+  return INDIRECT_BASIS_LABELS[basis] || basis
+}
+
 interface CostPoolQueryOverrides {
   month?: string
   source?: string
@@ -133,6 +153,7 @@ export function CostPoolList() {
   const [loading, setLoading] = useState(false)
   const [acting, setActing] = useState<string | null>(null)
   const [sourceTotals, setSourceTotals] = useState<SourceTotals | null>(null)
+  const [absorption, setAbsorption] = useState<AbsorptionInfo | null>(null)
   const [activityCenters, setActivityCenters] = useState<ActivityCenterOption[]>([])
   const [manualModalOpen, setManualModalOpen] = useState(false)
   const [manualForm, setManualForm] = useState<ManualCostPoolForm>(initialManualForm)
@@ -228,6 +249,8 @@ export function CostPoolList() {
 
       const nextSourceTotals = result?.sourceTotals || result?.collectResult?.sourceTotals || null
       setSourceTotals(nextSourceTotals)
+      // L5-2：捕获完全吸收对账与间接基准（auto-collect / recalculate 返回；sync 无）
+      setAbsorption(result?.absorption || result?.collectResult?.absorption || null)
       const messages = {
         sync: '费用来源已同步',
         'auto-collect': '成本池已自动归集',
@@ -374,6 +397,32 @@ export function CostPoolList() {
           <SourceTotal label="人工来源" value={formatCurrency(sourceTotals.laborCost)} />
           <SourceTotal label="设备来源" value={formatCurrency(sourceTotals.equipmentCost)} />
           <SourceTotal label="间接来源" value={formatCurrency(sourceTotals.indirectCost)} />
+        </div>
+      )}
+
+      {/* L5-2 完全吸收对账 + 间接基准披露（CHAIN-06 / CHAIN-09）：归集后明示 Σ池=Σ来源 与间接分摊基准 */}
+      {absorption && (
+        <div className={cn(
+          'flex flex-col gap-2 rounded-lg border p-4 lg:flex-row lg:items-center lg:justify-between',
+          absorption.ok ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'
+        )}>
+          <div className="text-sm">
+            <span className={cn('font-medium', absorption.ok ? 'text-emerald-800' : 'text-amber-800')}>
+              {absorption.ok ? '✓ 完全吸收：Σ池 = Σ来源' : '⚠ 未完全吸收（关账将被阻断）'}
+            </span>
+            <span className="ml-2 text-gray-600">
+              Σ池 {formatCurrency(absorption.sumPools)} / Σ来源 {formatCurrency(absorption.sourceTotal)}
+              {!absorption.ok && <> · 差额 {formatCurrency(absorption.diff)}</>}
+            </span>
+            {!absorption.ok && (Number(absorption.laborUnmapped) > 0 || Number(absorption.equipUnmapped) > 0) && (
+              <span className="ml-2 text-xs text-amber-700">
+                （未映射来源：人工 {formatCurrency(absorption.laborUnmapped)} / 设备 {formatCurrency(absorption.equipUnmapped)}）
+              </span>
+            )}
+          </div>
+          <div className="text-xs text-gray-500">
+            间接费分摊基准：<span className="font-medium text-gray-700">{getIndirectBasisLabel(absorption.basis)}</span>（估算，非精确归集）
+          </div>
         </div>
       )}
 

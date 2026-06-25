@@ -1,6 +1,11 @@
 /**
  * ABC 作业成本法集成测试
  * 测试作业中心、成本动因、成本池、BOM作业关联、成本计算等功能
+ *
+ * 数据库隔离：本文件用静态 `import app`，其 import 被 ESM 提升，无法像其它测试文件那样在
+ * 文件首行设置 `process.env.DATABASE_PATH=':memory:'`（会晚于 import 求值而失效）。隔离由
+ * vitest setupFiles（tests/db-isolation.setup.ts，在本文件 import 之前执行）统一强制 `:memory:`，
+ * 故无需也不应在此再设。下方 L5-3 块的 beforeAll/afterAll 清理保持幂等即可（内存库下为空操作）。
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
@@ -726,6 +731,57 @@ describe('ABC 作业成本法', () => {
       expect(codes).toContain('MP')
       expect(codes).toContain('DIAGNOSIS')
       expect(codes).toContain('CYTOLOGY')
+    })
+  })
+
+  describe('L5-3 切片成本下钻：逐中心作业动因分解', () => {
+    const MONTH = '2095-07'
+    const cleanup = () => {
+      db.prepare(`DELETE FROM outbound_abc_details WHERE bom_id = 'bom-brk'`).run()
+      db.prepare(`DELETE FROM outbound_records WHERE id LIKE 'oad-brk-%'`).run()
+    }
+    afterAll(cleanup) // 持久库：清理本块种子，避免污染盈利/对账等聚合测试
+    beforeAll(() => {
+      cleanup() // 幂等：清掉上次残留再种
+      db.prepare(`INSERT OR IGNORE INTO boms (id, code, name, version, type, status) VALUES ('bom-brk','BOM-BRK','下钻用例','v1.0','ihc',1)`).run()
+      const mk = (id: string, details: any[]) => {
+        db.prepare(`INSERT INTO outbound_records (id, outbound_no, type, total_cost, sample_count, operator, status, created_at)
+                    VALUES (?, ?, 'bom', 0, 1, 'admin', 'completed', ?)`).run(id, `OB-${id}`, `${MONTH}-15 10:00:00`)
+        db.prepare(`INSERT INTO outbound_abc_details (id, outbound_id, bom_id, sample_count, cost_month, cost_status, activity_details)
+                    VALUES (?, ?, 'bom-brk', 1, ?, 'costed', ?)`).run(id, id, MONTH, JSON.stringify(details))
+      }
+      mk('oad-brk-1', [
+        { activityCenterId: 'ac-s', activityCenterName: '切片', activityCenterCode: 'SEC', driverType: 'block_count', quantity: 3, driverRate: 10, rateSource: 'period', poolCost: 100, allocatedCost: 30, totalCost: 30 },
+        { activityCenterId: 'ac-i', activityCenterName: '免疫组化', activityCenterCode: 'IHC', driverType: 'slide_count', quantity: 6, driverRate: 4, rateSource: 'period', poolCost: 90, allocatedCost: 24, totalCost: 24 },
+      ])
+      mk('oad-brk-2', [
+        { activityCenterId: 'ac-s', activityCenterName: '切片', activityCenterCode: 'SEC', driverType: 'block_count', quantity: 2, driverRate: 10, rateSource: 'period', poolCost: 100, allocatedCost: 20, totalCost: 20 },
+        { activityCenterId: 'ac-i', activityCenterName: '免疫组化', activityCenterCode: 'IHC', driverType: 'slide_count', quantity: 4, driverRate: 4, rateSource: 'period', poolCost: 90, allocatedCost: 16, totalCost: 16 },
+      ])
+    })
+
+    it('按 BOM 聚合逐中心：分摊额/动因量求和，费率为期间代表值', async () => {
+      const res = await request(app)
+        .get('/api/v1/abc/profitability/activity-breakdown')
+        .query({ bomId: 'bom-brk', startDate: MONTH, endDate: MONTH })
+        .set('Authorization', `Bearer ${token}`)
+      expect(res.status).toBe(200)
+      const d = res.body.data
+      expect(d.snapshotCount).toBe(2)
+      expect(d.totalActivityCost).toBe(90) // (30+20)+(30+20)
+      const sec = d.breakdown.find((c: any) => c.activityCenterId === 'ac-s')
+      const ihc = d.breakdown.find((c: any) => c.activityCenterId === 'ac-i')
+      expect(sec).toMatchObject({ driverType: 'block_count', driverQuantity: 5, driverRate: 10, allocatedCost: 50 })
+      expect(ihc).toMatchObject({ driverType: 'slide_count', driverQuantity: 10, driverRate: 4, allocatedCost: 40 })
+      // 排序：分摊额降序
+      expect(d.breakdown[0].activityCenterId).toBe('ac-s')
+    })
+
+    it('缺 bomId 返回 400', async () => {
+      const res = await request(app)
+        .get('/api/v1/abc/profitability/activity-breakdown')
+        .set('Authorization', `Bearer ${token}`)
+      expect(res.status).toBe(400)
     })
   })
 })

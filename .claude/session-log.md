@@ -8,7 +8,66 @@
 
 ---
 
-## 当前状态（2026-06-11）
+## 当前状态（2026-06-25）
+
+**P0 出库捕获真实块/片数 ✅（部分 — 期间费率层）— 让 M3 正确性在生产数据上成立**
+- 新 `getBomPerSampleDriverQty(db,bomId)`（按 BOM 作业关联中心 `cost_driver_type` 聚合 quantity）；两出库写路径（`cost-runs.ts`/`outbound-v1.1.ts`）改写真实 `block/slide/case_count = 每样本量×样本数`，删写死 `block=1`/`slide=sampleCount`，补写 `case_count`。
+- 效果：期间动因量在真实数据上成立 → 块/片中心费率不再退化为"池÷出库单数"。**214 回归过、准确性 7 用例绿、零新增回归**（连带修 cost-exceptions 成本池重算：BOM 显式声明块作业）。
+- **⚠️ 仍待（更深，已隔离→专项）**：多样本出库**逐单**成本/收费缩放（`calculateSlideCostWithFee` per-sample↔per-outbound 语义与 fee 纠缠，N>1 逐单 activity/fee/total 偏小；期间费率与池总额已对）。建议与 L3-6 合并为专项。N=1 出库当前已正确。详见事实源 §12.3。
+- 优先级评价（我的排序）：P0 > M5 可解释下钻(依赖 P0) > 修 WIP > L3-6/关账硬门禁。
+
+**ABC 全链路矫正 — M4（L4 钉死准确性）✅ 完成**
+- **准确性三档黄金用例**（`abc-golden-accuracy.test.ts` 7 用例全绿，均独立 agent 手算交叉核 MATCH）：① 基准 ¥120；② 高间接 80% 主导 ¥100（Σ池=2000）；③ **拟真月度**（3 中心含 case_count / 2 BOM / 含材料 / 跨多出库聚合）Σ池=3000、费率 30/25/50、BOM ¥72.5·¥65。事实源 §7.6/§7.7 + AC-COST-ACCURACY。
+- **L4-3 CI 红线**：`.github/workflows/abc-accuracy.yml` + `npm run test:accuracy`（含三档 + abc-calculator，**本地 37 绿**）；仅跑准确性关键用例（全量入 CI 待 WIP 修绿）。
+- **下一步**：M5（前端收口：成本下钻显示逐中心动因/费率/出处、间接口径标注、标准/实际/差异）；或 M3 残留（出库捕获真实块/片数→生产可信）；**待修 [[wip-cost-exceptions-1147-fix]]**（用户嘱后续修）。
+
+**ABC 全链路矫正 — M3（L3 引擎重建）✅ 完成 — 黄金用例转绿**
+- 删平均分摊、装真追溯：`autoCollectCostPools` 重写为按 §11 映射逐中心归集（人工/设备/间接）+ 每中心真实动因量 + 完全吸收校验 + 可解释快照。详见 [session-log/2026-06-25.md](session-log/2026-06-25.md) 与事实源 **§12**。
+- **硬证据**：黄金用例红→绿 —— 单张切片 `155→¥120`、SECTION/IHC 费率 `70/70→¥35/¥52.5`、`Σ池=¥1400` 完全吸收。
+- 验证：tsc 干净 · golden 2/2 · ABC/成本回归 248 通过 · reports 35/35。**M3 零新增回归**；唯一失败 `cost-exceptions:1147` 经核为本分支未提交 WIP（非我所改、非引擎）。
+- 对抗审查 `wf_6863a0b3`（3 视角证伪）：golden 数学三方独立重算一致、**0 blocking**；已修 5 项（清旧池/对账只计 auto 池/不可计量动因→0/无费率不回退整池额/单行读池）。
+- **M3 已知残留（诚实，→M4/L5）**：① 出库写死 block_count=1/slide=sample → 生产块动因量≈出库单数（引擎正确，需 L5 出库捕获真值）；② 默认设备无中心映射（L5 补 seed）；③ 完全吸收暂为 warning 非关账硬门禁（M4 升 error 接 CHAIN-10）；④ L3-6 标准/实际分离留收尾。
+- **下一步 = M4**（钉死准确性：补高间接占比黄金用例、CI 红线、拟真月度对比）或继续按需推进。
+
+**ABC 全链路矫正 — M2（L2 设计/数据模型）✅ 完成**
+- 物理根因补链：**来源→中心映射 schema 一次到位**（产品未上线，规范建表 + ensureColumn 双写）。详见 [session-log/2026-06-25.md](session-log/2026-06-25.md) 与事实源 `docs/COREONE-成本核算事实源说明-2026-06-24.md` **§11**。
+- 落库：L2-1 四表 `*activity_center_id`（设备类型默认+实例覆盖继承）；L2-2 `outbound_abc_details.case_count` + `abc_cost_drivers.driver_source_column`(已 seed)；L2-3 新表 `abc_indirect_disclosure`(每期一基准) + `indirect_cost_centers.direct_activity_center_id`；L2-4 `activity_details` 固定 JSON 契约 + `activity_detail_version`；L2-5 `outbound_abc_details.bom_version_id` + 补 `boms.standard_activity_cost`；L2-6 统一 `bom_activity_links`(删兼容分支/修 seed/测试)；+ 索引。
+- 验证：tsc 干净 · abc-calculator 30/30 · 成本来源 CRUD + ABC 集成 + bom/outbound/pathology/role-story 全过 · golden 干净初始化(逻辑仍 skip)。两处失败(cost-exceptions/outbound-flow)经 stash 基线核验为**本分支既有、与本次无关**。
+- 对抗审查 `wf_e5cdb8d3`：goldenVerdict=**YES**(可支撑 35/52.5/Σ1400/¥120)、**0 blocking**；2 条 fix-now 已采纳。
+- **PM 已确认（2026-06-25）**：L2-3 间接基准采用**方案B 期间统一基准**（`abc_indirect_disclosure` 期间表 + `direct_activity_center_id` 逃生口），非每中心列。**下一步 = M3 引擎重建**（删平均分/按映射 GROUP BY 归集/完全吸收/解封 golden）；映射数据 seed + UNASSIGNED 兜底归 L5。
+
+---
+
+## 历史状态（2026-06-24）
+
+**产品目的达成度评估（七视角）** — ✅ 已产出
+- 新增 `docs/COREONE-产品目的达成度评估与ABC核心重构方案-2026-06-24.md`
+- 头号发现（代码核验）：`abc-v1.1.ts:457-483` 成本池"自动归集"按成本中心数**平均分摊** + 全局样本量做动因量 → ABC 退化为单一吸收率，作业中心/动因/BOM 关联是装饰；`cost-calculator.ts` 存在两套口径冲突引擎（360-378 vs 462-524）。
+- 结论：方向对、闭环骨架真，但成本引擎核心算法不成立，**不满足"单张切片精确成本核算 + ≤5% + 可解释"**。
+- 修改方案：重建成本池归集（去平均分摊）+ 统一成本入口 + 黄金用例验收测试 + 可解释硬约束。
+- **用户决策**：① 引擎深度选 **B（动因优先+单一披露基准）**；② 下一步=产详细实施计划；③ 产品未上线可接受高成本；④ 要求保证"调研→实现"整链成立、从头矫正。
+- **全链路诊断**：领域调研✅成立 → 方案选型⚠️欠定义 → 需求❌断裂(≤5%只在章程不在PRD/AC) → 设计❌断裂·根因(三类成本来源表无 activity_center_id，缺"来源→中心"映射) → 实现平均分(缺表后唯一写法)。
+- **已产出详细实施计划**：`plans/abc-full-chain-correction-2026-06-24.md`（L0领域锚定→L1需求矫正→L2设计补映射表→L3重建引擎→L4黄金用例钉死≤5%→L5前端收口；约15-17工作日到可信首版）。
+- **用户追加约束**：功能设计须避免"有用但用户不愿用→产品失败"，**采纳优先于技术正确**。已固化：① 计划 §2.5 + ADOPT-01~05 验收关 + §0 原则⑤（最高否决权）；② 记忆 `adoption-first-design`、`coreone-abc-not-real-abc`（首次建 MEMORY.md）。
+- **M1「立靶子」执行中（用户已批准开工，ultracode）**：
+  - L0-1/L0-2 ✅ 新增 `docs/COREONE-成本核算事实源说明-2026-06-24.md`（成本对象层级/作业中心/动因目录/可追溯性分级/单一披露基准/标准vs实际/黄金用例§7/缺陷映射）。**诚实矫正**：计划 L0-2 误列的 `machine_minute/batch_count` 实际不在 seed（仅 7 动因），文档已如实记录二者现走折旧/QC 路径。
+  - L4-1+L4-2 ✅ 黄金用例（Y=¥120/片，B方案费率 35/52.5，Σ池1400 完全吸收）+ 先红测试 `后端代码/server/tests/integration/abc-golden-accuracy.test.ts`。**已实跑确认真红**：CHAIN-04 两中心费率都=¥70；CHAIN-05 引擎¥155 vs 120 偏差29.17%（与§7.4预测精确吻合，交叉验证算术正确）。现 `describe.skip`（CI 绿），M3 后解除接 L4-3。
+  - L1-1 ✅ `07_AC` 新增 AC-COST-ACCURACY + AC-22-001 交叉引用 + PM确认行；L1-2 ✅ PRD 补 REQ-22-016/017 + 新增§30成功指标(承接 S4 ≤5%)+模块数15+→17+PM顺延§31；L1-3/L1-4 ✅ `04_BR` 新增 §9.7 BR-BM-024~028（按动因归集/单一披露/完全吸收/可解释/标准vs实际）。
+  - 对抗验证 `wwdf00huh` ✅（3维：黄金算术独立重算逐数确认无误 + 跨文档一致 + 链路/采纳关达标）。8 findings 已分诊：
+    - 已修(M1内)：① 测试完全吸收容差 2%相对→¥0.01绝对(major)；② 章程 S4 补现状声明，消除"章程独缺免责"裂缝(major)；③ PRD REQ-22-016 引用 024~027→024~028(nit)。
+    - **新发现 2 个引擎 bug，已登记事实源§8 + 计划 L3-2/L3-4（M1 不碰引擎，留 M3 修）**：`getDriverQuantity:580` 死分支(用中心code比对'block_count'恒假)；`calculateMaterialCost:536` 无明细回退乘 slideCount 与主路径单样本口径漂移。
+    - **M4 待办**：补「高间接占比黄金用例」(间接>直接)，验证 ≤5% 在间接主导时仍成立（计划§6已列风险，转绿前必补）。
+- M1 文件已 git add（4 治理文档改动 + 事实源/评估/计划/先红测试 4 新文件）。
+- 下一步：待用户决定是否进 **M2（L2 设计：建"成本来源→作业中心"映射表，schema 一次到位）**。
+
+**PM 技能安装（B 端产品经理）** — ✅ 已完成
+- 从高星仓库装入 18 个技能到 `.claude/skills/`（共 20 个）。来源：`anthropics/skills`⭐154k（官方）+ `deanpeters/Product-Manager-Skills`⭐5.3k；低星仓库已剔除。
+- 文档产出(5)：docx/pptx/xlsx/pdf/doc-coauthoring；发现+交付(7)：prd-development、roadmap-planning、user-story-mapping、prioritization-advisor、jobs-to-be-done、opportunity-solution-tree、stakeholder-mapping；B端/SaaS(6)：saas-revenue-growth-metrics、saas-economics-efficiency-metrics、finance-based-pricing-advisor、tam-sam-som-calculator、business-health-diagnostic、pestel-analysis。
+- 文档技能依赖装入隔离 venv：`.claude/skills-runtime/venv`（11 库已验证，docx/xlsx 实测生成成功）。⚠️ 执行 doc 脚本须用该 venv 解释器，见 `skills-runtime/README.md`。可选补：poppler(PDF→图)、LibreOffice(旧.doc)。
+
+---
+
+## 历史状态（2026-06-11）
 
 **治理框架 + 项目整理** — ✅ 全部完成
 
@@ -34,6 +93,7 @@
 
 | 日期 | 文件 | 内容摘要 |
 |------|------|---------|
+| 2026-06-25 | [2026-06-25.md](session-log/2026-06-25.md) | M2（L2 schema 一次到位）+ M3（L3 引擎重建）完成：黄金用例红→绿（¥120/35/52.5/Σ1400），对抗审查各 0 blocking |
 | 2026-06-11 | [2026-06-11-governance-docs.md](session-log/2026-06-11-governance-docs.md) | 治理文档体系建立：15 份核心文档全部生成，79 项待办 |
 | 2026-06-11 | [2026-06-11-e2e-phase3-complete.md](session-log/2026-06-11-e2e-phase3-complete.md) | Phase 3 完成：19 失败全部修复（后端 UNIQUE + 测试断言） |
 | 2026-06-10 | [2026-06-10-e2e-phase3-fixes.md](session-log/2026-06-10-e2e-phase3-fixes.md) | Phase 3 修复：abc-cost 全部通过 + dashboard/alerts 修复 |

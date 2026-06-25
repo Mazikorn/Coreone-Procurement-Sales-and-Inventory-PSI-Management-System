@@ -29,6 +29,16 @@ function sendTextError(res: any, result: TextGuardResult): result is Extract<Tex
   return false
 }
 
+function parseJsonObject(value: unknown): Record<string, any> {
+  if (!value || typeof value !== 'string') return {}
+  try {
+    const parsed = JSON.parse(value)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
 function validateProjectBom(db: any, bomId: unknown, projectType: string) {
   const id = String(bomId || '').trim()
   if (!id) return { ok: true }
@@ -402,6 +412,7 @@ router.put('/:id', requireProjectWrite, (req, res) => {
     const { id } = req.params
     const data = req.body
     const db = getDatabase()
+    const operator = (req as any).user?.username || 'system'
     const existing = db.prepare('SELECT * FROM projects WHERE id = ? AND is_deleted = 0').get(id)
     if (!existing) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
     if (data.code === null || data.code === undefined ||
@@ -490,7 +501,39 @@ router.put('/:id', requireProjectWrite, (req, res) => {
     if (data.status !== undefined) { fields.push('status = ?'); params.push(data.status === 'active' ? 1 : 0) }
     if (data.bomId !== undefined) { fields.push('bom_id = ?'); params.push(data.bomId || null) }
     if (fields.length > 0) { params.push(id); db.prepare(`UPDATE projects SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND is_deleted = 0`).run(...params) }
-    success(res, { id }, 'Updated')
+    let resolvedMissingBomExceptions = 0
+    if (data.bomId !== undefined && String(data.bomId || '').trim()) {
+      const openMissingBomRows = db.prepare(`
+        SELECT id, details
+        FROM cost_exceptions
+        WHERE project_id = ?
+          AND exception_type = 'missing_bom'
+          AND status = 'open'
+      `).all(id) as any[]
+      for (const row of openMissingBomRows) {
+        const details = {
+          ...parseJsonObject(row.details),
+          sourceRepair: {
+            action: 'project_bom_configured',
+            projectId: id,
+            bomId: String(data.bomId).trim(),
+            operator,
+            at: new Date().toISOString(),
+          },
+        }
+        const result = db.prepare(`
+          UPDATE cost_exceptions
+          SET status = 'resolved',
+              resolved_by = ?,
+              resolved_at = CURRENT_TIMESTAMP,
+              details = ?,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = ? AND status = 'open'
+        `).run(operator, JSON.stringify(details), row.id)
+        resolvedMissingBomExceptions += Number(result.changes) || 0
+      }
+    }
+    success(res, { id, resolvedMissingBomExceptions }, 'Updated')
   } catch (err: any) { error(res, err.message) }
 })
 

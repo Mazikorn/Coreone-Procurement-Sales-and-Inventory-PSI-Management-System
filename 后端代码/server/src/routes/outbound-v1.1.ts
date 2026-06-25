@@ -15,7 +15,7 @@ const OUTBOUND_LIST_STATUSES = new Set(['completed', 'pending', 'cancelled'])
 
 import { checkStockAlerts } from '../utils/alertChecker.js'
 import { generateNo } from '../utils/generateNo.js'
-import { buildBomSourceSnapshot, calculateFeeAmountFromStandard, calculateSlideCostWithFee } from '../utils/cost-calculator.js'
+import { buildBomSourceSnapshot, calculateFeeAmountFromStandard, calculateSlideCostWithFee, getBomPerSampleDriverQty } from '../utils/cost-calculator.js'
 import { errorMessage, recordCostException } from '../utils/cost-exceptions.js'
 import { writeAuditLog } from '../utils/cost-runs.js'
 
@@ -706,6 +706,11 @@ router.post('/bom', (req, res) => {
       const costMonth = new Date().toISOString().slice(0, 7)
       // ===== ABC 成本计算（失败不阻断出库）=====
       try {
+        // P0：真实块/片/例数 = 每样本驱动量 × 样本数（替代写死 block=1/slide=sc，修期间费率分母）。
+        const perSampleDriver = getBomPerSampleDriverQty(db, effectiveBomId)
+        const storedBlockCount = Math.round(perSampleDriver.block * sc)
+        const storedSlideCount = Math.round((perSampleDriver.slide > 0 ? perSampleDriver.slide : 1) * sc)
+        const storedCaseCount = normalizedCaseNo ? 1 : 0
         const slideCostResult = calculateSlideCostWithFee(db, {
           bomId: effectiveBomId,
           slideCount: sc,
@@ -714,6 +719,9 @@ router.post('/bom', (req, res) => {
           materialCost: totalCost,
           caseNo: normalizedCaseNo || null,
           applyCaseAggregation: true,
+          // R1：逐单分摊按真实驱动量（块/片 = 每样本量 × 样本数；病例 = 本单实际病例数），与期间池同口径。
+          sampleCount: sc,
+          caseCount: storedCaseCount,
         })
         const missingFeeMapping = slideCostResult.feeBreakdown.length === 0
 
@@ -721,14 +729,14 @@ router.post('/bom', (req, res) => {
         const abcDetailId = uuidv4()
         db.prepare(`
           INSERT INTO outbound_abc_details
-          (id, outbound_id, bom_id, project_id, sample_count, slide_count, block_count,
+          (id, outbound_id, bom_id, project_id, sample_count, slide_count, block_count, case_count,
            material_cost, activity_cost, total_cost, cost_per_slide,
            fee_category, fee_standard_id, fee_amount, profit, profit_rate,
            activity_details, cost_month, cost_status, case_no, charge_group_id, calculation_version, source_snapshot)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           abcDetailId, id, effectiveBomId, effectiveProjectId || null,
-          sc, sc, 1,
+          sc, storedSlideCount, storedBlockCount, storedCaseCount,
           slideCostResult.materialCost, slideCostResult.totalActivityCost, slideCostResult.totalCost,
           sc > 0 ? slideCostResult.totalCost / sc : 0,
           slideCostResult.feeCategory, slideCostResult.feeStandardId,

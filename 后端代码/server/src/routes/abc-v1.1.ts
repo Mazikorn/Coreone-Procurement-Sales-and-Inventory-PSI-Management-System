@@ -454,32 +454,232 @@ const getCostSourceTotals = (db: any, yearMonth: string) => {
   }
 }
 
+const roundCost = (value: number): number => Math.round((Number(value) || 0) * 100) / 100
+
+// 动因类型 → outbound_abc_details 计量列（白名单，防注入；与 abc_cost_drivers.driver_source_column 对齐）。
+const DRIVER_COLUMN: Record<string, string> = {
+  block_count: 'block_count',
+  slide_count: 'slide_count',
+  case_count: 'case_count',
+  sample_count: 'sample_count',
+}
+
+// 每中心当期实际动因量：按中心 cost_driver_type 取 outbound_abc_details 对应计量列求和（替代旧"全局样本量"）。
+const getCenterDriverQuantity = (db: any, centerDriverType: string, yearMonth: string): number => {
+  // R2：病例为「每病例」动因 → 取去重病例数 COUNT(DISTINCT case_no)，而非 SUM(case_count)。
+  //   否则一病例跨多出库会被重复计数，费率（=池÷动因量）失真为"每出库病例"而非"每病例"。
+  //   逐单分摊侧按 1/组大小均摊（cost-calculator.countCostedCaseOutbounds），两侧同口径 → 完全吸收。
+  if (centerDriverType === 'case_count') {
+    // 混合口径：有 case_no 的行按去重病例数计（一病例跨多出库只计一次）；无 case_no 的行（聚合/历史写法）
+    //   退回其 case_count 列求和。两者相加即当期病例动因量。逐单分摊侧对有 case_no 的按 1/组大小均摊，
+    //   故两侧同口径、完全吸收。
+    const row = db.prepare(`
+      SELECT COUNT(DISTINCT case_no)
+             + COALESCE(SUM(CASE WHEN case_no IS NULL OR case_no = '' THEN case_count ELSE 0 END), 0) as qty
+      FROM outbound_abc_details
+      WHERE COALESCE(cost_month, substr(created_at, 1, 7)) = ?
+        AND ${countableAbcCostClause}
+    `).get(yearMonth) as any
+    return Number(row?.qty) || 0
+  }
+  // 不可计量动因（无对应计量列，如 stain_count/test_count/report_count）→ 返回 0（诚实留作未吸收→残差异常），
+  // 不臆造为 slide_count（否则产出貌似合理实则错误的费率）。
+  const col = DRIVER_COLUMN[centerDriverType]
+  if (!col) return 0
+  const row = db.prepare(`
+    SELECT COALESCE(SUM(${col}), 0) as qty
+    FROM outbound_abc_details
+    WHERE COALESCE(cost_month, substr(created_at, 1, 7)) = ?
+      AND ${countableAbcCostClause}
+  `).get(yearMonth) as any
+  return Number(row?.qty) || 0
+}
+
+// 间接费单一披露快照（CHAIN-09：每期一个公开基准 + 总额对账锚点）。
+const upsertIndirectDisclosure = (db: any, yearMonth: string, basis: string, totalIndirect: number) => {
+  const note = '间接费为单一基准分摊估算'
+  const existing = db.prepare('SELECT id FROM abc_indirect_disclosure WHERE year_month = ?').get(yearMonth) as any
+  if (existing) {
+    db.prepare(`UPDATE abc_indirect_disclosure SET basis = ?, total_indirect = ?, note = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+      .run(basis, totalIndirect, note, existing.id)
+  } else {
+    db.prepare(`INSERT INTO abc_indirect_disclosure (id, year_month, basis, total_indirect, note) VALUES (?, ?, ?, ?, ?)`)
+      .run(uuidv4(), yearMonth, basis, totalIndirect, note)
+  }
+}
+
+// 按作业中心归集每中心成本池（B 方案动因优先；删除旧 `/ centers.length` 平均分）。
+const collectPerCenterPools = (db: any, yearMonth: string, centers: any[]) => {
+  // 0) 先清本期"自动归集"旧池（保留 source='manual' 手工池）：避免改映射/停用中心后残留陈池被重复计入吸收对账，使重算幂等。
+  db.prepare(`DELETE FROM abc_cost_pools WHERE year_month = ? AND source = 'auto_collect'`).run(yearMonth)
+
+  // 1) 样本量（按项目类型，供人工成本按类型摊到样本）
+  const sampleRows = db.prepare(`
+    SELECT p.type as project_type, COALESCE(SUM(r.sample_count), 0) as sample_count
+    FROM outbound_records r
+    LEFT JOIN projects p ON r.project_id = p.id
+    WHERE r.is_deleted = 0 AND r.status = 'completed' AND substr(r.created_at, 1, 7) = ?
+    GROUP BY p.type
+  `).all(yearMonth) as any[]
+  const sampleByType = new Map(sampleRows.map(r => [r.project_type || 'all', Number(r.sample_count) || 0]))
+  const totalSamples = sampleRows.reduce((s, r) => s + (Number(r.sample_count) || 0), 0)
+
+  // 2) 人工 → 中心（按 activity_center_id 分组；NULL 计未映射，不静默并入任何中心）
+  const laborRows = db.prepare(`
+    SELECT activity_center_id, project_type, standard_minutes, labor_rate_per_minute
+    FROM standard_labor_times WHERE COALESCE(is_deleted, 0) = 0
+  `).all() as any[]
+  const laborByCenter = new Map<string, number>()
+  let laborUnmapped = 0
+  for (const r of laborRows) {
+    const pt = r.project_type || 'all'
+    const samples = pt === 'all' ? totalSamples : (sampleByType.get(pt) || 0)
+    const cost = samples * (Number(r.standard_minutes) || 0) * (Number(r.labor_rate_per_minute) || 0)
+    if (cost === 0) continue
+    if (r.activity_center_id) laborByCenter.set(r.activity_center_id, (laborByCenter.get(r.activity_center_id) || 0) + cost)
+    else laborUnmapped += cost
+  }
+
+  // 3) 设备折旧 → 中心（COALESCE 用量定格 / 实例 / 类型默认；NULL 计未映射）
+  const equipRows = db.prepare(`
+    SELECT COALESCE(eu.activity_center_id, e.activity_center_id, et.default_activity_center_id) as center_id,
+           COALESCE(SUM(eu.depreciation_cost), 0) as cost
+    FROM equipment_usage eu
+    LEFT JOIN equipment e ON e.id = eu.equipment_id
+    LEFT JOIN equipment_types et ON et.id = e.type_id
+    WHERE substr(COALESCE(eu.usage_date, eu.created_at), 1, 7) = ?
+    GROUP BY center_id
+  `).all(yearMonth) as any[]
+  const equipByCenter = new Map<string, number>()
+  let equipUnmapped = 0
+  for (const r of equipRows) {
+    const cost = Number(r.cost) || 0
+    if (r.center_id) equipByCenter.set(r.center_id, (equipByCenter.get(r.center_id) || 0) + cost)
+    else equipUnmapped += cost
+  }
+
+  // 4) 间接费：direct_activity_center_id 直接归属 vs 其余按单一披露基准分摊
+  const allocRows = db.prepare(`
+    SELECT a.total_amount, c.direct_activity_center_id
+    FROM indirect_cost_allocations a
+    LEFT JOIN indirect_cost_centers c ON c.id = a.cost_center_id
+    WHERE a.year_month = ?
+  `).all(yearMonth) as any[]
+  const directIndirectByCenter = new Map<string, number>()
+  let indirectTotal = 0
+  let distributableIndirect = 0
+  for (const r of allocRows) {
+    const amt = Number(r.total_amount) || 0
+    indirectTotal += amt
+    if (r.direct_activity_center_id) {
+      directIndirectByCenter.set(r.direct_activity_center_id, (directIndirectByCenter.get(r.direct_activity_center_id) || 0) + amt)
+    } else {
+      distributableIndirect += amt
+    }
+  }
+  const disclosure = db.prepare('SELECT basis FROM abc_indirect_disclosure WHERE year_month = ?').get(yearMonth) as any
+  let basis = (disclosure?.basis as string) || 'by_direct_cost'
+
+  // 5) 每中心直接成本 + 实际动因量
+  const centerData = centers.map(c => {
+    const labor = laborByCenter.get(c.id) || 0
+    const equip = equipByCenter.get(c.id) || 0
+    return {
+      id: c.id,
+      driverType: c.cost_driver_type || 'slide_count',
+      labor,
+      equip,
+      directCost: labor + equip,
+      driverQty: getCenterDriverQuantity(db, c.cost_driver_type || 'slide_count', yearMonth),
+      directIndirect: directIndirectByCenter.get(c.id) || 0,
+    }
+  })
+  const sumDirect = centerData.reduce((s, c) => s + c.directCost, 0)
+  const sumDriverQty = centerData.reduce((s, c) => s + c.driverQty, 0)
+  // 单一披露基准权重；若基准信号为 0（如无直接成本），退化为按中心数等分（已披露，确保间接费不凭空消失→保完全吸收）
+  let weightOf: (c: typeof centerData[number]) => number
+  if (basis === 'by_driver_volume' && sumDriverQty > 0) {
+    weightOf = c => c.driverQty / sumDriverQty
+  } else if (basis !== 'by_driver_volume' && sumDirect > 0) {
+    weightOf = c => c.directCost / sumDirect
+  } else {
+    weightOf = () => (centerData.length > 0 ? 1 / centerData.length : 0)
+    if (distributableIndirect > 0) basis = `${basis}|equal_fallback`
+  }
+
+  let created = 0
+  for (const c of centerData) {
+    const indirectCost = distributableIndirect * weightOf(c) + c.directIndirect
+    // 不为"零成本且零动因"的中心建空池（噪声）；有成本或有动因即建（保完全吸收 + 满足下游"动因量>0"）
+    if (c.directCost === 0 && indirectCost === 0 && c.driverQty === 0) continue
+    upsertCostPool(db, {
+      activityCenterId: c.id,
+      yearMonth,
+      directCost: c.directCost,
+      indirectCost,
+      driverQuantity: c.driverQty,
+      source: 'auto_collect',
+      description: `按动因归集：人工 ${roundCost(c.labor)}，设备 ${roundCost(c.equip)}，间接 ${roundCost(indirectCost)}（基准 ${basis}）`,
+    })
+    created++
+  }
+
+  upsertIndirectDisclosure(db, yearMonth, basis, indirectTotal)
+  return { created, basis, indirectTotal, laborUnmapped, equipUnmapped }
+}
+
 const autoCollectCostPools = (db: any, yearMonth: string) => {
   const centers = db.prepare(`
     SELECT * FROM abc_activity_centers
     WHERE status = 'active' OR status = 1 OR status = '1'
     ORDER BY sort_order ASC
   `).all() as any[]
-  if (centers.length === 0) return { updated: 0, sourceTotals: getCostSourceTotals(db, yearMonth) }
-
   const sourceTotals = getCostSourceTotals(db, yearMonth)
-  const driverQty = Math.max(1, sourceTotals.sampleCount)
-  const directShare = (sourceTotals.laborTotal + sourceTotals.equipmentTotal) / centers.length
-  const indirectShare = sourceTotals.indirectTotal / centers.length
+  if (centers.length === 0) return { updated: 0, sourceTotals }
 
-  for (const center of centers) {
-    upsertCostPool(db, {
-      activityCenterId: center.id,
-      yearMonth,
-      directCost: directShare,
-      indirectCost: indirectShare,
-      driverQuantity: driverQty,
-      source: 'auto_collect',
-      description: `自动归集：人工 ${sourceTotals.laborTotal.toFixed(2)}，设备 ${sourceTotals.equipmentTotal.toFixed(2)}，间接 ${sourceTotals.indirectTotal.toFixed(2)}`,
-    })
+  const collected = collectPerCenterPools(db, yearMonth, centers)
+
+  // 完全吸收校验（CHAIN-06）：Σ池 必须 = Σ来源；差额（通常=未映射来源）登记异常台账，不静默。
+  const sumPools = Number((db.prepare(
+    `SELECT COALESCE(SUM(total_cost), 0) as total FROM abc_cost_pools WHERE year_month = ? AND source = 'auto_collect'`
+  ).get(yearMonth) as any)?.total || 0)
+  const sourceTotal = Number(sourceTotals.total) || 0
+  const diff = roundCost(sumPools - sourceTotal)
+  const absorptionOk = Math.abs(diff) <= 0.01
+  if (!absorptionOk && sourceTotal > 0) {
+    const open = db.prepare(
+      `SELECT id FROM cost_exceptions WHERE source_module = 'cost_pool' AND exception_type = 'absorption_residual' AND year_month = ? AND status = 'open'`
+    ).get(yearMonth) as any
+    if (!open) {
+      recordCostException(db, {
+        sourceModule: 'cost_pool',
+        sourceType: 'absorption',
+        yearMonth,
+        exceptionType: 'absorption_residual',
+        severity: 'warning',
+        message: `成本池未完全吸收：Σ池 ${roundCost(sumPools)} ≠ Σ来源 ${roundCost(sourceTotal)}（差额 ${diff}，多为来源未映射作业中心）`,
+        details: {
+          sumPools: roundCost(sumPools), sourceTotal: roundCost(sourceTotal), diff,
+          laborUnmapped: roundCost(collected.laborUnmapped), equipUnmapped: roundCost(collected.equipUnmapped), basis: collected.basis,
+        },
+      })
+    }
+  } else {
+    // R4：吸收恢复（或无来源）→ 关闭遗留未吸收残差异常，使关账硬门禁（INCOMPLETE_ABSORPTION）口径与当前吸收状态一致，避免陈旧残差永久挡关账。
+    db.prepare(
+      `UPDATE cost_exceptions SET status = 'resolved', resolved_by = 'system', resolved_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+       WHERE source_module = 'cost_pool' AND exception_type = 'absorption_residual' AND year_month = ? AND status = 'open'`
+    ).run(yearMonth)
   }
 
-  return { updated: centers.length, sourceTotals }
+  return {
+    updated: collected.created,
+    sourceTotals,
+    absorption: {
+      sumPools: roundCost(sumPools), sourceTotal: roundCost(sourceTotal), diff, ok: absorptionOk,
+      laborUnmapped: roundCost(collected.laborUnmapped), equipUnmapped: roundCost(collected.equipUnmapped), basis: collected.basis,
+    },
+  }
 }
 
 const listTable = (res: any, table: string, mapRow: (row: any) => any, query: any = {}, orderBy = 'created_at DESC') => {
@@ -923,6 +1123,19 @@ router.post('/periods/:id/close', requireCostWrite, (req, res) => {
     `).get(period.year_month) as any)?.total || 0
     if (pendingCost > 0) {
       error(res, '存在未补算或成本异常的出库记录，不能关账', 'PENDING_COST_ITEMS', 422, { blocking: pendingCost })
+      return
+    }
+    // R4（CHAIN-10 关账可信）：完全吸收硬门禁——成本池未完全吸收（Σ池≠Σ来源，有未映射来源残差）时阻断关账，
+    // 不再仅以 warning 放行。残差在补映射后重跑 auto-collect 即自动 resolve（见归集 resolve-on-OK）。
+    const openAbsorption = (db.prepare(`
+      SELECT COUNT(*) as total
+      FROM cost_exceptions
+      WHERE (year_month = ? OR year_month IS NULL)
+        AND status = 'open'
+        AND exception_type = 'absorption_residual'
+    `).get(period.year_month) as any)?.total || 0
+    if (openAbsorption > 0) {
+      error(res, '成本池未完全吸收（Σ池≠Σ来源），不能关账：请补齐未映射成本来源后重新归集', 'INCOMPLETE_ABSORPTION', 422, { blocking: openAbsorption })
       return
     }
 
@@ -1684,6 +1897,19 @@ router.put('/bom-fee-mappings/:bomId', requireCostWrite, (req, res) => {
     const normalized = normalizeFeeMappingsInput(db, mappings, true)
     if (!normalized.ok) { error(res, normalized.message, normalized.code, normalized.status); return }
 
+    const openExceptionRows = db.prepare(`
+      SELECT id, outbound_id, year_month
+      FROM cost_exceptions
+      WHERE bom_id = ?
+        AND exception_type = 'missing_fee_mapping'
+        AND status = 'open'
+    `).all(req.params.bomId) as any[]
+    const openExceptionIds = openExceptionRows.map(row => row.id)
+    const outboundExceptionRows = openExceptionRows.filter(row => row.outbound_id)
+    let resolvedConfigurationExceptions = 0
+    let recalculatedOutbounds = 0
+    const recalculationFailures: any[] = []
+
     db.exec('BEGIN IMMEDIATE')
     try {
       db.prepare('DELETE FROM bom_fee_mappings WHERE bom_id = ?').run(req.params.bomId)
@@ -1704,13 +1930,76 @@ router.put('/bom-fee-mappings/:bomId', requireCostWrite, (req, res) => {
           mapping.sortOrder ?? index,
         )
       })
+      const resolvedResult = db.prepare(`
+        UPDATE cost_exceptions
+        SET status = 'resolved',
+            resolved_by = ?,
+            resolved_at = CURRENT_TIMESTAMP,
+            details = json_set(COALESCE(details, '{}'), '$.sourceRepair', json(?)),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE bom_id = ?
+          AND exception_type = 'missing_fee_mapping'
+          AND status = 'open'
+          AND outbound_id IS NULL
+      `).run(
+        operator,
+        JSON.stringify({
+          action: 'bom_fee_mapping_configured',
+          bomId: req.params.bomId,
+          mappingCount: normalized.mappings.length,
+        }),
+        req.params.bomId,
+      )
+      resolvedConfigurationExceptions = Number(resolvedResult.changes) || 0
       writeAuditLog(db, 'bom_fee_mapping', 'update', req.params.bomId, { count: normalized.mappings.length }, operator)
       db.exec('COMMIT')
     } catch (innerErr) {
       db.exec('ROLLBACK')
       throw innerErr
     }
-    success(res, { bomId: req.params.bomId, count: normalized.mappings.length })
+    for (const exceptionRow of outboundExceptionRows) {
+      try {
+        const run = runCostRecalculation(
+          db,
+          normalizeMonth(exceptionRow.year_month),
+          operator,
+          'recalculate',
+          exceptionRow.outbound_id,
+        )
+        recalculatedOutbounds += Number(run.summary?.succeeded) || 0
+      } catch (recalculationError: any) {
+        recalculationFailures.push({
+          exceptionId: exceptionRow.id,
+          outboundId: exceptionRow.outbound_id,
+          message: recalculationError?.message || '成本重算失败',
+        })
+      }
+    }
+
+    const statusRows = openExceptionIds.length > 0
+      ? db.prepare(`
+        SELECT status, COUNT(*) as count
+        FROM cost_exceptions
+        WHERE id IN (${openExceptionIds.map(() => '?').join(',')})
+        GROUP BY status
+      `).all(...openExceptionIds) as any[]
+      : []
+    const statusCounts = statusRows.reduce((acc: Record<string, number>, row: any) => {
+      acc[row.status] = Number(row.count) || 0
+      return acc
+    }, {})
+    const openExceptions = Number(statusCounts.open) || 0
+    const resolvedExceptions = Number(statusCounts.resolved) || 0
+
+    success(res, {
+      bomId: req.params.bomId,
+      count: normalized.mappings.length,
+      resolvedExceptions,
+      resolvedConfigurationExceptions,
+      recalculatedOutbounds,
+      openExceptions,
+      recalculationFailures,
+    })
   } catch (err: any) { error(res, err.message) }
 })
 
@@ -2441,6 +2730,71 @@ router.get('/profitability', (req, res) => {
       costMonth: row.cost_month,
     })), page, pageSize, total, {
       ...getProfitabilityInsightExtra(db, startMonth, endMonth),
+    })
+  } catch (err: any) { error(res, err.message) }
+})
+
+// L5-3 切片成本下钻：按 BOM + 期间聚合逐中心作业动因分解（来自 outbound_abc_details.activity_details 快照）。
+// 让"切片成本=材料+按哪个动因以哪个费率消耗多少作业"可还原（CHAIN-07 可解释 / ADOPT-05）。
+router.get('/profitability/activity-breakdown', (req, res) => {
+  try {
+    const db = getDatabase()
+    const { bomId, startDate, endDate, month, yearMonth } = req.query
+    const bom = String(bomId || '').trim()
+    if (!bom) { error(res, '缺少 bomId', 'INVALID_PARAM', 400); return }
+    const startMonth = String(startDate || month || yearMonth || '').slice(0, 7)
+    const endMonth = String(endDate || month || yearMonth || startMonth || '').slice(0, 7)
+
+    const params: any[] = [bom]
+    let where = `bom_id = ? AND COALESCE(cost_status, 'costed') NOT IN ('pending_cost', 'cost_exception')`
+    if (startMonth) { where += ' AND cost_month >= ?'; params.push(startMonth) }
+    if (endMonth) { where += ' AND cost_month <= ?'; params.push(endMonth) }
+
+    const rows = db.prepare(
+      `SELECT activity_details FROM outbound_abc_details WHERE ${where}`
+    ).all(...params) as any[]
+
+    // 逐中心聚合：分摊额/动因量按期内求和；费率/池为期间值（每中心一致，取代表值）。
+    const byCenter = new Map<string, any>()
+    for (const row of rows) {
+      let details: any[]
+      try { details = JSON.parse(row.activity_details || '[]') } catch { details = [] }
+      if (!Array.isArray(details)) continue
+      for (const it of details) {
+        const id = it.activityCenterId || 'UNASSIGNED'
+        const acc = byCenter.get(id) || {
+          activityCenterId: id,
+          activityCenterName: it.activityCenterName || '未命名作业中心',
+          activityCenterCode: it.activityCenterCode || '',
+          driverType: it.driverType || null,
+          driverRate: Number(it.driverRate) || 0,
+          rateSource: it.rateSource || 'none',
+          poolCost: Number(it.poolCost) || 0,
+          poolDriverQuantity: Number(it.poolDriverQuantity) || 0,
+          driverQuantity: 0,
+          allocatedCost: 0,
+        }
+        acc.driverQuantity += Number(it.quantity) || 0
+        acc.allocatedCost += Number(it.allocatedCost ?? it.totalCost) || 0
+        // 代表性期间值：取首个 >0 的费率/池（同中心同月一致）。
+        if (!acc.driverRate && Number(it.driverRate) > 0) acc.driverRate = Number(it.driverRate)
+        if (!acc.poolCost && Number(it.poolCost) > 0) acc.poolCost = Number(it.poolCost)
+        byCenter.set(id, acc)
+      }
+    }
+
+    const breakdown = [...byCenter.values()]
+      .map(c => ({ ...c, allocatedCost: roundCost(c.allocatedCost), driverQuantity: roundCost(c.driverQuantity) }))
+      .sort((a, b) => b.allocatedCost - a.allocatedCost)
+    const totalActivityCost = roundCost(breakdown.reduce((s, c) => s + c.allocatedCost, 0))
+
+    success(res, {
+      bomId: bom,
+      yearMonth: startMonth,
+      snapshotCount: rows.length,
+      totalActivityCost,
+      breakdown,
+      note: '作业成本含间接费按单一披露基准的分摊估算；材料与人工/设备按真实动因逐中心归集。',
     })
   } catch (err: any) { error(res, err.message) }
 })

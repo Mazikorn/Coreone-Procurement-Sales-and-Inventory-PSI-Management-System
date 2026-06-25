@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid'
-import { buildBomSourceSnapshot, calculateSlideCostWithFee } from './cost-calculator.js'
+import { buildBomSourceSnapshot, calculateSlideCostWithFee, getBomPerSampleDriverQty } from './cost-calculator.js'
 import { errorMessage, recordCostException } from './cost-exceptions.js'
 
 const currentMonth = () => new Date().toISOString().slice(0, 7)
@@ -41,6 +41,12 @@ export const writeOutboundAbcSnapshot = (db: any, outbound: any, costRunId: stri
 
   const sampleCount = Math.max(1, Number(outbound.sample_count) || 1)
   const materialCost = Number(outbound.total_cost) || 0
+  // P0：真实块/片/例数 = 每样本驱动量 × 样本数（替代写死 block=1/slide=sampleCount，修期间费率分母）。
+  // case 为每病例（非每样本）：本出库挂 case_no 则计 1。无块关联 → 块=0（诚实，对应中心走未吸收残差）。
+  const perSampleDriver = getBomPerSampleDriverQty(db, bomId)
+  const storedBlockCount = Math.round(perSampleDriver.block * sampleCount)
+  const storedSlideCount = Math.round((perSampleDriver.slide > 0 ? perSampleDriver.slide : 1) * sampleCount)
+  const storedCaseCount = outbound.case_no ? 1 : 0
   const result = calculateSlideCostWithFee(db, {
     bomId,
     slideCount: sampleCount,
@@ -48,6 +54,9 @@ export const writeOutboundAbcSnapshot = (db: any, outbound: any, costRunId: stri
     month: yearMonth,
     materialCost,
     caseNo: outbound.case_no || null,
+    // R1：逐单分摊按真实驱动量（块/片 = 每样本量 × 样本数；病例 = 本单实际病例数），与期间池同口径。
+    sampleCount,
+    caseCount: storedCaseCount,
   })
   const effectiveCostStatus = result.feeBreakdown.length === 0 ? 'cost_exception' : costStatus
   const sourceSnapshot = {
@@ -67,21 +76,22 @@ export const writeOutboundAbcSnapshot = (db: any, outbound: any, costRunId: stri
   db.prepare('DELETE FROM outbound_abc_details WHERE outbound_id = ?').run(outbound.id)
   db.prepare(`
     INSERT INTO outbound_abc_details (
-      id, outbound_id, bom_id, project_id, sample_count, slide_count, block_count,
+      id, outbound_id, bom_id, project_id, sample_count, slide_count, block_count, case_count,
       material_cost, activity_cost, total_cost, cost_per_slide,
       fee_category, fee_standard_id, fee_amount, profit, profit_rate,
       activity_details, cost_month, cost_status, cost_run_id, case_no, charge_group_id,
       calculation_version, source_snapshot
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     uuidv4(),
     outbound.id,
     bomId,
     outbound.project_id || null,
     sampleCount,
-    sampleCount,
-    1,
+    storedSlideCount,
+    storedBlockCount,
+    storedCaseCount,
     result.materialCost,
     result.totalActivityCost,
     result.totalCost,

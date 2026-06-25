@@ -10,6 +10,7 @@
     "seed": "tsx scripts/seed-acceptance-data.ts",
     "lint": "eslint src/",
     "test": "vitest run",
+    "test:accuracy": "vitest run tests/integration/abc-golden-accuracy.test.ts src/utils/abc-calculator.test.ts",
     "test:node": "node --experimental-sqlite node_modules/vitest/vitest.mjs run"
   },
   "dependencies": {

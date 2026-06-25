@@ -224,7 +224,7 @@ describe('getDriverRate', () => {
 
 /**
  * 创建 calculateSlideCostWithFee 专用的 mock DB
- * 需要模拟：bom_items, batches, abc_bom_activity_links, abc_cost_pools, boms, fee_standards
+ * 需要模拟：bom_items, batches, bom_activity_links, abc_cost_pools, boms, fee_standards
  */
 function createSlideCostMockDb(options: {
   bomItems?: Array<{ material_id: string; usage_per_sample: number; price: number }>
@@ -268,8 +268,8 @@ function createSlideCostMockDb(options: {
               weighted_price: b.weighted_price,
             }))
           }
-          // abc_bom_activity_links 查询
-          if (sql.includes('FROM abc_bom_activity_links bal')) {
+          // bom_activity_links 查询（L2-6 统一表名，原 abc_bom_activity_links 兼容分支已删）
+          if (sql.includes('FROM bom_activity_links l')) {
             return activityLinks
           }
           return []
@@ -429,12 +429,14 @@ describe('calculateSlideCostWithFee', () => {
         {
           activity_center_id: 'ac-cut',
           activity_center_name: '切片中心',
-          activity_center_code: 'block_count',
+          activity_center_code: 'SECTION',
+          cost_driver_type: 'block_count', // L3-2：动因量按 cost_driver_type 判定（非中心 code）
         },
         {
           activity_center_id: 'ac-stain',
           activity_center_name: '染色中心',
-          activity_center_code: 'stain_count',
+          activity_center_code: 'STAIN',
+          cost_driver_type: 'stain_count', // 非 block/slide → 回退 1
         },
       ],
       costPools: [

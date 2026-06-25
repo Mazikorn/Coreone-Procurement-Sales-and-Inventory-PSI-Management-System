@@ -1,4 +1,31 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(grep -n \"success\\(res.*true\\\\|success\\(res.*null\\\\|success\\(res, {}\\)\" /Users/maxiaoyuan/Documents/进销存/后端代码/server/src/routes/abc-v1.1.ts)",
+      "Bash(ls -la ../../../.claude/research/)",
+      "Bash(wc -l ../../../docs/02_PRD.md ../../../docs/04_Business_Rules.md ../../../docs/06_Data_Object_List.md ../../../docs/07_Acceptance_Criteria.md)",
+      "Bash",
+      "WebFetch",
+      "WebSearch",
+      "Skill(code-review)",
+      "Skill(code-review:*)"
+    ],
+    "ask": [
+      "Bash(rm:*)",
+      "Bash(rmdir:*)",
+      "Bash(unlink:*)",
+      "Bash(shred:*)",
+      "Bash(srm:*)",
+      "Bash(trash:*)",
+      "Bash(git rm:*)",
+      "Bash(git clean:*)"
+    ],
+    "defaultMode": "acceptEdits"
+  },
+  "disabledMcpjsonServers": [
+    "playwright",
+    "context7"
+  ],
   "hooks": {
     "PostToolUse": [
       {
@@ -22,8 +49,6 @@
       }
     ]
   },
-  "disabledMcpjsonServers": [
-    "playwright",
-    "context7"
-  ]
+  "alwaysThinkingEnabled": true,
+  "showThinkingSummaries": true
 }

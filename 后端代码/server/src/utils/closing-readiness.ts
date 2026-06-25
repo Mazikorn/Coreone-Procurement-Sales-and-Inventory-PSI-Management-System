@@ -134,7 +134,7 @@ export function buildClosingReadiness(db: any, yearMonth: string) {
     WHERE (year_month = ? OR year_month IS NULL)
       AND status = 'open'
       AND severity <> 'error'
-      AND exception_type <> 'missing_fee_mapping'
+      AND exception_type NOT IN ('missing_fee_mapping', 'absorption_residual')
     ORDER BY created_at DESC
     LIMIT 5
   `).all(yearMonth) as any[]
@@ -144,7 +144,7 @@ export function buildClosingReadiness(db: any, yearMonth: string) {
     WHERE (year_month = ? OR year_month IS NULL)
       AND status = 'open'
       AND severity <> 'error'
-      AND exception_type <> 'missing_fee_mapping'
+      AND exception_type NOT IN ('missing_fee_mapping', 'absorption_residual')
   `).get(yearMonth) as any)?.total || 0)
   if (openWarningCount > 0) {
     warnings.push({
@@ -197,6 +197,41 @@ export function buildClosingReadiness(db: any, yearMonth: string) {
       label: '查看消耗对账',
       href: outboundCostHref(yearMonth),
       source: 'outbound_records',
+    })
+  }
+
+  // R4（CHAIN-10）：完全吸收硬门禁——成本池未完全吸收（Σ池≠Σ来源）登记为 blocker，与关账端点 INCOMPLETE_ABSORPTION 一致。
+  const absorptionResiduals = db.prepare(`
+    SELECT id, exception_no as exceptionNo, exception_type as exceptionType, severity, message
+    FROM cost_exceptions
+    WHERE (year_month = ? OR year_month IS NULL)
+      AND status = 'open'
+      AND exception_type = 'absorption_residual'
+    ORDER BY created_at DESC
+    LIMIT 5
+  `).all(yearMonth) as any[]
+  const absorptionResidualCount = Number((db.prepare(`
+    SELECT COUNT(*) as total
+    FROM cost_exceptions
+    WHERE (year_month = ? OR year_month IS NULL)
+      AND status = 'open'
+      AND exception_type = 'absorption_residual'
+  `).get(yearMonth) as any)?.total || 0)
+  if (absorptionResidualCount > 0) {
+    blockers.push({
+      code: 'INCOMPLETE_ABSORPTION',
+      source: 'cost_exceptions',
+      severity: 'blocker',
+      title: '成本池未完全吸收',
+      message: `Σ池≠Σ来源，存在 ${absorptionResidualCount} 条未吸收残差（多为来源未映射作业中心），关账前须补齐映射并重新归集。`,
+      count: absorptionResidualCount,
+      examples: absorptionResiduals,
+    })
+    addUniqueAction(nextActions, {
+      action: 'review_absorption_residual',
+      label: '检查未吸收来源',
+      href: costExceptionHref(yearMonth),
+      source: 'cost_exceptions',
     })
   }
 

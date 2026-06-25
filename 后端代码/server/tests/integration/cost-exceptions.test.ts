@@ -346,6 +346,38 @@ describe('成本异常台账', () => {
 
     expect(blockedClose.status).toBe(422)
     expect(blockedClose.body.error.code).toBe('OPEN_FEE_MAPPING_EXCEPTIONS')
+
+    const repairFeeStandardId = `fee-repair-${suffix}`
+    db.prepare(`
+      INSERT INTO fee_standards (id, code, name, category, project_type, fee_per_slide, base_price, status)
+      VALUES (?, ?, '修复收费标准', 'test', 'ihc', 80, 80, 'active')
+    `).run(repairFeeStandardId, `FEE-REPAIR-${suffix}`)
+
+    const repair = await request(app)
+      .put(`/api/v1/abc/bom-fee-mappings/${bomId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ mappings: [{ feeStandardId: repairFeeStandardId, quantityMultiplier: 1, aggregationScope: 'outbound' }] })
+
+    expect(repair.status).toBe(200)
+    expect(repair.body.data).toMatchObject({
+      resolvedExceptions: expect.any(Number),
+      recalculatedOutbounds: 1,
+      openExceptions: 0,
+    })
+
+    const repairedException = db.prepare(`
+      SELECT status, resolved_by, retry_count
+      FROM cost_exceptions
+      WHERE id = ?
+    `).get(exception.id) as any
+    expect(repairedException.status).toBe('resolved')
+    expect(repairedException.resolved_by).toBe('admin')
+
+    const repairedOutbound = db.prepare('SELECT cost_status, fee_amount, profit FROM outbound_records WHERE id = ?')
+      .get(res.body.data.id) as any
+    expect(repairedOutbound.cost_status).toBe('recalculated')
+    expect(repairedOutbound.fee_amount).toBe(160)
+    expect(repairedOutbound.profit).toBe(110)
   })
 
   it('BOM出库ABC成本结果可按出库单号进入统一审计回看', async () => {
@@ -1091,12 +1123,30 @@ describe('成本异常台账', () => {
       .set('Authorization', `Bearer ${token}`)
       .send({ mappings: [{ feeStandardId: 'FEE-003', quantityMultiplier: 1, aggregationScope: 'outbound' }] })
     expect(mapping.status).toBe(200)
+    expect(mapping.body.data).toMatchObject({
+      resolvedExceptions: expect.any(Number),
+      openExceptions: 0,
+    })
+
+    const resolvedAfterSave = db.prepare('SELECT status, resolved_by FROM cost_exceptions WHERE id = ?')
+      .get(exception.id) as any
+    expect(resolvedAfterSave.status).toBe('resolved')
+    expect(resolvedAfterSave.resolved_by).toBe('admin')
 
     const mappedList = await request(app)
       .get(`/api/v1/abc/bom-fee-mappings/audit?keyword=${encodeURIComponent(`BOM-${suffix}`)}&status=mapped`)
       .set('Authorization', `Bearer ${token}`)
     expect(mappedList.status).toBe(200)
     expect(mappedList.body.data.list.some((item: any) => item.bomId === bomId && item.status === 'mapped')).toBe(true)
+
+    // 存映射已即时关闭该异常（自动修复，见上 1126-1134）。为单独覆盖「审计安全网关闭已映射 BOM 的遗留 open 异常」
+    // 这条独立路径（成本重算 runCostRecalculation 也会为缺映射写 open 异常），此处模拟一条遗留 open 异常，
+    // 验证再次审计会识别 BOM 已映射并把遗留异常关闭。
+    db.prepare(`
+      UPDATE cost_exceptions
+      SET status = 'open', resolved_by = NULL, resolved_at = NULL, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(exception.id)
 
     const closeAudit = await request(app)
       .post('/api/v1/abc/bom-fee-mappings/audit')
@@ -1109,6 +1159,68 @@ describe('成本异常台账', () => {
       .get(exception.id) as any
     expect(resolved.status).toBe('resolved')
     expect(resolved.resolved_by).toBe('admin')
+  })
+
+  it('检测服务绑定BOM后自动关闭该项目缺BOM成本异常', async () => {
+    const suffix = unique('missing-bom-repair')
+    const base = seedBase(db, suffix)
+    const materialId = seedMaterialWithStock(db, `${suffix}-core`, base, 20, 25)
+    const bomId = `bom-${suffix}`
+    const projectId = `proj-${suffix}`
+    const exceptionId = `ex-${suffix}`
+
+    db.prepare(`
+      INSERT INTO boms (id, code, name, version, type, status)
+      VALUES (?, ?, '缺BOM修复目标BOM', 'v1.0', 'ihc', 1)
+    `).run(bomId, `BOM-${suffix}`)
+    db.prepare(`
+      INSERT INTO bom_items (id, bom_id, material_id, usage_per_sample, unit)
+      VALUES (?, ?, ?, 1, '支')
+    `).run(`bi-${suffix}`, bomId, materialId)
+    db.prepare(`
+      INSERT INTO projects (id, code, name, type, bom_id, status)
+      VALUES (?, ?, '缺BOM检测服务', 'ihc', NULL, 1)
+    `).run(projectId, `PRJ-${suffix}`)
+    db.prepare(`
+      INSERT INTO cost_exceptions (
+        id, exception_no, source_module, source_type, source_id, project_id, year_month,
+        exception_type, severity, status, message, details
+      )
+      VALUES (?, ?, 'reconciliation', 'project', ?, ?, '2099-03',
+        'missing_bom', 'error', 'open', '检测服务未绑定BOM，无法承接对账和成本核算', ?)
+    `).run(
+      exceptionId,
+      `CE-${suffix}`,
+      projectId,
+      projectId,
+      JSON.stringify({ action: 'configure_project_bom' }),
+    )
+
+    const repair = await request(app)
+      .put(`/api/v1/projects/${projectId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        code: `PRJ-${suffix}`,
+        name: '缺BOM检测服务',
+        type: 'ihc',
+        status: 'active',
+        bomId,
+      })
+
+    expect(repair.status).toBe(200)
+    expect(repair.body.data).toMatchObject({
+      id: projectId,
+      resolvedMissingBomExceptions: 1,
+    })
+
+    const resolved = db.prepare('SELECT status, resolved_by, details FROM cost_exceptions WHERE id = ?')
+      .get(exceptionId) as any
+    expect(resolved.status).toBe('resolved')
+    expect(resolved.resolved_by).toBe('admin')
+    expect(JSON.parse(resolved.details).sourceRepair).toMatchObject({
+      action: 'project_bom_configured',
+      bomId,
+    })
   })
 
   it('收费映射保存和预览会拒绝无效收费标准、非法数量系数和不存在BOM', async () => {
@@ -1201,6 +1313,10 @@ describe('成本异常台账', () => {
     const materialId = seedMaterialWithStock(db, `${suffix}-core`, base, 20, 25)
     const { bomId, projectId } = seedBomProject(db, suffix, materialId)
     seedFeeMapping(db, suffix, bomId, 90)
+    // BOM 声明一个块动因作业（标本接收 SPECIMEN，每样本 1 块）；出库写快照据此得真实块数 = 1×样本数，
+    // 而非旧的写死 block_count=1（P0 修正后，无作业关联的 BOM 块数为 0，故此处需显式声明活动）。
+    db.prepare(`INSERT INTO bom_activity_links (id, bom_id, activity_center_id, quantity, unit, sort_order)
+                VALUES (?, ?, 'ABC-AC-001', 1, '块', 0)`).run(unique('bal'), bomId)
 
     const outbound = await request(app)
       .post('/api/v1/outbound/bom')

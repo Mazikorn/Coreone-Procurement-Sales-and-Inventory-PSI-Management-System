@@ -132,6 +132,49 @@ describe('ABC 成本结账健康检查', () => {
     ]))
   })
 
+  it('R4: 完全吸收硬门禁——未吸收残差时 readiness=blocked 且关账 422，resolve 后放行（CHAIN-10）', async () => {
+    const yearMonth = '2097-09'
+    const exceptionId = unique('ex-absorb')
+    seedCalculatedPeriod(db, yearMonth)
+    db.prepare(`
+      INSERT INTO cost_exceptions (
+        id, exception_no, source_module, source_type, year_month,
+        exception_type, severity, status, message
+      )
+      VALUES (?, ?, 'cost_pool', 'absorption', ?, 'absorption_residual', 'warning', 'open', 'Σ池≠Σ来源残差')
+    `).run(exceptionId, `CE-${exceptionId}`, yearMonth)
+
+    // ① readiness 把未吸收残差列为 blocker（而非仅 warning）
+    const readiness = await request(app)
+      .get('/api/v1/abc/closing-readiness')
+      .query({ yearMonth })
+      .set('Authorization', `Bearer ${token}`)
+    expect(readiness.status).toBe(200)
+    expect(readiness.body.data.status).toBe('blocked')
+    expect(readiness.body.data.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'INCOMPLETE_ABSORPTION', source: 'cost_exceptions', count: 1 }),
+    ]))
+    // 不应同时被算进 warning（已从 warning 查询排除）
+    expect(readiness.body.data.summary.warningCount).toBe(0)
+
+    // ② 关账端点硬门禁：422 INCOMPLETE_ABSORPTION
+    const blocked = await request(app)
+      .post(`/api/v1/abc/periods/period-${yearMonth}/close`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({})
+    expect(blocked.status).toBe(422)
+    expect(blocked.body.error.code).toBe('INCOMPLETE_ABSORPTION')
+
+    // ③ resolve 残差后放行
+    db.prepare(`UPDATE cost_exceptions SET status = 'resolved' WHERE id = ?`).run(exceptionId)
+    const closed = await request(app)
+      .post(`/api/v1/abc/periods/period-${yearMonth}/close`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({})
+    expect(closed.status).toBe(200)
+    expect((db.prepare('SELECT status FROM abc_periods WHERE year_month = ?').get(yearMonth) as any).status).toBe('closed')
+  })
+
   it('CLOSING-READINESS-004: 未补算或成本异常出库返回 blocked', async () => {
     const yearMonth = '2098-04'
     seedCalculatedPeriod(db, yearMonth)

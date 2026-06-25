@@ -7,6 +7,12 @@ export interface SlideCostInput {
   caseNo?: string | null
   applyCaseAggregation?: boolean
   feeMappingsOverride?: any[]
+  // 本出库样本数：块/片为每样本动因，逐单分摊量 = 每样本配置量 × 样本数。
+  // 缺省 1（黄金用例直算/预览等单样本口径不受影响）。
+  sampleCount?: number
+  // 本出库实际病例数（病例为每病例动因，不随样本数缩放）：挂 case_no 计 1，否则 0。
+  // 缺省 undefined → 退回 BOM 配置量，保持既有断言。
+  caseCount?: number
 }
 
 export interface ActivityCost {
@@ -16,6 +22,13 @@ export interface ActivityCost {
   quantity: number
   unitCost: number
   totalCost: number
+  // L3-5 可解释明细（逐中心：动因/费率/出处 + 池快照，供 Σ分摊=池 对账）
+  driverType?: string | null
+  driverRate?: number
+  rateSource?: 'period' | 'pool_amount' | 'none'
+  poolCost?: number
+  poolDriverQuantity?: number
+  allocatedCost?: number
 }
 
 const round2 = (value: number): number => Math.round((Number(value) || 0) * 100) / 100
@@ -459,11 +472,35 @@ export function calculateIndirectCost(db: any, month: string, sampleCount = 1): 
   return round2(rows.reduce((sum, row) => sum + (Number(row.allocation_rate) || 0) * sampleCount, 0))
 }
 
+// R2：本期同一病例的已核算出库数（病例可跨多出库：一病例多蜡块→多 BOM 出库）。
+// 用于把「每病例」作业成本按组均摊到该病例各出库，使逐单 Σ(1/groupSize)=去重病例数，
+// 与期间池 COUNT(DISTINCT case_no) 同口径 → 完全吸收（CHAIN-06）。
+// ⚠️ 口径必须与 abc-v1.1.getCenterDriverQuantity 一致：用 NOT IN('pending_cost','cost_exception')
+//   而非 cost_status='costed'——重算路径把快照写成 'recalculated'，若只认 'costed' 则重算时组大小逐行塌缩
+//   （3→2→1）致 Σ(1/groupSize)≠1 过吸收。涵盖 costed/recalculated，组大小在重算全程稳定。
+function countCostedCaseOutbounds(db: any, caseNo: string, month: string): number {
+  const row = db.prepare(`
+    SELECT COUNT(*) as n
+    FROM outbound_abc_details
+    WHERE case_no = ?
+      AND COALESCE(cost_month, substr(created_at, 1, 7)) = ?
+      AND COALESCE(cost_status, 'costed') NOT IN ('pending_cost', 'cost_exception')
+  `).get(caseNo, month) as any
+  return Math.max(1, Number(row?.n) || 0)
+}
+
 export function calculateSlideCostWithFee(db: any, input: SlideCostInput) {
   const slideCount = Math.max(1, Number(input.slideCount) || 1)
   const blockCount = Math.max(1, Number(input.blockCount) || 1)
+  const sampleCount = Math.max(1, Number(input.sampleCount) || 1)
+  const rawCaseCount = input.caseCount == null ? null : Math.max(0, Number(input.caseCount) || 0)
   const month = input.month || new Date().toISOString().slice(0, 7)
   const bomId = input.bomId || ''
+  // R2：病例跨多出库时按组均摊（1/组大小），保证「每病例」作业成本只计一次、完全吸收。
+  const caseGroupSize = (input.caseNo && rawCaseCount != null && rawCaseCount > 0)
+    ? countCostedCaseOutbounds(db, input.caseNo, month)
+    : 1
+  const caseCount = rawCaseCount == null ? null : rawCaseCount / caseGroupSize
 
   const bom = bomId
     ? db.prepare('SELECT * FROM boms WHERE id = ? AND is_deleted = 0').get(bomId) as any
@@ -474,20 +511,32 @@ export function calculateSlideCostWithFee(db: any, input: SlideCostInput) {
   const links = bomId ? getBomActivityLinks(db, bomId) : []
 
   const activityCosts: ActivityCost[] = links.map(link => {
+    // 单行读取（不再混用 SUM(amount) 聚合，避免 >1 池时取到不一致行）。费率严格取 driver_rate；
+    // 无费率即 0（不再回退整池 amount 作单价——那会把整池成本当单价，造成首次重算严重高估）。
     const pool = db.prepare(`
-      SELECT driver_rate, COALESCE(SUM(amount), 0) as amount
+      SELECT driver_rate, total_cost, driver_quantity
       FROM abc_cost_pools
       WHERE activity_center_id = ? AND year_month = ?
+      LIMIT 1
     `).get(link.activity_center_id, month) as any
-    const unitCost = Number(pool?.driver_rate) || Number(pool?.amount) || 0
-    const quantity = getDriverQuantity(link, slideCount, blockCount)
+    const driverRate = Number(pool?.driver_rate) || 0
+    const unitCost = driverRate
+    const quantity = getDriverQuantity(link, slideCount, blockCount, sampleCount, caseCount)
+    const allocated = round2(unitCost * quantity)
     return {
       activityCenterId: link.activity_center_id,
       activityCenterName: link.activity_center_name || '未命名作业中心',
       activityCenterCode: link.activity_center_code || '',
       quantity,
       unitCost,
-      totalCost: round2(unitCost * quantity),
+      totalCost: allocated,
+      // L3-5 可解释明细
+      driverType: link.cost_driver_type || null,
+      driverRate,
+      rateSource: driverRate > 0 ? 'period' : 'none',
+      poolCost: Number(pool?.total_cost) || 0,
+      poolDriverQuantity: Number(pool?.driver_quantity) || 0,
+      allocatedCost: allocated,
     }
   })
 
@@ -507,11 +556,16 @@ export function calculateSlideCostWithFee(db: any, input: SlideCostInput) {
   const profitRate = feeAmount > 0 ? round4(profit / feeAmount) : 0
   const primaryFee = feeBreakdown.length === 1 ? feeBreakdown[0] : null
 
+  // L3-7 间接费披露标注：本期使用的单一基准（UI 据此标"间接为分摊估算"）
+  const disclosure = db.prepare('SELECT basis, note FROM abc_indirect_disclosure WHERE year_month = ?').get(month) as any
+
   return {
     materialCost,
     totalActivityCost,
     totalCost,
     costPerSlide: round2(totalCost / slideCount),
+    indirectBasis: disclosure?.basis || null,
+    indirectNote: disclosure?.note || null,
     feeCategory: primaryFee?.category || bom?.fee_category || null,
     feeStandardId: primaryFee?.feeStandardId || bom?.fee_standard_id || null,
     feeAmount,
@@ -552,20 +606,10 @@ function calculateMaterialCost(db: any, bomId: string, bom: any, slideCount: num
 }
 
 function getBomActivityLinks(db: any, bomId: string): any[] {
-  try {
-    const legacyLinks = db.prepare(`
-      SELECT bal.*, bal.activity_center_name, bal.activity_center_code
-      FROM abc_bom_activity_links bal
-      WHERE bal.bom_id = ?
-      ORDER BY bal.sort_order ASC
-    `).all(bomId) as any[]
-    if (legacyLinks.length) return legacyLinks
-  } catch (_e) {
-    // Fall back to the current table name below.
-  }
-
+  // L2-6 统一表名：bom_activity_links 为唯一规范表（abc_bom_activity_links 从无 CREATE TABLE，遗留兼容分支已删）。
+  // 带出中心 cost_driver_type，供 getDriverQuantity 按动因类型判定（L3-2）。
   return db.prepare(`
-    SELECT l.*, ac.name as activity_center_name, ac.code as activity_center_code
+    SELECT l.*, ac.name as activity_center_name, ac.code as activity_center_code, ac.cost_driver_type as cost_driver_type
     FROM bom_activity_links l
     LEFT JOIN abc_activity_centers ac ON l.activity_center_id = ac.id
     WHERE l.bom_id = ?
@@ -573,12 +617,46 @@ function getBomActivityLinks(db: any, bomId: string): any[] {
   `).all(bomId) as any[]
 }
 
-function getDriverQuantity(link: any, slideCount: number, blockCount: number): number {
+// 逐单作业动因量（按中心 cost_driver_type 判定）。link.quantity = BOM「每样本」配置量。
+// 块/片为每样本动因 → 逐单量 = 每样本配置量 × 样本数（R1：修旧码漏乘 sampleCount，致 N>1 逐单偏小且欠吸收）。
+// 病例为每病例动因（不随样本数缩放）→ 取本单实际病例数 caseCount，与期间池 SUM(case_count) 同口径保证完全吸收。
+// 兼容：未传 sampleCount（默认 1）/ caseCount（默认退回配置量）的既有调用方行为不变（黄金用例直算、预览等单样本口径）。
+function getDriverQuantity(
+  link: any,
+  slideCount: number,
+  blockCount: number,
+  sampleCount: number,
+  caseCount: number | null,
+): number {
   const configured = Number(link.driver_quantity ?? link.quantity)
-  if (configured > 0) return configured
 
-  if (link.activity_center_code === 'block_count') return blockCount
-  if (link.cost_driver_type === 'slide_count') return slideCount
+  switch (link.cost_driver_type) {
+    case 'block_count': return (configured > 0 ? configured : blockCount) * sampleCount
+    case 'slide_count': return (configured > 0 ? configured : slideCount) * sampleCount
+    case 'case_count': return caseCount != null ? caseCount : (configured > 0 ? configured : 1)
+    case 'sample_count': return sampleCount
+    default: return configured > 0 ? configured : 1
+  }
+}
 
-  return 1
+// 每样本的驱动消耗（由 BOM 作业关联按中心 cost_driver_type 聚合 quantity）。
+// 出库写快照时用「每样本量 × 样本数」得到真实块/片数，替代写死的 block_count=1 / slide_count=sampleCount，
+// 使 M3 期间动因量（费率分母 getCenterDriverQuantity）在真实数据上成立。
+export function getBomPerSampleDriverQty(db: any, bomId: string): { block: number; slide: number; case: number } {
+  const out = { block: 0, slide: 0, case: 0 }
+  if (!bomId) return out
+  const rows = db.prepare(`
+    SELECT ac.cost_driver_type as driver_type, COALESCE(SUM(l.quantity), 0) as qty
+    FROM bom_activity_links l
+    JOIN abc_activity_centers ac ON ac.id = l.activity_center_id
+    WHERE l.bom_id = ?
+    GROUP BY ac.cost_driver_type
+  `).all(bomId) as any[]
+  for (const r of rows) {
+    const q = Number(r.qty) || 0
+    if (r.driver_type === 'block_count') out.block += q
+    else if (r.driver_type === 'slide_count') out.slide += q
+    else if (r.driver_type === 'case_count') out.case += q
+  }
+  return out
 }

@@ -180,6 +180,7 @@ describe('集成测试：出库流程与成本核算', () => {
       .set('Authorization', `Bearer ${token}`)
       .send({
         type: 'project',
+        projectId, // 普通出库须归属项目（validateDirectOutboundReferences requireProject）
         items: [{ materialId, quantity: 3 }],
         remark: '普通项目出库编辑基线',
       })

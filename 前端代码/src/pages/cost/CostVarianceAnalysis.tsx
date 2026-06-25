@@ -269,7 +269,12 @@ export default function CostVarianceAnalysis() {
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">成本差异分析</h1>
-          <p className="text-sm text-gray-500 mt-1">标准成本与实际成本对比，识别超支项目</p>
+          {/* L5-5（§2.4）：明确区分计划值 vs 核算值，消除"两套引擎"对同一标签给两个数的困惑 */}
+          <p className="text-sm text-gray-500 mt-1">
+            <span className="font-medium text-gray-600">标准成本</span>（计划值：BOM 标准工时/用量，供定价与预算）
+            vs <span className="font-medium text-gray-600">实际成本</span>（核算值：月度 ABC 按真实动因归集），
+            差异 = 标准 − 实际（流程优化空间，非算错）。
+          </p>
         </div>
         <div className="flex flex-col items-start gap-1 lg:items-end">
           <div className="flex items-center gap-3">

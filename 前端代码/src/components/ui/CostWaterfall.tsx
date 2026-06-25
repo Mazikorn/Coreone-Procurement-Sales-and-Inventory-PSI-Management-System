@@ -1,3 +1,4 @@
+import React from 'react'
 import { formatCurrency } from '@/lib/utils'
 
 interface CostWaterfallItem {

@@ -1,0 +1,13 @@
+# 文档技能 (docx/pptx/xlsx/pdf) 运行依赖 — 兼容 Python 3.9
+python-docx
+python-pptx
+openpyxl
+pypdf
+pdfplumber
+reportlab
+Pillow
+lxml
+defusedxml
+pandas
+pdf2image
+# markitdown 需 Python>=3.10，本机为 3.9，已跳过（见 README）

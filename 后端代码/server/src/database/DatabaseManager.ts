@@ -453,6 +453,7 @@ export function initializeDatabase(): void {
       default_depreciation_method TEXT DEFAULT 'straight_line',
       default_total_capacity DECIMAL(18, 4) DEFAULT 0,
       default_capacity_unit TEXT DEFAULT 'minutes',
+      default_activity_center_id TEXT,
       status INTEGER NOT NULL DEFAULT 1,
       is_deleted INTEGER NOT NULL DEFAULT 0,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -476,6 +477,7 @@ export function initializeDatabase(): void {
       status INTEGER NOT NULL DEFAULT 1,
       location_id TEXT,
       type_id TEXT,
+      activity_center_id TEXT,
       is_deleted INTEGER NOT NULL DEFAULT 0,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -492,6 +494,7 @@ export function initializeDatabase(): void {
       depreciation_cost DECIMAL(18, 4) DEFAULT 0,
       operator TEXT,
       usage_date TEXT,
+      activity_center_id TEXT,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `)
@@ -507,6 +510,7 @@ export function initializeDatabase(): void {
       description TEXT,
       sort_order INTEGER DEFAULT 0,
       reference_source TEXT DEFAULT 'system',
+      activity_center_id TEXT,
       is_deleted INTEGER NOT NULL DEFAULT 0,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -516,6 +520,11 @@ export function initializeDatabase(): void {
   ensureColumn('equipment_types', 'is_deleted', 'INTEGER NOT NULL DEFAULT 0')
   ensureColumn('equipment', 'is_deleted', 'INTEGER NOT NULL DEFAULT 0')
   ensureColumn('standard_labor_times', 'is_deleted', 'INTEGER NOT NULL DEFAULT 0')
+  // L2-1 成本来源 → 作业中心映射（B 方案动因优先的物理前提；NULL=未映射，引擎按继承/约定回退或登记异常，永不静默丢弃）
+  ensureColumn('equipment_types', 'default_activity_center_id', 'TEXT')      // 设备模板默认中心（继承锚点：一类设备配一次）
+  ensureColumn('equipment', 'activity_center_id', 'TEXT')                    // 单台设备覆盖；有效中心 = COALESCE(equipment, equipment_types.default)
+  ensureColumn('equipment_usage', 'activity_center_id', 'TEXT')             // 用量发生时定格的中心（期间事实不可变，免受后续改映射影响）
+  ensureColumn('standard_labor_times', 'activity_center_id', 'TEXT')        // 人工步骤归属中心；NULL 时按 step_code 约定解析
 
   // 间接成本与季度调整
   database.exec(`
@@ -526,6 +535,7 @@ export function initializeDatabase(): void {
       cost_type TEXT NOT NULL DEFAULT 'other',
       monthly_amount DECIMAL(18, 4) DEFAULT 0,
       allocation_base TEXT DEFAULT 'sample_count',
+      direct_activity_center_id TEXT,
       description TEXT,
       status INTEGER NOT NULL DEFAULT 1,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -562,6 +572,22 @@ export function initializeDatabase(): void {
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `)
+  // L2-3 间接费单一披露基准（B 方案 §5）：basis 是"每期一个、公开声明"的策略，故按 year_month 落账而非按中心列，
+  // 避免不同中心用不同基准的不一致；total_indirect 为完全吸收对账锚点；note 供 UI 标注"间接为分摊估算"。
+  // 直接可归属的间接费（如某中心专用房租）走 indirect_cost_centers.direct_activity_center_id 100% 直接计入，排除出本池。
+  ensureColumn('indirect_cost_centers', 'direct_activity_center_id', 'TEXT')
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS abc_indirect_disclosure (
+      id TEXT PRIMARY KEY,
+      year_month TEXT NOT NULL,
+      basis TEXT NOT NULL DEFAULT 'by_direct_cost',
+      total_indirect DECIMAL(18, 4) DEFAULT 0,
+      note TEXT,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(year_month)
+    )
+  `)
 
   // BOM 扩展成本结构
   ensureColumn('boms', 'fee_standard_id', 'TEXT')
@@ -573,6 +599,9 @@ export function initializeDatabase(): void {
   ensureColumn('boms', 'standard_slide_cost', 'DECIMAL(18, 4) DEFAULT 0')
   ensureColumn('boms', 'standard_fee_per_slide', 'DECIMAL(18, 4) DEFAULT 0')
   ensureColumn('boms', 'standard_margin_rate', 'DECIMAL(18, 6) DEFAULT 0')
+  // L2-5 标准作业成本：getDriverRate 末级回退已读取 b.standard_activity_cost（cost-calculator.ts:324），但该列此前缺失 → AVG 恒为 0。
+  // 补列既修该回退，又为 bom_versions 标准成本快照提供真实的"作业标准费率"基准。
+  ensureColumn('boms', 'standard_activity_cost', 'DECIMAL(18, 4) DEFAULT 0')
   ensureColumn('fee_standards', 'base_price', 'DECIMAL(18, 4) DEFAULT 0')
   ensureColumn('fee_standards', 'tier_rules', 'TEXT')
   ensureColumn('fee_standards', 'cap_amount', 'DECIMAL(18, 4)')
@@ -685,6 +714,7 @@ export function initializeDatabase(): void {
       calculation_method TEXT DEFAULT 'linear',
       tier_rules TEXT,
       description TEXT,
+      driver_source_column TEXT,
       status TEXT NOT NULL DEFAULT 'active',
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -792,6 +822,9 @@ export function initializeDatabase(): void {
       charge_group_id TEXT,
       calculation_version TEXT NOT NULL DEFAULT 'v1',
       source_snapshot TEXT,
+      case_count INTEGER DEFAULT 0,
+      bom_version_id TEXT,
+      activity_detail_version INTEGER NOT NULL DEFAULT 2,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `)
@@ -947,6 +980,33 @@ export function initializeDatabase(): void {
   ensureColumn('abc_cost_pools', 'attachment_url', 'TEXT')
   ensureColumn('abc_cost_pools', 'linked_adjustment_id', 'TEXT')
   ensureColumn('abc_cost_pools', 'updated_at', 'DATETIME')
+  // L2-2 动因量数据驱动：每个动因 code 映射到 outbound_abc_details 的哪一计量列（block_count/slide_count/case_count…），
+  // 让期间动因聚合按 cost_driver_type 取对应列，而非硬编码 CASE；4 个无计量列的备用动因（stain/probe/test/report）借此显式声明来源。
+  ensureColumn('abc_cost_drivers', 'driver_source_column', 'TEXT')
+  // L2-2/L2-4/L2-5 切片成本快照列：case_count 的规范口径=本行覆盖病例数（单病例出库=1），M3 对 case_count 中心按 SUM(case_count) 聚合；
+  //   注意与 abc-v1.1.ts 中 `COUNT(*) as case_count`（汇总查询别名，非本列）及 `COUNT(DISTINCT case_no)` 读法区分，勿混用。
+  //   activity_detail_version 标 activity_details JSON 契约版本(v2)；
+  // bom_version_id 把本行核算钉到 bom_versions 快照，使关账后重算可复现（调和 DEC-009）。
+  ensureColumn('outbound_abc_details', 'case_count', 'INTEGER DEFAULT 0')
+  ensureColumn('outbound_abc_details', 'bom_version_id', 'TEXT')
+  ensureColumn('outbound_abc_details', 'activity_detail_version', 'INTEGER NOT NULL DEFAULT 2')
+  // L2 索引：成本来源→中心映射的 GROUP BY 热路径 + 期间动因聚合（按 cost_month/cost_status）。
+  // FK 关系按本仓约定走 app 层（不加 REFERENCES，避免 ALTER ADD COLUMN 在旧库上与 :memory: 新库产生差异）。
+  // abc_cost_pools(activity_center_id, year_month) 暂用普通索引；唯一约束留待 M3 重写 autoCollectCostPools（去重后）再加，避免旧库残留重复池导致启动报错。
+  database.exec(`CREATE INDEX IF NOT EXISTS idx_labor_center ON standard_labor_times(activity_center_id)`)
+  database.exec(`CREATE INDEX IF NOT EXISTS idx_equipment_center ON equipment(activity_center_id)`)
+  database.exec(`CREATE INDEX IF NOT EXISTS idx_equipment_type ON equipment(type_id)`)
+  database.exec(`CREATE INDEX IF NOT EXISTS idx_eqtype_default_center ON equipment_types(default_activity_center_id)`)
+  database.exec(`CREATE INDEX IF NOT EXISTS idx_equsage_center ON equipment_usage(activity_center_id)`)
+  database.exec(`CREATE INDEX IF NOT EXISTS idx_equsage_equipment ON equipment_usage(equipment_id)`)
+  database.exec(`CREATE INDEX IF NOT EXISTS idx_indirect_direct_center ON indirect_cost_centers(direct_activity_center_id)`)
+  database.exec(`CREATE INDEX IF NOT EXISTS idx_oad_month_status ON outbound_abc_details(cost_month, cost_status)`)
+  database.exec(`CREATE INDEX IF NOT EXISTS idx_oad_outbound ON outbound_abc_details(outbound_id)`)
+  database.exec(`CREATE INDEX IF NOT EXISTS idx_oad_bomversion ON outbound_abc_details(bom_version_id)`)
+  database.exec(`CREATE INDEX IF NOT EXISTS idx_oad_case_month ON outbound_abc_details(case_no, cost_month)`)
+  database.exec(`CREATE INDEX IF NOT EXISTS idx_pool_center_month ON abc_cost_pools(activity_center_id, year_month)`)
+  database.exec(`CREATE INDEX IF NOT EXISTS idx_bal_bom ON bom_activity_links(bom_id)`)
+  database.exec(`CREATE INDEX IF NOT EXISTS idx_bal_center ON bom_activity_links(activity_center_id)`)
   ensureColumn('outbound_abc_details', 'cost_status', "TEXT NOT NULL DEFAULT 'costed'")
   ensureColumn('outbound_abc_details', 'cost_run_id', 'TEXT')
   ensureColumn('outbound_abc_details', 'case_no', 'TEXT')
@@ -1068,20 +1128,27 @@ export function initializeDatabase(): void {
   `).run()
   database.prepare("UPDATE roles SET data_scope = 'all', updated_at = CURRENT_TIMESTAMP WHERE code = 'admin' AND is_deleted = 0 AND data_scope != 'all'").run()
 
-  const laborDefaults = [
-    ['LAB-ALL-001', 'sample_receive', '样本接收', 'all', 1.5, 1, 10],
-    ['LAB-ALL-002', 'embedding', '包埋', 'all', 6, 1, 20],
-    ['LAB-ALL-003', 'labeling', '标签核对', 'all', 1.5, 1, 30],
-    ['LAB-ALL-004', 'report_review', '报告复核', 'all', 40, 1, 40],
-    ['LAB-IHC-001', 'ihc_stain_review', '免疫组化染色复核', 'ihc', 7.5, 1, 50],
-  ] as const
+  // 末列 activity_center_id = 人工步骤的默认归属作业中心（L2-1/L5-1：开箱即用映射，使 M3 引擎在默认数据上即可按动因归集，
+  // 满足 ADOPT-02；否则默认人工无中心归属 → 成本池空 → 引擎在默认库上无产出）。
+  const laborDefaults: Array<[string, string, string, string, number, number, number, string]> = [
+    ['LAB-ALL-001', 'sample_receive', '样本接收', 'all', 1.5, 1, 10, 'ABC-AC-001'],   // 标本接收
+    ['LAB-ALL-002', 'embedding', '包埋', 'all', 6, 1, 20, 'ABC-AC-002'],              // 切片/制片
+    ['LAB-ALL-003', 'labeling', '标签核对', 'all', 1.5, 1, 30, 'ABC-AC-001'],         // 标本接收
+    ['LAB-ALL-004', 'report_review', '报告复核', 'all', 40, 1, 40, 'ABC-AC-007'],     // 诊断
+    ['LAB-IHC-001', 'ihc_stain_review', '免疫组化染色复核', 'ihc', 7.5, 1, 50, 'ABC-AC-004'], // 免疫组化
+  ]
 
   const insertLabor = database.prepare(`
     INSERT OR IGNORE INTO standard_labor_times
-      (id, step_code, step_name, project_type, standard_minutes, labor_rate_per_minute, is_equipment_step, sort_order, reference_source)
-    VALUES (?, ?, ?, ?, ?, ?, 0, ?, 'system')
+      (id, step_code, step_name, project_type, standard_minutes, labor_rate_per_minute, is_equipment_step, sort_order, reference_source, activity_center_id)
+    VALUES (?, ?, ?, ?, ?, ?, 0, ?, 'system', ?)
   `)
   laborDefaults.forEach(row => insertLabor.run(...row))
+  // 既有库回填：INSERT OR IGNORE 不覆盖已存在行，故按 step_code 约定补默认归属中心（仅当为空）。
+  const backfillLaborCenter = database.prepare(
+    `UPDATE standard_labor_times SET activity_center_id = ? WHERE step_code = ? AND activity_center_id IS NULL`
+  )
+  for (const r of laborDefaults) backfillLaborCenter.run(r[7], r[1])
 
   const activityDefaults = [
     ['ABC-AC-001', 'SPECIMEN', '标本接收', 'block_count', 10],
@@ -1108,21 +1175,26 @@ export function initializeDatabase(): void {
     updateActivity.run(row[1], row[2], row[3], row[4], row[0])
   })
 
-  const driverDefaults = [
-    ['ABC-CD-001', 'block_count', '蜡块数', '块'],
-    ['ABC-CD-002', 'slide_count', '切片数', '张'],
-    ['ABC-CD-003', 'case_count', '病例数', '例'],
-    ['ABC-CD-004', 'stain_count', '染色次数', '次'],
-    ['ABC-CD-005', 'probe_count', '探针数', '个'],
-    ['ABC-CD-006', 'test_count', '检测次数', '次'],
-    ['ABC-CD-007', 'report_count', '报告数', '份'],
-  ] as const
+  // 第 5 列 driver_source_column = 该动因在 outbound_abc_details 上的计量列（L2-2 数据驱动聚合）。
+  // 3 个核心动因列名与 code 同名；4 个备用动因暂无计量列 → NULL（待将来补列再声明，诚实不臆造）。
+  const driverDefaults: Array<[string, string, string, string, string | null]> = [
+    ['ABC-CD-001', 'block_count', '蜡块数', '块', 'block_count'],
+    ['ABC-CD-002', 'slide_count', '切片数', '张', 'slide_count'],
+    ['ABC-CD-003', 'case_count', '病例数', '例', 'case_count'],
+    ['ABC-CD-004', 'stain_count', '染色次数', '次', null],
+    ['ABC-CD-005', 'probe_count', '探针数', '个', null],
+    ['ABC-CD-006', 'test_count', '检测次数', '次', null],
+    ['ABC-CD-007', 'report_count', '报告数', '份', null],
+  ]
   const insertDriver = database.prepare(`
     INSERT OR IGNORE INTO abc_cost_drivers
-      (id, code, name, unit, calculation_method, status)
-    VALUES (?, ?, ?, ?, 'linear', 'active')
+      (id, code, name, unit, driver_source_column, calculation_method, status)
+    VALUES (?, ?, ?, ?, ?, 'linear', 'active')
   `)
   driverDefaults.forEach(row => insertDriver.run(...row))
+  // 既有库回填：INSERT OR IGNORE 不覆盖已存在行，故对 3 个核心动因显式补 source 列（列名=code）。
+  database.exec(`UPDATE abc_cost_drivers SET driver_source_column = code
+                 WHERE code IN ('block_count', 'slide_count', 'case_count') AND driver_source_column IS NULL`)
 
   const feeDefaults = [
     ['FEE-001', '012100000010000', '病理诊断费', 'diagnosis', 'diagnosis', 105],

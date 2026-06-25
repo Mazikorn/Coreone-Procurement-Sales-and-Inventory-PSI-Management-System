@@ -85,6 +85,18 @@ describe('CostPoolList', () => {
     } as any)
   })
 
+  it('L5-2: 归集后展示完全吸收对账与间接基准（CHAIN-06/09）', async () => {
+    vi.mocked(abcApi.autoCollectCostPools).mockResolvedValue({
+      absorption: { sumPools: 1400, sourceTotal: 1400, diff: 0, ok: true, basis: 'by_direct_cost' },
+      sourceTotals: { laborCost: 800, equipmentCost: 400, indirectCost: 200 },
+    } as any)
+    render(createElement(CostPoolList))
+    await waitFor(() => expect(abcApi.getCostPools).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /自动归集/ }))
+    await waitFor(() => expect(screen.getByText(/完全吸收：Σ池 = Σ来源/)).toBeInTheDocument())
+    expect(screen.getByText(/按各中心直接成本占比/)).toBeInTheDocument()
+  })
+
   it('uses keyword from URL so audit links open a filtered cost pool list', async () => {
     window.history.replaceState(null, '', '/abc/cost-pools?keyword=POOL-PW-DEEP-001')
 

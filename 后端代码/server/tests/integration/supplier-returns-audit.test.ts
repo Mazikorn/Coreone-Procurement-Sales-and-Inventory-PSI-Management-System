@@ -94,11 +94,18 @@ describe('供应商退货审计可信性', () => {
       .send({ status: 'shipped' })
     expect(statusRes.status).toBe(200)
 
+    // 审计日志描述用人类可读的退货单号(returnNo)，退货 id 落在结构化 request_data/response_data 中，
+    // 故按 id 检索须一并匹配结构化字段（与 abc-cost.test.ts latestOperationLog 成例一致）。
     const auditLog = db.prepare(`
       SELECT * FROM operation_logs
-      WHERE operation = ? AND description LIKE ?
+      WHERE operation = ? AND (description LIKE ? OR request_data LIKE ? OR response_data LIKE ?)
       ORDER BY created_at DESC LIMIT 1
-    `).get('supplier_return_status_update', `%${createRes.body.data.id}%`) as any
+    `).get(
+      'supplier_return_status_update',
+      `%${createRes.body.data.id}%`,
+      `%${createRes.body.data.id}%`,
+      `%${createRes.body.data.id}%`,
+    ) as any
     expect(auditLog.username).toBe('admin')
   })
 })

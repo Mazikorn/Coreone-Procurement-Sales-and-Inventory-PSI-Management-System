@@ -8,6 +8,7 @@ import SlideCostAnalysis, { normalizeProfitabilityRows } from './SlideCostAnalys
 vi.mock('@/api/abc', () => ({
   abcApi: {
     getProfitability: vi.fn(),
+    getBomActivityBreakdown: vi.fn(),
     exportData: vi.fn(),
   },
 }))
@@ -139,6 +140,51 @@ describe('SlideCostAnalysis', () => {
     expect(row).not.toBeNull()
     expect(within(row!).getByText('HE染色')).toBeInTheDocument()
     expect(within(row!).queryByText('he')).not.toBeInTheDocument()
+  })
+
+  it('L5-4: 展示间接费单一基准分摊估算口径披露（CHAIN-09 不假装精确）', async () => {
+    vi.mocked(abcApi.getProfitability).mockResolvedValue({ list: [] } as any)
+    render(React.createElement(SlideCostAnalysis))
+    await waitFor(() => expect(screen.getByText(/作业成本含间接费分摊估算/)).toBeInTheDocument())
+    expect(screen.getByText(/单一披露基准/)).toBeInTheDocument()
+  })
+
+  it('L5-3: 展开行后拉取并渲染逐中心作业动因分解（CHAIN-07 可解释）', async () => {
+    const thisMonth = new Date().toISOString().slice(0, 7)
+    vi.mocked(abcApi.getProfitability).mockResolvedValue({
+      list: [{
+        bomId: 'bom-ihc-1',
+        bomName: 'IHC黄金检测',
+        projectType: 'ihc',
+        costMonth: thisMonth,
+        sampleCount: 10,
+        materialCost: 100,
+        activityCost: 200,
+        totalCost: 300,
+        feeAmount: 500,
+        profit: 200,
+      }],
+    } as any)
+    vi.mocked(abcApi.getBomActivityBreakdown).mockResolvedValue({
+      breakdown: [
+        { activityCenterId: 'ac-section', activityCenterName: '切片', activityCenterCode: 'SECTION', driverType: 'block_count', driverQuantity: 10, driverRate: 35, rateSource: 'period', allocatedCost: 350 },
+        { activityCenterId: 'ac-ihc', activityCenterName: '免疫组化', activityCenterCode: 'IHC', driverType: 'slide_count', driverQuantity: 20, driverRate: 52.5, rateSource: 'period', allocatedCost: 1050 },
+      ],
+    } as any)
+
+    render(React.createElement(SlideCostAnalysis))
+    await waitFor(() => expect(screen.getByText('IHC黄金检测')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByText('IHC黄金检测').closest('tr')!)
+
+    await waitFor(() => expect(screen.getByText('作业动因分解（逐中心）')).toBeInTheDocument())
+    expect(abcApi.getBomActivityBreakdown).toHaveBeenCalledWith(
+      expect.objectContaining({ bomId: 'bom-ihc-1' }),
+    )
+    // 逐中心明细渲染：动因标签（唯一于下钻表）+ 中心名
+    await waitFor(() => expect(screen.getByText('切片数')).toBeInTheDocument()) // slide_count 动因标签
+    expect(screen.getByText('蜡块数')).toBeInTheDocument() // block_count 动因标签
+    expect(screen.getAllByText('免疫组化').length).toBeGreaterThanOrEqual(1) // 中心名（下拉也有，故 getAll）
   })
 
   it('exports the filtered full table data with project type labels', async () => {
