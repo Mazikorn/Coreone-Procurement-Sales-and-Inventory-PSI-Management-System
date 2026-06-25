@@ -62,6 +62,9 @@ export function RoleFormModal({ open, type, form, onClose, onChange, onSubmit, o
 
           <div className="mb-5">
             <label className="block text-sm font-medium text-gray-700 mb-2">数据权限范围</label>
+            <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+              行级数据隔离规划中：当前所有角色均按「全部数据」生效，「本部门/本人数据」暂不参与数据过滤。此项仅作未来规划占位，请勿据此判断数据可见范围。
+            </div>
             <div className="grid grid-cols-3 gap-3">
               {DATA_SCOPE_OPTIONS.map(opt => (
                 <label

@@ -381,20 +381,22 @@ router.post('/generate', (req, res) => {
 
     const lowStockRule = db.prepare("SELECT * FROM alert_rules WHERE type = 'low-stock' AND enabled = 1").get() as any
     if (lowStockRule) {
+      // P0-04 统一低库存阈值口径：有效阈值 = COALESCE(NULLIF(min_stock,0), safety_stock)，与列表/表格/统计同源。
       const lowItems = db.prepare(`
-        SELECT m.id, m.name, i.stock, m.safety_stock
+        SELECT m.id, m.name, i.stock, COALESCE(NULLIF(m.min_stock, 0), m.safety_stock, 0) AS threshold
         FROM materials m
         JOIN inventory i ON m.id = i.material_id
         WHERE m.status = 1 AND m.is_deleted = 0
-        AND i.stock <= m.safety_stock AND m.safety_stock > 0
+        AND i.stock <= COALESCE(NULLIF(m.min_stock, 0), m.safety_stock, 0)
+        AND COALESCE(NULLIF(m.min_stock, 0), m.safety_stock, 0) > 0
       `).all() as any[]
 
       for (const item of lowItems) {
         const exists = db.prepare("SELECT COUNT(*) as c FROM alerts WHERE material_id = ? AND type = ? AND status = 'pending'").get(item.id, 'low-stock') as any
         if (exists.c === 0) {
-          const triggerCondition = `当前库存 ${item.stock} <= 安全库存 ${item.safety_stock}`
+          const triggerCondition = `当前库存 ${item.stock} <= 安全库存 ${item.threshold}`
           db.prepare("INSERT INTO alerts (id, type, level, material_id, material_name, current_stock, threshold, message, status, rule_id, trigger_condition) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)")
-            .run(uuidv4(), 'low-stock', 'warning', item.id, item.name, item.stock, item.safety_stock, `Low stock: current ${item.stock}, safety ${item.safety_stock}`, lowStockRule.id, triggerCondition)
+            .run(uuidv4(), 'low-stock', 'warning', item.id, item.name, item.stock, item.threshold, `Low stock: current ${item.stock}, safety ${item.threshold}`, lowStockRule.id, triggerCondition)
           count++
         }
       }

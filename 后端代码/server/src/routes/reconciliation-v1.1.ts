@@ -649,12 +649,15 @@ function getMaterialReconciliationRows(db: any, startDate?: string, endDate?: st
     for (const r of rows) caseCountsByProject.set(r.project_id, r.count)
   }
 
+  // P0-06：实际出库须与理论口径对等——理论量仅来自"已配 BOM 的项目派生消耗"，
+  // 故实际量也只统计"归属项目的出库"，排除无项目的直接/通用出库，否则物料级对账永远不平（几乎全红）。
   const actualOutboundRows = hasDate
     ? (db.prepare(`
         SELECT oi.material_id, SUM(oi.quantity) as total_qty
         FROM outbound_items oi
         JOIN outbound_records o ON oi.outbound_id = o.id
         WHERE o.status = 'completed' AND o.is_deleted = 0 AND o.created_at >= ? AND o.created_at <= ?
+          AND o.project_id IS NOT NULL AND o.project_id != ''
         GROUP BY oi.material_id
       `).all(startDate, endDateTime) as any[])
     : (db.prepare(`
@@ -662,6 +665,7 @@ function getMaterialReconciliationRows(db: any, startDate?: string, endDate?: st
         FROM outbound_items oi
         JOIN outbound_records o ON oi.outbound_id = o.id
         WHERE o.status = 'completed' AND o.is_deleted = 0
+          AND o.project_id IS NOT NULL AND o.project_id != ''
         GROUP BY oi.material_id
       `).all() as any[])
 

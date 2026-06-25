@@ -179,14 +179,11 @@ router.post('/tracking/:id/deplete', requireDepletionWrite, (req, res) => {
         WHERE id = ?
       `).run(id)
 
-      // 更新批次库存
-      if (tracking.batch && tracking.material_id) {
-        db.prepare(`
-          UPDATE batches
-          SET remaining = ?, status = 2, updated_at = datetime('now')
-          WHERE batch_no = ? AND material_id = ?
-        `).run(remainQty, tracking.batch, tracking.material_id)
-      }
+      // 注意（守恒不变量）：确认耗尽是「领用台账(batch_usage_tracking)」的台面侧生命周期事件，
+      // 不得回写仓库批次台账(batches)。仓库 batches.remaining / inventory.stock 已在出库时按领用量结算；
+      // 此处若用台面剩余量(remainQty)绝对覆盖 batches.remaining 并置 status=2，会破坏
+      // inventory.stock = Σ(status=1 批次 remaining) 守恒（见 inventory-consistency.ts），
+      // 制造幽灵库存并触发 INVENTORY_BATCH_MISMATCH。故仅更新 tracking 状态 + 写 batch_depletion 流水。
 
       logOperation(db, req as any, {
         operation: 'POST /depletion/tracking/:id/deplete',

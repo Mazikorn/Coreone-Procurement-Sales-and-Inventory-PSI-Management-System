@@ -281,6 +281,8 @@ describe('角色引用保护', () => {
     expect(listed.body.data.list[0]).toMatchObject({
       code,
       dataScope: 'self',
+      // P0-02：dataScope 仍可配置/持久化，但响应须诚实标注行级隔离未启用，避免误导为已生效的数据范围控制
+      dataScopeEnforced: false,
     })
 
     const update = await request(app)

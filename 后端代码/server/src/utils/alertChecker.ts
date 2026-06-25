@@ -10,21 +10,23 @@ export function checkStockAlerts(db: any, materialIds: string[]): void {
     for (const materialId of materialIds) {
       const inv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
       const currentStock = inv?.stock || 0
-      const material = db.prepare('SELECT name, safety_stock FROM materials WHERE id = ?').get(materialId) as any
-      const safetyStock = material?.safety_stock || 0
+      const material = db.prepare('SELECT name, min_stock, safety_stock FROM materials WHERE id = ?').get(materialId) as any
+      // P0-04 统一低库存阈值口径：优先 min_stock（前端"安全库存"栏写入、列表/表格/统计同源），
+      // min_stock 未设(0)时回退 safety_stock，避免旧/演示数据漏报。消除"列表标红但预警静默不触发"的双轨割裂。
+      const threshold = Number(material?.min_stock) || Number(material?.safety_stock) || 0
 
-      // 库存低于安全库存时生成预警
-      if (currentStock <= safetyStock && safetyStock > 0) {
+      // 库存低于预警阈值时生成预警
+      if (currentStock <= threshold && threshold > 0) {
         const exists = db.prepare("SELECT COUNT(*) as c FROM alerts WHERE material_id = ? AND type = ? AND status = 'pending'").get(materialId, 'low-stock') as any
         if (exists.c === 0) {
-          const triggerCondition = `当前库存 ${currentStock} <= 安全库存 ${safetyStock}`
+          const triggerCondition = `当前库存 ${currentStock} <= 安全库存 ${threshold}`
           db.prepare(`INSERT INTO alerts (id, type, level, material_id, material_name, current_stock, threshold, message, status, rule_id, trigger_condition, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, CURRENT_TIMESTAMP)`)
-            .run(uuidv4(), 'low-stock', 'warning', materialId, material?.name || '', currentStock, safetyStock, `库存不足：当前 ${currentStock}，安全库存 ${safetyStock}`, 'RULE-001', triggerCondition)
+            .run(uuidv4(), 'low-stock', 'warning', materialId, material?.name || '', currentStock, threshold, `库存不足：当前 ${currentStock}，安全库存 ${threshold}`, 'RULE-001', triggerCondition)
         }
       }
 
-      // 库存恢复到安全线以上时，关闭 pending 的低库存预警
-      if (currentStock > safetyStock) {
+      // 库存恢复到阈值以上时，关闭 pending 的低库存预警
+      if (currentStock > threshold) {
         db.prepare(`UPDATE alerts SET status = 'auto_resolved', remark = '库存已恢复', handled_at = CURRENT_TIMESTAMP WHERE material_id = ? AND type = 'low-stock' AND status = 'pending'`).run(materialId)
       }
 

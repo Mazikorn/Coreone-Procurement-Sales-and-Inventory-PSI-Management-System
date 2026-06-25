@@ -161,6 +161,51 @@ describe('成本对账异常闭环', () => {
     expect(exportRes.body.data.content).toContain('对账项目')
   })
 
+  it('物料级对账（P0-06）: 实际量只计归属项目的出库，无项目的直接出库不污染口径', async () => {
+    const suffix = `matrecon-${Date.now()}`
+    const materialId = `mat-${suffix}`
+    const bomId = `bom-${suffix}`
+    const projectId = `proj-${suffix}`
+    db.prepare('INSERT INTO material_categories (id, code, name, level) VALUES (?, ?, ?, ?)')
+      .run(`cat-${suffix}`, `RC-${suffix}`, '物料级对账试剂', 1)
+    db.prepare(`INSERT INTO materials (id, code, name, spec, unit, category_id, price, status) VALUES (?, ?, ?, ?, ?, ?, ?, 1)`)
+      .run(materialId, `M-${suffix}`, '物料级对账物料', '1ml', '支', `cat-${suffix}`, 10)
+    db.prepare(`INSERT INTO boms (id, code, name, version, type, status) VALUES (?, ?, ?, 'v1.0', 'ihc', 1)`)
+      .run(bomId, `BOM-${suffix}`, '物料级对账BOM')
+    db.prepare(`INSERT INTO bom_items (id, bom_id, material_id, usage_per_sample, unit) VALUES (?, ?, ?, ?, ?)`)
+      .run(`bi-${suffix}`, bomId, materialId, 1, '支')
+    db.prepare(`INSERT INTO projects (id, code, name, type, bom_id, status) VALUES (?, ?, ?, 'ihc', ?, 1)`)
+      .run(projectId, `P-${suffix}`, '物料级对账项目', bomId)
+    // 2 个病例 → 理论量 = 2 × 用量1 = 2
+    db.prepare(`INSERT INTO lis_cases (id, case_no, project_id, project_name, operator, operate_time, import_batch) VALUES (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?)`)
+      .run(
+        `c1-${suffix}`, `C1-${suffix}`, projectId, '物料级对账项目', 'lis', '2026-06-10 09:00:00', suffix,
+        `c2-${suffix}`, `C2-${suffix}`, projectId, '物料级对账项目', 'lis', '2026-06-11 09:00:00', suffix,
+      )
+    // 归属项目的出库：实际领用 2（与理论一致）
+    db.prepare(`INSERT INTO outbound_records (id, outbound_no, type, project_id, total_cost, operator, status, created_at) VALUES (?, ?, 'bom', ?, ?, 'admin', 'completed', ?)`)
+      .run(`out-proj-${suffix}`, `OUT-P-${suffix}`, projectId, 20, '2026-06-12 10:00:00')
+    db.prepare(`INSERT INTO outbound_items (id, outbound_id, material_id, quantity, unit, unit_cost, total_cost) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run(`oi-proj-${suffix}`, `out-proj-${suffix}`, materialId, 2, '支', 10, 20)
+    // 无项目的直接出库：同物料领用 100（修复前会污染物料级 actual → 102/danger）
+    db.prepare(`INSERT INTO outbound_records (id, outbound_no, type, project_id, total_cost, operator, status, created_at) VALUES (?, ?, 'direct', '', ?, 'admin', 'completed', ?)`)
+      .run(`out-none-${suffix}`, `OUT-N-${suffix}`, 100, '2026-06-13 10:00:00')
+    db.prepare(`INSERT INTO outbound_items (id, outbound_id, material_id, quantity, unit, unit_cost, total_cost) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run(`oi-none-${suffix}`, `out-none-${suffix}`, materialId, 100, '支', 10, 1000)
+
+    const res = await request(app)
+      .get('/api/v1/reconciliation/materials?startDate=2026-06-01&endDate=2026-06-30')
+      .set('Authorization', `Bearer ${token}`)
+    expect(res.status).toBe(200)
+    const row = res.body.data.list.find((r: any) => r.materialId === materialId)
+    expect(row).toBeTruthy()
+    expect(row.theoryTotal).toBe(2)
+    // 修复后：actual 仅含归属项目出库(2)，排除无项目直接出库(100) → 与理论持平
+    expect(row.actualTotal).toBe(2)
+    expect(row.diff).toBe(0)
+    expect(row.status).toBe('match')
+  })
+
   it('LIS 导入可按项目名称关联项目，编辑病例时同步项目名称', async () => {
     const suffix = Date.now()
     const sourceProjectId = `proj-import-source-${suffix}`

@@ -83,7 +83,7 @@ describe('消耗记录', () => {
     pathologistToken = await loginUser(app, 'liuyf')
   })
 
-  it('DP-001: 确认耗尽时忽略请求体伪造operator，使用登录用户并同步批次状态', async () => {
+  it('DP-001: 确认耗尽时忽略请求体伪造operator，使用登录用户；不回写仓库批次（台面侧守恒）', async () => {
     const { trackingId, materialId, batchNo } = seedTrackingBatch(db, `${Date.now()}`)
 
     const res = await request(app)
@@ -106,8 +106,9 @@ describe('消耗记录', () => {
     expect(depletion.operator).toBe('admin')
     expect(depletion.remain_qty).toBe(1)
     expect(tracking.status).toBe('depleted')
-    expect(batch.remaining).toBe(1)
-    expect(batch.status).toBe(2)
+    // 守恒：确认耗尽不改动仓库批次余量/状态（出库时已结算）
+    expect(batch.remaining).toBe(10)
+    expect(batch.status).toBe(1)
 
     const auditLog = latestOperationLog(db, 'POST /depletion/tracking/:id/deplete', trackingId)
     expect(auditLog).toBeTruthy()
@@ -218,8 +219,48 @@ describe('消耗记录', () => {
     const batch = db.prepare('SELECT remaining, status FROM batches WHERE material_id = ? AND batch_no = ?').get(materialId, batchNo) as any
     expect(depletion.operator).toBe('wangkq')
     expect(depletion.remain_qty).toBe(1)
-    expect(batch.remaining).toBe(1)
-    expect(batch.status).toBe(2)
+    // 守恒：确认耗尽不改动仓库批次
+    expect(batch.remaining).toBe(10)
+    expect(batch.status).toBe(1)
+  })
+
+  it('DP-CONSERVATION: 确认耗尽不得用台面剩余量覆盖仓库批次余量（防幽灵库存）', async () => {
+    // 构造「仓库批次余量(100) >> 本台面领用(10)」场景，凸显绝对覆盖会抹掉 90 的守恒断裂
+    const suffix = `conservation-${Date.now()}`
+    const categoryId = `cat-dpl-${suffix}`
+    const materialId = `mat-dpl-${suffix}`
+    const batchNo = `BATCH-DPL-${suffix}`
+    const trackingId = `tracking-dpl-${suffix}`
+    db.prepare('INSERT INTO material_categories (id, code, name, level) VALUES (?, ?, ?, ?)')
+      .run(categoryId, `CAT-DPL-${suffix}`, '守恒测试分类', 1)
+    db.prepare('INSERT INTO materials (id, code, name, spec, unit, category_id, price) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(materialId, `MAT-DPL-${suffix}`, '守恒测试物料', '1ml', 'ml', categoryId, 12)
+    db.prepare('INSERT INTO inventory (id, material_id, stock) VALUES (?, ?, ?)')
+      .run(`inv-${suffix}`, materialId, 100)
+    db.prepare(`INSERT INTO batches (id, material_id, batch_no, quantity, remaining, inbound_id, inbound_price, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 1)`).run(`batch-${suffix}`, materialId, batchNo, 100, 100, `inb-${suffix}`, 12)
+    db.prepare(`INSERT INTO batch_usage_tracking
+      (id, material_id, material_name, batch, spec, total_qty, remaining, unit, start_date, expected_days, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'in-use')`)
+      .run(trackingId, materialId, '守恒测试物料', batchNo, '1ml', 10, 3, 'ml', '2026-06-01', 10)
+
+    const res = await request(app)
+      .post(`/api/v1/depletion/tracking/${trackingId}/deplete`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ remain_qty: 1, deplete_type: 'normal', deplete_reason: '台面用完' })
+    expect(res.status).toBe(200)
+
+    const batch = db.prepare('SELECT remaining, status FROM batches WHERE material_id = ? AND batch_no = ?').get(materialId, batchNo) as any
+    const tracking = db.prepare('SELECT status FROM batch_usage_tracking WHERE id = ?').get(trackingId) as any
+    // 仓库批次余量与状态保持不变（修复前会被覆盖为 remaining=1/status=2 → 90 单位幽灵库存）
+    expect(batch.remaining).toBe(100)
+    expect(batch.status).toBe(1)
+    // 台面台账正确收口
+    expect(tracking.status).toBe('depleted')
+    // 守恒不变量：inventory.stock === Σ(status=1 批次 remaining)
+    const stock = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
+    const activeBatchRemaining = db.prepare('SELECT COALESCE(SUM(remaining),0) AS s FROM batches WHERE material_id = ? AND status = 1').get(materialId) as any
+    expect(Number(stock.stock)).toBe(Number(activeBatchRemaining.s))
   })
 
   it('DP-003: 创建使用中记录时剩余量不能超过领用总量', async () => {

@@ -154,6 +154,10 @@ router.get('/', (req, res) => {
     userCount: Number(r.user_count) || 0,
     permissions: parsePermissions(r.permissions),
     dataScope: normalizeDataScope(r.data_scope),
+    // P0-02 诚实标注：data_scope(all/dept/self) 已建模但行级数据隔离尚未落地，
+    // 当前任何角色都按 all 生效（无路由按 dataScope/department 过滤）。该字段供前端明示"规划中/未启用"，
+    // 避免管理员误以为 dept/self 已限制数据可见范围（虚假安全控制）。落地见 docs 基础功能审查 P0-02。
+    dataScopeEnforced: false,
     isSystem: isSystemRoleCode(r.code),
     associatedUsers: associatedUsersByRole.get(r.code) || [],
     createdAt: r.created_at,

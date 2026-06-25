@@ -70,6 +70,9 @@ export function RoleDetailModal({ open, role, onClose }: Props) {
             <div>
               <div className="text-xs text-gray-500 mb-1">数据权限</div>
               <div className="text-base font-semibold text-gray-900">{getDataScopeLabel(role)}</div>
+              {role.code !== 'admin' && (
+                <div className="mt-1 text-xs text-amber-600">行级隔离规划中，当前按「全部数据」生效</div>
+              )}
             </div>
             <div>
               <div className="text-xs text-gray-500 mb-1">创建时间</div>

@@ -732,7 +732,7 @@ function updateBomStandardCost(db: any, bomId: string): void {
   try {
     // 1. 计算材料标准成本（基于当前加权平均价）
     const items = db.prepare(`
-      SELECT bi.usage_per_sample, m.price
+      SELECT bi.material_id, bi.usage_per_sample, m.price
       FROM bom_items bi
       LEFT JOIN materials m ON bi.material_id = m.id AND m.is_deleted = 0
       WHERE bi.bom_id = ?

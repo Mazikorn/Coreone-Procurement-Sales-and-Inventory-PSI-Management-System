@@ -385,6 +385,38 @@ describe('集成测试：BOM 管理', () => {
       // 标准成本应增加（材料用量翻倍）
       expect(newBom.standard_total_cost).toBeGreaterThan(oldCost)
     })
+
+    it('BOM-STDCOST-WEIGHTED（P0-05）: 材料标准成本按批次加权进价计算，而非物料主数据价', async () => {
+      // 物料主数据价=100，但实际批次加权进价=10（差异显著，便于判别用了哪一个）
+      const suffix = `${Date.now()}`
+      const matRes = await request(app)
+        .post('/api/v1/materials')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ code: `STDCOST-${suffix}`, name: `加权价测试物料${suffix}`, spec: '7ml', unit: '支', categoryId: 'cat-seed', supplierId: 'sup-seed', price: 100, minStock: 1, locationId: 'loc-seed' })
+      expect(matRes.status).toBe(201)
+      const matId = matRes.body.data.id
+      // 入库批次，进价=10（与主数据价 100 不同）
+      const inb = await request(app)
+        .post('/api/v1/inbound')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ type: 'direct', materialId: matId, batchNo: `B-STD-${suffix}`, quantity: 50, price: 10, locationId: 'loc-seed', expiryDate: '2027-12-31' })
+      expect(inb.status).toBe(201)
+      // 创建 BOM，用量=2
+      const bomRes = await request(app)
+        .post('/api/v1/boms')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ code: `BOM-STD-${suffix}`, name: `加权价BOM${suffix}`, version: 'v1', type: 'ihc', materials: [{ materialId: matId, usagePerSample: 2, unit: '支', price: 100 }] })
+      expect(bomRes.status).toBe(201)
+      const newBomId = bomRes.body.data.id
+
+      // 材料分项 = 总标准成本 − 人工 − 设备 − 间接（本 BOM 无质控配置 → QC=0）
+      const b = db.prepare('SELECT standard_total_cost, standard_labor_cost, standard_equipment_cost, standard_indirect_cost FROM boms WHERE id = ?').get(newBomId) as any
+      const materialCost = Number(b.standard_total_cost) - Number(b.standard_labor_cost) - Number(b.standard_equipment_cost) - Number(b.standard_indirect_cost)
+      // 修复前：漏选 material_id → weightedPrices 恒空 → 用主数据价 100×2=200
+      // 修复后：用批次加权进价 10×2=20
+      expect(materialCost).toBeCloseTo(20, 0)
+      expect(materialCost).toBeLessThan(100)
+    })
   })
 
   describe('BOM 事务完整性', () => {

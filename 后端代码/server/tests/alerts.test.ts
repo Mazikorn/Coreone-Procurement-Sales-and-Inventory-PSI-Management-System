@@ -356,7 +356,7 @@ describe('预警处理', () => {
       materialId,
       status: 'pending',
       currentStock: 2,
-      threshold: 6,
+      threshold: 5, // P0-04：有效阈值优先取 min_stock(5)，非 safety_stock(6)
     })
 
     const alertId = pending.body.data.list[0].id
@@ -383,6 +383,40 @@ describe('预警处理', () => {
     const generateLog = latestOperationLog(db, 'POST /alerts/generate')
     expect(generateLog).toMatchObject({ username: 'admin', description: '手动生成预警' })
     expect(JSON.parse(generateLog.response_data).generatedCount).toBeGreaterThanOrEqual(1)
+  })
+
+  it('ALERT-LOWSTOCK-MINSTOCK（P0-04）: 仅设 min_stock（safety_stock=0）也必须触发低库存预警', async () => {
+    // 这是双轨割裂的核心场景：用户在"安全库存"栏设阈值（落 min_stock），safety_stock 留默认 0。
+    // 修复前引擎只读 safety_stock(0) → 永不触发（库存跌破却无告警）；修复后按有效阈值=min_stock 触发。
+    const stamp = Date.now()
+    const suffix = `minstock-${stamp}`
+    const categoryId = `cat-alert-${suffix}`
+    const materialId = `mat-alert-min-${suffix}`
+    db.prepare('INSERT INTO material_categories (id, code, name, level) VALUES (?, ?, ?, ?)')
+      .run(categoryId, `CAT-ALERT-${suffix}`, '低库存阈值测试分类', 1)
+    db.prepare(`INSERT INTO materials (id, code, name, spec, unit, category_id, min_stock, safety_stock)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(materialId, `MAT-ALERT-${suffix}`, `仅min_stock预警物料-${suffix}`, '1ml', '瓶', categoryId, 10, 0)
+    db.prepare('INSERT INTO inventory (id, material_id, stock, locked_stock) VALUES (?, ?, ?, 0)')
+      .run(`inv-alert-${suffix}`, materialId, 3)
+
+    const generate = await request(app)
+      .post('/api/v1/alerts/generate')
+      .set('Authorization', `Bearer ${token}`)
+    expect(generate.status).toBe(200)
+
+    const pending = await request(app)
+      .get('/api/v1/alerts')
+      .query({ keyword: suffix, status: 'pending' })
+      .set('Authorization', `Bearer ${token}`)
+    expect(pending.status).toBe(200)
+    expect(pending.body.data.list).toHaveLength(1)
+    expect(pending.body.data.list[0]).toMatchObject({
+      type: 'low-stock',
+      materialId,
+      currentStock: 3,
+      threshold: 10, // 有效阈值取 min_stock
+    })
   })
 
   it('ALERT-016: 有效期扫描按批次生成预警并返回来源事实', async () => {

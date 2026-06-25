@@ -10,6 +10,11 @@
 
 ## 当前状态（2026-06-25）
 
+**非 ABC 基础功能审查 + P0 批量修复 ✅ — 审计(107 子代理)产报告 → 6/6 P0 修复(零回归)**
+- 用户转向：ABC 之外 PSI 17 模块组产品目的+前后端审查。Workflow `wf_eef2c46b-f41`：每模块 3 维并行→对 C/H 对抗验证→横向交叉。报告 `docs/COREONE-基础功能审查-产品目的与前后端-2026-06-25.md`，脚本 `.claude/workflows/base-feature-audit.js`（与 06-20 UX 复核互补）。297 发现(C3/H50/M100/L144)；53 C/H 验证→**确认 44/存疑 2/证伪 7**。横向：事务/库存守恒整体可靠、RBAC 无越权写、设计规范 shadow-xl/React Query 0 用系统性违反。
+- **P0 6/6 完成（用户选「批量修全部」，逐项 TDD，全量后端 647 通过 / tsc 干净 / 零回归，均 git add 未提交）**：P0-01 库存守恒(`depletion-v1.1.ts` 删覆盖块)；P0-03 JWT 停用/改角色即时失效(`middleware/auth.ts` 回查 users)；P0-04 预警阈值统一(有效阈值 COALESCE(NULLIF(min_stock,0),safety_stock))；P0-05 BOM 标准成本 SQL 补 material_id；P0-06 对账 actual 补项目过滤；P0-02 data_scope 诚实标注未启用(用户选)。详见 [session-log/2026-06-25.md](session-log/2026-06-25.md)。
+- **下一步待用户定**：提交本批 P0 / 继续 P1（17 项流程断裂·空壳）/ P2（工程债）。
+
 **测试隔离修复 ✅ — 消除跨文件 SQLite 污染（IDC-GUARD-002 偶发误红根治）**
 - 根因：`abc-cost.test.ts`（唯一静态 import + 未设 `DATABASE_PATH`）落到共享磁盘库 `data/coreone.db`，与 `global-setup.ts` 主进程常驻服务器并发开同一文件 → SQLite 文件锁/半迁移 schema 竞争（佐证全绿运行仍现 `no such table`），偶发崩溃拖红同 worker 无关测试。
 - 修复：新增 `tests/db-isolation.setup.ts`+`vitest.config.ts` `setupFiles` 统一在文件 import 前强制 `:memory:`（纯赋值、不 import DatabaseManager）；`global-setup.ts` 主进程亦 `:memory:`+容忍 EADDRINUSE+`unref()`。

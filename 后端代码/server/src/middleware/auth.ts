@@ -92,13 +92,34 @@ export function authenticateToken(req: AuthRequest, res: Response, next: NextFun
     return
   }
 
+  let decoded: { userId: string; username: string; role: string }
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { userId: string; username: string; role: string }
-    req.user = decoded
-    next()
+    decoded = jwt.verify(token, JWT_SECRET) as { userId: string; username: string; role: string }
   } catch {
     res.status(401).json({ success: false, error: { message: 'Invalid token', code: 'UNAUTHORIZED' } })
+    return
   }
+
+  // P0-03 安全：access token 8h 有效；停用/软删账号或改角色后必须即时失效，否则旧 token 在到期前
+  // （最长 8h）仍可调用原权限接口，应急收权失效。verify 后轻量回查 users（与 /auth/refresh 的
+  // status 校验对齐）：账号停用/删除或角色已变更则拒绝、强制重登。DB 不可用时退回仅签名校验，避免整站鉴权硬瘫。
+  try {
+    const db = getDatabase()
+    const u = db.prepare('SELECT status, is_deleted, role FROM users WHERE id = ?').get(decoded.userId) as any
+    if (!u || Number(u.is_deleted) === 1 || Number(u.status) !== 1) {
+      res.status(401).json({ success: false, error: { message: '账号已停用或删除，请重新登录', code: 'ACCOUNT_DISABLED' } })
+      return
+    }
+    if (u.role !== decoded.role) {
+      res.status(401).json({ success: false, error: { message: '账号角色已变更，请重新登录', code: 'ROLE_CHANGED' } })
+      return
+    }
+  } catch {
+    // 仅在数据库不可用时到达（启动/极端情况）：退回仅凭签名校验，不阻断全部已认证请求。
+  }
+
+  req.user = decoded
+  next()
 }
 
 export function requireRole(...allowedRoles: string[]) {
