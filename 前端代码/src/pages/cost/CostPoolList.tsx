@@ -69,7 +69,10 @@ const INDIRECT_BASIS_LABELS: Record<string, string> = {
 }
 function getIndirectBasisLabel(basis?: string) {
   if (!basis) return '单一披露基准'
-  return INDIRECT_BASIS_LABELS[basis] || basis
+  // 后端在基准信号为 0 时追加 '|equal_fallback'（退化为按中心等分），需拆解显示而非露原始 token
+  const [base, fallback] = String(basis).split('|')
+  const label = INDIRECT_BASIS_LABELS[base] || base
+  return fallback === 'equal_fallback' ? `${label}（基准信号为 0，退化为按中心等分）` : label
 }
 
 interface CostPoolQueryOverrides {

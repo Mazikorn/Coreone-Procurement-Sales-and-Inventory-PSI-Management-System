@@ -8,7 +8,8 @@
       "WebFetch",
       "WebSearch",
       "Skill(code-review)",
-      "Skill(code-review:*)"
+      "Skill(code-review:*)",
+      "mcp__Claude_Preview__preview_start"
     ],
     "ask": [
       "Bash(rm:*)",

@@ -40,6 +40,11 @@ const DRIVER_TYPE_LABELS: Record<string, string> = {
   slide_count: '切片数',
   case_count: '病例数',
   sample_count: '样本数',
+  stain_count: '染色次数',
+  probe_count: '探针数',
+  report_count: '报告数',
+  test_count: '检测次数',
+  machine_minute: '机器分钟',
 }
 function getDriverTypeLabel(driverType?: string | null) {
   if (!driverType) return '—'
@@ -351,34 +356,48 @@ export default function SlideCostAnalysis() {
                             {breakdownLoading === item.bomId ? (
                               <div className="text-sm text-gray-400 py-4">加载动因明细...</div>
                             ) : (breakdowns[item.bomId]?.length ?? 0) === 0 ? (
-                              <div className="text-sm text-gray-400 py-4">暂无逐中心动因明细（可能为纯材料 BOM 或本期未归集）。</div>
+                              <div className="text-sm text-gray-400 py-4">
+                                {(item.activityCost || 0) > 0
+                                  ? '本期该 BOM 未生成逐中心明细（历史快照，重算后可还原动因分解）。'
+                                  : '纯材料 BOM，无作业成本分摊。'}
+                              </div>
                             ) : (
-                              <table className="w-full text-sm">
-                                <thead>
-                                  <tr className="text-xs text-gray-500 border-b border-gray-200">
-                                    <th className="text-left font-medium py-2">作业中心</th>
-                                    <th className="text-left font-medium py-2">动因</th>
-                                    <th className="text-right font-medium py-2">动因量</th>
-                                    <th className="text-right font-medium py-2">费率</th>
-                                    <th className="text-right font-medium py-2">分摊成本</th>
-                                  </tr>
-                                </thead>
-                                <tbody className="divide-y divide-gray-100">
-                                  {breakdowns[item.bomId].map(center => (
-                                    <tr key={center.activityCenterId}>
-                                      <td className="py-2 text-gray-700">{center.activityCenterName}</td>
-                                      <td className="py-2 text-gray-500">{getDriverTypeLabel(center.driverType)}</td>
-                                      <td className="py-2 text-right text-gray-500">{center.driverQuantity?.toLocaleString()}</td>
-                                      <td className="py-2 text-right text-gray-500">
-                                        {center.driverRate > 0
-                                          ? formatCurrency(center.driverRate)
-                                          : <span className="text-amber-600">无费率</span>}
-                                      </td>
-                                      <td className="py-2 text-right font-medium text-gray-900">{formatCurrency(center.allocatedCost)}</td>
+                              <>
+                                {breakdowns[item.bomId].some(c => c.rateSource === 'legacy') && (
+                                  <p className="text-xs text-amber-600 mb-2">历史快照：仅有逐中心分摊额，缺动因量/费率明细（重算后可还原）。</p>
+                                )}
+                                <table className="w-full text-sm">
+                                  <thead>
+                                    <tr className="text-xs text-gray-500 border-b border-gray-200">
+                                      <th className="text-left font-medium py-2">作业中心</th>
+                                      <th className="text-left font-medium py-2">动因</th>
+                                      <th className="text-right font-medium py-2">动因量</th>
+                                      <th className="text-right font-medium py-2">费率</th>
+                                      <th className="text-right font-medium py-2">分摊成本</th>
                                     </tr>
-                                  ))}
-                                </tbody>
-                              </table>
+                                  </thead>
+                                  <tbody className="divide-y divide-gray-100">
+                                    {breakdowns[item.bomId].map(center => {
+                                      const isLegacy = center.rateSource === 'legacy'
+                                      return (
+                                        <tr key={center.activityCenterId}>
+                                          <td className="py-2 text-gray-700">{center.activityCenterName}</td>
+                                          <td className="py-2 text-gray-500">{getDriverTypeLabel(center.driverType)}</td>
+                                          <td className="py-2 text-right text-gray-500">{isLegacy ? '—' : center.driverQuantity?.toLocaleString()}</td>
+                                          <td className="py-2 text-right text-gray-500">
+                                            {isLegacy
+                                              ? <span className="text-gray-400">历史</span>
+                                              : center.driverRate > 0
+                                                ? formatCurrency(center.driverRate)
+                                                : <span className="text-amber-600">无费率</span>}
+                                          </td>
+                                          <td className="py-2 text-right font-medium text-gray-900">{formatCurrency(center.allocatedCost)}</td>
+                                        </tr>
+                                      )
+                                    })}
+                                  </tbody>
+                                </table>
+                              </>
                             )}
                           </div>
                         </div>

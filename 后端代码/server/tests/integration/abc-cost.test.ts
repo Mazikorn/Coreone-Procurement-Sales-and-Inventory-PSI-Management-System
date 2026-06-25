@@ -737,7 +737,7 @@ describe('ABC 作业成本法', () => {
   describe('L5-3 切片成本下钻：逐中心作业动因分解', () => {
     const MONTH = '2095-07'
     const cleanup = () => {
-      db.prepare(`DELETE FROM outbound_abc_details WHERE bom_id = 'bom-brk'`).run()
+      db.prepare(`DELETE FROM outbound_abc_details WHERE bom_id IN ('bom-brk','bom-brk-legacy')`).run()
       db.prepare(`DELETE FROM outbound_records WHERE id LIKE 'oad-brk-%'`).run()
     }
     afterAll(cleanup) // 持久库：清理本块种子，避免污染盈利/对账等聚合测试
@@ -758,6 +758,11 @@ describe('ABC 作业成本法', () => {
         { activityCenterId: 'ac-s', activityCenterName: '切片', activityCenterCode: 'SEC', driverType: 'block_count', quantity: 2, driverRate: 10, rateSource: 'period', poolCost: 100, allocatedCost: 20, totalCost: 20 },
         { activityCenterId: 'ac-i', activityCenterName: '免疫组化', activityCenterCode: 'IHC', driverType: 'slide_count', quantity: 4, driverRate: 4, rateSource: 'period', poolCost: 90, allocatedCost: 16, totalCost: 16 },
       ])
+      // 旧格式快照：activity_details 为 {中心标识: 分摊额} 对象（历史数据，无逐动因明细）。
+      db.prepare(`INSERT OR IGNORE INTO boms (id, code, name, version, type, status) VALUES ('bom-brk-legacy','BOM-BRK-L','旧格式下钻','v1.0','ihc',1)`).run()
+      db.prepare(`INSERT INTO outbound_records (id, outbound_no, type, total_cost, sample_count, operator, status, created_at) VALUES ('oad-brk-legacy','OB-LEG','bom',0,1,'admin','completed','${MONTH}-15 10:00:00')`).run()
+      db.prepare(`INSERT INTO outbound_abc_details (id, outbound_id, bom_id, sample_count, cost_month, cost_status, activity_details) VALUES ('oad-brk-legacy','oad-brk-legacy','bom-brk-legacy',1,?, 'costed', ?)`)
+        .run(MONTH, JSON.stringify({ specimen: 26.38, section: 35.57, diagnosis: 54.23 }))
     })
 
     it('按 BOM 聚合逐中心：分摊额/动因量求和，费率为期间代表值', async () => {
@@ -775,6 +780,23 @@ describe('ABC 作业成本法', () => {
       expect(ihc).toMatchObject({ driverType: 'slide_count', driverQuantity: 10, driverRate: 4, allocatedCost: 40 })
       // 排序：分摊额降序
       expect(d.breakdown[0].activityCenterId).toBe('ac-s')
+    })
+
+    it('旧格式快照（对象 {中心: 分摊额}）也能还原逐中心分摊额（legacy=true，不误显空）', async () => {
+      const res = await request(app)
+        .get('/api/v1/abc/profitability/activity-breakdown')
+        .query({ bomId: 'bom-brk-legacy', startDate: MONTH, endDate: MONTH })
+        .set('Authorization', `Bearer ${token}`)
+      expect(res.status).toBe(200)
+      const d = res.body.data
+      expect(d.legacy).toBe(true)
+      expect(d.breakdown.length).toBe(3)
+      expect(d.totalActivityCost).toBe(116.18) // 26.38+35.57+54.23
+      // 旧格式行：有分摊额、rateSource=legacy、无费率/动因量
+      const top = d.breakdown[0]
+      expect(top.allocatedCost).toBe(54.23) // diagnosis 最大，降序在首
+      expect(top.rateSource).toBe('legacy')
+      expect(top.driverRate).toBe(0)
     })
 
     it('缺 bomId 返回 400', async () => {

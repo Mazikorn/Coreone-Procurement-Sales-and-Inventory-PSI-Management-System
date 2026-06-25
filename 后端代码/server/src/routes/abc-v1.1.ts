@@ -2754,12 +2754,46 @@ router.get('/profitability/activity-breakdown', (req, res) => {
       `SELECT activity_details FROM outbound_abc_details WHERE ${where}`
     ).all(...params) as any[]
 
+    // 中心标识解析表（旧格式 key=中心 code/name → 还原中心名与动因类型）。
+    const centerRows = db.prepare('SELECT id, code, name, cost_driver_type FROM abc_activity_centers').all() as any[]
+    const centerByKey = new Map<string, any>()
+    for (const c of centerRows) {
+      if (c.code) centerByKey.set(String(c.code).toLowerCase(), c)
+      if (c.name) centerByKey.set(String(c.name).toLowerCase(), c)
+    }
+    // 解析 activity_details：新格式=逐中心 ActivityCost 数组（含动因量/费率/池）；
+    //   旧格式={中心标识: 分摊额} 对象（无逐动因明细）→ 退化为仅含中心名+分摊额的行（rateSource='legacy'），
+    //   使历史数据下钻仍能展示"哪个中心消耗多少"，而非误显空/纯材料。
+    const normalizeDetails = (raw: string): any[] => {
+      let parsed: any
+      try { parsed = JSON.parse(raw || '[]') } catch { return [] }
+      if (Array.isArray(parsed)) return parsed
+      if (parsed && typeof parsed === 'object') {
+        return Object.entries(parsed).map(([k, v]) => {
+          const c = centerByKey.get(String(k).toLowerCase())
+          return {
+            activityCenterId: c?.id || k,
+            activityCenterName: c?.name || k,
+            activityCenterCode: c?.code || '',
+            allocatedCost: Number(v) || 0,
+            driverType: c?.cost_driver_type || null,
+            driverRate: 0,
+            rateSource: 'legacy',
+            quantity: 0,
+          }
+        })
+      }
+      return []
+    }
+
     // 逐中心聚合：分摊额/动因量按期内求和；费率/池为期间值（每中心一致，取代表值）。
     const byCenter = new Map<string, any>()
+    let hasLegacy = false
     for (const row of rows) {
-      let details: any[]
-      try { details = JSON.parse(row.activity_details || '[]') } catch { details = [] }
-      if (!Array.isArray(details)) continue
+      let raw: any
+      try { raw = JSON.parse(row.activity_details || '[]') } catch { raw = [] }
+      if (raw && !Array.isArray(raw) && typeof raw === 'object') hasLegacy = true
+      const details = normalizeDetails(row.activity_details)
       for (const it of details) {
         const id = it.activityCenterId || 'UNASSIGNED'
         const acc = byCenter.get(id) || {
@@ -2794,6 +2828,7 @@ router.get('/profitability/activity-breakdown', (req, res) => {
       snapshotCount: rows.length,
       totalActivityCost,
       breakdown,
+      legacy: hasLegacy, // true=含旧格式快照（仅有分摊额、无逐动因明细），前端据此标注
       note: '作业成本含间接费按单一披露基准的分摊估算；材料与人工/设备按真实动因逐中心归集。',
     })
   } catch (err: any) { error(res, err.message) }

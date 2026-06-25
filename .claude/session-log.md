@@ -10,6 +10,11 @@
 
 ## 当前状态（2026-06-25）
 
+**测试隔离修复 ✅ — 消除跨文件 SQLite 污染（IDC-GUARD-002 偶发误红根治）**
+- 根因：`abc-cost.test.ts`（唯一静态 import + 未设 `DATABASE_PATH`）落到共享磁盘库 `data/coreone.db`，与 `global-setup.ts` 主进程常驻服务器并发开同一文件 → SQLite 文件锁/半迁移 schema 竞争（佐证全绿运行仍现 `no such table`），偶发崩溃拖红同 worker 无关测试。
+- 修复：新增 `tests/db-isolation.setup.ts`+`vitest.config.ts` `setupFiles` 统一在文件 import 前强制 `:memory:`（纯赋值、不 import DatabaseManager）；`global-setup.ts` 主进程亦 `:memory:`+容忍 EADDRINUSE+`unref()`。
+- 验收：净环境连跑 `npx vitest run` **5/5 全绿**（638 通过/0 失败/24 skip，EADDRINUSE=0、无 lingering 警告）。3 文件已随 `7a7017b` 落库，`global-setup.ts` 已 git add 未提交。详见 [session-log/2026-06-25.md](session-log/2026-06-25.md)。
+
 **P0 出库捕获真实块/片数 ✅（部分 — 期间费率层）— 让 M3 正确性在生产数据上成立**
 - 新 `getBomPerSampleDriverQty(db,bomId)`（按 BOM 作业关联中心 `cost_driver_type` 聚合 quantity）；两出库写路径（`cost-runs.ts`/`outbound-v1.1.ts`）改写真实 `block/slide/case_count = 每样本量×样本数`，删写死 `block=1`/`slide=sampleCount`，补写 `case_count`。
 - 效果：期间动因量在真实数据上成立 → 块/片中心费率不再退化为"池÷出库单数"。**214 回归过、准确性 7 用例绿、零新增回归**（连带修 cost-exceptions 成本池重算：BOM 显式声明块作业）。
