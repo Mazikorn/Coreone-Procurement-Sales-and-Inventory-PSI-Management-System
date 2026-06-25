@@ -22,6 +22,7 @@ import { DatabaseSync } from 'node:sqlite'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { v4 as uuidv4 } from 'uuid'
+import { seedAbcMappings } from './seed-abc-mappings.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const dbPath = path.join(__dirname, '..', 'data', 'coreone.db')
@@ -372,51 +373,10 @@ export function seedComprehensiveData(): void {
   // ============================================================
   console.log('\n【4/12】填充 ABC BOM 作业关联...')
 
-  const balCount = db.prepare('SELECT COUNT(*) as count FROM bom_activity_links').get() as any
-  if (balCount.count === 0) {
-    const activityCenters = db.prepare('SELECT id, code, name, cost_driver_type FROM abc_activity_centers').all() as any[]
-
-    if (activityCenters.length > 0 && boms.length > 0) {
-      // L2-6 统一到规范表 bom_activity_links(id, bom_id, activity_center_id, quantity, unit, sort_order)。
-      // 旧 abc_bom_activity_links 从无建表；其 cost_driver_id/description 字段去除——动因由中心 cost_driver_type 决定。
-      const insertBAL = db.prepare(`
-        INSERT INTO bom_activity_links (id, bom_id, activity_center_id, quantity, unit, sort_order)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `)
-      const DRIVER_UNIT: Record<string, string> = { block_count: '块', slide_count: '张', case_count: '例' }
-
-      // BOM 类型与作业中心的映射
-      const bomActivityMap: Record<string, string[]> = {
-        'he': ['SPECIMEN', 'SECTION', 'HE_STAIN', 'DIAGNOSIS'],
-        'ihc': ['SPECIMEN', 'SECTION', 'AR', 'IHC', 'DIAGNOSIS'],
-        'ss': ['SPECIMEN', 'SECTION', 'SS', 'DIAGNOSIS'],
-        'mp': ['SPECIMEN', 'MP', 'DIAGNOSIS'],
-        'cyto': ['SPECIMEN', 'CYTOLOGY', 'DIAGNOSIS'],
-      }
-
-      let balTotal = 0
-      for (const bom of boms) {
-        const activities = bomActivityMap[bom.type] || bomActivityMap['ihc']
-
-        for (let i = 0; i < activities.length; i++) {
-          const activityCode = activities[i]
-          const activity = activityCenters.find(a => a.code === activityCode)
-          if (!activity) continue
-
-          insertBAL.run(
-            uuidv4(), bom.id, activity.id,
-            randomInt(1, 5),
-            DRIVER_UNIT[activity.cost_driver_type] || null,
-            i
-          )
-          balTotal++
-        }
-      }
-      console.log(`  创建 ${balTotal} 条 BOM 作业关联`)
-    }
-  } else {
-    console.log(`  已有 ${balCount.count} 条关联，跳过`)
-  }
+  // L2-1/L5-1：BOM↔作业中心映射 + 人工/设备中心归属 + 标准中心可计量动因，统一交由幂等的 seedAbcMappings，
+  // 避免随机量/不存在中心码/非可计量动因等问题，保证 ABC 引擎在 seed 数据上完全吸收且可分摊。
+  const mapStats = seedAbcMappings(db)
+  console.log(`  ABC 映射：BOM 关联 +${mapStats.bomLinks}（${mapStats.bomsLinked} BOM）、人工 +${mapStats.labor}、设备 +${mapStats.equipment}、用量 +${mapStats.usage}、动因修正 ${mapStats.driverFix}`)
 
   // ============================================================
   // 5. 预警记录

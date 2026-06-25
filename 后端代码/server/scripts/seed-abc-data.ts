@@ -22,12 +22,12 @@ export function seedAbcData(): void {
   const activityCenters = [
     { id: uuidv4(), code: 'SPECIMEN', name: '标本处理中心', description: '标本接收、登记、取材、包埋', cost_driver_type: 'block_count', sort_order: 1 },
     { id: uuidv4(), code: 'SECTION', name: '切片制作中心', description: '切片、摊片、烤片', cost_driver_type: 'slide_count', sort_order: 2 },
-    { id: uuidv4(), code: 'HE_STAIN', name: '常规染色中心', description: 'HE 染色', cost_driver_type: 'stain_count', sort_order: 3 },
-    { id: uuidv4(), code: 'IHC', name: '免疫组化中心', description: 'IHC 染色（普通+靶向）', cost_driver_type: 'test_count', sort_order: 4 },
+    { id: uuidv4(), code: 'HE_STAIN', name: '常规染色中心', description: 'HE 染色', cost_driver_type: 'slide_count', sort_order: 3 },
+    { id: uuidv4(), code: 'IHC', name: '免疫组化中心', description: 'IHC 染色（普通+靶向）', cost_driver_type: 'slide_count', sort_order: 4 },
     { id: uuidv4(), code: 'SS', name: '特染中心', description: '抗酸、PAS、GMS、网状纤维、弹力纤维', cost_driver_type: 'slide_count', sort_order: 5 },
-    { id: uuidv4(), code: 'MP', name: '分子病理中心', description: 'FISH、PCR（普通+荧光）、NGS', cost_driver_type: 'probe_locus_panel', sort_order: 6 },
-    { id: uuidv4(), code: 'DIAGNOSIS', name: '诊断中心', description: '阅片、报告', cost_driver_type: 'report_count', sort_order: 7 },
-    { id: uuidv4(), code: 'CYTOLOGY', name: '细胞病理中心', description: '细胞学处理、制片、染色', cost_driver_type: 'slide_block_count', sort_order: 8 },
+    { id: uuidv4(), code: 'MP', name: '分子病理中心', description: 'FISH、PCR（普通+荧光）、NGS', cost_driver_type: 'case_count', sort_order: 6 },
+    { id: uuidv4(), code: 'DIAGNOSIS', name: '诊断中心', description: '阅片、报告', cost_driver_type: 'case_count', sort_order: 7 },
+    { id: uuidv4(), code: 'CYTOLOGY', name: '细胞病理中心', description: '细胞学处理、制片、染色', cost_driver_type: 'slide_count', sort_order: 8 },
   ]
 
   const insertCenter = db.prepare(`
