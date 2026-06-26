@@ -13,9 +13,10 @@
 **非 ABC 基础功能审查 + P0 批量修复 ✅ — 审计(107 子代理)产报告 → 6/6 P0 修复(零回归)**
 - 用户转向：ABC 之外 PSI 17 模块组产品目的+前后端审查。Workflow `wf_eef2c46b-f41`：每模块 3 维并行→对 C/H 对抗验证→横向交叉。报告 `docs/COREONE-基础功能审查-产品目的与前后端-2026-06-25.md`，脚本 `.claude/workflows/base-feature-audit.js`（与 06-20 UX 复核互补）。297 发现(C3/H50/M100/L144)；53 C/H 验证→**确认 44/存疑 2/证伪 7**。横向：事务/库存守恒整体可靠、RBAC 无越权写、设计规范 shadow-xl/React Query 0 用系统性违反。
 - **P0 6/6 完成（用户选「批量修全部」，逐项 TDD，全量后端 647 通过 / tsc 干净 / 零回归，均 git add 未提交）**：P0-01 库存守恒(`depletion-v1.1.ts` 删覆盖块)；P0-03 JWT 停用/改角色即时失效(`middleware/auth.ts` 回查 users)；P0-04 预警阈值统一(有效阈值 COALESCE(NULLIF(min_stock,0),safety_stock))；P0-05 BOM 标准成本 SQL 补 material_id；P0-06 对账 actual 补项目过滤；P0-02 data_scope 诚实标注未启用(用户选)。详见 [session-log/2026-06-25.md](session-log/2026-06-25.md)。
-- **「全部执行」推进中**：P0 6/6 + P1 14/17 + P2 快速项 = 22 commit，全程 TDD/零回归（全量后端 653 通过、前端相关测试绿）。
-  - P1 已完成：P1-01(辅料缺货跳过)、02(过期→报废)、03(审计渲染)、05(设备关联项目)、06(库位利用率)、08(设备折旧自动)、09(呆滞预警接线)、10(Token续期)、11(clearAuth)、12(库位RBAC)、13(退款上界)、15(Hooks)、16(设备幂等)、17(库存状态优先级)。
-  - **剩余（净新增特性/团队决策，待定优先级）**：P1-04 盘点批量(新表)、P1-07 BOM设备模板UI(后端已就绪)、P1-14 退货财务闭环；P2 余项(React Query 团队决策、双toast去重、设计token、大组件拆分、日志Link)。详见 [session-log/2026-06-25.md](session-log/2026-06-25.md)。
+- **「全部执行」已完成主体**：**6 P0 + 17 P1（全部）+ P2 大部分** = 约 21 commit，全程逐项 TDD/分组提交/零回归（后端全量 656 通过、各前端模块绿、tsc 干净）。
+  - P1 17/17：01 辅料缺货跳过·02 过期→报废·03 审计渲染·04 盘点批量·05 设备关联项目·06 库位利用率·07 BOM设备模板UI·08 设备折旧自动·09 呆滞预警接线·10 Token续期·11 clearAuth·12 库位RBAC·13 退款上界·14 退货finance只读+退款额可改·15 Hooks·16 设备幂等·17 库存状态优先级。
+  - P2 已做：删死代码·Modal阴影·设计token(border-gray-100→200)·Outbound纯函数拆分·transfers双toast去重。
+  - **剩余（低价值行为中性 polish / 团队决策）**：**React Query 待用户决策**（已给 PM 白话详解 A/B/C）；其余 4 模块 toast 去重、OutboundFormModal 918行渲染拆分(建议带E2E专项)、日志Link。详见 [session-log/2026-06-25.md](session-log/2026-06-25.md)。
 
 **测试隔离修复 ✅ — 消除跨文件 SQLite 污染（IDC-GUARD-002 偶发误红根治）**
 - 根因：`abc-cost.test.ts`（唯一静态 import + 未设 `DATABASE_PATH`）落到共享磁盘库 `data/coreone.db`，与 `global-setup.ts` 主进程常驻服务器并发开同一文件 → SQLite 文件锁/半迁移 schema 竞争（佐证全绿运行仍现 `no such table`），偶发崩溃拖红同 worker 无关测试。
