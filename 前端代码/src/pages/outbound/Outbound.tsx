@@ -6,7 +6,6 @@ import { outboundApi } from '@/api/inventory'
 import { materialApi, projectApi } from '@/api/master'
 import type { OutboundRecord, Material, Project } from '@/types'
 import { toast } from 'sonner'
-import { formatDateTime } from '@/lib/utils'
 import OutboundFormModal, { type FormData } from './components/OutboundFormModal'
 import OutboundDetailModal from './components/OutboundDetailModal'
 import OutboundCancelModal from './components/OutboundCancelModal'
@@ -15,9 +14,10 @@ import OutboundStats from './components/OutboundStats'
 import OutboundQuickFilters from './components/OutboundQuickFilters'
 import OutboundFilterBar from './components/OutboundFilterBar'
 import OutboundTable from './components/OutboundTable'
-import { getOutboundTypeLabel } from './outboundLabels'
-// P2（拆分）：纯映射函数已抽至 outboundRecordMappers.ts，降低本文件体量
+// P2（拆分）：纯映射/打印/导出已抽至独立模块，降低本文件体量
 import { buildCreatedOutboundRecord, buildEditedOutboundPatch, mapOutboundRecordToForm } from './outboundRecordMappers'
+import { exportOutboundRecordsToXlsx } from './outboundExport'
+import { buildOutboundPrintDocument } from './outboundPrint'
 
 // 保持既有导入路径不变：mapOutboundRecordToForm 仍可从本模块导入（Outbound.test 依赖）
 export { mapOutboundRecordToForm } from './outboundRecordMappers'
@@ -457,84 +457,18 @@ export default function Outbound() {
       return
     }
     try {
-      const XLSX = await import('xlsx')
-      const rows = exportData.map(row => ({
-        出库单号: row.outboundNo,
-        类型: getOutboundTypeLabel(row.type),
-        项目: row.projectName || '-',
-        物料明细: row.items?.map(i => `${i.materialName}×${i.quantity}`).join(', ') || '-',
-        总金额: row.totalCost || 0,
-        ABC总成本: row.abcTotalCost || 0,
-        收费金额: row.feeAmount || 0,
-        利润: row.profit || 0,
-        操作人: row.operator || '-',
-        出库时间: formatDateTime(row.createdAt),
-        状态: row.status === 'completed' ? '已完成' : row.status === 'pending' ? '待出库' : '已取消',
-        备注: row.remark || '-',
-      }))
-      const ws = XLSX.utils.json_to_sheet(rows)
-      const wb = XLSX.utils.book_new()
-      XLSX.utils.book_append_sheet(wb, ws, '出库记录')
-      const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '')
-      XLSX.writeFile(wb, `出库记录_${dateStr}.xlsx`)
-      toast.success('导出成功', { description: `已导出 ${rows.length} 条记录` })
+      const count = await exportOutboundRecordsToXlsx(exportData)
+      toast.success('导出成功', { description: `已导出 ${count} 条记录` })
     } catch (e) {
       toast.error('导出失败')
     }
-  }
-
-  const escapeHtml = (str: string) => str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;')
-
-  const buildPrintDocument = (records: OutboundRecord[]) => {
-    const pages = records.map(record => {
-      const items = record.items?.map(i => `
-        <tr>
-          <td>${escapeHtml(i.materialName || '')}</td>
-          <td>${escapeHtml(i.batchNo || '-')}</td>
-          <td>${i.quantity} ${escapeHtml(i.unit || '')}</td>
-          <td>${i.unitCost || 0}</td>
-          <td>${i.totalCost || 0}</td>
-        </tr>
-      `).join('') || ''
-
-      return `
-        <section class="print-page">
-          <h2>出库单</h2>
-          <div class="meta">单号：${escapeHtml(record.outboundNo)} | 项目：${escapeHtml(record.projectName || '-')} | 时间：${new Date(record.createdAt).toLocaleString()}</div>
-          <table><thead><tr><th>物料</th><th>批号</th><th>数量</th><th>单价</th><th>金额</th></tr></thead>
-          <tbody>${items}</tbody>
-          </table>
-          <div class="footer">操作人：${escapeHtml(record.operator || '-')} | 备注：${escapeHtml(record.remark || '无')}</div>
-          <div class="footer">本单据由 COREONE 系统自动生成</div>
-        </section>
-      `
-    }).join('')
-
-    return `
-      <html><head><title>出库单打印</title><style>
-        body { font-family: sans-serif; padding: 40px; }
-        h2 { text-align: center; margin-bottom: 8px; }
-        .meta { text-align: center; color: #666; font-size: 12px; margin-bottom: 24px; }
-        table { width: 100%; border-collapse: collapse; font-size: 13px; }
-        th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
-        th { background: #f5f5f5; }
-        .footer { margin-top: 24px; font-size: 12px; color: #999; text-align: center; }
-        .print-page { page-break-after: always; }
-        .print-page:last-child { page-break-after: auto; }
-      </style></head><body>${pages}</body></html>
-    `
   }
 
   const printRecords = (records: OutboundRecord[]) => {
     if (records.length === 0) return
     const w = window.open('', '_blank')
     if (!w) return
-    w.document.write(buildPrintDocument(records))
+    w.document.write(buildOutboundPrintDocument(records))
     w.document.close()
     w.print()
   }
