@@ -1054,6 +1054,41 @@ describe('集成测试：出库管理', () => {
       expect(rec.remark).toContain('辅料缺货已跳过')
     })
 
+    it('BOM-EQUIP-USAGE-001（P1-08）: BOM 出库按设备模板自动登记设备使用与折旧（喂 ABC 设备动因）', async () => {
+      const stamp = Date.now()
+      const specificId = await createMaterial(app, token, `OB-EQ-SP-${stamp}`, 100)
+      await inbound(app, token, specificId, `B-EQ-SP-${stamp}`, 50, 100)
+      // 设备：purchase_price=525600 / 年限1年 / 直线法 → 每分钟折旧 = 525600/(1×525600) = 1
+      const equipmentId = `eq-auto-${stamp}`
+      db.prepare(`INSERT INTO equipment (id, code, name, purchase_price, purchase_date, depreciable_life_years, residual_value, depreciation_method, total_capacity, capacity_unit, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`)
+        .run(equipmentId, `EQ-AUTO-${stamp}`, '免疫组化仪', 525600, '2026-01-01', 1, 0, 'straight_line', 0, 'minutes')
+
+      const bomRes = await request(app)
+        .post('/api/v1/boms')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ code: `OB-EQ-BOM-${stamp}`, name: '设备自动登记BOM', type: 'ihc', materials: [{ materialId: specificId, usagePerSample: 1, unit: '支', price: 100 }] })
+      const eqBomId = bomRes.body.data.id
+      db.prepare('INSERT INTO bom_equipment_templates (id, bom_id, equipment_id, usage_minutes) VALUES (?, ?, ?, ?)')
+        .run(`bet-auto-${stamp}`, eqBomId, equipmentId, 10)
+      const projRes = await request(app)
+        .post('/api/v1/projects')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ code: `OB-EQ-PROJ-${stamp}`, name: '设备自动登记项目', type: 'ihc', bomId: eqBomId, status: 'active' })
+
+      const res = await request(app)
+        .post('/api/v1/outbound/bom')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ projectId: projRes.body.data.id, bomId: eqBomId, sampleCount: 2 })
+      expect(res.status).toBe(201)
+
+      // usage_minutes = 模板10 × 样本2 = 20；折旧 = 20 × 1 = 20
+      const usage = db.prepare('SELECT usage_minutes, depreciation_cost, outbound_id FROM equipment_usage WHERE equipment_id = ? AND outbound_id = ?').get(equipmentId, res.body.data.id) as any
+      expect(usage).toBeTruthy()
+      expect(Number(usage.usage_minutes)).toBe(20)
+      expect(Number(usage.depreciation_cost)).toBeCloseTo(20, 1)
+    })
+
     it('项目已配置BOM时可只传检测项目和样本数执行标准BOM出库', async () => {
       const res = await request(app)
         .post('/api/v1/outbound/bom')

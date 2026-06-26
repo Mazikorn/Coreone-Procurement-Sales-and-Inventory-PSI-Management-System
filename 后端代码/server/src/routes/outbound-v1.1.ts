@@ -17,6 +17,7 @@ import { checkStockAlerts } from '../utils/alertChecker.js'
 import { generateNo } from '../utils/generateNo.js'
 import { buildBomSourceSnapshot, calculateFeeAmountFromStandard, calculateSlideCostWithFee, getBomPerSampleDriverQty } from '../utils/cost-calculator.js'
 import { errorMessage, recordCostException } from '../utils/cost-exceptions.js'
+import { computeEquipmentDepreciation } from '../utils/depreciation.js'
 import { writeAuditLog } from '../utils/cost-runs.js'
 
 function generateOutboundNo(): string {
@@ -718,6 +719,26 @@ router.post('/bom', (req, res) => {
       }
 
       const costMonth = new Date().toISOString().slice(0, 7)
+
+      // P1-08：BOM 出库按设备模板自动登记设备使用与折旧，喂给 ABC 设备动因，免去技术员逐台手填（目的闭环）。
+      //   仅对配置了具体 equipment_id（非仅类型）的模板自动生成；幂等由 (equipment_id, outbound_id) 保证（同 P1-16）。
+      const usageDateValue = new Date().toISOString().slice(0, 10)
+      const equipTemplates = db.prepare(`
+        SELECT bet.equipment_id, bet.usage_minutes,
+               e.purchase_price, e.residual_value, e.depreciation_method, e.total_capacity, e.depreciable_life_years
+        FROM bom_equipment_templates bet
+        JOIN equipment e ON e.id = bet.equipment_id AND e.is_deleted = 0 AND e.status = 1
+        WHERE bet.bom_id = ? AND bet.equipment_id IS NOT NULL AND bet.equipment_id != ''
+      `).all(effectiveBomId) as any[]
+      for (const tpl of equipTemplates) {
+        const usageMinutes = (Number(tpl.usage_minutes) || 0) * sc
+        if (usageMinutes <= 0) continue
+        const dup = db.prepare('SELECT id FROM equipment_usage WHERE equipment_id = ? AND outbound_id = ?').get(tpl.equipment_id, id) as any
+        if (dup) continue
+        const depreciationCost = computeEquipmentDepreciation(tpl, usageMinutes)
+        db.prepare('INSERT INTO equipment_usage (id, equipment_id, project_id, outbound_id, usage_minutes, usage_count, depreciation_cost, operator, usage_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+          .run(uuidv4(), tpl.equipment_id, effectiveProjectId || null, id, usageMinutes, sc, depreciationCost, operator, usageDateValue)
+      }
 
       // P1-01：辅料缺货已按 BR-OB-022~024 跳过（不阻断出库），但写 cost_exception 标记本次成本可能低估，
       // 保成本完整性意图——可追溯、可补料后重算，而非静默低估。
