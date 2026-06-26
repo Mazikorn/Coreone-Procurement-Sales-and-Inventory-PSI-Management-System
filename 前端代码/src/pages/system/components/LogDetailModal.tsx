@@ -132,7 +132,12 @@ export function LogDetailModal({ open, log, getLogType, getModuleLabel, onClose 
                     {Object.entries(log.requestData).map(([key, value]) => (
                       <tr key={key}>
                         <td className="px-4 py-2.5 w-[140px] bg-gray-50 font-medium text-gray-700">{key}</td>
-                        <td className="px-4 py-2.5 text-gray-900">{String(value)}</td>
+                        {/* P1-03：before/after 等嵌套对象不能用 String() 渲染（会变成 [object Object]，审计员看不到改前/改后值），改用格式化 JSON */}
+                        <td className="px-4 py-2.5 text-gray-900">
+                          {value !== null && typeof value === 'object'
+                            ? <pre className="whitespace-pre-wrap break-all text-xs text-gray-700 font-mono">{JSON.stringify(value, null, 2)}</pre>
+                            : String(value)}
+                        </td>
                       </tr>
                     ))}
                   </tbody>

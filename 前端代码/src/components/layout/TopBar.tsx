@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import { alertsApi } from '@/api/alerts'
+import { clearAuth } from '@/api/request'
 import { getAllowedPaths, getUserRole } from '@/lib/permissions'
 
 function formatTimeAgo(dateStr: string): string {
@@ -251,7 +252,7 @@ export default function TopBar() {
   ].filter(item => allowedSearchPaths.has(item.path)), [allowedSearchPaths])
 
   const handleLogout = () => {
-    localStorage.removeItem('token')
+    clearAuth() // P1-11：统一清除 token/refreshToken/user，避免共用终端身份残留（AC-01-003）
     toast.success('已退出登录')
     window.location.href = '/login'
   }

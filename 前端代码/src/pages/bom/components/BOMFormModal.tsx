@@ -26,9 +26,10 @@ export function BOMFormModal({
   onChange,
   onSubmit,
 }: Props) {
+  // P1-15：所有 Hook 必须在任何 early return 之前调用（Rules of Hooks）。
+  const [activeTab, setActiveTab] = useState<'materials' | 'reagents' | 'consumables' | 'qc'>('materials')
   if (!open) return null
 
-  const [activeTab, setActiveTab] = useState<'materials' | 'reagents' | 'consumables' | 'qc'>('materials')
   const serviceOptions = allProjects
     .filter(project => project.type === form.type && (!project.bomId || project.id === form.serviceId))
     .map(project => ({

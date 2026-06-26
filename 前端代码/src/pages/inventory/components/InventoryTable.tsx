@@ -67,17 +67,19 @@ function getStatusInfo(item: InventoryRow) {
   const expiry = item.expiry && item.expiry !== '-' ? new Date(item.expiry) : null
   const daysLeft = expiry ? Math.ceil((expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)) : 999
 
+  // P1-17：状态优先级须与 PRD/后端一致：缺货 > 过期 > 即将过期(warning) > 低库存 > 正常。
+  // 修复前"库存不足"排在"即将过期"之前，会让既低库存又临期的批次被低库存标签掩盖，削弱"先清临期"。
   if (item.stock === 0) {
     return { label: '已缺货', badgeClass: 'bg-red-50 text-red-600' }
   }
   if (expiry && daysLeft < 0) {
     return { label: '已过期', badgeClass: 'bg-red-50 text-red-600' }
   }
-  if (item.stock <= item.minStock) {
-    return { label: '库存不足', badgeClass: 'bg-orange-50 text-orange-600' }
-  }
   if (expiry && daysLeft <= 30) {
     return { label: '即将过期', badgeClass: 'bg-yellow-50 text-yellow-700' }
+  }
+  if (item.stock <= item.minStock) {
+    return { label: '库存不足', badgeClass: 'bg-orange-50 text-orange-600' }
   }
   return { label: '正常', badgeClass: 'bg-green-50 text-green-600' }
 }

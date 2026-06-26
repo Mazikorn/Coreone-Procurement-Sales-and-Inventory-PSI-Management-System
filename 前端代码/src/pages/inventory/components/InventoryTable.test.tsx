@@ -101,6 +101,16 @@ function makeRow(materialId: string, code: string, stock: number): InventoryRow 
 }
 
 describe('InventoryTable', () => {
+  it('P1-17: 既低库存又临期的批次显示「即将过期」而非「库存不足」（优先级 warning > low-stock）', () => {
+    const near = new Date(Date.now() + 10 * 86400000).toISOString().slice(0, 10)
+    // stock 1 ≤ minStock 5（低库存）且 10 天内到期（即将过期）
+    const row = { ...makeRow('mat-p117', 'INV-P117', 1), minStock: 5, expiry: near }
+    renderTable([row])
+    // 唯一一行低库存+临期：修复后状态徽标应为「即将过期」（桌面/移动双视图各一→≥2）；
+    // 修复前会因优先级倒置渲染为「库存不足」徽标，此处即将过期徽标计数将不足。
+    expect(screen.getAllByText('即将过期').length).toBeGreaterThanOrEqual(2)
+  })
+
   it('按物料身份分组，避免同名不同编码物料被合并出库', () => {
     const data = [
       makeRow('mat-a', 'INV-SAME-A', 5),
