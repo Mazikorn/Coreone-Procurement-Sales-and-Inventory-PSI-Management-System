@@ -421,8 +421,8 @@ export default function SupplierReturns() {
       })
       setMaterialBatches([])
       refresh()
-    } catch (e: any) {
-      toast.error(e?.response?.data?.message || '创建失败')
+    } catch {
+      // P2：创建失败原因由全局响应拦截器统一 toast 后端真实消息；原 e?.response?.data?.message 取值路径错误（拦截器读 data.error.message）恒退化为通用文案
     } finally {
       setIsSubmitting(false)
     }
@@ -451,8 +451,8 @@ export default function SupplierReturns() {
       setRecordToCancelStatus(null)
       setPendingStatusTransition(null)
       refresh()
-    } catch (e: any) {
-      toast.error(e?.response?.data?.message || '状态更新失败')
+    } catch {
+      // P2：状态更新失败原因由全局响应拦截器统一提示后端真实消息，不再重复弹通用文案
     }
   }
 
@@ -479,8 +479,8 @@ export default function SupplierReturns() {
       setDeleteConfirmOpen(false)
       setRecordToDelete(null)
       refresh()
-    } catch (e: any) {
-      toast.error(e?.response?.data?.message || '删除失败')
+    } catch {
+      // P2：删除失败原因由全局响应拦截器统一提示后端真实消息，不再重复弹通用文案
     }
   }
 

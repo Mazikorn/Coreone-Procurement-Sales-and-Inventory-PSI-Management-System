@@ -343,8 +343,8 @@ export function useLocationsPage() {
           setExpandedIds(prev => new Set(prev).add(form.parentId))
         }
       }
-    } catch (e) {
-      toast.error((e as any)?.response?.data?.error?.message || '保存失败')
+    } catch {
+      // P2：保存失败原因由全局响应拦截器统一 toast 后端真实消息，不再重复弹通用文案
     }
   }
 
@@ -356,7 +356,7 @@ export function useLocationsPage() {
       const check = await locationApi.checkDeletable(id)
       setDeleteCheck(check)
     } catch {
-      toast.error('删除影响检查失败')
+      // P2：删除影响检查失败原因由全局响应拦截器统一提示后端真实消息，不再重复弹通用文案
     } finally {
       setCheckingDelete(false)
     }
@@ -374,8 +374,8 @@ export function useLocationsPage() {
       toast.success('删除成功')
       closeDelete()
       fetchData()
-    } catch (e) {
-      toast.error('删除失败')
+    } catch {
+      // P2：删除失败原因由全局响应拦截器统一提示后端真实消息，不再重复弹通用文案
     } finally {
       setDeleting(false)
     }
@@ -397,8 +397,8 @@ export function useLocationsPage() {
     try {
       const check = await locationApi.checkStatus(row.id, newStatus)
       setStatusCheck(check)
-    } catch (e) {
-      toast.error('状态变更影响检查失败')
+    } catch {
+      // P2：状态变更影响检查失败原因由全局响应拦截器统一提示后端真实消息，不再重复弹通用文案
     } finally {
       setCheckingStatus(false)
     }
@@ -415,8 +415,8 @@ export function useLocationsPage() {
       toast.success(statusTargetStatus === 'active' ? '已启用' : '已停用')
       closeStatusChange()
       fetchData()
-    } catch (e: any) {
-      toast.error(e?.response?.data?.message || '操作失败')
+    } catch {
+      // P2：停用/启用失败原因由全局响应拦截器统一提示后端真实消息（原 data.message 路径错误恒退化为通用文案）
     } finally {
       setUpdatingStatus(false)
     }

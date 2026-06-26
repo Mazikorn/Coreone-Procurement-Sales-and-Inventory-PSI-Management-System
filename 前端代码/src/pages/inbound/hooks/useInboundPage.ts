@@ -600,8 +600,8 @@ export function useInboundPage() {
       })
       closeModal()
       refresh()
-    } catch (e) {
-      toast.error('取消失败')
+    } catch {
+      // P2：取消失败原因由全局响应拦截器统一提示后端真实消息，不再重复弹通用文案
     }
   }
 
@@ -745,8 +745,8 @@ export function useInboundPage() {
       toast.success('恢复成功', { description: '入库记录已恢复' })
       closeModal()
       refresh()
-    } catch (e) {
-      toast.error('恢复失败', { description: '请检查后端接口是否支持状态恢复' })
+    } catch {
+      // P2：恢复失败原因由全局响应拦截器统一提示后端真实消息，不再重复弹通用文案
     }
   }
 

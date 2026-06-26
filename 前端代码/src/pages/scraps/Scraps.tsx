@@ -348,8 +348,8 @@ export default function Scraps() {
       setForm({ materialId: '', batchId: '', quantity: 1, reason: '', responsiblePerson: '', responsibleDepartment: '', remark: '' })
       refresh()
       fetchRefs()
-    } catch (e) {
-      toast.error('报废登记失败')
+    } catch {
+      // P2：报废登记失败原因由全局响应拦截器统一 toast 后端真实消息（如批次冲突/库存不足），不再重复弹通用文案
     } finally {
       setIsSubmitting(false)
     }
@@ -379,8 +379,8 @@ export default function Scraps() {
       setDeleteConfirmOpen(false)
       setRecordToDelete(null)
       refresh()
-    } catch (e) {
-      toast.error('撤销失败')
+    } catch {
+      // P2：撤销失败原因由全局响应拦截器统一提示后端真实消息，不再重复弹通用文案
     }
   }
 
@@ -410,8 +410,8 @@ export default function Scraps() {
       setReviewReason('')
       refresh()
       fetchRefs()
-    } catch (e) {
-      toast.error('复核失败')
+    } catch {
+      // P2：复核失败原因（如自审禁止/状态冲突）由全局响应拦截器统一提示，不再重复弹通用文案
     }
   }
 
