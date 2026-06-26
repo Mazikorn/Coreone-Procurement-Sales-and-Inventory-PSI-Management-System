@@ -140,6 +140,29 @@ router.post('/', (req, res) => {
     const inv = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId) as any
     if (!inv || inv.stock < quantity) { error(res, '库存不足', 'STOCK_INSUFFICIENT', 422); return }
 
+    // P1-13: 退款金额与来源成本勾稽，refundAmount 不得超过 来源单价 × 数量。
+    // 来源单价优先取关联入库单 price，其次该物料批次最近 inbound_price，最后 material.price。
+    const refund = Number(refundAmount) || 0
+    if (refund > 0) {
+      let sourceUnitCost = 0
+      if (inboundRecordId) {
+        const ir = db.prepare('SELECT price FROM inbound_records WHERE id = ? AND is_deleted = 0').get(inboundRecordId) as any
+        sourceUnitCost = Number(ir?.price) || 0
+      }
+      if (sourceUnitCost <= 0) {
+        const b = db.prepare('SELECT inbound_price FROM batches WHERE material_id = ? ORDER BY created_at DESC').get(materialId) as any
+        sourceUnitCost = Number(b?.inbound_price) || 0
+      }
+      if (sourceUnitCost <= 0) {
+        sourceUnitCost = Number(material.price) || 0
+      }
+      const refundCap = sourceUnitCost * Number(quantity)
+      // 浮点容差，避免边界等值误判
+      if (refundCap > 0 && refund > refundCap + 1e-6) {
+        error(res, `退款金额(${refund})超过来源成本上界(${refundCap})`, 'REFUND_EXCEEDS_SOURCE_COST', 422); return
+      }
+    }
+
     db.exec('BEGIN IMMEDIATE')
     try {
       const id = uuidv4()
