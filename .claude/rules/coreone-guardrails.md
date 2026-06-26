@@ -18,7 +18,7 @@
 - **React 函数组件** 优先，不使用 class 组件
 - **TypeScript 严格模式**，所有 props 和返回值需有类型
 - **Tailwind CSS** 用于样式，不内联 `style={{}}` 除非动态计算
-- **React Query** 用于服务端状态管理，不用 useEffect 直接 fetch
+- **服务端状态**：现状采用 `usePagination` + 自定义页面 hook（`useXxxPage`）+ 统一 `@/api/request`（axios 实例，全局响应拦截器统一 toast/解包）。**React Query 未启用**（2026-06-25 PM 决策选项 A：移除死依赖、规范对齐现实）；如未来前端规模显著扩张，再作为独立技术投资专项评估迁移到 React Query，届时先在 1–2 个新页面试点沉淀规范再扩散，不做大爆炸重写
 - **Zod** 用于表单验证和 API 响应校验
 - **组件文件** 不超过 400 行，超过则拆分
 - **Hooks** 提取可复用逻辑，命名以 `use` 开头
