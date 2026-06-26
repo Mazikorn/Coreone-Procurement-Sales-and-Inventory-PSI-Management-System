@@ -12,8 +12,8 @@
 
 **移植 codex 线工作到真 master + Phase 2/3 审计修复 → 两 PR ✅；新会话交接计划已就绪**
 - 关键结构事实：codex 工作线与 `origin/master` **无共同 git 历史**（两棵 fork）→ 不能覆盖（会毁真实 v1.1.0+131 协作 commit）。分阶段移植到真 master：**PR #2** ABC 子系统（引擎+前端+outbound hook，纯增量 114 文件，黄金 13/13、master 零回退）；**PR #3** 审计修复（**4 P0 + 8 P1 + 3 大 P1 + 全量双 toast 去重**，后端内存测试 33 绿/tsc 0、前端受影响区绿/build 绿）。均 worktree off origin/master、委托 agent/Workflow + 主循环逐项独立复验、OPEN 待评审。
-- 用户本地实跑发现 3 类前端问题（①设计规范 ②中文文案 ③交互体验），将在新会话系统梳理处理。
-- ⭐ **新会话开局必读** [session-log/2026-06-26.md](session-log/2026-06-26.md) 末「🔖 新会话交接计划」：含用户 3 类前端问题（A1 设计 checklist/A2 文案/A3 交互）+ 剩余待办（B1 成本池期间 UX/B2 CI 需 workflow scope/B3 P1-08 设备子系统·B4 P1-14 应付过账=待 PM 新功能）+ 建议顺序 + worktree/本地实跑方法。
+- 用户本地实跑发现 **4 类**前端问题（①设计规范 ②中文文案 ③交互体验 ④页面"很丑"/视觉美观），明确要求**先排查+确认（用户亲自参与）再修**，不要跳过排查直接改、也不要替用户排查。
+- ⭐ **新会话开局必读** [session-log/2026-06-26.md](session-log/2026-06-26.md) 末「🔖 新会话交接计划」：含用户 4 类前端问题（A1 设计 checklist/A2 文案/A3 交互/**A4 视觉美观+优化方向①②③**）+ **F1 排查确认→F2 修复**流程 + 剩余待办（B1 成本池期间/B2 CI 需 workflow scope/B3·B4 待 PM 新功能）+ worktree/本地实跑方法。
 
 **DatabaseManager 冗余 is_deleted 迁移块清理 ✅ — 删错序/吞错死代码，零回归**
 - 报告称 `purchase_orders.is_deleted` 内联 ALTER 迁移在 CREATE TABLE 之前 → 全新库 `no such table` 被吞 → JOIN `po.is_deleted=0` 报 500。实跑核查（`:memory:`）发现**当前代码已不复现**：CREATE TABLE 已含该列(line 365) + 末尾统一 `ensureColumn`(line 662) 兜底旧库。
