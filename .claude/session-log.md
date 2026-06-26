@@ -10,6 +10,11 @@
 
 ## 当前状态（2026-06-26）
 
+**移植 codex 线工作到真 master + Phase 2/3 审计修复 → 两 PR ✅；新会话交接计划已就绪**
+- 关键结构事实：codex 工作线与 `origin/master` **无共同 git 历史**（两棵 fork）→ 不能覆盖（会毁真实 v1.1.0+131 协作 commit）。分阶段移植到真 master：**PR #2** ABC 子系统（引擎+前端+outbound hook，纯增量 114 文件，黄金 13/13、master 零回退）；**PR #3** 审计修复（**4 P0 + 8 P1 + 3 大 P1 + 全量双 toast 去重**，后端内存测试 33 绿/tsc 0、前端受影响区绿/build 绿）。均 worktree off origin/master、委托 agent/Workflow + 主循环逐项独立复验、OPEN 待评审。
+- 用户本地实跑发现 3 类前端问题（①设计规范 ②中文文案 ③交互体验），将在新会话系统梳理处理。
+- ⭐ **新会话开局必读** [session-log/2026-06-26.md](session-log/2026-06-26.md) 末「🔖 新会话交接计划」：含用户 3 类前端问题（A1 设计 checklist/A2 文案/A3 交互）+ 剩余待办（B1 成本池期间 UX/B2 CI 需 workflow scope/B3 P1-08 设备子系统·B4 P1-14 应付过账=待 PM 新功能）+ 建议顺序 + worktree/本地实跑方法。
+
 **DatabaseManager 冗余 is_deleted 迁移块清理 ✅ — 删错序/吞错死代码，零回归**
 - 报告称 `purchase_orders.is_deleted` 内联 ALTER 迁移在 CREATE TABLE 之前 → 全新库 `no such table` 被吞 → JOIN `po.is_deleted=0` 报 500。实跑核查（`:memory:`）发现**当前代码已不复现**：CREATE TABLE 已含该列(line 365) + 末尾统一 `ensureColumn`(line 662) 兜底旧库。
 - 真正残留为**死代码**：line 188–222 四个内联 `is_deleted` 迁移块（purchase_orders/return_records/scrap_records/stocktaking_records），全部错序在各自 CREATE 之前、每次 init 抛错被吞、且与「CREATE 含列 + ensureColumn」完全重复 → **删除**，替换说明注释。正确顺序的 inbound_records 块(177–186)保持不动。
