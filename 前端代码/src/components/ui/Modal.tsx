@@ -24,7 +24,7 @@ export function Modal({ title, children, onClose, size = 'md' }: ModalProps) {
         aria-modal="true"
         aria-labelledby="modal-title"
         className={cn(
-          'w-full rounded-lg bg-white shadow-xl max-h-[90vh] overflow-hidden flex flex-col',
+          'w-full rounded-lg bg-white shadow-lg max-h-[90vh] overflow-hidden flex flex-col',
           sizeClass[size]
         )}
       >
