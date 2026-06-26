@@ -8,7 +8,16 @@
 
 ---
 
-## 当前状态（2026-06-25）
+## 当前状态（2026-06-26）
+
+**DatabaseManager 冗余 is_deleted 迁移块清理 ✅ — 删错序/吞错死代码，零回归**
+- 报告称 `purchase_orders.is_deleted` 内联 ALTER 迁移在 CREATE TABLE 之前 → 全新库 `no such table` 被吞 → JOIN `po.is_deleted=0` 报 500。实跑核查（`:memory:`）发现**当前代码已不复现**：CREATE TABLE 已含该列(line 365) + 末尾统一 `ensureColumn`(line 662) 兜底旧库。
+- 真正残留为**死代码**：line 188–222 四个内联 `is_deleted` 迁移块（purchase_orders/return_records/scrap_records/stocktaking_records），全部错序在各自 CREATE 之前、每次 init 抛错被吞、且与「CREATE 含列 + ensureColumn」完全重复 → **删除**，替换说明注释。正确顺序的 inbound_records 块(177–186)保持不动。
+- 验证：全新内存库四表 `is_deleted` 均 present、supplier-returns 形态 JOIN OK；旧库 legacy 表 ensureColumn 幂等补列(旧行默认 0)、二次 init 不报错；returns/stocktaking/purchase-order-inbound/scraps 单文件隔离全绿（scraps SC-004 多文件偶发 404 经 stash 对照确认为既有跨文件 flakiness，与本改动无关）。详见 [session-log/2026-06-26.md](session-log/2026-06-26.md)。
+
+---
+
+## 历史状态（2026-06-25）
 
 **非 ABC 基础功能审查 + P0 批量修复 ✅ — 审计(107 子代理)产报告 → 6/6 P0 修复(零回归)**
 - 用户转向：ABC 之外 PSI 17 模块组产品目的+前后端审查。Workflow `wf_eef2c46b-f41`：每模块 3 维并行→对 C/H 对抗验证→横向交叉。报告 `docs/COREONE-基础功能审查-产品目的与前后端-2026-06-25.md`，脚本 `.claude/workflows/base-feature-audit.js`（与 06-20 UX 复核互补）。297 发现(C3/H50/M100/L144)；53 C/H 验证→**确认 44/存疑 2/证伪 7**。横向：事务/库存守恒整体可靠、RBAC 无越权写、设计规范 shadow-xl/React Query 0 用系统性违反。
@@ -111,6 +120,7 @@
 | 2026-06-25 | [2026-06-25.md](session-log/2026-06-25.md) | M2（L2 schema 一次到位）+ M3（L3 引擎重建）完成：黄金用例红→绿（¥120/35/52.5/Σ1400），对抗审查各 0 blocking |
 | 2026-06-11 | [2026-06-11-governance-docs.md](session-log/2026-06-11-governance-docs.md) | 治理文档体系建立：15 份核心文档全部生成，79 项待办 |
 | 2026-06-11 | [2026-06-11-e2e-phase3-complete.md](session-log/2026-06-11-e2e-phase3-complete.md) | Phase 3 完成：19 失败全部修复（后端 UNIQUE + 测试断言） |
+| 2026-06-26 | [2026-06-26.md](session-log/2026-06-26.md) | DatabaseManager 删四个冗余/错序 is_deleted 迁移块（零回归） |
 | 2026-06-10 | [2026-06-10-e2e-phase3-fixes.md](session-log/2026-06-10-e2e-phase3-fixes.md) | Phase 3 修复：abc-cost 全部通过 + dashboard/alerts 修复 |
 | 2026-06-09 | [2026-06-09-e2e-phase2.md](session-log/2026-06-09-e2e-phase2.md) | Phase 1 完成 + Phase 2 全量回归 + Chromium 崩溃根因 |
 | 2026-06-08 | [2026-06-08.md](session-log/2026-06-08.md) | E2E登录超时根因修复：auth.spec.ts 100%通过 |

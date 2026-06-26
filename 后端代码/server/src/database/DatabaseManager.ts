@@ -185,41 +185,10 @@ export function initializeDatabase(): void {
     }
   } catch (_e) { /* ignore */ }
 
-  // 兼容旧数据库：添加 purchase_orders.is_deleted 字段
-  try {
-    const poCols = database.prepare("PRAGMA table_info(purchase_orders)").all() as any[]
-    if (!poCols.find(c => c.name === 'is_deleted')) {
-      database.exec("ALTER TABLE purchase_orders ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0")
-      console.log('Migrated purchase_orders table: added is_deleted column')
-    }
-  } catch (_e) { /* ignore */ }
-
-  // 兼容旧数据库：添加 return_records.is_deleted 字段
-  try {
-    const rrCols = database.prepare("PRAGMA table_info(return_records)").all() as any[]
-    if (!rrCols.find(c => c.name === 'is_deleted')) {
-      database.exec("ALTER TABLE return_records ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0")
-      console.log('Migrated return_records table: added is_deleted column')
-    }
-  } catch (_e) { /* ignore */ }
-
-  // 兼容旧数据库：添加 scrap_records.is_deleted 字段
-  try {
-    const srCols = database.prepare("PRAGMA table_info(scrap_records)").all() as any[]
-    if (!srCols.find(c => c.name === 'is_deleted')) {
-      database.exec("ALTER TABLE scrap_records ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0")
-      console.log('Migrated scrap_records table: added is_deleted column')
-    }
-  } catch (_e) { /* ignore */ }
-
-  // 兼容旧数据库：添加 stocktaking_records.is_deleted 字段
-  try {
-    const stCols = database.prepare("PRAGMA table_info(stocktaking_records)").all() as any[]
-    if (!stCols.find(c => c.name === 'is_deleted')) {
-      database.exec("ALTER TABLE stocktaking_records ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0")
-      console.log('Migrated stocktaking_records table: added is_deleted column')
-    }
-  } catch (_e) { /* ignore */ }
+  // 说明：purchase_orders / return_records / scrap_records / stocktaking_records 的 is_deleted 列
+  // 已直接写入各自的 CREATE TABLE 语句（全新库即带该列），旧库则由下方统一的 ensureColumn(...)
+  // 幂等兜底迁移（见 “ABC 成本相关表” 处）。此前这里有四个内联 ALTER 迁移块，位置在对应
+  // CREATE TABLE 之前 —— 在全新库上会抛出 “no such table” 被 catch 吞掉，属冗余死代码，已移除。
   database.exec(`
     CREATE TABLE IF NOT EXISTS outbound_records (id TEXT PRIMARY KEY, outbound_no TEXT NOT NULL UNIQUE, type TEXT NOT NULL, project_id TEXT, total_cost DECIMAL(18, 4) NOT NULL DEFAULT 0, operator TEXT NOT NULL, approver TEXT, approved_at TEXT, status TEXT NOT NULL DEFAULT 'completed', remark TEXT, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, created_by TEXT, updated_by TEXT, is_deleted INTEGER NOT NULL DEFAULT 0)
   `)
