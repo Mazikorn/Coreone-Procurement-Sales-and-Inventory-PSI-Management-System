@@ -315,8 +315,8 @@ export default function Transfers() {
       setForm({ materialId: '', batchNo: '', quantity: 1, fromLocationId: '', toLocationId: '', remark: '' })
       setMaterialBatches([])
       refresh()
-    } catch (e) {
-      toast.error((e as any)?.response?.data?.message || '调拨登记失败')
+    } catch {
+      // P2：错误提示由全局响应拦截器统一 toast 后端真实消息；此处不再重复弹通用文案（原取值路径错误恒退化）
     } finally {
       setIsSubmitting(false)
     }
@@ -353,8 +353,8 @@ export default function Transfers() {
       setDeleteConfirmOpen(false)
       setRecordToDelete(null)
       refresh()
-    } catch (e) {
-      toast.error('撤销失败')
+    } catch {
+      // P2：撤销失败原因由全局拦截器统一提示，不再重复弹通用文案
     }
   }
 
