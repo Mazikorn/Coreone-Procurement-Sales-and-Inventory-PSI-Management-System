@@ -75,7 +75,7 @@ COREONE 采用 **后端双层 + 前端三层** 的权限控制架构：
 | 库存列表 | `/inventory` | Y | Y | Y | Y | - | Y | Y |
 | 出库管理 | `/outbound` | Y | Y | - | - | - | - | - |
 | 退库管理 | `/returns` | Y | Y | - | - | - | - | - |
-| 退货给供应商 | `/supplier-returns` | Y | Y | - | Y | - | - | - |
+| 退货给供应商 | `/supplier-returns` | Y | Y | - | Y | 只读 | - | - |
 | 调拨管理 | `/transfers` | Y | Y | - | - | - | - | - |
 | 报废管理 | `/scraps` | Y | Y | - | - | - | - | - |
 | 库存盘点 | `/stocktaking` | Y | Y | - | - | - | - | - |
@@ -181,7 +181,7 @@ COREONE 采用 **后端双层 + 前端三层** 的权限控制架构：
 | `returns-v1.1.ts` | `/api/v1/returns` | admin, warehouse_manager（创建/撤销写操作日志并刷新预警） |
 | `scraps-v1.1.ts` | `/api/v1/scraps` | admin, warehouse_manager |
 | `transfers-v1.1.ts` | `/api/v1/transfers` | admin, warehouse_manager |
-| `supplier-returns-v1.1.ts` | `/api/v1/supplier-returns` | admin, warehouse_manager, procurement（创建/删除/状态流转有审计；库存变动刷新预警） |
+| `supplier-returns-v1.1.ts` | `/api/v1/supplier-returns` | 读: admin, warehouse_manager, procurement, finance(只读, `supplier_returns:view`)；写(创建/删除/状态流转/改退款额): admin, warehouse_manager, procurement（有审计；库存变动刷新预警） |
 
 #### 项目与 BOM
 
@@ -247,7 +247,7 @@ COREONE 采用 **后端双层 + 前端三层** 的权限控制架构：
 | 退库 | admin, wm | admin, wm |
 | 报废 | admin, wm | admin, wm |
 | 调拨 | admin, wm | admin, wm |
-| 供应商退货 | admin, wm, proc | admin, wm, proc |
+| 供应商退货 | admin, wm, proc, finance(只读) | admin, wm, proc |
 | 检测项目 | admin, wm, tech, path, finance | admin, tech |
 | BOM | admin, wm, tech, path, finance | admin, tech |
 | 设备 | admin, tech, path | admin (类型); admin, tech, path (设备/工时) |

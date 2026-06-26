@@ -356,6 +356,59 @@ describe('供应商退货', () => {
     expect(ok.status).toBe(200)
   })
 
+  it('SR-RBAC-FINANCE-001（P1-14）: finance 可只读访问列表，但不能创建退货（写仍限 admin/仓管/采购）', async () => {
+    const financeToken = await loginRole(app, 'sunli')
+    const list = await request(app).get('/api/v1/supplier-returns').set('Authorization', `Bearer ${financeToken}`)
+    expect(list.status).toBe(200)
+    const seed = seedSupplierReturnMaterial(db, `fin-${Date.now()}`)
+    const create = await request(app)
+      .post('/api/v1/supplier-returns')
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({ materialId: seed.materialId, supplierId: seed.supplierId, quantity: 1, reason: 'finance 不应能创建' })
+    expect(create.status).toBe(403)
+  })
+
+  it('SR-REFUND-EDIT-001（P1-14）: 退款金额创建后可由写角色修正，超成本上界被拒、已退款不可改', async () => {
+    const seed = seedSupplierReturnMaterialWithBatch(db, `refedit-${Date.now()}`)
+    const create = await request(app)
+      .post('/api/v1/supplier-returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ materialId: seed.materialId, supplierId: seed.supplierId, batchId: seed.batchId, quantity: 2, refundAmount: 10, reason: '建退货' })
+    expect(create.status).toBe(200)
+    const id = create.body.data.id
+    // 写角色修正退款额（≤ 成本上界 12×2=24）
+    const edit = await request(app)
+      .put(`/api/v1/supplier-returns/${id}/refund-amount`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ refundAmount: 24 })
+    expect(edit.status).toBe(200)
+    const rec = db.prepare('SELECT refund_amount FROM supplier_returns WHERE id = ?').get(id) as any
+    expect(Number(rec.refund_amount)).toBe(24)
+    // finance 只读，不能改退款额
+    const financeToken = await loginRole(app, 'sunli')
+    const financeEdit = await request(app)
+      .put(`/api/v1/supplier-returns/${id}/refund-amount`)
+      .set('Authorization', `Bearer ${financeToken}`)
+      .send({ refundAmount: 15 })
+    expect(financeEdit.status).toBe(403)
+    // 超上界被拒
+    const over = await request(app)
+      .put(`/api/v1/supplier-returns/${id}/refund-amount`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ refundAmount: 999 })
+    expect(over.status).toBe(422)
+    // 流转到 refunded 后不可再改
+    for (const s of ['shipped', 'received', 'refunded']) {
+      const st = await request(app).put(`/api/v1/supplier-returns/${id}/status`).set('Authorization', `Bearer ${token}`).send({ status: s })
+      expect(st.status).toBe(200)
+    }
+    const afterRefunded = await request(app)
+      .put(`/api/v1/supplier-returns/${id}/refund-amount`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ refundAmount: 20 })
+    expect(afterRefunded.status).toBe(409)
+  })
+
   it('SR-ALERT-001: 供应商退货扣减到安全线后触发低库存预警，删除后自动关闭', async () => {
     const { materialId, supplierId, batchId } = seedSupplierReturnMaterialWithBatch(db, `alert-${Date.now()}`)
     db.prepare('UPDATE materials SET safety_stock = 8 WHERE id = ?').run(materialId)

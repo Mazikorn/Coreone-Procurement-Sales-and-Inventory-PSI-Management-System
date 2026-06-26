@@ -172,7 +172,7 @@ app.use('/api/v1/locations', authenticateToken, requireRole('admin', 'warehouse_
 app.use('/api/v1/returns', authenticateToken, requireRole('admin', 'warehouse_manager'), returnRoutes)
 app.use('/api/v1/scraps', authenticateToken, requireRole('admin', 'warehouse_manager'), scrapRoutes)
 app.use('/api/v1/transfers', authenticateToken, requireRole('admin', 'warehouse_manager'), transferRoutes)
-app.use('/api/v1/supplier-returns', authenticateToken, requireRole('admin', 'warehouse_manager', 'procurement'), supplierReturnRoutes)
+app.use('/api/v1/supplier-returns', authenticateToken, requireRole('admin', 'warehouse_manager', 'procurement', 'finance'), supplierReturnRoutes)
 
 // 路由注册 - 检测项目/BOM 主数据；仓管出库需要只读选择，写入由模块权限守卫。
 app.use('/api/v1/projects', authenticateToken, requireRole('admin', 'warehouse_manager', 'technician', 'pathologist'), projectRoutes)

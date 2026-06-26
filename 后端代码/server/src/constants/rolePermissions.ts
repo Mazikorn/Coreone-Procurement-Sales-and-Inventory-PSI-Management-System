@@ -21,6 +21,7 @@ export const ROLE_PERMISSIONS: Record<string, string[]> = {
   finance: [
     'dashboard', 'cost_analysis', 'logs', 'alerts', 'labor_times',
     'projects:view', 'bom:view', 'materials:view',
+    'supplier_returns:view', // P1-14：财务只读访问供应商退货（退款应收对账），写操作仍限 admin/仓管/采购
   ],
   manager: [
     'dashboard',

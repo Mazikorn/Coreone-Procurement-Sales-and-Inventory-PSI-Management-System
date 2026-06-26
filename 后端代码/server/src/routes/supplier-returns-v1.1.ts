@@ -7,8 +7,12 @@ import { consumeInventoryLocationStock, restoreInventoryLocationStock } from '..
 import { consumeBatchLocationStockByLocations, getBatchLocationIds, restoreBatchLocationStock } from '../utils/batch-locations.js'
 import { checkStockAlerts } from '../utils/alertChecker.js'
 import { logOperation } from '../utils/operation-logger.js'
+import { requireRole } from '../middleware/auth.js'
 
 const router = Router()
+// P1-14：finance 在 app.ts 路由级 + supplier_returns:view 获只读访问；写操作（创建/状态流转/删除/改退款额）
+// 仍限 admin/仓管/采购（解决"退款额创建后不可改"——写角色现可修正）。
+const requireSupplierReturnWrite = requireRole('admin', 'warehouse_manager', 'procurement')
 const BATCH_RESTORE_EPSILON = 0.000001
 const SUPPLIER_RETURN_STATUSES = new Set(['pending', 'shipped', 'received', 'refunded', 'cancelled'])
 
@@ -292,7 +296,7 @@ router.get('/:id', (req, res) => {
 })
 
 // 创建退货记录
-router.post('/', (req, res) => {
+router.post('/', requireSupplierReturnWrite, (req, res) => {
   try {
     const { materialId, batchId, quantity, supplierId, purchaseOrderId, inboundRecordId, reason, refundAmount, trackingNo, remark } = req.body
     const qty = Number(quantity)
@@ -483,7 +487,43 @@ router.post('/', (req, res) => {
 })
 
 // 更新状态
-router.put('/:id/status', (req, res) => {
+// P1-14：退款金额可编辑（解决"创建后不可改"）。仅 refunded/cancelled 之前可改；沿用 P1-13 成本上界。
+router.put('/:id/refund-amount', requireSupplierReturnWrite, (req, res) => {
+  try {
+    const { refundAmount } = req.body
+    const amount = Number(refundAmount)
+    if (refundAmount === undefined || refundAmount === null || refundAmount === '' || !Number.isFinite(amount) || amount < 0) {
+      error(res, '退款金额必填且不能为负数', 'INVALID_PARAMETER', 400); return
+    }
+    const db = getDatabase()
+    const record = db.prepare('SELECT * FROM supplier_returns WHERE id = ? AND is_deleted = 0').get(req.params.id) as any
+    if (!record) { error(res, '记录不存在', 'NOT_FOUND', 404); return }
+    if (record.status === 'refunded' || record.status === 'cancelled') {
+      error(res, `退货已${record.status === 'refunded' ? '退款' : '取消'}，退款金额不可再修改`, 'CONFLICT', 409); return
+    }
+    if (amount > 0 && record.batch_id) {
+      const batch = db.prepare('SELECT inbound_price FROM batches WHERE id = ?').get(record.batch_id) as any
+      const unitCost = Number(batch?.inbound_price)
+      if (Number.isFinite(unitCost) && unitCost > 0) {
+        const maxRefund = unitCost * Number(record.quantity)
+        if (amount > maxRefund + 0.01) {
+          error(res, `退款金额不能超过来源批次成本 ${maxRefund.toFixed(2)}`, 'REFUND_EXCEEDS_COST', 422); return
+        }
+      }
+    }
+    const before = Number(record.refund_amount || 0)
+    db.prepare('UPDATE supplier_returns SET refund_amount = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(amount, req.params.id)
+    logOperation(db, req as any, {
+      operation: 'PUT /supplier-returns/:id/refund-amount',
+      description: '修改供应商退货退款金额',
+      requestData: { module: 'supplier_returns', id: req.params.id, returnNo: record.return_no, before, after: amount },
+      responseData: { id: req.params.id, refundAmount: amount },
+    })
+    success(res, { id: req.params.id, refundAmount: amount })
+  } catch (err: any) { error(res, err.message) }
+})
+
+router.put('/:id/status', requireSupplierReturnWrite, (req, res) => {
   try {
     const { status } = req.body
     if (!status || !SUPPLIER_RETURN_STATUSES.has(status)) {
@@ -584,7 +624,7 @@ router.put('/:id/status', (req, res) => {
 })
 
 // 删除（仅 pending 状态可删除，恢复库存）
-router.delete('/:id', (req, res) => {
+router.delete('/:id', requireSupplierReturnWrite, (req, res) => {
   try {
     const db = getDatabase()
     const operator = (req as any).user?.username || 'system'
