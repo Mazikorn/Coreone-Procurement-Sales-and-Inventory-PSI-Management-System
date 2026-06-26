@@ -419,6 +419,34 @@ describe('预警处理', () => {
     })
   })
 
+  it('ALERT-STAGNANT-001（P1-09）: 有库存且超阈值天数无出库的物料生成呆滞预警（此前空壳）', async () => {
+    const stamp = Date.now()
+    const suffix = `stagnant-${stamp}`
+    const categoryId = `cat-${suffix}`
+    const materialId = `mat-${suffix}`
+    db.prepare('INSERT INTO material_categories (id, code, name, level) VALUES (?, ?, ?, ?)')
+      .run(categoryId, `CAT-${suffix}`, '呆滞测试分类', 1)
+    db.prepare('INSERT INTO materials (id, code, name, spec, unit, category_id, min_stock, safety_stock) VALUES (?, ?, ?, ?, ?, ?, 0, 0)')
+      .run(materialId, `MAT-${suffix}`, `呆滞物料-${suffix}`, '1ml', '瓶', categoryId)
+    db.prepare('INSERT INTO inventory (id, material_id, stock, locked_stock) VALUES (?, ?, ?, 0)')
+      .run(`inv-${suffix}`, materialId, 20)
+    // 在库批次到货于很久以前（>90 天），且该物料从无出库 → 呆滞
+    db.prepare("INSERT INTO batches (id, material_id, batch_no, quantity, remaining, inbound_id, inbound_price, status, created_at) VALUES (?, ?, ?, 20, 20, ?, 10, 1, '2020-01-01 00:00:00')")
+      .run(`batch-${suffix}`, materialId, `B-${suffix}`, `inb-${suffix}`)
+
+    const generate = await request(app).post('/api/v1/alerts/generate').set('Authorization', `Bearer ${token}`)
+    expect(generate.status).toBe(200)
+
+    const pending = await request(app)
+      .get('/api/v1/alerts')
+      .query({ keyword: suffix, status: 'pending' })
+      .set('Authorization', `Bearer ${token}`)
+    expect(pending.status).toBe(200)
+    const stagnant = pending.body.data.list.find((a: any) => a.type === 'stagnant' && a.materialId === materialId)
+    expect(stagnant).toBeTruthy()
+    expect(stagnant.currentStock).toBe(20)
+  })
+
   it('ALERT-016: 有效期扫描按批次生成预警并返回来源事实', async () => {
     const stamp = Date.now()
     const { materialId, batchNos, emptyBatchNo } = seedExpiringBatches(db, `expiry-${stamp}`)

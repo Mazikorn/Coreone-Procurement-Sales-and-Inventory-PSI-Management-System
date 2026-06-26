@@ -434,6 +434,36 @@ router.post('/generate', (req, res) => {
       }
     }
 
+    // P1-09：呆滞库存预警接线（此前 stagnant 类型有 UI/筛选/弹窗却无任何生产者→永远空）。
+    // 呆滞判定：有库存(stock>0) 且 近 threshold 天无完成出库 且 在库批次到货已超 threshold 天（避免误报新到货）。
+    const stagnantRule = db.prepare("SELECT * FROM alert_rules WHERE type = 'stagnant' AND enabled = 1").get() as any
+    if (stagnantRule && stagnantRule.threshold != null) {
+      const days = Number(stagnantRule.threshold) || 90
+      const cutoffTs = Date.now() - days * 24 * 60 * 60 * 1000
+      const stagnantItems = db.prepare(`
+        SELECT m.id, m.name, i.stock,
+          (SELECT MAX(o.created_at) FROM outbound_items oi JOIN outbound_records o ON oi.outbound_id = o.id
+            WHERE oi.material_id = m.id AND o.status = 'completed' AND o.is_deleted = 0) AS last_out,
+          (SELECT MIN(b.created_at) FROM batches b WHERE b.material_id = m.id AND b.status = 1 AND b.remaining > 0) AS oldest_batch
+        FROM materials m
+        JOIN inventory i ON m.id = i.material_id
+        WHERE m.status = 1 AND m.is_deleted = 0 AND i.stock > 0
+      `).all() as any[]
+      for (const item of stagnantItems) {
+        const lastOutTs = item.last_out ? new Date(item.last_out).getTime() : 0
+        const oldestBatchTs = item.oldest_batch ? new Date(item.oldest_batch).getTime() : Date.now()
+        if (lastOutTs >= cutoffTs) continue        // 近 threshold 天内有出库 → 不呆滞
+        if (oldestBatchTs >= cutoffTs) continue     // 库存到货不足 threshold 天 → 不误报新到货
+        const exists = db.prepare("SELECT COUNT(*) as c FROM alerts WHERE material_id = ? AND type = 'stagnant' AND status = 'pending'").get(item.id) as any
+        if (exists.c === 0) {
+          const triggerCondition = `当前库存 ${item.stock}，已超 ${days} 天无出库`
+          db.prepare("INSERT INTO alerts (id, type, level, material_id, material_name, current_stock, threshold, message, status, rule_id, trigger_condition) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)")
+            .run(uuidv4(), 'stagnant', 'info', item.id, item.name, item.stock, days, `呆滞库存：${item.name} 已超 ${days} 天无出库（当前库存 ${item.stock}）`, stagnantRule.id, triggerCondition)
+          count++
+        }
+      }
+    }
+
     logAlertOperation(db, req, {
       action: 'POST /alerts/generate',
       description: '手动生成预警',
