@@ -153,6 +153,35 @@ describe('设备删除保护', () => {
     expect(equipment?.id).toBe(equipmentId)
   })
 
+  it('EQ-USAGE-IDEMPOTENT-001（P1-16）: 同一出库的设备使用只能登记一次，重复登记被拒不双计折旧', async () => {
+    const suffix = `usage-idem-${Date.now()}`
+    const equipmentId = seedEquipment(db, suffix)
+    const outboundId = `out-${suffix}`
+    const body = { outboundId, usageMinutes: 60, usageCount: 1, usageDate: '2026-06-20' }
+
+    const first = await request(app)
+      .post(`/api/v1/equipment/${equipmentId}/usage`)
+      .set('Authorization', `Bearer ${token}`)
+      .send(body)
+    expect(first.status).toBe(201)
+
+    const second = await request(app)
+      .post(`/api/v1/equipment/${equipmentId}/usage`)
+      .set('Authorization', `Bearer ${token}`)
+      .send(body)
+    expect(second.status).toBe(409)
+    expect(second.body?.error?.code).toBe('DUPLICATE_USAGE')
+
+    const count = db.prepare('SELECT COUNT(*) as c FROM equipment_usage WHERE equipment_id = ? AND outbound_id = ?').get(equipmentId, outboundId) as any
+    expect(count.c).toBe(1)
+
+    // 无 outboundId 的纯手工登记不去重，可多次
+    const m1 = await request(app).post(`/api/v1/equipment/${equipmentId}/usage`).set('Authorization', `Bearer ${token}`).send({ usageMinutes: 30, usageCount: 1 })
+    const m2 = await request(app).post(`/api/v1/equipment/${equipmentId}/usage`).set('Authorization', `Bearer ${token}`).send({ usageMinutes: 30, usageCount: 1 })
+    expect(m1.status).toBe(201)
+    expect(m2.status).toBe(201)
+  })
+
   it('EQ-GUARD-002: 被BOM设备模板引用的设备类型不可删除', async () => {
     const suffix = `type-${Date.now()}`
     const typeId = seedEquipmentType(db, suffix)

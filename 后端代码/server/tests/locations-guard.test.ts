@@ -17,6 +17,14 @@ async function loginAdmin(app: any): Promise<string> {
   return res.body.data.token
 }
 
+async function loginUser(app: any, username: string): Promise<string> {
+  const res = await request(app)
+    .post('/api/v1/auth/login')
+    .send({ username, password: 'CoreOne2026!' })
+  expect(res.status).toBe(200)
+  return res.body.data.token
+}
+
 async function createLocation(app: any, token: string, suffix: string) {
   const res = await request(app)
     .post('/api/v1/locations')
@@ -359,6 +367,9 @@ describe('库位删除保护', () => {
         INSERT INTO locations (id, code, name, type, zone, capacity, used, status)
         VALUES (?, ?, ?, 'shelf', ?, ?, ?, ?)
       `).run(row[0], row[1], row[2], `统计区-${suffix}`, row[4], row[5], row[3])
+      // P1-06：利用率派生自实际分库位库存 Σinventory_locations.stock，故按目标占用量 seed 该表（不再依赖 locations.used 物化列）
+      db.prepare('INSERT INTO inventory_locations (id, material_id, location_id, stock, locked_stock) VALUES (?, ?, ?, ?, 0)')
+        .run(`il-${row[0]}`, `mat-${row[0]}`, row[0], row[5])
     }
 
     const listRes = await request(app)
@@ -421,6 +432,36 @@ describe('库位删除保护', () => {
       inactive: 1,
       avgUtilization: 58,
     })
+  })
+
+  it('LOC-RBAC-001（P1-12）: 仓管可创建/更新库位（对齐权限矩阵 admin+warehouse_manager）', async () => {
+    const wmToken = await loginUser(app, 'wangkq')
+    const create = await request(app)
+      .post('/api/v1/locations')
+      .set('Authorization', `Bearer ${wmToken}`)
+      .send({ name: `仓管库位-${Date.now()}`, zone: 'A区', type: 'shelf' })
+    expect(create.status).toBe(201)
+    const update = await request(app)
+      .put(`/api/v1/locations/${create.body.data.id}`)
+      .set('Authorization', `Bearer ${wmToken}`)
+      .send({ name: `仓管库位改名-${Date.now()}` })
+    expect(update.status).toBe(200)
+  })
+
+  it('LOC-USED-001（P1-06）: 库位占用量/利用率派生自实际分库位库存，而非恒0的物化 used 列', async () => {
+    const suffix = `used-${Date.now()}`
+    const locationId = await createLocation(app, token, suffix)
+    // seedInventoryLocationStock 为该库位写 inventory_locations.stock=5
+    seedInventoryLocationStock(db, locationId, suffix)
+    const listRes = await request(app)
+      .get('/api/v1/locations')
+      .query({ keyword: suffix, page: 1, pageSize: 10 })
+      .set('Authorization', `Bearer ${token}`)
+    expect(listRes.status).toBe(200)
+    const row = listRes.body.data.list.find((r: any) => r.id === locationId)
+    expect(row).toBeTruthy()
+    // 修复前 used 恒 0；修复后 = Σinventory_locations.stock = 5
+    expect(row.used).toBe(5)
   })
 
   it('LOC-TEXT-001: 创建和更新库位时拦截危险文本并保存清理后的展示文本', async () => {

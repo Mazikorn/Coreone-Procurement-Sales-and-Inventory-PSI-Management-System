@@ -338,6 +338,24 @@ describe('供应商退货', () => {
     expect(JSON.parse(deleteLog.response_data)).toMatchObject({ id: createRes.body.data.id, status: 'deleted' })
   })
 
+  it('SR-REFUND-BOUND-001（P1-13）: 退款金额超过来源批次成本(inbound_price×qty)被拒，不超时放行', async () => {
+    const { materialId, supplierId, batchId } = seedSupplierReturnMaterialWithBatch(db, `refund-over-${Date.now()}`)
+    // 批次 inbound_price=12，退货数量 2 → 成本上界 = 24
+    const over = await request(app)
+      .post('/api/v1/supplier-returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ materialId, supplierId, batchId, quantity: 2, refundAmount: 100, reason: '虚高退款应被拒' })
+    expect(over.status).toBe(422)
+    expect(over.body?.error?.code).toBe('REFUND_EXCEEDS_COST')
+
+    const within = seedSupplierReturnMaterialWithBatch(db, `refund-ok-${Date.now()}`)
+    const ok = await request(app)
+      .post('/api/v1/supplier-returns')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ materialId: within.materialId, supplierId: within.supplierId, batchId: within.batchId, quantity: 2, refundAmount: 24, reason: '等于成本上界放行' })
+    expect(ok.status).toBe(200)
+  })
+
   it('SR-ALERT-001: 供应商退货扣减到安全线后触发低库存预警，删除后自动关闭', async () => {
     const { materialId, supplierId, batchId } = seedSupplierReturnMaterialWithBatch(db, `alert-${Date.now()}`)
     db.prepare('UPDATE materials SET safety_stock = 8 WHERE id = ?').run(materialId)
@@ -1302,7 +1320,7 @@ describe('供应商退货', () => {
         batchId: seed.batchId,
         inboundRecordId,
         quantity: 2,
-        refundAmount: 50,
+        refundAmount: 20, // ≤ 批次成本上界 inbound_price(12)×2=24（P1-13）
         reason: '按入库记录退货但省略供应商',
       })
 
@@ -1329,7 +1347,7 @@ describe('供应商退货', () => {
     const supplierCost = reportRes.body.data.suppliers.find((row: any) => row.id === seed.supplierId)
     expect(supplierCost).toMatchObject({
       id: seed.supplierId,
-      amount: 70,
+      amount: 100, // 入库额 120 − 退款额 20（P1-13 上界内）
       orderCount: 1,
     })
   })

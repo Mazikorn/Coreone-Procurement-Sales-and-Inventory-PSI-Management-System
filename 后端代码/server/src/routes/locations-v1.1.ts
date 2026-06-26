@@ -8,7 +8,9 @@ import { normalizeDisplayText, requireValidText, type TextGuardResult } from '..
 const router = Router()
 
 const requireLocationRead = requireRole('admin', 'warehouse_manager')
-const requireLocationWrite = requireStrictRole('admin')
+// P1-12：库位维护是仓管日常仓储作业（05_Role_Permission_Matrix 行55/96/165 + 角色故事 002/005），
+// 与同属仓储的 inbound/outbound 写权限一致；放开给 warehouse_manager（仍保留 strict 硬白名单语义）。
+const requireLocationWrite = requireStrictRole('admin', 'warehouse_manager')
 
 function buildLocationWhere(query: any) {
   const { zone, status, type, keyword } = query
@@ -36,11 +38,12 @@ router.get('/', authenticateToken, requireLocationRead, (req, res) => {
 
     const count = (db.prepare(`SELECT COUNT(*) as total FROM locations WHERE ${where}`).get(...params) as any)?.total || 0
     const offset = (Number(page) - 1) * Number(pageSize)
-    const list = db.prepare(`SELECT * FROM locations WHERE ${where} ORDER BY zone, name LIMIT ? OFFSET ?`).all(...params, Number(pageSize), offset) as any[]
+    // P1-06：库位占用量(used)派生自实际分库位库存 Σinventory_locations.stock，而非从不被写入的物化 locations.used 列（恒 0）。
+    const list = db.prepare(`SELECT *, (SELECT COALESCE(SUM(il.stock), 0) FROM inventory_locations il WHERE il.location_id = locations.id) AS derived_used FROM locations WHERE ${where} ORDER BY zone, name LIMIT ? OFFSET ?`).all(...params, Number(pageSize), offset) as any[]
 
     successList(res, list.map((r: any) => ({
       id: r.id, code: r.code, name: r.name, type: r.type, parentId: r.parent_id, zone: r.zone, shelf: r.shelf, position: r.position,
-      capacity: r.capacity, used: r.used, status: r.status === 1 ? 'active' : 'inactive',
+      capacity: r.capacity, used: Number(r.derived_used) || 0, status: r.status === 1 ? 'active' : 'inactive',
       isDeleted: Number(r.is_deleted || 0) !== 0,
     })), Number(page), Number(pageSize), count)
   } catch (err: any) { error(res, err.message) }
@@ -55,7 +58,7 @@ router.get('/stats', authenticateToken, requireLocationRead, (req, res) => {
         COUNT(*) as total,
         COALESCE(SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END), 0) as active,
         COALESCE(SUM(CASE WHEN status = 0 THEN 1 ELSE 0 END), 0) as inactive,
-        COALESCE(AVG(CASE WHEN capacity > 0 THEN (COALESCE(used, 0) * 100.0 / capacity) ELSE 0 END), 0) as avgUtilization
+        COALESCE(AVG(CASE WHEN capacity > 0 THEN ((SELECT COALESCE(SUM(il.stock), 0) FROM inventory_locations il WHERE il.location_id = locations.id) * 100.0 / capacity) ELSE 0 END), 0) as avgUtilization
       FROM locations
       WHERE ${where}
     `).get(...params) as any
@@ -72,7 +75,8 @@ router.get('/tree', authenticateToken, requireLocationRead, (_req, res) => {
   try {
     const db = getDatabase()
     const rows = db.prepare(`
-      SELECT id, code, name, type, parent_id as parentId, zone, shelf, position, capacity, used, status
+      SELECT id, code, name, type, parent_id as parentId, zone, shelf, position, capacity,
+        (SELECT COALESCE(SUM(il.stock), 0) FROM inventory_locations il WHERE il.location_id = locations.id) AS used, status
       FROM locations
       WHERE is_deleted = 0
       ORDER BY zone, name

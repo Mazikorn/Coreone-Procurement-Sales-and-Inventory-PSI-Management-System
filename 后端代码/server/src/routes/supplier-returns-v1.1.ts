@@ -343,7 +343,7 @@ router.post('/', (req, res) => {
       let batch: any = null
       if (batchId) {
         batch = db.prepare(`
-          SELECT id, batch_no, remaining, status, supplier_id, inbound_id
+          SELECT id, batch_no, remaining, status, supplier_id, inbound_id, inbound_price
           FROM batches
           WHERE id = ? AND material_id = ?
         `).get(batchId, materialId) as any
@@ -365,7 +365,7 @@ router.post('/', (req, res) => {
         }
       } else {
         batch = db.prepare(`
-          SELECT id, batch_no, remaining, status, supplier_id, inbound_id
+          SELECT id, batch_no, remaining, status, supplier_id, inbound_id, inbound_price
           FROM batches
           WHERE material_id = ? AND status = 1 AND remaining >= ? AND supplier_id = ?
           ORDER BY
@@ -388,6 +388,18 @@ router.post('/', (req, res) => {
         if (!batchSourceValidation.ok) {
           db.exec('ROLLBACK')
           error(res, batchSourceValidation.message, batchSourceValidation.code, batchSourceValidation.status)
+          return
+        }
+      }
+
+      // P1-13：退款金额以来源批次成本（inbound_price × 退货数量, BR-SR-015）为上界，
+      // 拒绝远超实际入库金额的虚高退款，防止对账金额被人为夸大/录错（容差 0.01 应对四舍五入）。
+      const unitCostBasis = Number(batch?.inbound_price)
+      if (normalizedRefundAmount > 0 && Number.isFinite(unitCostBasis) && unitCostBasis > 0) {
+        const maxRefund = unitCostBasis * qty
+        if (normalizedRefundAmount > maxRefund + 0.01) {
+          db.exec('ROLLBACK')
+          error(res, `退款金额不能超过来源批次成本 ${maxRefund.toFixed(2)}（入库单价 ${unitCostBasis} × 数量 ${qty}）`, 'REFUND_EXCEEDS_COST', 422)
           return
         }
       }

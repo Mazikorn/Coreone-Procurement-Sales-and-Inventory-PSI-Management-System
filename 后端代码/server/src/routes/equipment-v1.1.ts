@@ -569,6 +569,13 @@ router.post('/:id/usage', (req, res) => {
     if (!equipment) { error(res, 'Equipment not found', 'NOT_FOUND', 404); return }
     if (Number(equipment.status) !== 1) { error(res, '设备未启用，不能登记使用', 'BUSINESS_RULE', 400); return }
 
+    // P1-16 幂等：同一出库的设备使用只能登记一次。该折旧成本既进设备净值又喂 ABC 设备动因，
+    // 双击/重试/同出库重复登记会双计折旧。outboundId 为空的纯手工登记可多次（不去重）。
+    if (outboundId) {
+      const dup = db.prepare('SELECT id FROM equipment_usage WHERE equipment_id = ? AND outbound_id = ?').get(id, outboundId) as any
+      if (dup) { error(res, '该出库的设备使用已登记，请勿重复登记', 'DUPLICATE_USAGE', 409); return }
+    }
+
     // 计算本次折旧成本
     // 注意：直线法使用日历年度（365天/年 × 24小时/天 × 60分钟/小时 = 525,600分钟/年）
     // 设备无论是否使用都会折旧（老化、技术淘汰等）
