@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import { Modal } from '@/components/ui/Modal'
-import { equipmentApi } from '@/api/master'
+import { equipmentApi, projectApi } from '@/api/master'
 import { formatCurrency, formatDate } from '@/lib/utils'
-import type { Equipment, EquipmentUsage } from '@/types'
+import type { Equipment, EquipmentUsage, Project } from '@/types'
 import { toast } from 'sonner'
 
 interface Props {
@@ -38,10 +38,12 @@ export function EquipmentDetailModal({ open, row, onClose, onEdit, canEdit = tru
   const [usageList, setUsageList] = useState<EquipmentUsage[]>([])
   const [loadingUsage, setLoadingUsage] = useState(false)
   const [savingUsage, setSavingUsage] = useState(false)
+  const [projects, setProjects] = useState<Project[]>([])
   const [usageForm, setUsageForm] = useState({
     usageDate: new Date().toISOString().slice(0, 10),
     usageMinutes: 0,
     usageCount: 1,
+    projectId: '', // P1-05：设备使用可选关联项目（REQ-24-004 按项目/出库关联，支撑折旧追溯）
   })
 
   const current = detail || row
@@ -60,13 +62,17 @@ export function EquipmentDetailModal({ open, row, onClose, onEdit, canEdit = tru
     Promise.allSettled([
       equipmentApi.getDetail(row.id),
       equipmentApi.getUsage(row.id, { page: 1, pageSize: 5 }),
-    ]).then(([detailResult, usageResult]) => {
+      projectApi.getList({ page: 1, pageSize: 200, status: 'active' }),
+    ]).then(([detailResult, usageResult, projectResult]) => {
       if (cancelled) return
       if (detailResult.status === 'fulfilled') setDetail(detailResult.value as Equipment)
       if (usageResult.status === 'fulfilled') {
         setUsageList((usageResult.value as any)?.list || [])
       } else {
         setUsageList([])
+      }
+      if (projectResult.status === 'fulfilled') {
+        setProjects((projectResult.value as any)?.list || [])
       }
     }).finally(() => {
       if (!cancelled) setLoadingUsage(false)
@@ -103,12 +109,14 @@ export function EquipmentDetailModal({ open, row, onClose, onEdit, canEdit = tru
         usageDate: usageForm.usageDate,
         usageMinutes: usageForm.usageMinutes,
         usageCount: usageForm.usageCount,
+        ...(usageForm.projectId ? { projectId: usageForm.projectId } : {}),
       })
       await refreshDetailAndUsage()
       setUsageForm({
         usageDate: new Date().toISOString().slice(0, 10),
         usageMinutes: 0,
         usageCount: 1,
+        projectId: '',
       })
       toast.success('设备使用已登记')
     } catch {
@@ -171,6 +179,19 @@ export function EquipmentDetailModal({ open, row, onClose, onEdit, canEdit = tru
           <div className="flex items-center justify-between gap-3 mb-3">
             <h3 className="text-sm font-semibold text-gray-900">最近使用记录</h3>
             <div className="flex flex-wrap items-end gap-2">
+              <label className="block">
+                <span className="block text-xs text-gray-500 mb-1">关联项目（可选）</span>
+                <select
+                  value={usageForm.projectId}
+                  onChange={(e) => setUsageForm({ ...usageForm, projectId: e.target.value })}
+                  className="h-9 w-44 px-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-[3px] focus:ring-blue-500/10 focus:border-blue-500"
+                >
+                  <option value="">不关联</option>
+                  {projects.map((p) => (
+                    <option key={p.id} value={p.id}>{p.code} - {p.name}</option>
+                  ))}
+                </select>
+              </label>
               <label className="block">
                 <span className="block text-xs text-gray-500 mb-1">使用日期</span>
                 <input

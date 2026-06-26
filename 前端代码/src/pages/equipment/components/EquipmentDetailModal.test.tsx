@@ -11,6 +11,10 @@ vi.mock('@/api/master', () => ({
     getUsage: vi.fn(),
     recordUsage: vi.fn(),
   },
+  // P1-05：EquipmentDetailModal 新增可选「关联项目」选择器，需要项目列表
+  projectApi: {
+    getList: vi.fn().mockResolvedValue({ list: [], pagination: { total: 0 } }),
+  },
 }))
 
 vi.mock('sonner', () => ({

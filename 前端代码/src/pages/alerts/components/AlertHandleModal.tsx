@@ -1,5 +1,6 @@
 import React from 'react'
-import { X } from 'lucide-react'
+import { X, Trash2 } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import type { AlertItem } from '../hooks/useAlertsPage'
 
 interface Props {
@@ -26,6 +27,12 @@ export function AlertHandleModal({ open, alert, form, onClose, onChange, onConfi
   const downstreamFacts = alert.type === 'low-stock'
     ? '库存、批次、补货、预警记录、审计记录'
     : '库存、批次、预警记录、审计记录'
+  // P1-02：过期预警的头号处置是「去报废核销」，此前预警处理只让填文本、不通向报废，仓管须手动改道重选物料批次。
+  // 此处给出一键深链进入报废草稿（带物料/批次/原因），让 过期→报废 贯通。
+  const isExpiry = alert.type === 'expiry'
+  const scrapUrl = isExpiry && alert.materialId
+    ? `/scraps?action=create&materialId=${encodeURIComponent(alert.materialId)}${alert.batchId ? `&batchId=${encodeURIComponent(String(alert.batchId))}` : ''}&reason=expired&remark=${encodeURIComponent('来自过期预警')}`
+    : null
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -61,6 +68,16 @@ export function AlertHandleModal({ open, alert, form, onClose, onChange, onConfi
               ))}
             </div>
           </div>
+          {scrapUrl ? (
+            <Link
+              to={scrapUrl}
+              onClick={onClose}
+              className="flex items-center justify-center gap-2 h-10 w-full rounded-md border border-blue-500 bg-blue-50 text-sm font-medium text-blue-700 hover:bg-blue-100 transition-colors"
+            >
+              <Trash2 className="w-4 h-4" />
+              去报废核销（已带入物料/批次/过期原因）
+            </Link>
+          ) : null}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1.5">处理结果</label>
             <select
