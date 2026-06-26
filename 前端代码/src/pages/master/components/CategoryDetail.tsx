@@ -180,7 +180,7 @@ export function CategoryDetail({
               </tbody>
             </table>
             {materialTotal > materials.length && (
-              <div className="px-4 py-2.5 border-t border-gray-100 text-center">
+              <div className="px-4 py-2.5 border-t border-gray-200 text-center">
                 <button
                   onClick={onLoadMore}
                   disabled={materialsLoading}

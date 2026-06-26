@@ -118,7 +118,7 @@ export function LocationCards({
               </div>
             </div>
 
-            <div className="mt-4 flex items-center justify-end gap-2 border-t border-gray-100 pt-3">
+            <div className="mt-4 flex items-center justify-end gap-2 border-t border-gray-200 pt-3">
               <button
                 type="button"
                 onClick={() => onToggleStatus(row)}

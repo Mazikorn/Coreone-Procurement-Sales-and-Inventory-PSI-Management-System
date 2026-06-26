@@ -56,7 +56,7 @@ export function InventoryDetailModal({
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-x-6 gap-y-3">
           {rows.map(([label, value]) => (
-            <div key={label} className="border-b border-gray-100 pb-2">
+            <div key={label} className="border-b border-gray-200 pb-2">
               <div className="text-xs text-gray-500">{label}</div>
               <div className="mt-1 text-sm font-medium text-gray-900">{value}</div>
             </div>
@@ -101,7 +101,7 @@ export function InventoryDetailModal({
 
                 <div>
                   <div className="mb-2 text-xs text-gray-500">批次流转记录</div>
-                  <div className="overflow-hidden rounded-md border border-gray-100">
+                  <div className="overflow-hidden rounded-md border border-gray-200">
                     <table className="w-full text-sm">
                       <thead className="bg-gray-50 text-xs text-gray-500">
                         <tr>

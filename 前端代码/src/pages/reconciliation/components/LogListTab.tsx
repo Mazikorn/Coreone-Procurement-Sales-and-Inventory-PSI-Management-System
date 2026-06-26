@@ -86,7 +86,7 @@ export function LogListTab({ logPagination }: Props) {
               {logPagination.data.map(log => {
                 const display = buildLogDisplay(log)
                 return (
-                  <div key={log.id} className="flex gap-3 pb-4 border-b border-gray-100 last:border-0">
+                  <div key={log.id} className="flex gap-3 pb-4 border-b border-gray-200 last:border-0">
                     <div className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${log.type === 'bom_fix' ? 'bg-blue-500' : 'bg-green-500'}`} />
                     <div className="min-w-0 flex-1">
                       <div className="text-sm text-gray-800">

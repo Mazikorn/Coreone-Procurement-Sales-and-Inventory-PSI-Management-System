@@ -50,7 +50,7 @@ export function ActivityItem({ item }: Props) {
       <button
         type="button"
         onClick={() => navigate(item.href!)}
-        className="flex w-full items-start gap-3 border-b border-gray-100 py-3 text-left transition-colors last:border-0 hover:bg-gray-50"
+        className="flex w-full items-start gap-3 border-b border-gray-200 py-3 text-left transition-colors last:border-0 hover:bg-gray-50"
       >
         {content}
       </button>
@@ -58,7 +58,7 @@ export function ActivityItem({ item }: Props) {
   }
 
   return (
-    <div className="flex items-start gap-3 py-3 border-b border-gray-100 last:border-0">
+    <div className="flex items-start gap-3 py-3 border-b border-gray-200 last:border-0">
       {content}
     </div>
   )

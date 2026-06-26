@@ -101,7 +101,7 @@ export default function EquipmentTypeList() {
                 <tr><td colSpan={page.canManageEquipmentTypes ? 7 : 6} className="px-4 py-12 text-center text-gray-400">暂无数据</td></tr>
               ) : (
                 page.data.map((row: any) => (
-                  <tr key={row.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
+                  <tr key={row.id} className="border-b border-gray-200 hover:bg-gray-50 transition-colors">
                     <td className="px-4 py-3 text-sm font-medium text-gray-900">{row.code}</td>
                     <td className="px-4 py-3 text-sm text-gray-900">
                       <div className="flex items-center gap-2">
