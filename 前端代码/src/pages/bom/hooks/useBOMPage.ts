@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { bomApi, materialApi, projectApi } from '@/api/master'
+import { bomApi, materialApi, projectApi, equipmentApi } from '@/api/master'
 import { usePagination } from '@/hooks/usePagination'
-import type { BOM, BOMDeleteCheck, BOMGeneralConsumable, BOMGeneralReagent, BOMQualityControl, BOMStatusCheck, Material, Project } from '@/types'
+import type { BOM, BOMDeleteCheck, BOMEquipmentTemplate, BOMGeneralConsumable, BOMGeneralReagent, BOMQualityControl, BOMStatusCheck, Equipment, Material, Project } from '@/types'
 import { toast } from 'sonner'
 import { downloadTextFile } from '@/lib/utils'
 import { getUserPermissions, getUserRole } from '@/lib/permissions'
@@ -30,6 +30,7 @@ export interface BOMForm {
   generalReagents: BOMGeneralReagent[]
   generalConsumables: BOMGeneralConsumable[]
   qualityControls: BOMQualityControl[]
+  equipmentTemplates: BOMEquipmentTemplate[]
 }
 
 export interface CopyForm {
@@ -78,6 +79,7 @@ const emptyForm: BOMForm = {
   generalReagents: [],
   generalConsumables: [],
   qualityControls: [],
+  equipmentTemplates: [],
 }
 
 type BOMUsageItem = {
@@ -184,6 +186,7 @@ function toForm(bom: BOM): BOMForm {
     generalReagents: bom.generalReagents || [],
     generalConsumables: bom.generalConsumables || [],
     qualityControls: bom.qualityControls || [],
+    equipmentTemplates: bom.equipmentTemplates || [],
   }
 }
 
@@ -222,6 +225,13 @@ function buildPayload(form: BOMForm): any {
         unit: item.unit || '片',
         coversSamples: Number(item.coversSamples),
       })),
+    // P1-07：设备模板（UI 仅支持选具体设备实例 equipmentId；后端要求 equipmentId/equipmentTypeId 二选一 + usageMinutes>0）
+    equipmentTemplates: (form.equipmentTemplates || [])
+      .filter(item => item.equipmentId && Number(item.usageMinutes) > 0)
+      .map(item => ({
+        equipmentId: item.equipmentId,
+        usageMinutes: Number(item.usageMinutes),
+      })),
   }
 }
 
@@ -254,7 +264,7 @@ function buildLocalBomFromForm(form: BOMForm, saved: Partial<BOM> | null, status
     generalReagents: saved?.generalReagents || form.generalReagents,
     generalConsumables: saved?.generalConsumables || form.generalConsumables,
     qualityControls: saved?.qualityControls || form.qualityControls,
-    equipmentTemplates: saved?.equipmentTemplates,
+    equipmentTemplates: saved?.equipmentTemplates || form.equipmentTemplates,
     versionHistory: saved?.versionHistory || [],
     createdAt: saved?.createdAt || now,
     updatedAt: saved?.updatedAt || now,
@@ -285,6 +295,7 @@ export function useBOMPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [allMaterials, setAllMaterials] = useState<Material[]>([])
   const [allProjects, setAllProjects] = useState<Project[]>([])
+  const [allEquipment, setAllEquipment] = useState<Equipment[]>([])
   const [allBoms, setAllBoms] = useState<BOM[]>([])
   const [modalType, setModalType] = useState<ModalType>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -385,14 +396,16 @@ export function useBOMPage() {
 
   const fetchRefs = useCallback(async () => {
     try {
-      const [materialsRes, projectsRes, bomsRes] = await Promise.all([
+      const [materialsRes, projectsRes, bomsRes, equipmentRes] = await Promise.all([
         materialApi.getList({ page: 1, pageSize: 1000, status: 'active' }),
         projectApi.getList({ page: 1, pageSize: 1000, status: 'active' }),
         bomApi.getList({ page: 1, pageSize: 1000 }),
+        equipmentApi.getList({ page: 1, pageSize: 1000, status: 'active' }),
       ])
       setAllMaterials(materialsRes.list || [])
       setAllProjects(projectsRes.list || [])
       setAllBoms(bomsRes.list || [])
+      setAllEquipment((equipmentRes as any)?.list || [])
     } catch (e) {
       console.error(e)
     }
@@ -998,6 +1011,7 @@ export function useBOMPage() {
     setExportForm,
     allMaterials,
     allProjects,
+    allEquipment,
     stats,
     handleSearch: () => {
       setKeyword(searchInput.trim())

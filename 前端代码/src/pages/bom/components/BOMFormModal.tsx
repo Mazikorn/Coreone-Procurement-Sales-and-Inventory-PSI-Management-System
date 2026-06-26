@@ -3,7 +3,7 @@ import { X, Plus, Trash2, ChevronDown, ChevronRight } from 'lucide-react'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import { TYPE_OPTIONS } from '../constants'
 import type { BOMForm } from '../hooks/useBOMPage'
-import type { Material, Project } from '@/types'
+import type { Material, Project, Equipment } from '@/types'
 
 interface Props {
   open: boolean
@@ -11,6 +11,7 @@ interface Props {
   form: BOMForm
   allMaterials: Material[]
   allProjects: Project[]
+  allEquipment?: Equipment[]
   onClose: () => void
   onChange: (form: BOMForm) => void
   onSubmit: () => void
@@ -22,12 +23,13 @@ export function BOMFormModal({
   form,
   allMaterials,
   allProjects,
+  allEquipment = [],
   onClose,
   onChange,
   onSubmit,
 }: Props) {
   // P1-15：所有 Hook 必须在任何 early return 之前调用（Rules of Hooks）。
-  const [activeTab, setActiveTab] = useState<'materials' | 'reagents' | 'consumables' | 'qc'>('materials')
+  const [activeTab, setActiveTab] = useState<'materials' | 'reagents' | 'consumables' | 'qc' | 'equipment'>('materials')
   if (!open) return null
 
   const serviceOptions = allProjects
@@ -209,6 +211,7 @@ export function BOMFormModal({
                 { key: 'reagents' as const, label: '通用试剂' },
                 { key: 'consumables' as const, label: '通用耗材' },
                 { key: 'qc' as const, label: '质控品' },
+                { key: 'equipment' as const, label: '设备模板' },
               ].map((t) => (
                 <button
                   key={t.key}
@@ -481,6 +484,95 @@ export function BOMFormModal({
                 className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-blue-600 hover:bg-blue-50 rounded-md border border-blue-200 transition-colors"
               >
                 <Plus className="w-4 h-4" />添加质控品
+              </button>
+            </div>
+          )}
+
+          {/* 设备模板 Tab（P1-07：此前 UI 不可配置、只能脚本播种；设备成本是 BR-BM-014/018 标准成本五要素之一） */}
+          {activeTab === 'equipment' && (
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <label className="block text-sm font-medium text-gray-700">设备使用模板</label>
+                <span className="text-xs text-gray-400">{form.equipmentTemplates.length} 项设备</span>
+              </div>
+              <div className="border border-gray-200 rounded-md overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 w-10">序号</th>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">设备</th>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 w-32">每样本使用分钟</th>
+                      <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 w-12">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {form.equipmentTemplates.length > 0 ? (
+                      form.equipmentTemplates.map((t, idx) => (
+                        <tr key={idx}>
+                          <td className="px-3 py-2 text-gray-500">{idx + 1}</td>
+                          <td className="px-3 py-2">
+                            <SearchableSelect
+                              value={t.equipmentId || ''}
+                              onChange={(val) => {
+                                const eq = allEquipment.find((e) => e.id === val)
+                                const next = [...form.equipmentTemplates]
+                                next[idx] = { ...next[idx], equipmentId: val, equipmentName: eq?.name || '' }
+                                onChange({ ...form, equipmentTemplates: next })
+                              }}
+                              options={allEquipment.map((e) => ({ value: e.id, label: `${e.code} - ${e.name}` }))}
+                              placeholder="选择设备"
+                            />
+                          </td>
+                          <td className="px-3 py-2">
+                            <input
+                              type="number"
+                              min={0.01}
+                              step="0.01"
+                              value={t.usageMinutes}
+                              onChange={(e) => {
+                                const next = [...form.equipmentTemplates]
+                                next[idx] = { ...next[idx], usageMinutes: Number(e.target.value) }
+                                onChange({ ...form, equipmentTemplates: next })
+                              }}
+                              className="w-full h-9 px-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-[2px] focus:ring-blue-500/10 focus:border-blue-500"
+                            />
+                          </td>
+                          <td className="px-3 py-2 text-center">
+                            <button
+                              onClick={() => {
+                                const next = form.equipmentTemplates.filter((_, i) => i !== idx)
+                                onChange({ ...form, equipmentTemplates: next })
+                              }}
+                              className="p-1 hover:bg-red-50 rounded text-gray-400 hover:text-red-500 transition-colors"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={4} className="px-3 py-6 text-center text-gray-400">
+                          <p className="text-xs">暂无设备模板，请点击下方按钮添加（设备使用分钟用于折旧与 ABC 设备成本）</p>
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <button
+                onClick={() => {
+                  onChange({
+                    ...form,
+                    equipmentTemplates: [
+                      ...form.equipmentTemplates,
+                      { equipmentId: '', equipmentName: '', usageMinutes: 1 } as any,
+                    ],
+                  })
+                }}
+                className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-blue-600 hover:bg-blue-50 rounded-md border border-blue-200 transition-colors"
+              >
+                <Plus className="w-4 h-4" />添加设备
               </button>
             </div>
           )}

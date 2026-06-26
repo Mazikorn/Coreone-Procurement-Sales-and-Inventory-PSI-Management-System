@@ -89,6 +89,7 @@ export default function BOMList() {
         form={page.form}
         allMaterials={page.allMaterials}
         allProjects={page.allProjects}
+        allEquipment={page.allEquipment}
         onClose={page.closeModal}
         onChange={page.setForm}
         onSubmit={page.handleSubmit}

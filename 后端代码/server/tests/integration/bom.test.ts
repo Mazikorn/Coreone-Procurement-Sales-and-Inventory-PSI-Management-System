@@ -386,6 +386,28 @@ describe('集成测试：BOM 管理', () => {
       expect(newBom.standard_total_cost).toBeGreaterThan(oldCost)
     })
 
+    it('BOM-EQUIP-TEMPLATE-001（P1-07）: 创建 BOM 可携带设备模板并持久化（前端 UI 现可配置）', async () => {
+      const suffix = `eqtpl-${Date.now()}`
+      const equipmentId = `eq-${suffix}`
+      db.prepare(`INSERT INTO equipment (id, code, name, purchase_price, purchase_date, depreciable_life_years, residual_value, depreciation_method, total_capacity, capacity_unit, status)
+        VALUES (?, ?, ?, 100000, '2026-01-01', 5, 0, 'straight_line', 0, 'minutes', 1)`)
+        .run(equipmentId, `EQ-${suffix}`, '设备模板测试设备')
+      const matId = await createMaterialWithStock(app, token, db, `EQTPL-M-${suffix}`, 50, 20)
+      const res = await request(app)
+        .post('/api/v1/boms')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          code: `BOM-EQTPL-${suffix}`, name: '设备模板BOM', version: 'v1', type: 'ihc',
+          materials: [{ materialId: matId, usagePerSample: 1, unit: '支', price: 50 }],
+          equipmentTemplates: [{ equipmentId, usageMinutes: 15 }],
+        })
+      expect(res.status).toBe(201)
+      const tpl = db.prepare('SELECT equipment_id, usage_minutes FROM bom_equipment_templates WHERE bom_id = ?').get(res.body.data.id) as any
+      expect(tpl).toBeTruthy()
+      expect(tpl.equipment_id).toBe(equipmentId)
+      expect(Number(tpl.usage_minutes)).toBe(15)
+    })
+
     it('BOM-STDCOST-WEIGHTED（P0-05）: 材料标准成本按批次加权进价计算，而非物料主数据价', async () => {
       // 物料主数据价=100，但实际批次加权进价=10（差异显著，便于判别用了哪一个）
       const suffix = `${Date.now()}`
