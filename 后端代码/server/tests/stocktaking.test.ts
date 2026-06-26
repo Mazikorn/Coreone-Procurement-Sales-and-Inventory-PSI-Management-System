@@ -109,6 +109,43 @@ describe('库存盘点 API', () => {
     expect(item.locationName).toBe('盘点测试库位')
   })
 
+  it('ST-BATCH-001（P1-04）: 批量盘点一次提交多物料，共享盘点单号、各自记录差异', async () => {
+    const s1 = seedStocktakingFixture(db, `batchA-${Date.now()}`, 10)
+    const s2 = seedStocktakingFixture(db, `batchB-${Date.now()}`, 5)
+    const res = await request(app)
+      .post('/api/v1/stocktaking/batch')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ items: [
+        { materialId: s1.materialId, actualStock: 8 }, // 差异 -2
+        { materialId: s2.materialId, actualStock: 7 }, // 差异 +2
+      ] })
+    expect(res.status).toBe(200)
+    expect(res.body.data.count).toBe(2)
+    const sheetNo = res.body.data.sheetNo
+    expect(sheetNo).toBeTruthy()
+    const rows = db.prepare('SELECT material_id, actual_stock, difference, sheet_no FROM stocktaking_records WHERE sheet_no = ?').all(sheetNo) as any[]
+    expect(rows.length).toBe(2)
+    const r1 = rows.find((r) => r.material_id === s1.materialId)
+    expect(Number(r1.actual_stock)).toBe(8)
+    expect(Number(r1.difference)).toBe(-2)
+    const r2 = rows.find((r) => r.material_id === s2.materialId)
+    expect(Number(r2.difference)).toBe(2)
+  })
+
+  it('ST-BATCH-002（P1-04）: 批量盘点拒绝空 items 与非法行（整单不写入）', async () => {
+    const empty = await request(app).post('/api/v1/stocktaking/batch').set('Authorization', `Bearer ${adminToken}`).send({ items: [] })
+    expect(empty.status).toBe(400)
+    const s = seedStocktakingFixture(db, `batchBad-${Date.now()}`, 10)
+    const bad = await request(app)
+      .post('/api/v1/stocktaking/batch')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ items: [{ materialId: s.materialId, actualStock: 9 }, { materialId: 'nonexistent-mat', actualStock: 1 }] })
+    expect(bad.status).toBe(404)
+    // 整单拒绝：合法行也不应写入
+    const leaked = db.prepare("SELECT COUNT(*) as c FROM stocktaking_records WHERE material_id = ? AND sheet_no IS NOT NULL").get(s.materialId) as any
+    expect(leaked.c).toBe(0)
+  })
+
   it('ST-002: 确认盘点差异会更新库存，并以登录用户写入库存日志', async () => {
     const suffix = `confirm-${Date.now()}`
     const { materialId, recordId } = seedStocktakingFixture(db, suffix, 10)

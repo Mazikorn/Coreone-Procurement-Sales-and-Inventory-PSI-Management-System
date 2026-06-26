@@ -22,6 +22,11 @@ export const stocktakingApi = {
     remark?: string
   }) => request.post('/stocktaking', data),
 
+  // P1-04：批量盘点——一次提交多物料行，共享盘点单号
+  createBatch: (data: {
+    items: Array<{ materialId: string; actualStock: number; locationId?: string; batchId?: string; remark?: string }>
+  }) => request.post('/stocktaking/batch', data),
+
   delete: (id: string) =>
     request.delete(`/stocktaking/${id}`),
 

@@ -367,6 +367,66 @@ router.get('/stats', (req, res) => {
   } catch (err: any) { error(res, err.message) }
 })
 
+// P1-04：批量盘点——一次提交多物料，事务内建多条盘点记录并共享盘点单号(sheet_no)。
+// 解决"一物一单、无法周期全仓盘点"的采纳缺口（此前仓管须逐 SKU 走 3 步弹窗）。
+router.post('/batch', (req, res) => {
+  try {
+    const items = Array.isArray(req.body?.items) ? req.body.items : null
+    const operator = (req as any).user?.username || 'system'
+    if (!items || items.length === 0) { error(res, 'items 必填且不能为空', 'INVALID_PARAMETER', 400); return }
+    if (items.length > 500) { error(res, '单次批量盘点不能超过 500 条', 'INVALID_PARAMETER', 400); return }
+    const db = getDatabase()
+
+    // 预校验全部行（任一不合法则整单拒绝，不部分写入）
+    const normalized: Array<{ materialId: string; actual: number; locationId: string | null; batchId: string | null; remark: string | null }> = []
+    for (let i = 0; i < items.length; i++) {
+      const raw = items[i]
+      const materialId = raw?.materialId
+      const actual = Number(raw?.actualStock)
+      const locationId = normalizeOptionalId(raw?.locationId)
+      const batchId = normalizeOptionalId(raw?.batchId)
+      if (!materialId || raw?.actualStock === undefined || !Number.isFinite(actual) || actual < 0) {
+        error(res, `第 ${i + 1} 行：物料和实盘数必填，且实盘数为非负数`, 'INVALID_PARAMETER', 400); return
+      }
+      if (!db.prepare('SELECT 1 FROM materials WHERE id = ? AND is_deleted = 0').get(materialId)) {
+        error(res, `第 ${i + 1} 行：物料不存在或已删除`, 'NOT_FOUND', 404); return
+      }
+      if (!db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(materialId)) {
+        error(res, `第 ${i + 1} 行：物料无库存记录，无法盘点`, 'NOT_FOUND', 404); return
+      }
+      try { validateStocktakingScope(db, materialId, locationId, batchId) }
+      catch (scopeErr: any) { error(res, `第 ${i + 1} 行：${scopeErr.message}`, 'INVALID_PARAMETER', 400); return }
+      normalized.push({ materialId, actual, locationId, batchId, remark: raw?.remark || null })
+    }
+
+    const sheetNo = generateNo('STKS')
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      const records: Array<{ id: string; stocktakingNo: string; materialId: string; difference: number }> = []
+      for (const n of normalized) {
+        const systemStock = getScopedSystemStock(db, n.materialId, n.locationId, n.batchId)
+        const difference = n.actual - systemStock
+        const id = uuidv4()
+        const stocktakingNo = generateStocktakingNo()
+        db.prepare('INSERT INTO stocktaking_records (id, stocktaking_no, sheet_no, material_id, location_id, batch_id, system_stock, actual_stock, difference, operator, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+          .run(id, stocktakingNo, sheetNo, n.materialId, n.locationId, n.batchId, systemStock, n.actual, difference, operator, n.remark)
+        records.push({ id, stocktakingNo, materialId: n.materialId, difference })
+      }
+      db.exec('COMMIT')
+      logOperation(db, req as any, {
+        operation: 'POST /stocktaking/batch',
+        description: `批量盘点 ${sheetNo}（${records.length} 项）`,
+        requestData: { module: 'stocktaking', sheetNo, count: records.length },
+        responseData: { sheetNo, count: records.length },
+      })
+      success(res, { sheetNo, count: records.length, records }, 'Batch stocktaking created')
+    } catch (e: any) {
+      db.exec('ROLLBACK')
+      throw e
+    }
+  } catch (err: any) { error(res, err.message) }
+})
+
 router.post('/', (req, res) => {
   try {
     const { materialId, actualStock, remark } = req.body

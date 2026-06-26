@@ -665,6 +665,7 @@ export function initializeDatabase(): void {
   ensureColumn('stocktaking_records', 'updated_at', 'DATETIME')
   ensureColumn('stocktaking_records', 'location_id', 'TEXT')
   ensureColumn('stocktaking_records', 'batch_id', 'TEXT')
+  ensureColumn('stocktaking_records', 'sheet_no', 'TEXT') // P1-04：批量盘点单号，同一次批量盘点的多条记录共享，便于按盘点单回看/分组
   ensureColumn('stocktaking_batch_adjustments', 'location_id', 'TEXT')
   ensureColumn('lis_cases', 'updated_at', 'DATETIME')
   ensureColumn('return_records', 'is_deleted', 'INTEGER NOT NULL DEFAULT 0')

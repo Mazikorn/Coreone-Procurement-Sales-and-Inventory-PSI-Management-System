@@ -1,8 +1,10 @@
-import { Plus } from 'lucide-react'
+import { useState } from 'react'
+import { Plus, Layers } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useStocktakingPage, statusOptions } from './hooks/useStocktakingPage'
 import { StocktakingTable } from './components/StocktakingTable'
 import { StocktakingCreateModal } from './components/StocktakingCreateModal'
+import { StocktakingBatchModal } from './components/StocktakingBatchModal'
 import { StocktakingDetailModal } from './components/StocktakingDetailModal'
 import { StocktakingDeleteModal } from './components/StocktakingDeleteModal'
 import { StocktakingAdjustModal } from './components/StocktakingAdjustModal'
@@ -10,6 +12,7 @@ import { StocktakingAdjustModal } from './components/StocktakingAdjustModal'
 export default function Stocktaking() {
   const page = useStocktakingPage()
   const navigate = useNavigate()
+  const [batchOpen, setBatchOpen] = useState(false)
 
   return (
     <div className="space-y-6">
@@ -19,9 +22,14 @@ export default function Stocktaking() {
           <h1 className="text-[28px] font-semibold text-gray-900 leading-tight tracking-tight">库存盘点</h1>
           <p className="mt-1 text-sm text-gray-500">管理库存盘点任务，确保账实相符</p>
         </div>
-        <button onClick={page.openCreate} className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-500 text-white rounded-md hover:bg-blue-600 text-sm font-medium shadow-sm transition-colors">
-          <Plus className="w-4 h-4" />新建盘点
-        </button>
+        <div className="flex items-center gap-3">
+          <button onClick={() => setBatchOpen(true)} className="inline-flex items-center gap-2 px-4 py-2.5 bg-white text-blue-600 border border-blue-200 rounded-md hover:bg-blue-50 text-sm font-medium transition-colors">
+            <Layers className="w-4 h-4" />批量盘点
+          </button>
+          <button onClick={page.openCreate} className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-500 text-white rounded-md hover:bg-blue-600 text-sm font-medium shadow-sm transition-colors">
+            <Plus className="w-4 h-4" />新建盘点
+          </button>
+        </div>
       </div>
 
       {/* Stats Grid */}
@@ -79,6 +87,14 @@ export default function Stocktaking() {
         onSetCreateStep={page.setCreateStep}
         onSubmit={page.handleCreateSubmit}
         onOpenAuditEvidence={(stocktakingNo) => navigate(`/logs?keyword=${encodeURIComponent(stocktakingNo)}`)}
+      />
+
+      {/* Batch Modal（P1-04） */}
+      <StocktakingBatchModal
+        open={batchOpen}
+        materials={page.materials}
+        onClose={() => setBatchOpen(false)}
+        onSubmitted={page.handleQuery}
       />
 
       {/* Detail Modal */}
