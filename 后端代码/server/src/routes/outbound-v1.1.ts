@@ -588,13 +588,19 @@ router.post('/bom', (req, res) => {
         JOIN materials m ON gr.material_id = m.id AND m.is_deleted = 0
         WHERE gr.bom_id = ?
       `).all(effectiveBomId) as any[]
+      // P1-01：通用试剂/耗材/质控品库存不足时「跳过、不阻断出库」（BR-OB-022/023/024），
+      // 仅核心特异性试剂(bom_items)缺货才整单回滚。跳过项记入 skippedAux 并写进出库备注，保持可追溯。
+      const skippedAux: string[] = []
       for (const gr of generalReagents) {
         const quantity = (gr.usage_per_sample || 0) * sc
         if (quantity <= 0) continue
-        const allocations = allocateBatches(db, gr.material_id, quantity).map(a => ({
-          ...a,
-          materialId: gr.material_id,
-        }))
+        let allocations
+        try {
+          allocations = allocateBatches(db, gr.material_id, quantity).map(a => ({ ...a, materialId: gr.material_id }))
+        } catch (e: any) {
+          if (e?.message?.includes('批次库存不足')) { skippedAux.push(`通用试剂 ${gr.name || gr.material_id}`); continue }
+          throw e
+        }
         const itemTotalCost = allocations.reduce((sum, a) => sum + a.quantity * a.unitCost, 0)
         totalCost += itemTotalCost
         itemAllocations.push({ materialId: gr.material_id, quantity, allocations, itemTotalCost })
@@ -609,10 +615,13 @@ router.post('/bom', (req, res) => {
       for (const gc of generalConsumables) {
         const quantity = (gc.usage_per_sample || 0) * sc
         if (quantity <= 0) continue
-        const allocations = allocateBatches(db, gc.material_id, quantity).map(a => ({
-          ...a,
-          materialId: gc.material_id,
-        }))
+        let allocations
+        try {
+          allocations = allocateBatches(db, gc.material_id, quantity).map(a => ({ ...a, materialId: gc.material_id }))
+        } catch (e: any) {
+          if (e?.message?.includes('批次库存不足')) { skippedAux.push(`通用耗材 ${gc.name || gc.material_id}`); continue }
+          throw e
+        }
         const itemTotalCost = allocations.reduce((sum, a) => sum + a.quantity * a.unitCost, 0)
         totalCost += itemTotalCost
         itemAllocations.push({ materialId: gc.material_id, quantity, allocations, itemTotalCost })
@@ -630,19 +639,24 @@ router.post('/bom', (req, res) => {
         const batchesNeeded = Math.ceil(sc / coverage)
         const quantity = batchesNeeded * usagePerBatch
         if (quantity <= 0) continue
-        const allocations = allocateBatches(db, qc.material_id, quantity).map(a => ({
-          ...a,
-          materialId: qc.material_id,
-        }))
+        let allocations
+        try {
+          allocations = allocateBatches(db, qc.material_id, quantity).map(a => ({ ...a, materialId: qc.material_id }))
+        } catch (e: any) {
+          if (e?.message?.includes('批次库存不足')) { skippedAux.push(`质控品 ${qc.name || qc.material_id}`); continue }
+          throw e
+        }
         const itemTotalCost = allocations.reduce((sum, a) => sum + a.quantity * a.unitCost, 0)
         totalCost += itemTotalCost
         itemAllocations.push({ materialId: qc.material_id, quantity, allocations, itemTotalCost })
       }
 
+      const auxNote = skippedAux.length ? `辅料缺货已跳过(不阻断出库, BR-OB-022~024)：${skippedAux.join('、')}` : ''
+      const finalRemark = [remark, auxNote].filter(Boolean).join(' | ') || null
       db.prepare(`
         INSERT INTO outbound_records (id, outbound_no, type, project_id, total_cost, sample_count, case_no, operator, status, remark)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?)
-      `).run(id, outboundNo, 'bom', effectiveProjectId || null, totalCost, sc, normalizedCaseNo || null, operator, remark || null)
+      `).run(id, outboundNo, 'bom', effectiveProjectId || null, totalCost, sc, normalizedCaseNo || null, operator, finalRemark)
 
       for (const ia of itemAllocations) {
         for (const alloc of ia.allocations) {
@@ -704,6 +718,25 @@ router.post('/bom', (req, res) => {
       }
 
       const costMonth = new Date().toISOString().slice(0, 7)
+
+      // P1-01：辅料缺货已按 BR-OB-022~024 跳过（不阻断出库），但写 cost_exception 标记本次成本可能低估，
+      // 保成本完整性意图——可追溯、可补料后重算，而非静默低估。
+      for (const auxName of skippedAux) {
+        recordCostException(db, {
+          sourceModule: 'abc',
+          sourceType: 'bom_outbound',
+          sourceId: id,
+          projectId: effectiveProjectId || null,
+          bomId: effectiveBomId,
+          outboundId: id,
+          yearMonth: costMonth,
+          exceptionType: 'bom_material_skipped',
+          severity: 'warning',
+          message: `辅料缺货已跳过，本次出库成本可能低估：${auxName}`,
+          details: { outboundNo, bomId: effectiveBomId, skipped: auxName, sampleCount: sc, action: 'replenish_or_recalculate' },
+        })
+      }
+
       // ===== ABC 成本计算（失败不阻断出库）=====
       try {
         // P0：真实块/片/例数 = 每样本驱动量 × 样本数（替代写死 block=1/slide=sc，修期间费率分母）。

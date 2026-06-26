@@ -184,8 +184,10 @@ describe('成本异常台账', () => {
     expect(after).toBe(before)
   })
 
-  it('BOM出库扩展物料库存不足时阻断出库，不创建低估成本记录', async () => {
-    const suffix = unique('block')
+  it('BOM出库扩展物料库存不足时跳过不阻断（BR-OB-022~024），并写入低估成本异常', async () => {
+    // P1-01：通用试剂/耗材/质控品缺货时应「跳过、不阻断出库」（仅核心特异试剂缺货才阻断），
+    // 但须写 bom_material_skipped 异常标记成本可能低估，保留成本完整性意图（可追溯/可补料重算）。
+    const suffix = unique('skip')
     const base = seedBase(db, suffix)
     const materialId = seedMaterialWithStock(db, `${suffix}-core`, base, 20, 30)
     const skippedMaterialId = seedEmptyMaterial(db, suffix, base)
@@ -201,23 +203,27 @@ describe('成本异常台账', () => {
       .set('Authorization', `Bearer ${token}`)
       .send({ projectId, bomId, sampleCount: 2 })
 
-    expect(res.status).toBe(422)
-    expect(res.body.error.code).toBe('STOCK_INSUFFICIENT')
+    // 修复后：缺货辅料跳过，出库成功
+    expect(res.status).toBe(201)
 
     const outboundCount = db.prepare(`
       SELECT COUNT(*) as total
       FROM outbound_records
       WHERE project_id = ? AND is_deleted = 0
     `).get(projectId) as any
-    const skippedExceptionCount = db.prepare(`
-      SELECT COUNT(*) as total
+    const skippedException = db.prepare(`
+      SELECT severity, message
       FROM cost_exceptions
       WHERE bom_id = ? AND exception_type = 'bom_material_skipped'
     `).get(bomId) as any
     const skippedInventory = db.prepare('SELECT stock FROM inventory WHERE material_id = ?').get(skippedMaterialId) as any
 
-    expect(outboundCount.total).toBe(0)
-    expect(skippedExceptionCount.total).toBe(0)
+    expect(outboundCount.total).toBe(1)
+    // 跳过辅料写入低估成本异常（warning），保留成本完整性意图
+    expect(skippedException).toBeTruthy()
+    expect(skippedException.severity).toBe('warning')
+    expect(skippedException.message).toContain('辅料缺货已跳过')
+    // 缺货辅料从未被扣减
     expect(skippedInventory?.stock || 0).toBe(0)
   })
 

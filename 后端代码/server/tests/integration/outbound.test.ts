@@ -1020,6 +1020,40 @@ describe('集成测试：出库管理', () => {
       expect(JSON.parse(auditLog.response_data)).toMatchObject({ id: res.body.data.id, type: 'bom' })
     })
 
+    it('BOM-AUX-SKIP-001（P1-01）: 通用试剂缺货时跳过不阻断出库，主特异试剂正常出库（BR-OB-022~024）', async () => {
+      const stamp = Date.now()
+      // 特异性试剂：足量入库
+      const specificId = await createMaterial(app, token, `OB-AUX-SP-${stamp}`, 100)
+      await inbound(app, token, specificId, `B-AUX-SP-${stamp}`, 50, 100)
+      // 通用试剂：不入库 → 无批次 → 缺货
+      const auxId = await createMaterial(app, token, `OB-AUX-GR-${stamp}`, 80)
+
+      const bomRes = await request(app)
+        .post('/api/v1/boms')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ code: `OB-AUX-BOM-${stamp}`, name: '辅料跳过BOM', type: 'ihc', materials: [{ materialId: specificId, usagePerSample: 1, unit: '支', price: 100 }] })
+      const auxBomId = bomRes.body.data.id
+      // 直插一条缺货通用试剂到该 BOM
+      db.prepare('INSERT INTO bom_general_reagents (id, bom_id, material_id, usage_per_sample, unit) VALUES (?, ?, ?, ?, ?)')
+        .run(`bgr-aux-${stamp}`, auxBomId, auxId, 1, '支')
+      const projRes = await request(app)
+        .post('/api/v1/projects')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ code: `OB-AUX-PROJ-${stamp}`, name: '辅料跳过项目', type: 'ihc', bomId: auxBomId, status: 'active' })
+      const auxProjectId = projRes.body.data.id
+
+      const res = await request(app)
+        .post('/api/v1/outbound/bom')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ projectId: auxProjectId, bomId: auxBomId, sampleCount: 1, remark: '辅料跳过测试' })
+
+      // 修复前：通用试剂缺货 → allocateBatches throw → 整单 ROLLBACK/STOCK_INSUFFICIENT；修复后：跳过该辅料、出库成功
+      expect(res.status).toBe(201)
+      expect(res.body.data.totalCost).toBe(100) // 仅特异试剂 1×100，跳过的缺货辅料不计入
+      const rec = db.prepare('SELECT remark FROM outbound_records WHERE id = ?').get(res.body.data.id) as any
+      expect(rec.remark).toContain('辅料缺货已跳过')
+    })
+
     it('项目已配置BOM时可只传检测项目和样本数执行标准BOM出库', async () => {
       const res = await request(app)
         .post('/api/v1/outbound/bom')
