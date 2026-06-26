@@ -1,4 +1,5 @@
 import React from 'react'
+import { Link } from 'react-router-dom'
 import { X } from 'lucide-react'
 import type { OperationLog } from '@/types'
 
@@ -48,12 +49,13 @@ export function LogDetailModal({ open, log, getLogType, getModuleLabel, onClose 
             <Info label="操作模块" value={getModuleLabel(log.module || (log.requestData?.module as string) || '')} />
             <Info label="业务单据" value={
               log.businessId && log.businessUrl ? (
-                <a
-                  href={log.businessUrl}
+                <Link
+                  to={log.businessUrl}
+                  onClick={onClose}
                   className="font-mono text-blue-600 hover:text-blue-700 hover:underline"
                 >
                   {log.businessId}
-                </a>
+                </Link>
               ) : log.businessId || '-'
             } mono />
             <Info label="IP地址" value={log.ip} mono />
@@ -78,19 +80,21 @@ export function LogDetailModal({ open, log, getLogType, getModuleLabel, onClose 
               </p>
               <div className="mt-3 flex flex-wrap gap-2">
                 {evidenceBusinessUrl && (
-                  <a
-                    href={evidenceBusinessUrl}
+                  <Link
+                    to={evidenceBusinessUrl}
+                    onClick={onClose}
                     className="inline-flex h-8 items-center rounded-md border border-blue-200 bg-white px-3 text-xs font-medium text-blue-700 hover:bg-blue-50"
                   >
                     回到业务单据
-                  </a>
+                  </Link>
                 )}
-                <a
-                  href={evidenceTimelineUrl}
+                <Link
+                  to={evidenceTimelineUrl}
+                  onClick={onClose}
                   className="inline-flex h-8 items-center rounded-md border border-blue-200 bg-white px-3 text-xs font-medium text-blue-700 hover:bg-blue-50"
                 >
                   查看同一单据审计时间线
-                </a>
+                </Link>
               </div>
             </div>
           )}
@@ -108,12 +112,13 @@ export function LogDetailModal({ open, log, getLogType, getModuleLabel, onClose 
                     <EventRow
                       label="标准回跳"
                       value={log.auditEvent.businessUrl ? (
-                        <a
-                          href={log.auditEvent.businessUrl}
+                        <Link
+                          to={log.auditEvent.businessUrl}
+                          onClick={onClose}
                           className="font-mono text-blue-600 hover:text-blue-700 hover:underline"
                         >
                           {log.auditEvent.businessUrl}
-                        </a>
+                        </Link>
                       ) : '-'}
                     />
                   </tbody>

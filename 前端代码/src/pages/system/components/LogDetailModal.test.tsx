@@ -1,11 +1,14 @@
 import React from 'react'
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
+import { MemoryRouter } from 'react-router-dom'
 import { LogDetailModal } from './LogDetailModal'
+
+const renderWithRouter = (ui: React.ReactElement) => render(<MemoryRouter>{ui}</MemoryRouter>)
 
 describe('LogDetailModal', () => {
   it('renders a business document link when audit row provides a businessUrl', () => {
-    render(
+    renderWithRouter(
       <LogDetailModal
         open
         log={{
@@ -51,7 +54,7 @@ describe('LogDetailModal', () => {
   })
 
   it('shows business evidence review paths from the detail dialog', () => {
-    render(
+    renderWithRouter(
       <LogDetailModal
         open
         log={{

@@ -1,4 +1,5 @@
 import React from 'react'
+import { Link } from 'react-router-dom'
 import { Search } from 'lucide-react'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import type { OperationLog } from '@/types'
@@ -191,12 +192,12 @@ export function LogsTable({
                   <td className="px-4 py-3.5 font-mono text-[13px] text-gray-600">
                     <div className="flex flex-wrap items-center gap-2">
                       {row.businessId && row.businessUrl ? (
-                        <a
-                          href={row.businessUrl}
+                        <Link
+                          to={row.businessUrl}
                           className="text-blue-600 hover:text-blue-700 hover:underline"
                         >
                           {row.businessId}
-                        </a>
+                        </Link>
                       ) : row.businessId || '-'}
                       {isCurrentBusiness && (
                         <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700">

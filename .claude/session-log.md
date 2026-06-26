@@ -17,7 +17,7 @@
   - P1 17/17：01 辅料缺货跳过·02 过期→报废·03 审计渲染·04 盘点批量·05 设备关联项目·06 库位利用率·07 BOM设备模板UI·08 设备折旧自动·09 呆滞预警接线·10 Token续期·11 clearAuth·12 库位RBAC·13 退款上界·14 退货finance只读+退款额可改·15 Hooks·16 设备幂等·17 库存状态优先级。
   - P2 已做：删死代码·Modal阴影·设计token(border-gray-100→200)·Outbound纯函数拆分·transfers双toast去重。
   - **React Query 选项A 已执行**（PM 决策；我推荐 A）：移除死 QueryClientProvider + 规范对齐现实。
-  - **剩余 polish（行为中性·非阻断，已写新会话交接计划，见 [session-log/2026-06-25.md](session-log/2026-06-25.md) 末「🔖 新会话交接计划」）**：~~① 4 模块双 toast 去重~~ **✅ 完成**（13 catch 逐个判定 axios→删/客户端·域映射→留，4 子代理对抗复核 ALL_CORRECT，65/65 绿；纠偏保留 437 localStorage·784 xlsx·734 域映射 helper，inbound 实测无需改测试；顺修 SupplierReturns CRLF 行尾污染）；剩 ② 日志裸`<a>`→Link ③ OutboundFormModal 918行渲染拆分(最大/高风险，建议带 E2E 专项) ④ 可选 npm uninstall @tanstack/react-query。
+  - **剩余 polish（行为中性·非阻断，已写新会话交接计划，见 [session-log/2026-06-25.md](session-log/2026-06-25.md) 末「🔖 新会话交接计划」）**：~~① 4 模块双 toast 去重~~ **✅ 完成**（13 catch 逐个判定 axios→删/客户端·域映射→留，4 子代理对抗复核 ALL_CORRECT，65/65 绿；纠偏保留 437 localStorage·784 xlsx·734 域映射 helper，inbound 实测无需改测试；顺修 SupplierReturns CRLF 行尾污染）；~~② 日志裸`<a>`→Link~~ **✅ 完成**（LogsTable 1+LogDetailModal 4 锚点改 react-router Link，modal 链接加 onClick=onClose；businessUrl 已核全为内部 SPA 路由；测试包 MemoryRouter，6/6 绿）；剩 ③ OutboundFormModal 918行渲染拆分(最大/高风险，建议带 E2E 专项) ④ 可选 npm uninstall @tanstack/react-query。
   - 全部在分支 `codex/abc-productization-phase0-1`，未合并 master、未建 PR。
 
 **测试隔离修复 ✅ — 消除跨文件 SQLite 污染（IDC-GUARD-002 偶发误红根治）**

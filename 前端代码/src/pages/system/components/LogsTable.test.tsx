@@ -1,7 +1,10 @@
 import React from 'react'
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
+import { MemoryRouter } from 'react-router-dom'
 import { LogsTable } from './LogsTable'
+
+const renderWithRouter = (ui: React.ReactElement) => render(<MemoryRouter>{ui}</MemoryRouter>)
 
 const noop = vi.fn()
 
@@ -42,7 +45,7 @@ const baseProps = {
 
 describe('LogsTable', () => {
   it('shows a visible date range validation error before users read an empty log list as fact', () => {
-    render(
+    renderWithRouter(
       <LogsTable
         {...baseProps}
         dateError="开始日期不能晚于结束日期"
@@ -59,7 +62,7 @@ describe('LogsTable', () => {
   })
 
   it('renders business document as a clickable link when audit row provides a businessUrl', () => {
-    render(
+    renderWithRouter(
       <LogsTable
         {...baseProps}
         data={[{
@@ -102,7 +105,7 @@ describe('LogsTable', () => {
   })
 
   it('makes audit deep-link context visible so users know they are reviewing one business document', () => {
-    render(
+    renderWithRouter(
       <LogsTable
         {...baseProps}
         keyword="IN-LINK-001"
@@ -135,7 +138,7 @@ describe('LogsTable', () => {
   })
 
   it('explains an empty business evidence result instead of leaving users to verify offline', () => {
-    render(
+    renderWithRouter(
       <LogsTable
         {...baseProps}
         keyword="IN-MISSING-001"
