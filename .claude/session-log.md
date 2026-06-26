@@ -16,7 +16,9 @@
 - **「全部执行」已完成主体**：**6 P0 + 17 P1（全部）+ P2 大部分** = 约 21 commit，全程逐项 TDD/分组提交/零回归（后端全量 656 通过、各前端模块绿、tsc 干净）。
   - P1 17/17：01 辅料缺货跳过·02 过期→报废·03 审计渲染·04 盘点批量·05 设备关联项目·06 库位利用率·07 BOM设备模板UI·08 设备折旧自动·09 呆滞预警接线·10 Token续期·11 clearAuth·12 库位RBAC·13 退款上界·14 退货finance只读+退款额可改·15 Hooks·16 设备幂等·17 库存状态优先级。
   - P2 已做：删死代码·Modal阴影·设计token(border-gray-100→200)·Outbound纯函数拆分·transfers双toast去重。
-  - **剩余（低价值行为中性 polish / 团队决策）**：**React Query 待用户决策**（已给 PM 白话详解 A/B/C）；其余 4 模块 toast 去重、OutboundFormModal 918行渲染拆分(建议带E2E专项)、日志Link。详见 [session-log/2026-06-25.md](session-log/2026-06-25.md)。
+  - **React Query 选项A 已执行**（PM 决策；我推荐 A）：移除死 QueryClientProvider + 规范对齐现实。
+  - **剩余 polish（行为中性·非阻断，已写新会话交接计划，见 [session-log/2026-06-25.md](session-log/2026-06-25.md) 末「🔖 新会话交接计划」）**：① 其余 4 模块双 toast 去重(同 transfers 模式；inbound 需同步改测试) ② 日志裸`<a>`→Link ③ OutboundFormModal 918行渲染拆分(最大/高风险，建议带 E2E 专项) ④ 可选 npm uninstall @tanstack/react-query。
+  - 全部在分支 `codex/abc-productization-phase0-1`，未合并 master、未建 PR。
 
 **测试隔离修复 ✅ — 消除跨文件 SQLite 污染（IDC-GUARD-002 偶发误红根治）**
 - 根因：`abc-cost.test.ts`（唯一静态 import + 未设 `DATABASE_PATH`）落到共享磁盘库 `data/coreone.db`，与 `global-setup.ts` 主进程常驻服务器并发开同一文件 → SQLite 文件锁/半迁移 schema 竞争（佐证全绿运行仍现 `no such table`），偶发崩溃拖红同 worker 无关测试。
