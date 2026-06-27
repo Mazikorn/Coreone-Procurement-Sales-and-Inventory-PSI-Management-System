@@ -46,27 +46,39 @@ router.post('/import', authenticateToken, requireWrite, (req, res) => {
     `)
     const lisMatch = db.prepare('SELECT 1 FROM lis_cases WHERE case_no = ?')
 
+    // 明细按 case 分组，使「删旧+插新」在同一 case 内成对，避免两段循环间的空窗
+    const linesByCase = new Map<string, typeof agg.lines>()
+    for (const ln of agg.lines) {
+      const arr = linesByCase.get(ln.caseNo) || []
+      arr.push(ln)
+      linesByCase.set(ln.caseNo, arr)
+    }
+
     const unmatched: string[] = []
     let matchedToLis = 0
-    for (const c of agg.cases) {
-      let partnerId = partnerCache.get(c.partnerName)
-      if (!partnerId) {
-        const ref = findOrCreatePartner(db, c.partnerName, uuidv4, { createdBy: operator })
-        partnerId = ref.id
-        partnerCache.set(c.partnerName, partnerId)
-        if (ref.created) partnersCreated++
+    // 整批事务：任一 case 失败则整体回滚（防「删了明细未补插」+ 并发交错）
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      for (const c of agg.cases) {
+        let partnerId = partnerCache.get(c.partnerName)
+        if (!partnerId) {
+          const ref = findOrCreatePartner(db, c.partnerName, uuidv4, { createdBy: operator })
+          partnerId = ref.id
+          partnerCache.set(c.partnerName, partnerId)
+          if (ref.created) partnersCreated++
+        }
+        upsertRev.run(`CR-${uuidv4()}`, c.caseNo, partnerId, c.partnerName, docNo || null, c.grossAmount, c.netAmount, c.discountRate, c.serviceMonth, c.lineCount, importBatch)
+        delLines.run(c.caseNo, c.serviceMonth)
+        const lns = linesByCase.get(c.caseNo) || []
+        lns.forEach((ln, i) => insLine.run(`CRL-${uuidv4()}`, ln.caseNo, ln.partnerName, i + 1, ln.specimenName, ln.chargeItem, ln.chargeCode,
+          ln.unitPrice, ln.qty, ln.unit, ln.grossAmount, ln.discountRate, ln.netAmount, ln.chargeTime, ln.serviceMonth, importBatch))
+        if (lisMatch.get(c.caseNo)) matchedToLis++
+        else unmatched.push(c.caseNo)
       }
-      upsertRev.run(`CR-${uuidv4()}`, c.caseNo, partnerId, c.partnerName, docNo || null, c.grossAmount, c.netAmount, c.discountRate, c.serviceMonth, c.lineCount, importBatch)
-      delLines.run(c.caseNo, c.serviceMonth)
-      if (lisMatch.get(c.caseNo)) matchedToLis++
-      else unmatched.push(c.caseNo)
-    }
-    // 明细行
-    let seqByCase: Record<string, number> = {}
-    for (const ln of agg.lines) {
-      seqByCase[ln.caseNo] = (seqByCase[ln.caseNo] || 0) + 1
-      insLine.run(`CRL-${uuidv4()}`, ln.caseNo, ln.partnerName, seqByCase[ln.caseNo], ln.specimenName, ln.chargeItem, ln.chargeCode,
-        ln.unitPrice, ln.qty, ln.unit, ln.grossAmount, ln.discountRate, ln.netAmount, ln.chargeTime, ln.serviceMonth, importBatch)
+      db.exec('COMMIT')
+    } catch (e) {
+      db.exec('ROLLBACK')
+      throw e
     }
 
     success(res, {

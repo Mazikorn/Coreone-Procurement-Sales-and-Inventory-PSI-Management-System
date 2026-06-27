@@ -62,13 +62,20 @@ export function computeCasePnl(input: CasePnlInput, catalog: Map<string, ChargeC
   const techRatio = split.techRatio
   const diagRatio = split.diagnosisRatio
   const inScopeRatio = input.serviceScope === 'with_diagnosis' ? techRatio + diagRatio : techRatio
+  // 完整度诚实标注：任一不确定因素 → partial_quantities（绝不静默）
   const heZero = (input.qty!.heSlideCount ?? 0) === 0
+  const cytology = input.qty!.specimenType === 'cytology'
+  const hasUnmatched = split.unmatchedCount > 0
+  const notes: string[] = []
+  if (heZero) notes.push('诊断切片数(HE)=0，技术/诊断分解未校正（院级收入总额仍可靠）')
+  if (cytology) notes.push('细胞学处理费按玻片≈蜡块近似，待真实玻片数校正')
+  if (hasUnmatched) notes.push(`${split.unmatchedCount} 个收费项未命中目录，占比被低估（检查目录是否完整）`)
   return {
     ...base,
     techRatio: r4(techRatio), diagnosisRatio: r4(diagRatio), inScopeRatio: r4(inScopeRatio),
     labRevenue: r2(input.netRevenue * inScopeRatio),
-    quality: heZero ? 'partial_quantities' : 'ok',
-    note: heZero ? '诊断切片数(HE)=0，技术/诊断分解未校正（院级收入总额仍可靠）' : undefined,
+    quality: heZero || cytology || hasUnmatched ? 'partial_quantities' : 'ok',
+    note: notes.length ? notes.join('；') : undefined,
   }
 }
 

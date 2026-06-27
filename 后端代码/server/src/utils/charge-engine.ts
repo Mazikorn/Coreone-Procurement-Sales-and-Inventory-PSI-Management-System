@@ -66,6 +66,8 @@ export interface CaseChargeItem {
 export interface CaseSplit {
   byCategory: Record<ChargeCategory, number>
   total: number
+  /** 未在目录命中的收费项数（>0 → 占比被低估，调用方应标数据缺口，不可静默） */
+  unmatchedCount: number
   /** 技术(实验室)占比 = 技术 / total（total=0 时为 0） */
   techRatio: number
   /** 诊断占比、取材占比（供含诊断/取材的医院取对应组分） */
@@ -97,6 +99,7 @@ export function computeCaseSplit(items: CaseChargeItem[], catalog: Map<string, C
   return {
     byCategory,
     total: round2(total),
+    unmatchedCount: resolved.filter((r) => !r.matched).length,
     techRatio: ratio(byCategory.技术),
     diagnosisRatio: ratio(byCategory.诊断),
     grossingRatio: ratio(byCategory.取材),

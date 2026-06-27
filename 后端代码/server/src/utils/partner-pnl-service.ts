@@ -17,6 +17,12 @@ interface DbLike {
   prepare: (sql: string) => { get: (...a: unknown[]) => unknown; run: (...a: unknown[]) => { changes?: number }; all: (...a: unknown[]) => unknown[] }
 }
 
+const VALID_SPECIMEN: SpecimenType[] = ['tissue', 'tissue_complex', 'cytology']
+/** DB 值校验：非法/NULL 的 specimen_type 显式归一为 'tissue'（默认），不静默把垃圾值当组织 */
+function normalizeSpecimen(v: string | null): SpecimenType {
+  return VALID_SPECIMEN.includes(v as SpecimenType) ? (v as SpecimenType) : 'tissue'
+}
+
 interface RevenueRow {
   case_no: string
   partner_id: string
@@ -56,7 +62,7 @@ export function loadCasePnls(db: DbLike, catalog: Map<string, ChargeCodeDef>, op
           heSlideCount: Number(r.he_slide_count) || 0, blockCount: Number(r.block_count) || 0,
           ihcCount: Number(r.ihc_count) || 0, specialStainCount: Number(r.special_stain_count) || 0,
           eberCount: Number(r.eber_count) || 0, pdl1Count: Number(r.pdl1_count) || 0,
-          specimenType: (r.specimen_type as SpecimenType) || 'tissue',
+          specimenType: normalizeSpecimen(r.specimen_type),
         }
       : null
     const input: CasePnlInput = {
@@ -148,15 +154,23 @@ export interface PnlTrendPoint {
   caseCount: number
 }
 
-/** 某医院的月度趋势（按 service_month 时序）。 */
+/** 某医院的月度趋势（按 service_month 时序）。单次装载目录+收入+成本，按月分桶，避免逐月 N+1。 */
 export function buildPartnerTrend(db: DbLike, partnerId: string): PnlTrendPoint[] {
-  const months = (db.prepare(
-    'SELECT DISTINCT service_month AS m FROM case_revenue WHERE partner_id = ? AND service_month IS NOT NULL ORDER BY service_month',
-  ).all(partnerId) as Array<{ m: string }>).map((r) => r.m)
-  const points: PnlTrendPoint[] = []
-  for (const m of months) {
-    const row = buildPartnerPnl(db, { serviceMonth: m, partnerId }).find((p) => p.partnerId === partnerId)
-    if (row) points.push({ serviceMonth: m, netRevenueTotal: row.netRevenueTotal, labRevenueTotal: row.labRevenueTotal, costTotal: row.costTotal, grossMargin: row.grossMargin, caseCount: row.caseCount })
+  const catalog = loadChargeCatalog(db) // 一次
+  const cases = loadCasePnls(db, catalog, { partnerId }) // 一次（全月份）
+  const costMap = getCaseCostRollup(db, {}) // 一次（case→成本）
+  const byMonth = new Map<string, PnlTrendPoint>()
+  for (const c of cases) {
+    const m = c.serviceMonth
+    if (!m) continue
+    let p = byMonth.get(m)
+    if (!p) { p = { serviceMonth: m, netRevenueTotal: 0, labRevenueTotal: 0, costTotal: 0, grossMargin: 0, caseCount: 0 }; byMonth.set(m, p) }
+    p.netRevenueTotal = r2(p.netRevenueTotal + c.netRevenue)
+    p.labRevenueTotal = r2(p.labRevenueTotal + c.labRevenue)
+    p.costTotal = r2(p.costTotal + (costMap.get(c.caseNo) || 0))
+    p.caseCount++
   }
+  const points = [...byMonth.values()].sort((a, b) => a.serviceMonth.localeCompare(b.serviceMonth))
+  points.forEach((p) => { p.grossMargin = r2(p.labRevenueTotal - p.costTotal) })
   return points
 }

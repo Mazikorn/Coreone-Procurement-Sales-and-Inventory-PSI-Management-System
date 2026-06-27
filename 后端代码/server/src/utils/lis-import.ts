@@ -54,8 +54,9 @@ function s(row: Record<string, unknown>, key: string): string {
 function n(row: Record<string, unknown>, key: string): number {
   const v = pick(row, key)
   if (v == null) return 0
-  const x = parseInt(String(v).replace(/[^\d-]/g, ''), 10)
-  return Number.isFinite(x) && x > 0 ? x : 0
+  // 保留小数点再 parseFloat → 四舍五入为整数计数；避免 parseInt 把 '10.5' 误剥成 '105'(×10 放大)
+  const x = parseFloat(String(v).replace(/[^\d.-]/g, ''))
+  return Number.isFinite(x) && x > 0 ? Math.round(x) : 0
 }
 
 /** 规范化一行 LIS 导出 → NormalizedLisCase（含自动样本类型判定） */

@@ -38,6 +38,14 @@ describe('normalizeLisRow：真实 LIS 行 → 规范化', () => {
     expect(isValidLisRow(normalizeLisRow({ 病理号: 'X1' }))).toBe(false) // 缺医院
   })
 
+  it('小数数量四舍五入为整数，不被 parseInt 剥成 ×10（对抗审查 critical 修复）', () => {
+    const c = normalizeLisRow({ 病理号: 'A', 送检医院: 'H', 蜡块数: '10.5', HE切片数: '5.2', 免疫组化数: '3' })
+    expect(c.blockCount).toBe(11) // 非 105
+    expect(c.heSlideCount).toBe(5) // 非 52
+    expect(c.ihcCount).toBe(3)
+    expect(normalizeLisRow({ 病理号: 'A', 送检医院: 'H', 蜡块数: '7' }).blockCount).toBe(7)
+  })
+
   it('toLisCaseQty：带入指定 specimenType，喂给 mapCaseToCharges', () => {
     const c = normalizeLisRow({ 病理号: 'A', 送检医院: 'H', 蜡块数: 2, 免疫组化数: 4 })
     const q = toLisCaseQty(c, 'tissue')

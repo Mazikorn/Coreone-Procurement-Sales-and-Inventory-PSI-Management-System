@@ -43,6 +43,20 @@ describe('computeCasePnl：实验室收入 = 实收 × 在范围组分占比', (
     expect(r.labRevenue).toBe(300)
     expect(r.inScopeRatio).toBe(1)
   })
+
+  it('细胞学样本 → partial_quantities（玻片≈蜡块近似要标注，不静默当 ok）', () => {
+    const r = computeCasePnl({ caseNo: 'CY', partnerId: 'P1', serviceScope: 'with_diagnosis', netRevenue: 400, qty: qty({ heSlideCount: 2, blockCount: 1, specimenType: 'cytology' }) }, CAT)
+    expect(r.quality).toBe('partial_quantities')
+    expect(r.note).toMatch(/玻片/)
+  })
+
+  it('收费项未命中目录 → partial_quantities + 标注（占比被低估，不静默）', () => {
+    const partialCat = buildSeedCatalog()
+    partialCat.delete('012100000120000') // 移除 IHC 常规码模拟目录缺失
+    const r = computeCasePnl({ caseNo: 'UM', partnerId: 'P1', serviceScope: 'technical_only', netRevenue: 500, qty: qty({ heSlideCount: 3, ihcCount: 5 }) }, partialCat)
+    expect(r.quality).toBe('partial_quantities')
+    expect(r.note).toMatch(/未命中目录/)
+  })
 })
 
 describe('rollupPartnerRevenue：院级上卷 + 完整度计数', () => {

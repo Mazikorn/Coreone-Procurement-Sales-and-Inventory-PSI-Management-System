@@ -53,23 +53,31 @@ router.post('/import', authenticateToken, requireWrite, (req, res) => {
 
     let imported = 0
     let skipped = 0
-    for (const row of cases) {
-      const c = normalizeLisRow(row)
-      if (!isValidLisRow(c)) { skipped++; continue }
-      // 医院 upsert（缓存避免重复查）
-      let partnerId = partnerCache.get(c.partnerName)
-      if (!partnerId) {
-        const ref = findOrCreatePartner(db, c.partnerName, uuidv4, { createdBy: operator })
-        partnerId = ref.id
-        partnerCache.set(c.partnerName, partnerId)
-        if (ref.created) partnersCreated++
+    // 整批事务：任一行 SQL 失败则整体回滚，避免半批落库
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      for (const row of cases) {
+        const c = normalizeLisRow(row)
+        if (!isValidLisRow(c)) { skipped++; continue }
+        // 医院 upsert（缓存避免重复查）
+        let partnerId = partnerCache.get(c.partnerName)
+        if (!partnerId) {
+          const ref = findOrCreatePartner(db, c.partnerName, uuidv4, { createdBy: operator })
+          partnerId = ref.id
+          partnerCache.set(c.partnerName, partnerId)
+          if (ref.created) partnersCreated++
+        }
+        upsert.run(
+          `LC-${uuidv4()}`, c.caseNo, partnerId, c.status || 'normal', c.operateTime || null, importBatch,
+          c.heSlideCount, c.blockCount, c.ihcCount, c.specialStainCount, c.eberCount, c.pdl1Count,
+          c.autoSpecimenType,
+        )
+        imported++
       }
-      upsert.run(
-        `LC-${uuidv4()}`, c.caseNo, partnerId, c.status || 'normal', c.operateTime || null, importBatch,
-        c.heSlideCount, c.blockCount, c.ihcCount, c.specialStainCount, c.eberCount, c.pdl1Count,
-        c.autoSpecimenType,
-      )
-      imported++
+      db.exec('COMMIT')
+    } catch (e) {
+      db.exec('ROLLBACK')
+      throw e
     }
 
     success(res, {
