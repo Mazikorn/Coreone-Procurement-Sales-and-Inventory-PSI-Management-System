@@ -1,12 +1,21 @@
 import { useState, useEffect, useMemo } from 'react'
-import { inventoryApi, inboundApi, outboundApi } from '@/api/inventory'
-import { canAccess } from '@/lib/permissions'
+import { inventoryApi, inboundApi, outboundApi, purchaseOrderApi } from '@/api/inventory'
+import { projectApi } from '@/api/master'
+import { abcApi } from '@/api/abc'
+import { canAccess, canSeeCost } from '@/lib/permissions'
 import type { InventoryStats, InboundRecord, OutboundRecord } from '@/types'
 
 export interface DashboardStats extends InventoryStats {
   monthlyInbound: number
   monthlyOutbound: number
   alertCount: number
+}
+
+export interface CostSummary {
+  totalCost: number
+  totalRevenue: number
+  totalProfit: number
+  profitRate: number // 0–100
 }
 
 export interface ActivityItem {
@@ -21,6 +30,9 @@ export function useDashboardPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [recentInbound, setRecentInbound] = useState<InboundRecord[]>([])
   const [recentOutbound, setRecentOutbound] = useState<OutboundRecord[]>([])
+  const [projectCount, setProjectCount] = useState<number | null>(null)
+  const [poCount, setPoCount] = useState<number | null>(null)
+  const [costSummary, setCostSummary] = useState<CostSummary | null>(null)
   const [loading, setLoading] = useState(true)
 
   const today = useMemo(() => {
@@ -33,11 +45,14 @@ export function useDashboardPage() {
     const fetchData = async () => {
       setLoading(true)
       try {
-        // 数据驱动 RBAC：仅拉取当前用户有读权限的接口（根治财务/病理等首屏 403 toast）
-        const [statsData, inboundRes, outboundRes] = await Promise.all([
+        // 数据驱动 RBAC：仅拉取当前用户有权限的接口（根治 403 toast + 角色仪表盘按能力差异化）
+        const [statsData, inboundRes, outboundRes, projectRes, poRes, costRes] = await Promise.all([
           canAccess('inventory', 'R') ? inventoryApi.getStats() : Promise.resolve(null),
           canAccess('inbound', 'R') ? inboundApi.getList({ page: 1, pageSize: 5 }) : Promise.resolve(null),
           canAccess('outbound', 'R') ? outboundApi.getList({ page: 1, pageSize: 5 }) : Promise.resolve(null),
+          canAccess('projects', 'R') ? projectApi.getList({ page: 1, pageSize: 1 }) : Promise.resolve(null),
+          canAccess('purchase_orders', 'R') ? purchaseOrderApi.getList({ page: 1, pageSize: 1 }) : Promise.resolve(null),
+          canSeeCost() ? abcApi.getDashboard() : Promise.resolve(null),
         ])
 
         if (statsData) {
@@ -52,6 +67,9 @@ export function useDashboardPage() {
 
         setRecentInbound((inboundRes as unknown as { list: InboundRecord[] } | null)?.list || [])
         setRecentOutbound((outboundRes as unknown as { list: OutboundRecord[] } | null)?.list || [])
+        if (projectRes) setProjectCount(Number((projectRes as any)?.pagination?.total ?? (projectRes as any)?.total ?? 0))
+        if (poRes) setPoCount(Number((poRes as any)?.pagination?.total ?? (poRes as any)?.total ?? 0))
+        if (costRes) setCostSummary(extractCostSummary(costRes))
       } catch {
         // silent fail
       } finally {
@@ -108,7 +126,25 @@ export function useDashboardPage() {
     []
   )
 
-  return { stats, recentInbound, recentOutbound, loading, today, activities, stockTrend, consumeTrend }
+  return { stats, recentInbound, recentOutbound, projectCount, poCount, costSummary, loading, today, activities, stockTrend, consumeTrend }
+}
+
+// /abc/dashboard 响应字段防御性提取（兼容 summary 嵌套 / 扁平 / snake_case）
+function extractCostSummary(raw: any): CostSummary {
+  const s = raw?.summary ?? raw ?? {}
+  const num = (...keys: string[]): number => {
+    for (const k of keys) {
+      const v = s[k] ?? raw?.[k]
+      if (typeof v === 'number') return v
+      if (typeof v === 'string' && v !== '' && !isNaN(Number(v))) return Number(v)
+    }
+    return 0
+  }
+  const totalCost = num('totalCost', 'total_cost')
+  const totalRevenue = num('totalRevenue', 'totalFee', 'total_fee', 'revenue')
+  const totalProfit = num('totalProfit', 'total_profit', 'profit')
+  const profitRate = totalRevenue > 0 ? Math.round((totalProfit / totalRevenue) * 1000) / 10 : 0
+  return { totalCost, totalRevenue, totalProfit, profitRate }
 }
 
 function formatTime(iso: string): string {
