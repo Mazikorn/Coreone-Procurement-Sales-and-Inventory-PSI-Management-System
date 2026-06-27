@@ -44,6 +44,24 @@ export function initializeDatabase(): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS suppliers (id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL, contact TEXT, phone TEXT, email TEXT, address TEXT, tax_no TEXT, bank_name TEXT, bank_account TEXT, status INTEGER NOT NULL DEFAULT 1, cooperation_count INTEGER DEFAULT 0, total_amount DECIMAL(18, 4) DEFAULT 0, rating INTEGER DEFAULT 5, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, created_by TEXT, updated_by TEXT, is_deleted INTEGER NOT NULL DEFAULT 0)
   `)
+  // 合作医院(客户)主数据 —— 第三方诊断中心按医院核成本/盈利的核心维度（可经 LIS 按 code 导入/匹配）。
+  // service_scope: 本中心对该医院承担的范围（technical_only=仅技术 / with_diagnosis=含诊断），决定收入取哪些组分。
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS partners (
+      id TEXT PRIMARY KEY,
+      code TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      short_name TEXT,
+      contact TEXT, phone TEXT, address TEXT,
+      contract_no TEXT,
+      service_scope TEXT NOT NULL DEFAULT 'technical_only',
+      status INTEGER NOT NULL DEFAULT 1,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by TEXT, updated_by TEXT,
+      is_deleted INTEGER NOT NULL DEFAULT 0
+    )
+  `)
   database.exec(`
     CREATE TABLE IF NOT EXISTS locations (id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL, type TEXT NOT NULL DEFAULT 'shelf', parent_id TEXT, zone TEXT NOT NULL, shelf TEXT, position TEXT, capacity INTEGER DEFAULT 999999, used INTEGER DEFAULT 0, status INTEGER NOT NULL DEFAULT 1, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, created_by TEXT, updated_by TEXT, is_deleted INTEGER NOT NULL DEFAULT 0)
   `)
@@ -940,6 +958,9 @@ export function initializeDatabase(): void {
   ensureColumn('outbound_abc_details', 'case_no', 'TEXT')
   ensureColumn('outbound_abc_details', 'charge_group_id', 'TEXT')
   ensureColumn('outbound_abc_details', 'calculation_version', "TEXT NOT NULL DEFAULT 'v1'")
+  // 按医院(客户)成本/盈利：partner 维度（LIS 给"哪家医院送检" → lis_cases；冗余到 abc 明细供按客户上卷）
+  ensureColumn('outbound_abc_details', 'partner_id', 'TEXT')
+  ensureColumn('lis_cases', 'partner_id', 'TEXT')
   ensureColumn('outbound_abc_details', 'source_snapshot', 'TEXT')
 
   // —— ABC 索引（L2 成本来源→中心映射热路径 + 期间动因聚合）——
