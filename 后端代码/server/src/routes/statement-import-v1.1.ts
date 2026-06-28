@@ -49,7 +49,11 @@ router.post('/preview', authenticateToken, requireImport, (req, res) => {
     }
 
     const rev = computeStatementRevenue(parsed.rows, cfg.config)
-    const lisCaseNos = (db.prepare('SELECT case_no FROM lis_cases WHERE partner_id = ?').all(partnerId) as any[]).map((r) => r.case_no)
+    // codex verify-M1：传了 serviceMonth 就按 LIS 登记月过滤本期病例，否则全院（无日期 LIS 不计入本期 backward 缺口）
+    const lisRows = (serviceMonth
+      ? db.prepare(`SELECT case_no FROM lis_cases WHERE partner_id = ? AND replace(substr(COALESCE(operate_time, ''), 1, 7), '/', '-') = ?`).all(partnerId, serviceMonth)
+      : db.prepare('SELECT case_no FROM lis_cases WHERE partner_id = ?').all(partnerId)) as any[]
+    const lisCaseNos = lisRows.map((r) => r.case_no)
     const score = scoreStatement(rev, {
       declaredTotal: parsed.declaredTotal,
       lisCaseNos,
@@ -93,13 +97,17 @@ router.post('/commit', authenticateToken, requireImport, (req, res) => {
     }
     const rev = computeStatementRevenue(parsed.rows, cfg.config)
 
-    // codex F5：未匹配/歧义金额 或 对账不平 → 不静默当「已对账权威」落库，需财务显式 confirm:true。
-    const closureDiff = parsed.declaredTotal == null ? null : round2(rev.totalSettle - parsed.declaredTotal)
-    const closureOk = closureDiff == null ? true : Math.abs(closureDiff) <= 0.01
+    // codex F5（+verify H1/H2）：未匹配/歧义 或 对账不平 或【无独立合计行无法核对闭合】→ 需财务显式 confirm===true 才落库。
+    const confirmed = confirm === true // 严格布尔：'false'/'0'/1 等一律不算确认（H1）
+    const closureVerifiable = parsed.declaredTotal != null
+    const closureDiff = closureVerifiable ? round2(rev.totalSettle - (parsed.declaredTotal as number)) : null
+    const closureOk = closureVerifiable && Math.abs(closureDiff as number) <= 0.01 // 无合计行 → 不可核对 → 非 OK（H2）
     const unclassified = rev.counts.unmatched + rev.counts.ambiguous
-    if (!confirm && (unclassified > 0 || !closureOk)) {
+    if (!confirmed && (unclassified > 0 || !closureOk)) {
+      const reason = !closureVerifiable ? '对账单无独立合计行，无法核对闭合'
+        : closureOk ? '' : `逐行结算 ${rev.totalSettle} 与对账单合计 ${parsed.declaredTotal} 差 ${closureDiff}`
       error(res,
-        `对账单未完全识别或未对平，未确认不落库：未匹配 ${rev.counts.unmatched} 行 / 歧义 ${rev.counts.ambiguous} 行${closureOk ? '' : `，逐行结算 ${rev.totalSettle} 与对账单合计 ${parsed.declaredTotal} 差 ${closureDiff}`}。请先归类/核对，或重发带 confirm:true 显式确认。`,
+        `对账单未完全识别或未对平，未确认不落库：未匹配 ${rev.counts.unmatched} 行 / 歧义 ${rev.counts.ambiguous} 行${reason ? '，' + reason : ''}。请先归类/核对，或重发带 confirm:true 显式确认。`,
         'NEEDS_CONFIRM', 409)
       return
     }

@@ -120,3 +120,26 @@ describe('GOLDEN 端到端：配置 → 导入 → 看板 = ¥13,152', () => {
     expect(pnl.sourceCounts.statement).toBe(25)
   })
 })
+
+describe('codex verify 门禁加固（H1 严格布尔 / H2 无合计行需确认）', () => {
+  const NOTOTAL = [
+    ['病理号', '项目名称', '收费金额', '结算扣率', '结算金额'],
+    ['S26-700', '手术标本检查与诊断', '190', '0.8', '152'], // 全匹配，但无独立合计行
+  ]
+  it('H1：confirm 传字符串 "false" 不算确认 → 含未匹配仍 409', async () => {
+    const request = await st()
+    const res = await request(app).post('/api/v1/statement-import/commit').set('Authorization', `Bearer ${financeToken}`)
+      .send({ partnerId: PID, grid: SMALL_GRID, serviceMonth: '2026-08', confirm: 'false' })
+    expect(res.status).toBe(409)
+  })
+  it('H2：全匹配但无独立合计行 → 无 confirm 也 409（无法核对闭合）；confirm:true → 200', async () => {
+    const request = await st()
+    const a = await request(app).post('/api/v1/statement-import/commit').set('Authorization', `Bearer ${financeToken}`)
+      .send({ partnerId: PID, grid: NOTOTAL, serviceMonth: '2026-09' })
+    expect(a.status).toBe(409)
+    const b = await request(app).post('/api/v1/statement-import/commit').set('Authorization', `Bearer ${financeToken}`)
+      .send({ partnerId: PID, grid: NOTOTAL, serviceMonth: '2026-09', confirm: true })
+    expect(b.status).toBe(200)
+    expect(b.body.data.labRevenue).toBe(152)
+  })
+})

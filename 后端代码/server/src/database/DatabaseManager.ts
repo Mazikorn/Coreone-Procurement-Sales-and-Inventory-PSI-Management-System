@@ -458,6 +458,10 @@ export function initializeDatabase(): void {
     )
   `)
   database.exec(`CREATE INDEX IF NOT EXISTS idx_partner_configs_current ON partner_configs(partner_id, is_current)`)
+  // codex F3 + verify-H3：建唯一索引前先归一历史脏数据（旧库若已有同院多 current/baseline 会让建索引失败）。
+  // current = 该院最高版本那行；baseline 仅保留最高版本的一条。幂等（干净库为 no-op）。
+  database.exec(`UPDATE partner_configs SET is_current = 0 WHERE is_current = 1 AND version <> (SELECT MAX(version) FROM partner_configs p2 WHERE p2.partner_id = partner_configs.partner_id)`)
+  database.exec(`UPDATE partner_configs SET is_baseline = 0 WHERE is_baseline = 1 AND version <> (SELECT MAX(version) FROM partner_configs p2 WHERE p2.partner_id = partner_configs.partner_id AND p2.is_baseline = 1)`)
   // codex F3：同院最多一行 current / 一行 baseline（部分唯一索引，DB 级兜底非原子写/并发种子导致的多 current）
   database.exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_partner_configs_one_current ON partner_configs(partner_id) WHERE is_current = 1`)
   database.exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_partner_configs_one_baseline ON partner_configs(partner_id) WHERE is_baseline = 1`)
