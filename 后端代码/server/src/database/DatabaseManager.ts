@@ -4,6 +4,7 @@ import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { SEED_MATRIX } from '../middleware/rbac-matrix.js'
 import { CHARGE_CODE_SEED, chargeDefToRow } from '../utils/charge-catalog.js'
+import { NGS_PRODUCT_SEED, ngsProductToRow } from '../utils/ngs-catalog.js'
 import fs from 'fs'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -387,6 +388,43 @@ export function initializeDatabase(): void {
   `)
   database.exec(`CREATE INDEX IF NOT EXISTS idx_case_revenue_partner_month ON case_revenue(partner_id, service_month)`)
   database.exec(`CREATE INDEX IF NOT EXISTS idx_case_revenue_lines_case ON case_revenue_lines(case_no)`)
+
+  // 收入侧：NGS 基因检测【外购转销】产品目录（参考价）+ 逐单（独立渠道，非 LIS/非对账单）。
+  // ⛔ 红线：外包成本(协议价)=外购直接成本，独立于 ABC 内部成本引擎；与院内 charge_codes 占比估算互不读写。
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS ngs_products (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      product_name TEXT NOT NULL UNIQUE,
+      category TEXT,
+      gene_count TEXT,
+      sample_type TEXT,
+      clinical_meaning TEXT,
+      turnaround_days INTEGER,
+      guide_price DECIMAL(18, 4),
+      agreement_price DECIMAL(18, 4),
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS ngs_orders (
+      id TEXT PRIMARY KEY,
+      order_no TEXT,
+      partner_id TEXT,
+      partner_name TEXT,
+      product_name TEXT,
+      sell_price DECIMAL(18, 4) NOT NULL DEFAULT 0,
+      outsource_cost DECIMAL(18, 4) NOT NULL DEFAULT 0,
+      margin DECIMAL(18, 4) NOT NULL DEFAULT 0,
+      order_month TEXT,
+      import_batch TEXT,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(order_no, product_name, order_month)
+    )
+  `)
+  database.exec(`CREATE INDEX IF NOT EXISTS idx_ngs_orders_partner_month ON ngs_orders(partner_id, order_month)`)
 
   // 成本对账：修正日志
   database.exec(`
@@ -1031,6 +1069,15 @@ export function initializeDatabase(): void {
   ;['he_slide_count', 'block_count', 'ihc_count', 'special_stain_count', 'eber_count', 'pdl1_count'].forEach((c) =>
     ensureColumn('lis_cases', c, 'INTEGER NOT NULL DEFAULT 0'),
   )
+  // —— 收入归属「两层模型」预埋（2026-06-27，待对账单学习后完善逻辑；当前全可空、无任何计算读取它们，零回归）——
+  //   business_line：检测业务线（组织学/细胞/宫颈液基/冰冻/外院会诊/分子院内/FISH/外送… 见 revenue-attribution.ts）。
+  //     决定该 case 走哪种「归属方法」(A 账单占比 / B 单项整笔 / C 外送转销)。
+  //   service_step_scope：方法 A 的 case 上「我们实际做了哪几步」的 JSON（病例级覆盖；默认取医院协议，可人工改、留痕）。
+  //   _source：取值来源（auto 推断 / contract 协议默认 / manual 人工 / bill 账单码反推）——增量纠错留痕，对齐 specimen_type_source。
+  ensureColumn('lis_cases', 'business_line', 'TEXT')
+  ensureColumn('lis_cases', 'business_line_source', "TEXT NOT NULL DEFAULT 'auto'")
+  ensureColumn('lis_cases', 'service_step_scope', 'TEXT')
+  ensureColumn('lis_cases', 'service_step_scope_source', "TEXT NOT NULL DEFAULT 'auto'")
 
   // —— ABC 索引（L2 成本来源→中心映射热路径 + 期间动因聚合）——
   database.exec(`CREATE INDEX IF NOT EXISTS idx_labor_center ON standard_labor_times(activity_center_id)`)
@@ -1138,6 +1185,16 @@ export function initializeDatabase(): void {
   CHARGE_CODE_SEED.forEach((def) => {
     const row = chargeDefToRow(def)
     insertChargeCode.run(row.code, row.name, row.unit, row.category, row.rule_type, row.rule_json)
+  })
+
+  // NGS 外购转销产品参考目录种子（截图可见子集；INSERT OR IGNORE 幂等，已存在不覆盖以保留运营修改）
+  const insertNgsProduct = database.prepare(`
+    INSERT OR IGNORE INTO ngs_products (product_name, category, gene_count, sample_type, clinical_meaning, turnaround_days, guide_price, agreement_price, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')
+  `)
+  NGS_PRODUCT_SEED.forEach((def) => {
+    const r = ngsProductToRow(def)
+    insertNgsProduct.run(r.product_name, r.category, r.gene_count, r.sample_type, r.clinical_meaning, r.turnaround_days, r.guide_price, r.agreement_price)
   })
 
   console.log('Database initialized successfully')

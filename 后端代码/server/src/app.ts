@@ -42,6 +42,7 @@ import partnerRoutes from './routes/partners-v1.1.js'
 import lisCaseRoutes from './routes/lis-cases-v1.1.js'
 import caseRevenueRoutes from './routes/case-revenue-v1.1.js'
 import partnerPnlRoutes from './routes/partner-pnl-v1.1.js'
+import ngsRoutes from './routes/ngs-v1.1.js'
 
 const app = express()
 const PORT = process.env.PORT || 3001
@@ -112,6 +113,8 @@ app.use('/api/v1/lis-cases', authenticateToken, requirePermission('reconciliatio
 app.use('/api/v1/case-revenue', authenticateToken, requirePermission('reconciliation', 'R'), caseRevenueRoutes)
 // 院级 P&L 视图 + ABC 成本维度回填（W6/W5）。读权限由路由内 cost_analysis R 守卫（成本敏感）。
 app.use('/api/v1/partner-pnl', authenticateToken, partnerPnlRoutes)
+// NGS 基因检测外购转销（独立渠道）：订单导入/产品目录/院级 NGS P&L。读写权限由路由内守卫（reconciliation W / cost_analysis R）。
+app.use('/api/v1/ngs', authenticateToken, ngsRoutes)
 
 // 健康检查
 app.get('/api/health', (_req, res) => {

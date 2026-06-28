@@ -65,6 +65,23 @@ describe('mapCaseToCharges（只对 >0 数量产出收费项）', () => {
     expect(items).toContainEqual({ code: CHARGE_CODE.ISH_CHEMICAL, qty: 2 })
     expect(items).toContainEqual({ code: CHARGE_CODE.SPECIAL_STAIN, qty: 1 })
   })
+
+  it('多重染色/冰冻 两列（院内、LIS 补列后）→ 各自独立收费项', () => {
+    const items = mapCaseToCharges({ ...zero, multiplexCount: 2, frozenBlockCount: 3 })
+    expect(items).toContainEqual({ code: CHARGE_CODE.MULTIPLEX, qty: 2 })
+    expect(items).toContainEqual({ code: CHARGE_CODE.FROZEN_PROC, qty: 3 })
+  })
+
+  it('多重染色与常规 IHC 分列并存（上游须把多重切片从 ihcCount 剔除）', () => {
+    const items = mapCaseToCharges({ ...zero, ihcCount: 5, multiplexCount: 2, specimenType: 'tissue' })
+    expect(items).toContainEqual({ code: CHARGE_CODE.IHC_STD, qty: 5 })
+    expect(items).toContainEqual({ code: CHARGE_CODE.MULTIPLEX, qty: 2 })
+  })
+
+  it('两列缺省（当前真实 LIS 形态，无这两列）→ 不产出对应收费项（零回归）', () => {
+    const items = mapCaseToCharges({ ...zero, heSlideCount: 3, blockCount: 3, ihcCount: 12, specimenType: 'tissue' })
+    expect(items.some((i) => [CHARGE_CODE.MULTIPLEX, CHARGE_CODE.FROZEN_PROC].includes(i.code as never))).toBe(false)
+  })
 })
 
 describe('全链：mapCaseToCharges → computeCaseSplit → 技术占比', () => {

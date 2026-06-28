@@ -7,7 +7,11 @@
  * 映射口径已与用户锁定（2026-06-27，见 docs/COREONE-按医院成本盈利-真实样例数据分析-2026-06-27.md §F）：
  *  - 病理诊断费 ← HE切片数（tiered_increment）
  *  - 蜡块处理费 ← 蜡块数，按样本类型分流：细胞学(关键词判)→细胞蜡块制作+细胞处理；组织→组织常规
- *  - IHC常规 ← 免疫组化数；IHC增强 ← PD-L1数；特殊染色 ← 特染数；原位杂交(化学探针) ← EBER数
+ *  - IHC常规 ← 免疫组化数；IHC增强 ← PD-L1数（用户 2026-06-27 确认该院 PD-L1 走 TSA 增强染色 ¥650）；特殊染色 ← 特染数；原位杂交(化学探针) ← EBER数
+ *  - 多重染色 ← 多重染色切片数；冷冻处理 ← 术中冰冻蜡块数（院内、走 LIS，按用户 2026-06-27 确认"该院做且占比不小"而加）。
+ *    ⚠️ 当前真实 LIS 数量导出仅 6 基础列、不含这两列 → 引擎已具能力但需 LIS 补列或 v2 账单码路径才在真实数据生效。
+ *  - 🚫 分子病理(NGS 基因检测大 panel) = 【外包给第三方的外购转销业务、收入/成本走独立渠道、不经 LIS】，
+ *       不在本映射、不进技术占比引擎；见独立模块 `ngs-pnl.ts`（NGS 毛利 = 给医院售价 − 外包成本/协议价）。
  */
 
 import { CaseChargeItem } from './charge-engine.js'
@@ -23,6 +27,10 @@ export interface LisCaseQty {
   specialStainCount: number // 特染数
   eberCount: number         // EBER数
   pdl1Count: number         // PD-L1数
+  // —— 以下两列当前真实 LIS 导出未提供（仅 6 基础列），缺省 0 → 不产出收费项；待 LIS 补列或 v2 账单码路径激活 ——
+  // （分子病理 NGS 是外购转销、独立渠道，不在此 → 见 ngs-pnl.ts，故此处无 molecularCount）
+  multiplexCount?: number   // 多重染色切片数（双染/三染，单记录抗体≥2 的切片数；须从 ihcCount 剔除，替换非叠加）
+  frozenBlockCount?: number // 术中冰冻蜡块数（¥94/块）
   /** 若已知/人工指定则直接用；否则由 detectSpecimenType 推断 */
   specimenType?: SpecimenType
 }
@@ -38,6 +46,10 @@ export const CHARGE_CODE = {
   IHC_ENHANCED: '012100000130000',
   SPECIAL_STAIN: '012100000110000',
   ISH_CHEMICAL: '012100000140000',
+  MULTIPLEX: '012100000120001',
+  FROZEN_PROC: '012100000080000',
+  // 注：012100000060000(院内分子病理处理费) 仍在目录中(charge-catalog)，但不由 LIS 数量列驱动；
+  //     NGS 基因检测的外购转销业务走独立模块 ngs-pnl.ts，不在此映射。
 } as const
 
 /**
@@ -84,6 +96,11 @@ export function mapCaseToCharges(q: LisCaseQty): CaseChargeItem[] {
   if (q.pdl1Count > 0) items.push({ code: CHARGE_CODE.IHC_ENHANCED, qty: q.pdl1Count })
   if (q.specialStainCount > 0) items.push({ code: CHARGE_CODE.SPECIAL_STAIN, qty: q.specialStainCount })
   if (q.eberCount > 0) items.push({ code: CHARGE_CODE.ISH_CHEMICAL, qty: q.eberCount })
+
+  // 多重染色（双染/三染）：单独切片数，与常规 IHC 分列（上游须把多重切片从 ihcCount 剔除，替换非叠加）
+  if ((q.multiplexCount ?? 0) > 0) items.push({ code: CHARGE_CODE.MULTIPLEX, qty: q.multiplexCount! })
+  // 术中冰冻标本处理费（按冰冻蜡块数）
+  if ((q.frozenBlockCount ?? 0) > 0) items.push({ code: CHARGE_CODE.FROZEN_PROC, qty: q.frozenBlockCount! })
 
   return items
 }

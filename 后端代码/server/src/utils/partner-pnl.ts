@@ -43,8 +43,6 @@ export interface CasePnl {
 
 const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100
 const r4 = (n: number) => Math.round((n + Number.EPSILON) * 10000) / 10000
-const qtySum = (q?: LisCaseQty | null) =>
-  q ? q.heSlideCount + q.blockCount + q.ihcCount + q.specialStainCount + q.eberCount + q.pdl1Count : 0
 
 /** 单 case 实验室收入拆分（含完整度标注）。 */
 export function computeCasePnl(input: CasePnlInput, catalog: Map<string, ChargeCodeDef>): CasePnl {
@@ -52,7 +50,11 @@ export function computeCasePnl(input: CasePnlInput, catalog: Map<string, ChargeC
     caseNo: input.caseNo, partnerId: input.partnerId, partnerName: input.partnerName,
     serviceScope: input.serviceScope, serviceMonth: input.serviceMonth, netRevenue: r2(input.netRevenue),
   }
-  const split = qtySum(input.qty) > 0 ? computeCaseSplit(mapCaseToCharges(input.qty!), catalog) : null
+  // 据所有数量列(含冷冻/多重染色)映射出收费项；只要有任一收费项即可拆，否则(全 0 或无 LIS)诚实回退。
+  // 改为以「是否产出收费项」为闸（原 6 基础列求和 >0），修复"有冷冻/多重但 6 基础列为 0 时被静默判全额"的口子。
+  // 注：分子病理 NGS 是外购转销、独立渠道(ngs-pnl.ts)，不进此院内技术占比，故此处不含 molecular。
+  const items = input.qty ? mapCaseToCharges(input.qty) : []
+  const split = items.length > 0 ? computeCaseSplit(items, catalog) : null
 
   if (!split || split.total === 0) {
     // 无可计费数量 → 不可拆，暂按全额（诚实标注待校正）

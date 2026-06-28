@@ -7,8 +7,12 @@
  * ⛔ 红线：本目录服务【收入侧】(实验室收入 = 财务实收 × 引擎技术占比)，
  *    与【成本侧】(`fee_standards` / `cost-calculator.ts` / ABC 引擎) **完全独立**，互不读写。
  *
- * 全量 33 目录（含分子/测序/FISH 多探针/电镜/远程/术中冷冻/AI 扩展）待真实出现时增量补编，
- * 其中 FISH 多探针「每切片·每探针 + 多探针加收封顶」需引擎 multi_driver 扩展（v2，本期不在 LIS 数量列）。
+ * v1 常见档已含：诊断 / 组织·细胞·分子·冷冻 标本处理 / IHC 常规·增强 / 多重染色 / 特染 / 原位杂交(化学探针) / 切片复制 / 取材。
+ *   （冷冻处理 080000 / 多重染色 120001 按用户 2026-06-27 确认"该院做且占比不小"补入，院内、走 LIS，价格照 v5.2 附录。）
+ *   （分子病理处理 060000 = 院内分子受理/处理费，留作目录有效码 + v2 账单码分类用，不由 LIS 数量列驱动。）
+ * 🚫 NGS 基因检测大 panel（结直肠/胃/肺癌等个性化用药套餐，¥1350+/单）= 【外包第三方的外购转销业务、独立渠道、不经 LIS】，
+ *    既不在本收费目录(占比估算)、也不在 ABC 内部成本引擎 → 见独立模块 `ngs-pnl.ts`（毛利 = 售价 − 外包成本/协议价）。
+ * 仍待 v2 增量补编：FISH 多探针·分子测序【检测费】(若有院内自做部分)、电镜、远程诊断、AI 辅助扩展。
  */
 
 import { ChargeCodeDef, ChargeRule, buildCatalog } from './charge-engine.js'
@@ -23,15 +27,28 @@ export const CHARGE_CODE_SEED: ChargeCodeDef[] = [
   { code: '012100000030000', name: '病理标本处理费(组织病理-常规)', unit: '每蜡块', category: '技术',
     rule: { kind: 'tiered_increment', baseQty: 3, basePrice: 36, stepQty: 1, stepPrice: 7, capAddon: 72 } },
   { code: '012100000040000', name: '病理标本处理费(组织病理-复杂)', unit: '每蜡块', category: '技术',
+    // ⚠️ capAddon:144 为【待核对的假定值】(=basePrice 72×2，沿用常规费 cap=base×2 范式)：
+    //    v5.2 附录与沟通记录均未注明复杂处理费封顶，需回原始《YZ.xlsx》核对（确认无封顶则删 capAddon）。
     rule: { kind: 'tiered_increment', baseQty: 5, basePrice: 72, stepQty: 1, stepPrice: 14, capAddon: 144 } },
   { code: '012100000050000', name: '病理标本处理费(细胞病理)', unit: '每玻片', category: '技术',
     rule: { kind: 'flat', unitPrice: 75 } },
   { code: '012100000090000', name: '细胞病理蜡块制作费', unit: '每蜡块', category: '技术',
     rule: { kind: 'flat', unitPrice: 40 } },
+  // 院内分子病理受理/处理费（¥100/次，固定）。仅院内自做处理时适用；不由 LIS 数量列驱动。
+  //   ⚠️ NGS 基因检测大 panel（¥1350+/单）是外包转销，走独立模块 ngs-pnl.ts，与此 ¥100 处理费无关。
+  { code: '012100000060000', name: '分子病理标本处理费', unit: '次', category: '技术',
+    rule: { kind: 'flat', unitPrice: 100 } },
+  // 术中冷冻标本处理费（≤5块¥94/块，>5块每增1块+¥18）。封顶待核：v5.2 附录未注明，回原始《YZ.xlsx》确认（确有则补 capAddon）。
+  { code: '012100000080000', name: '冷冻标本处理费', unit: '每蜡块', category: '技术',
+    rule: { kind: 'tiered_increment', baseQty: 5, basePrice: 94, stepQty: 1, stepPrice: 18 } },
 
   // —— 技术·染色 / 杂交 ——
   { code: '012100000120000', name: '病理样本免疫组织化学染色检查费(常规)', unit: '每切片', category: '技术',
     rule: { kind: 'stepped', tiers: [{ from: 1, to: 3, unitPrice: 205 }, { from: 4, to: 12, unitPrice: 210 }, { from: 13, to: null, unitPrice: 105 }] } },
+  // 多重染色（双染/三染：单张切片≥2 抗体，按"片"计；镜像 IHC 常规价×2 阶梯）。
+  //   ⚠️ 判据=「单条免组记录抗体数≥2」，qty=多重染色【切片数】(双染通常 1 片/记录)，非抗体数；上游须把多重染色切片从 ihcCount 剔除（替换非叠加）。
+  { code: '012100000120001', name: '多重染色费', unit: '每切片', category: '技术',
+    rule: { kind: 'stepped', tiers: [{ from: 1, to: 3, unitPrice: 410 }, { from: 4, to: 12, unitPrice: 420 }, { from: 13, to: null, unitPrice: 210 }] } },
   { code: '012100000130000', name: '病理样本免疫组织化学染色检查费(增强)', unit: '每切片', category: '技术',
     rule: { kind: 'stepped', tiers: [{ from: 1, to: 3, unitPrice: 650 }, { from: 4, to: null, unitPrice: 655 }] } },
   { code: '012100000110000', name: '病理样本化学染色检查费(特殊染色及酶组织化学染色诊断)', unit: '每切片', category: '技术',
