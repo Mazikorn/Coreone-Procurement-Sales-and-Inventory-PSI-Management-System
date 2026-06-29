@@ -32,6 +32,8 @@ import EquipmentDepreciationStats from '@/pages/equipment/EquipmentDepreciationS
 import LaborTimeList from '@/pages/labor/LaborTimeList'
 import IndirectCostCenterList from '@/pages/cost-center/IndirectCostCenterList'
 import CostDashboard from '@/pages/cost/CostDashboard'
+import HospitalPnLDashboard from '@/pages/hospital-pnl/HospitalPnLDashboard'
+import PartnerConfigPage from '@/pages/partner-config/PartnerConfigPage'
 import SlideCostAnalysis from '@/pages/cost/SlideCostAnalysis'
 import { ProfitabilityAnalysis } from '@/pages/cost/ProfitabilityAnalysis'
 import FeeComparison from '@/pages/cost/FeeComparison'
@@ -84,6 +86,8 @@ function App() {
           <Route path="/equipment/depreciation" element={<EquipmentDepreciationStats />} />
           <Route path="/labor-times" element={<LaborTimeList />} />
           <Route path="/indirect-costs" element={<IndirectCostCenterList />} />
+          <Route path="/hospital-pnl" element={<HospitalPnLDashboard />} />
+          <Route path="/partner-config" element={<PartnerConfigPage />} />
           <Route path="/abc/dashboard" element={<CostDashboard />} />
           <Route path="/abc/slide-cost" element={<SlideCostAnalysis />} />
           <Route path="/abc/profitability" element={<ProfitabilityAnalysis />} />

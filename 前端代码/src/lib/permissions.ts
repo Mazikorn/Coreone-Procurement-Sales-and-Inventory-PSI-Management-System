@@ -102,6 +102,9 @@ export const NAV_PATH_MODULE: Record<string, string> = {
   '/categories': 'categories', '/materials': 'materials', '/alerts': 'alerts',
   '/purchase-orders': 'purchase_orders', '/suppliers': 'suppliers', '/locations': 'locations',
   '/users': 'users', '/roles': 'roles', '/logs': 'logs',
+  '/hospital-pnl': 'cost_analysis',
+  '/partner-config': 'partners', // 配置页 finance/admin（backend requireAnyRole('finance')）；partners 模块=finance/lab_director/admin
+
   '/abc/dashboard': 'abc_dashboard', '/abc/slide-cost': 'slide_cost', '/abc/profitability': 'profitability',
   '/abc/activity-centers': 'abc_config', '/equipment': 'equipment', '/labor-times': 'labor_times', '/indirect-costs': 'abc_config',
 }
@@ -127,7 +130,7 @@ export const ROLE_MENU_MAP: Record<string, string[]> = {
     '/', '/inventory', '/inbound', '/outbound', '/returns', '/supplier-returns', '/scraps', '/transfers', '/stocktaking',
     '/projects', '/bom', '/reconciliation', '/cost-analysis',
     '/categories', '/materials', '/alerts',
-    '/purchase-orders', '/suppliers', '/locations', '/users', '/roles', '/logs',
+    '/purchase-orders', '/suppliers', '/locations', '/users', '/roles', '/logs', '/partner-config',
     // ABC 成本核算（移植）
     '/abc/dashboard', '/abc/slide-cost', '/abc/profitability', '/abc/activity-centers', '/equipment', '/labor-times', '/indirect-costs',
   ],
@@ -145,7 +148,7 @@ export const ROLE_MENU_MAP: Record<string, string[]> = {
     '/', '/inventory', '/inbound', '/materials', '/suppliers', '/purchase-orders', '/supplier-returns', '/categories', '/alerts',
   ],
   finance: [
-    '/', '/inventory', '/supplier-returns', '/reconciliation', '/cost-analysis', '/categories', '/alerts',
+    '/', '/inventory', '/supplier-returns', '/reconciliation', '/cost-analysis', '/categories', '/alerts', '/partner-config',
     // ABC 成本核算（移植）
     '/abc/dashboard', '/abc/slide-cost', '/abc/profitability', '/abc/activity-centers', '/equipment', '/labor-times', '/indirect-costs',
   ],

@@ -59,6 +59,9 @@ const ALL_MAIN_MENU: MenuItem[] = [
   { label: '物料分类', path: '/categories', icon: FolderTree },
   { label: '耗材管理', path: '/materials', icon: Boxes },
   { label: '预警中心', path: '/alerts', icon: Bell },
+  // ===== 按医院成本/盈利 =====
+  { label: '医院盈利看板', path: '/hospital-pnl', icon: TrendingUp },
+  { label: '合作医院配置', path: '/partner-config', icon: Settings },
   // ===== ABC 成本核算导航（移植自 abc-productization 分支）=====
   { label: 'ABC成本看板', path: '/abc/dashboard', icon: BarChart3 },
   { label: '单片成本分析', path: '/abc/slide-cost', icon: Layers },
