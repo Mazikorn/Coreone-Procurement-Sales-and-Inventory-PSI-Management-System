@@ -44,6 +44,13 @@ describe('computeCasePnl：实验室收入 = 实收 × 在范围组分占比', (
     expect(r.inScopeRatio).toBe(1)
   })
 
+  it('纯冰冻 case（6 基础列全 0、frozenBlockCount>0）→ 不再静默判 no_quantities：按引擎拆分（修 MISS-1 静默口子）', () => {
+    const r = computeCasePnl({ caseNo: 'FRZ', partnerId: 'P1', serviceScope: 'technical_only', netRevenue: 100, qty: qty({ frozenBlockCount: 5 }) }, CAT)
+    expect(r.quality).not.toBe('no_quantities') // 关键：旧闸 6 基础列求和=0 会静默判 no_quantities → 全额
+    expect(r.techRatio).toBe(1) // 冷冻标本处理费 100% 技术
+    expect(r.labRevenue).toBe(100)
+  })
+
   it('细胞学样本 → partial_quantities（玻片≈蜡块近似要标注，不静默当 ok）', () => {
     const r = computeCasePnl({ caseNo: 'CY', partnerId: 'P1', serviceScope: 'with_diagnosis', netRevenue: 400, qty: qty({ heSlideCount: 2, blockCount: 1, specimenType: 'cytology' }) }, CAT)
     expect(r.quality).toBe('partial_quantities')

@@ -15,6 +15,8 @@ import type { ServiceScope } from './partner-upsert.js'
 import type { ChargeCodeDef } from './charge-engine.js'
 
 export type RevenueQuality = 'ok' | 'partial_quantities' | 'no_quantities'
+/** 收入来源三态（看板诚实标注）：已对账(对账单 Σ(IN结算)，权威) / 估算(无账单，实收×占比) / 已修正(人工覆盖留痕)。 */
+export type RevenueSource = 'statement' | 'estimated' | 'corrected'
 
 export interface CasePnlInput {
   caseNo: string
@@ -38,21 +40,26 @@ export interface CasePnl {
   inScopeRatio: number
   labRevenue: number // 拆给实验室的收入
   quality: RevenueQuality
+  revenueSource: RevenueSource // 已对账(statement)/估算(estimated)/已修正(corrected)
+  outRevenue?: number // 移出额（statement 路径才有）
   note?: string
 }
 
 const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100
 const r4 = (n: number) => Math.round((n + Number.EPSILON) * 10000) / 10000
-const qtySum = (q?: LisCaseQty | null) =>
-  q ? q.heSlideCount + q.blockCount + q.ihcCount + q.specialStainCount + q.eberCount + q.pdl1Count : 0
 
 /** 单 case 实验室收入拆分（含完整度标注）。 */
 export function computeCasePnl(input: CasePnlInput, catalog: Map<string, ChargeCodeDef>): CasePnl {
   const base = {
     caseNo: input.caseNo, partnerId: input.partnerId, partnerName: input.partnerName,
     serviceScope: input.serviceScope, serviceMonth: input.serviceMonth, netRevenue: r2(input.netRevenue),
+    revenueSource: 'estimated' as RevenueSource, // 本函数=无账单估算路径；已对账走 statementCasePnl
   }
-  const split = qtySum(input.qty) > 0 ? computeCaseSplit(mapCaseToCharges(input.qty!), catalog) : null
+  // 据所有数量列(含冷冻/多重染色)映射出收费项；只要有任一收费项即可拆，否则(全 0 或无 LIS)诚实回退。
+  // 改为以「是否产出收费项」为闸（原 6 基础列求和 >0），修复"有冷冻/多重但 6 基础列为 0 时被静默判全额"的口子。
+  // 注：分子病理 NGS 是外购转销、独立渠道(ngs-pnl.ts)，不进此院内技术占比，故此处不含 molecular。
+  const items = input.qty ? mapCaseToCharges(input.qty) : []
+  const split = items.length > 0 ? computeCaseSplit(items, catalog) : null
 
   if (!split || split.total === 0) {
     // 无可计费数量 → 不可拆，暂按全额（诚实标注待校正）
@@ -79,6 +86,25 @@ export function computeCasePnl(input: CasePnlInput, catalog: Map<string, ChargeC
   }
 }
 
+/**
+ * 已对账（statement 权威）/已修正 路径的 case P&L：实验室收入 = 对账单 Σ(IN 结算)，**不走估算占比**。
+ * netRevenue=该 case 全部结算(实收)；labRevenue=IN 部分；outRevenue=移出部分；inScopeRatio=lab/net（仅展示）。
+ */
+export function statementCasePnl(
+  input: Omit<CasePnlInput, 'qty'> & { labRevenue: number; outRevenue?: number },
+  source: Extract<RevenueSource, 'statement' | 'corrected'> = 'statement',
+): CasePnl {
+  const net = r2(input.netRevenue)
+  const lab = r2(input.labRevenue)
+  return {
+    caseNo: input.caseNo, partnerId: input.partnerId, partnerName: input.partnerName,
+    serviceScope: input.serviceScope, serviceMonth: input.serviceMonth, netRevenue: net,
+    techRatio: 0, diagnosisRatio: 0, inScopeRatio: net > 0 ? r4(lab / net) : 0,
+    labRevenue: lab, outRevenue: r2(input.outRevenue ?? 0),
+    quality: 'ok', revenueSource: source,
+  }
+}
+
 export interface PartnerRevenueRollup {
   partnerId: string
   partnerName?: string
@@ -86,6 +112,7 @@ export interface PartnerRevenueRollup {
   netTotal: number // 财务实收合计
   labRevenueTotal: number // 实验室收入合计
   qualityCounts: Record<RevenueQuality, number>
+  sourceCounts: Record<RevenueSource, number> // 已对账/估算/已修正 case 数（看板诚实标注）
 }
 
 /** 院级汇总（按 partnerId 上卷）。 */
@@ -94,13 +121,14 @@ export function rollupPartnerRevenue(cases: CasePnl[]): PartnerRevenueRollup[] {
   for (const c of cases) {
     let p = byPartner.get(c.partnerId)
     if (!p) {
-      p = { partnerId: c.partnerId, partnerName: c.partnerName, caseCount: 0, netTotal: 0, labRevenueTotal: 0, qualityCounts: { ok: 0, partial_quantities: 0, no_quantities: 0 } }
+      p = { partnerId: c.partnerId, partnerName: c.partnerName, caseCount: 0, netTotal: 0, labRevenueTotal: 0, qualityCounts: { ok: 0, partial_quantities: 0, no_quantities: 0 }, sourceCounts: { statement: 0, estimated: 0, corrected: 0 } }
       byPartner.set(c.partnerId, p)
     }
     p.caseCount++
     p.netTotal = r2(p.netTotal + c.netRevenue)
     p.labRevenueTotal = r2(p.labRevenueTotal + c.labRevenue)
     p.qualityCounts[c.quality]++
+    p.sourceCounts[c.revenueSource]++
   }
   return [...byPartner.values()]
 }
