@@ -62,6 +62,8 @@ const ALL_MAIN_MENU: MenuItem[] = [
   // ===== 按医院成本/盈利 =====
   { label: '医院盈利看板', path: '/hospital-pnl', icon: TrendingUp },
   { label: '合作医院配置', path: '/partner-config', icon: Settings },
+  { label: '导入测试台', path: '/import-console', icon: FlaskConical },
+  { label: '财务月度导入', path: '/import-wizard', icon: FileText },
   // ===== ABC 成本核算导航（移植自 abc-productization 分支）=====
   { label: 'ABC成本看板', path: '/abc/dashboard', icon: BarChart3 },
   { label: '单片成本分析', path: '/abc/slide-cost', icon: Layers },

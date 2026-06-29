@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
-import { Lock, ArrowLeft, Save, RotateCcw, Plus, X, History, ChevronRight, Loader2, AlertCircle, Search } from 'lucide-react'
+import { Lock, ArrowLeft, Save, Plus, X, History, ChevronRight, Loader2, AlertCircle, Search } from 'lucide-react'
 import { partnerConfigApi, type PartnerListItem } from '@/api/partner-config'
-import type { PartnerConfig, PartnerConfigLine, ConfigChange } from '@/types/partner-config'
+import type { PartnerConfig, ConfigChange } from '@/types/partner-config'
 
 // —— 设计令牌（Stripe 风，主蓝 #3b82f6）——
 const inputCls = 'h-9 w-full rounded-md border border-gray-200 bg-white px-3 text-[13px] text-gray-900 placeholder:text-gray-400 outline-none transition-colors focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10'

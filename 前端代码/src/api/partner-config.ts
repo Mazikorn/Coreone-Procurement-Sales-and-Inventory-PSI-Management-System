@@ -12,9 +12,9 @@ export interface PartnerListItem {
 
 // request 拦截器已解包 → 直接返回 data 层
 export const partnerConfigApi = {
-  /** 合作医院列表（配置页左侧选院）。successList → {list} */
-  partners: (params?: { keyword?: string; page?: number; pageSize?: number }) =>
-    request.get('/partners', { params: { pageSize: 100, ...params } }) as unknown as Promise<{ list: PartnerListItem[]; total: number }>,
+  /** 合作医院列表（配置域内，按财务/管理员权限；财务无 partners 模块能力，故不走 /partners）。successList → {list} */
+  partners: (params?: { keyword?: string }) =>
+    request.get('/partner-config', { params }) as unknown as Promise<{ list: PartnerListItem[]; total: number }>,
 
   /** GET /partner-config/:id —— 取配置（首访默认 seed） */
   get: (partnerId: string) =>

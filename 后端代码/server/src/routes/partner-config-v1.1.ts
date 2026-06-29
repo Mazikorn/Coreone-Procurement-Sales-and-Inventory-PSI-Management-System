@@ -11,7 +11,7 @@
 import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../database/DatabaseManager.js'
-import { success, error } from '../utils/response.js'
+import { success, successList, error } from '../utils/response.js'
 import { authenticateToken } from '../middleware/auth.js'
 import { requireAnyRole } from '../middleware/permissions.js'
 import { loadConfig, saveConfig, getChanges, rollbackConfig, setBaseline } from '../utils/partner-config.js'
@@ -24,6 +24,20 @@ const userId = (req: any): string | undefined => req.user?.id
 function partnerExists(db: any, id: string): boolean {
   return !!db.prepare('SELECT 1 FROM partners WHERE id = ? AND is_deleted = 0').get(id)
 }
+
+// 合作医院列表（配置页/测试台/向导左侧选院）。**按配置权限(财务/管理员)守卫**——
+// 财务无 partners 模块能力，故不能走 /partners；这里在配置域内提供，口径与配置写一致。
+router.get('/', authenticateToken, requireConfig, (req, res) => {
+  try {
+    const db = getDatabase()
+    const keyword = (req.query.keyword as string) || ''
+    let where = 'is_deleted = 0'
+    const params: unknown[] = []
+    if (keyword) { where += ' AND (name LIKE ? OR code LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`) }
+    const rows = db.prepare(`SELECT id, code, name, short_name, service_scope, status FROM partners WHERE ${where} ORDER BY name LIMIT 300`).all(...params) as any[]
+    successList(res, rows.map((r) => ({ id: r.id, code: r.code, name: r.name, shortName: r.short_name, serviceScope: r.service_scope, status: r.status === 1 ? 'active' : 'inactive' })), 1, rows.length, rows.length)
+  } catch (e: any) { error(res, e.message) }
+})
 
 router.get('/:id', authenticateToken, requireConfig, (req, res) => {
   try {

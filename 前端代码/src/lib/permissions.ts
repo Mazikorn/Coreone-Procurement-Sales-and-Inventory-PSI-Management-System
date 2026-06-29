@@ -103,7 +103,8 @@ export const NAV_PATH_MODULE: Record<string, string> = {
   '/purchase-orders': 'purchase_orders', '/suppliers': 'suppliers', '/locations': 'locations',
   '/users': 'users', '/roles': 'roles', '/logs': 'logs',
   '/hospital-pnl': 'cost_analysis',
-  '/partner-config': 'partners', // 配置页 finance/admin（backend requireAnyRole('finance')）；partners 模块=finance/lab_director/admin
+  // 注：/partner-config、/import-console、/import-wizard 不走模块能力（财务无 partners 等模块能力），
+  //   改为按角色(finance/admin)放行——见 getAccessiblePaths，口径与后端 requireAnyRole('finance') 一致。
 
   '/abc/dashboard': 'abc_dashboard', '/abc/slide-cost': 'slide_cost', '/abc/profitability': 'profitability',
   '/abc/activity-centers': 'abc_config', '/equipment': 'equipment', '/labor-times': 'labor_times', '/indirect-costs': 'abc_config',
@@ -116,6 +117,11 @@ export function getAccessiblePaths(): string[] {
     const paths = ['/']
     for (const [p, mod] of Object.entries(NAV_PATH_MODULE)) {
       if (canAccess(mod, 'R')) paths.push(p)
+    }
+    // 配置驱动导入器三页：后端按角色(finance/admin)守卫；财务无对应模块能力，故按角色补（口径一致）。
+    const roles = getRoles()
+    if (roles.includes('admin') || roles.includes('finance')) {
+      paths.push('/partner-config', '/import-console', '/import-wizard')
     }
     return paths
   }
@@ -130,7 +136,7 @@ export const ROLE_MENU_MAP: Record<string, string[]> = {
     '/', '/inventory', '/inbound', '/outbound', '/returns', '/supplier-returns', '/scraps', '/transfers', '/stocktaking',
     '/projects', '/bom', '/reconciliation', '/cost-analysis',
     '/categories', '/materials', '/alerts',
-    '/purchase-orders', '/suppliers', '/locations', '/users', '/roles', '/logs', '/partner-config',
+    '/purchase-orders', '/suppliers', '/locations', '/users', '/roles', '/logs', '/partner-config', '/import-console', '/import-wizard',
     // ABC 成本核算（移植）
     '/abc/dashboard', '/abc/slide-cost', '/abc/profitability', '/abc/activity-centers', '/equipment', '/labor-times', '/indirect-costs',
   ],
@@ -148,7 +154,7 @@ export const ROLE_MENU_MAP: Record<string, string[]> = {
     '/', '/inventory', '/inbound', '/materials', '/suppliers', '/purchase-orders', '/supplier-returns', '/categories', '/alerts',
   ],
   finance: [
-    '/', '/inventory', '/supplier-returns', '/reconciliation', '/cost-analysis', '/categories', '/alerts', '/partner-config',
+    '/', '/inventory', '/supplier-returns', '/reconciliation', '/cost-analysis', '/categories', '/alerts', '/partner-config', '/import-console', '/import-wizard',
     // ABC 成本核算（移植）
     '/abc/dashboard', '/abc/slide-cost', '/abc/profitability', '/abc/activity-centers', '/equipment', '/labor-times', '/indirect-costs',
   ],
