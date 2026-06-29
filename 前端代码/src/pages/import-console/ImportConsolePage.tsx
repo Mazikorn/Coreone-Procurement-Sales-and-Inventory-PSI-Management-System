@@ -8,7 +8,7 @@ import type { PartnerConfigLine } from '@/types/partner-config'
 import { UploadBar, ScoreCard, useHospitals, readGrid, btnCls, btnPri, inputCls, yuan } from '@/pages/import-shared/ImportShared'
 
 export default function ImportConsolePage() {
-  const { hospitals } = useHospitals()
+  const { hospitals, loading: hospLoading, error: hospError, reload: reloadHospitals } = useHospitals()
   const [partnerId, setPartnerId] = useState('')
   const [month, setMonth] = useState('')
   const [grid, setGrid] = useState<Grid | null>(null)
@@ -43,16 +43,21 @@ export default function ImportConsolePage() {
     catch (e: any) { setError('读取文件失败：' + (e?.message || '')); setBusy(false) }
   }, [runPreview])
 
-  // 内联归类：把某未匹配行的项目名加为某业务线的识别词（项目名含）→ 写回该院配置 → 重新预览
-  const classify = useCallback(async (item: string, lineKey: string) => {
-    if (!partnerId || !lineKey || !grid) return
+  // 内联归类：把某行按【所选规则类型】加为某业务线的识别词 → 写回该院配置 → 重新预览。
+  // codex F2：支持 项目名/病理号前缀/备注 三类规则；带 expectedVersion 乐观锁，配置已被改到更新版时 409 → 提示重新预览。
+  const classify = useCallback(async (lineKey: string, ruleType: 'keyword' | 'prefix' | 'remark', value: string) => {
+    if (!partnerId || !lineKey || !grid || !value.trim()) return
     try {
-      await statementImportApi.classifyRule({ partnerId, lineKey, ruleType: 'keyword', value: item })
+      await statementImportApi.classifyRule({ partnerId, lineKey, ruleType, value, expectedVersion: configVersion })
       const env = await partnerConfigApi.get(partnerId); setLines(env.config.lines)
       toast.success('已写回该院配置，重新预览')
       await runPreview(grid)
-    } catch { /* 拦截器已 toast */ }
-  }, [partnerId, grid, runPreview])
+    } catch (e: any) {
+      if (e?.response?.data?.error?.code === 'CONFLICT' || e?.response?.status === 409) {
+        toast.error('该院配置已被更新，请基于最新预览重试'); await runPreview(grid)
+      } /* 其余拦截器已 toast */
+    }
+  }, [partnerId, grid, runPreview, configVersion])
 
   const setBaseline = useCallback(async () => {
     if (!partnerId || !configVersion) return
@@ -70,7 +75,7 @@ export default function ImportConsolePage() {
       <p className="mb-4 text-[13px] text-gray-500">上传一张对账单样表，按该院配置规则解析+分类，给出体检卡；未匹配的行可当场归类（写回该院配置、立即生效）；核对无误后设为月度导入基线。</p>
 
       <div className="mb-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-        <UploadBar hospitals={hospitals} partnerId={partnerId} onPartner={setPartnerId} month={month} onMonth={setMonth} onFile={onFile} busy={busy} fileName={fileName} />
+        <UploadBar hospitals={hospitals} partnerId={partnerId} onPartner={setPartnerId} month={month} onMonth={setMonth} onFile={onFile} busy={busy} fileName={fileName} hospitalsLoading={hospLoading} hospitalsError={hospError} onReloadHospitals={reloadHospitals} />
       </div>
 
       {busy && !preview ? (
@@ -116,7 +121,7 @@ export default function ImportConsolePage() {
                 <div className="py-6 text-center text-[12.5px] text-emerald-600">全部已识别 ✓</div>
               ) : (
                 <div className="space-y-2 max-h-[280px] overflow-y-auto pr-1">
-                  {preview.needsAttention.map((row, i) => <AttentionItem key={i} item={row.item} no={row.no} settle={row.settle} status={row.status} lines={lines} onClassify={(lk) => classify(row.item, lk)} />)}
+                  {preview.needsAttention.map((row, i) => <AttentionItem key={i} item={row.item} no={row.no} settle={row.settle} status={row.status} lines={lines} onClassify={classify} />)}
                 </div>
               )}
             </div>
@@ -128,23 +133,33 @@ export default function ImportConsolePage() {
 }
 
 function AttentionItem({ item, no, settle, status, lines, onClassify }: {
-  item: string; no: string; settle: number; status: string; lines: PartnerConfigLine[]; onClassify: (lineKey: string) => void
+  item: string; no: string; settle: number; status: string; lines: PartnerConfigLine[]
+  onClassify: (lineKey: string, ruleType: 'keyword' | 'prefix' | 'remark', value: string) => void
 }) {
   const [lk, setLk] = useState('')
+  const prefixGuess = (no.match(/^[^\d]+/)?.[0] || '').trim() // 病理号前导非数字段（如 H/冰/M）
+  const [ruleType, setRuleType] = useState<'keyword' | 'prefix' | 'remark'>(item ? 'keyword' : 'prefix')
+  const [value, setValue] = useState(item || prefixGuess)
+  // 行变化（重新预览后顺序/内容变）时重置默认识别词，避免陈旧值
+  useEffect(() => { setRuleType(item ? 'keyword' : 'prefix'); setValue(item || prefixGuess); setLk('') }, [item, no]) // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div className="rounded-md border border-amber-200 bg-amber-50/50 p-2.5">
-      <div className="flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <div className="truncate text-[12.5px] font-medium text-gray-800">{item || '（无项目名）'}</div>
-          <div className="text-[11px] text-gray-500">{no || '无病理号'} · {status === 'ambiguous' ? '歧义' : '未匹配'} · {yuan(settle)}</div>
-        </div>
+      <div className="min-w-0">
+        <div className="truncate text-[12.5px] font-medium text-gray-800">{item || '（无项目名）'}</div>
+        <div className="text-[11px] text-gray-500">{no || '无病理号'} · {status === 'ambiguous' ? '歧义' : '未匹配'} · {yuan(settle)}</div>
       </div>
-      <div className="mt-2 flex items-center gap-2">
-        <select className={inputCls + ' h-8 flex-1 text-[12px]'} value={lk} onChange={(e) => setLk(e.target.value)}>
+      <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[7rem_1fr] sm:items-center">
+        <select aria-label="识别依据" className={inputCls + ' h-8 text-[12px]'} value={ruleType} onChange={(e) => setRuleType(e.target.value as 'keyword' | 'prefix' | 'remark')}>
+          <option value="keyword">项目名含</option>
+          <option value="prefix">病理号前缀</option>
+          <option value="remark">备注含</option>
+        </select>
+        <input aria-label="识别词" className={inputCls + ' h-8 text-[12px]'} value={value} onChange={(e) => setValue(e.target.value)} placeholder="识别词" />
+        <select aria-label="归到业务线" className={inputCls + ' h-8 text-[12px]'} value={lk} onChange={(e) => setLk(e.target.value)}>
           <option value="">归到业务线…</option>
           {lines.map((l) => <option key={l.key} value={l.key}>{l.name}（{l.scope === 'in' ? '计入' : '不计入'}）</option>)}
         </select>
-        <button className={btnPri + ' h-8'} disabled={!lk} onClick={() => onClassify(lk)}>归类<ArrowRight className="h-3.5 w-3.5" /></button>
+        <button className={btnPri + ' h-8'} disabled={!lk || !value.trim()} onClick={() => onClassify(lk, ruleType, value.trim())}>归类<ArrowRight className="h-3.5 w-3.5" /></button>
       </div>
     </div>
   )

@@ -9,7 +9,7 @@ import { UploadBar, ScoreCard, useHospitals, readGrid, btnCls, btnPri, yuan } fr
 const STEPS = ['上传对账单', '预览核对', '入库'] as const
 
 export default function ImportWizardPage() {
-  const { hospitals } = useHospitals()
+  const { hospitals, loading: hospLoading, error: hospError, reload: reloadHospitals } = useHospitals()
   const [partnerId, setPartnerId] = useState('')
   const [month, setMonth] = useState('')
   const [grid, setGrid] = useState<Grid | null>(null)
@@ -42,10 +42,12 @@ export default function ImportWizardPage() {
       setCommitted(r); setNeedConfirm(null)
       toast.success(`已入库 ${r.caseCount} 例 · 实验室收入 ${yuan(r.labRevenue)}`)
     } catch (e: any) {
-      // 409 NEEDS_CONFIRM → 让财务显式确认
-      if (/NEEDS_CONFIRM|未确认|未对平|未完全识别/i.test(e?.code || e?.message || '')) {
-        setNeedConfirm(e?.message || '对账单未完全识别或未对平，需确认后入库')
-      } else setError(e?.message || '入库失败')
+      // codex CRITICAL：非 2xx 时拦截器 reject 原始 AxiosError，后端结构化错误在 e.response.data.error（与项目既有 idiom 一致）。
+      //   原来只看 e.code/e.message（='ERR_BAD_REQUEST'/'…409'），永不命中 → 确认入库按钮不出现，月度入库走死。
+      const be = e?.response?.data?.error
+      if (be?.code === 'NEEDS_CONFIRM' || e?.response?.status === 409) {
+        setNeedConfirm(be?.message || '对账单未完全识别或未对平，需确认后入库')
+      } else setError(be?.message || e?.message || '入库失败')
     } finally { setBusy(false) }
   }, [partnerId, grid, month])
 
@@ -76,7 +78,7 @@ export default function ImportWizardPage() {
       {/* Step 0：上传 */}
       {step === 0 && (
         <div className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
-          <UploadBar hospitals={hospitals} partnerId={partnerId} onPartner={setPartnerId} month={month} onMonth={setMonth} onFile={onFile} busy={busy} fileName={fileName} />
+          <UploadBar hospitals={hospitals} partnerId={partnerId} onPartner={setPartnerId} month={month} onMonth={setMonth} onFile={onFile} busy={busy} fileName={fileName} hospitalsLoading={hospLoading} hospitalsError={hospError} onReloadHospitals={reloadHospitals} />
           <p className="mt-3 text-[12px] text-gray-400">先选医院和账期，再上传该院该月的对账单（.xlsx）。</p>
         </div>
       )}

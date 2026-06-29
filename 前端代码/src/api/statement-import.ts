@@ -13,7 +13,7 @@ export const statementImportApi = {
   commit: (body: { partnerId: string; grid: Grid; serviceMonth: string; template?: string; docNo?: string; confirm?: boolean }) =>
     request.post('/statement-import/commit', body) as unknown as Promise<CommitResult>,
 
-  /** POST /statement-import/classify-rule —— 把某行归类写回该院配置（立即生效） */
-  classifyRule: (body: { partnerId: string; lineKey?: string; newLine?: { name: string; scope: 'in' | 'out' }; ruleType: 'prefix' | 'keyword' | 'remark'; value: string }) =>
+  /** POST /statement-import/classify-rule —— 把某行归类写回该院配置（立即生效；expectedVersion 乐观锁防并发覆盖） */
+  classifyRule: (body: { partnerId: string; lineKey?: string; newLine?: { name: string; scope: 'in' | 'out' }; ruleType: 'prefix' | 'keyword' | 'remark'; value: string; expectedVersion?: number }) =>
     request.post('/statement-import/classify-rule', body) as unknown as Promise<{ partnerId: string; version: number; lineKey: string; scope: 'in' | 'out' }>,
 }
