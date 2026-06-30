@@ -43,7 +43,10 @@
 
 **已合/关闭**：#9 引擎(MERGED→#8 线)、#7/#6/#4/#3/#2 已并 master；#5/#1 CLOSED。
 
-**当前唯一可合项 = #8**（栈底）。顺序：#8 → 重定向 #10 base 到 master → #10 → 重定向 Phase 0 base 到 master → Phase 0。每合一步立刻更新本表。
+> ⛔ **合并暂停（2026-06-29，用户决策：先修账单再合）**：GitHub Actions 因账单/spending-limit 停摆 → e2e job 2 秒未启动即 FAILURE（**非代码问题**，#8 mergeStateStatus=UNSTABLE）。三 PR 均无合并冲突、后端联合校验 482 全绿，但 e2e 拿不到真实信号。**待用户修复 GitHub Billing → e2e 真跑出绿 → 再按序合**。
+
+**合并顺序（恢复后执行）= #8 → 重定向 #10 base 到 master → #10 → 重定向 #11 base 到 master → #11**。每合一步立刻更新本表。
+**恢复 playbook**：①GitHub Settings→Billing 解决 spending limit；②对 #8/#10/#11 重跑 e2e（`gh run rerun <id>` 或重推空 commit / 关开 PR 触发）；③确认 e2e 绿 + `gh pr view` mergeable → 用 **merge commit**（保留栈共享历史，下游免 rebase）按序合。
 
 ## 5. 会话启动检查清单（30 秒）
 
