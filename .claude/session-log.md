@@ -20,8 +20,9 @@
 - **多代理对抗复核已收口**（Workflow 6 镜头，harvest 47 原始发现）：6 CRITICAL=我已修的 lisCanonical（独立交叉验证）；多数 HIGH/MED 为假警/属设计；**2 真残留已补修**——classify-rule 写回未归一（补 normalizeConfig→400）、T1.6 回填不收敛（歧义出现后清回 NULL，防隐蔽成本串院）；另补旧库重建迁移直测。代理 scratch 探针已清。
 - **✅ Phase 0 PR 已开 = [#11](https://github.com/Mazikorn/Coreone-Procurement-Sales-and-Inventory-PSI-Management-System/pull/11)**（commit 78919621，base=`fix/codex-p0-p6` 即栈在 #10 上→物理保证 #10 不被单独合、跨院串账两半一起落）。
 - **🆕🧯 PR 治理规范已立**（防 PR 被忽视/错误合并）：新 `.claude/rules/pr-governance.md`（铁律+**活跃PR看板**唯一事实源+会话启动检查清单）+ `.github/pull_request_template.md` + GitHub 标签(`stacked`/`do-not-merge-alone`/`merge-order/N`) + #8/#10/#11 body 加栈位+合并顺序+依赖警示。**栈+序**：`master ← #8(序1) ← #10(序2,do-not-merge-alone) ← #11(序3)`；当前唯一可合=**#8**，合后重定向 #10/#11 base 到 master 再依序合。
-- **⛔ 合并暂停（用户决策：先修账单再合）**：合栈前校验发现 **GitHub Actions 因账单停摆**→#8 的 e2e job 2 秒未启动即 FAILURE（非代码问题，UNSTABLE）。三 PR 无冲突、后端联合校验 482 绿，但 e2e 无真实信号。**待用户修 GitHub Billing→重跑 e2e 出绿→再按 #8→#10→#11 用 merge commit 按序合**（恢复 playbook 见 `.claude/rules/pr-governance.md` 看板）。
-- **下一步**：用户修账单 + 重跑 e2e；恢复后我按序合栈并每步复校。遗留(Phase 1A)：规范行/聚合账本/月结工作台/状态机/v0死锁/NGS读RBAC/弹层焦点。
+- **✅🎉 全栈已落 master（2026-06-30，tip 1d4e1a50）**：账单修复后按 #8→#10→#11 **merge commit 按序合**，每步 e2e 复校=三次均 **6 failed/251 passed 失败集完全一致**（supplier-returns 5+auth-logout 1）→**全栈零新增 e2e 失败**。黄金 ¥13,152 守住、后端 482 绿。当前**无开放 PR**。
+- **⚠️ 既有 e2e 债已拆独立 task `c93e8188`**：这 6 个失败=master 自带 supplier-returns/auth bug（非 RBAC 403，权限本就授予 wh_mgr/procurement；疑似退款闭环审计副作用 / 登出重定向），与本栈无关，需独立复现定性+修。
+- **下一步**：① 处理 e2e 债 task（supplier-returns/auth 6 失败）；② Phase 1A（规范行/聚合账本/月结工作台/状态机/v0死锁/NGS读RBAC/弹层焦点）。栈式 PR 经验已沉淀进 `.claude/rules/pr-governance.md`。
 
 **🆕✅ codex 第二轮（复审+产品审）跑完 → 产品路线图已出 → 待用户拍 Epic 优先级 + 跨院同号口径 → 续 [[coreone-codex-deep-review]]**
 - **04 复审**（`codex-rereview-p0-p6` 的 `findings/04-rereview.md`，已核验全真）：我上轮修复 **4–5 处不完整**——跨院串账 CRITICAL **只修 case_revenue**，`lis_cases.case_no` 仍全局UNIQUE + P&L按case_no单键JOIN + ABC按case_no（半闭环，仍会跨院串数据）；新医院 v0 首次内联归类死锁（我加 expectedVersion 引入）；NGS confirm后仍写0成本；normalizeConfig 只在保存路径(读/回滚不归一)；NGS读RBAC；弹层焦点。
