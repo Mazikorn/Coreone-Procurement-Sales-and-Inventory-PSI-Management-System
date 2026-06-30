@@ -15,6 +15,7 @@ export interface PartnerPnl {
   qualityCounts: { ok: number; partial_quantities: number; no_quantities: number }
   sourceCounts: { statement: number; estimated: number; corrected: number } // 已对账/估算/已修正 case 数（P5）
   costMatched: boolean // 是否有已归集 ABC 成本
+  costMonthAxis: 'service_month' | 'all' // 单月口径：'service_month'=成本已按服务月对齐（跨月耗材归入服务当月，与收入同月）；'all'=全量未分月
   benchmarkCorrected: boolean // 恒 false：benchmark 未做病种校正
   // NGS 外购转销（独立渠道）
   ngsRevenue: number

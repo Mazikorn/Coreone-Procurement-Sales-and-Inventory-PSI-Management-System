@@ -32,7 +32,8 @@ beforeAll(async () => {
 
 describe('① 成本排除 pending_cost / cost_exception', () => {
   it('getPartnerCostRollup 只计 costed 800，不含 pending(500)/exception(700)', () => {
-    const cost = getPartnerCostRollup(db, { serviceMonth: '2026-06' }).get(PA)
+    // 本用例验证成本状态排除（数据按 cost_month=2026-06 落，无 case_revenue）→ 用 costMonth 原始成本月轴。
+    const cost = getPartnerCostRollup(db, { costMonth: '2026-06' }).get(PA)
     expect(cost?.costTotal).toBe(800)
   })
 })
