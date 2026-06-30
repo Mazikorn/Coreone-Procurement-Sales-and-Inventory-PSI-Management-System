@@ -14,7 +14,7 @@
 - 复现定性：**无产品 bug，全是陈旧/欠规范 e2e**。fresh CI 库下创建用例 skip（掩盖问题）；seeded 库下 30 failed=裸 body 创建缺 supplierId（400 SUPPLIER_REQUIRED，**角色无关，admin 同样**，推翻「仓管/采购才建不了」假设）+ finance 只读(GET 200)/page=0 严格 400/getRefs 取非末级分类。
 - 用户拍：保留产品行为（P1-14 创建必带供应商、finance 只读、分页 fail-fast 均有意）、改测试、comprehensive。修：ensureReturnContext 自给自足建「末级分类+在职供应商+批次库存」物料→创建用例真实跑不再 skip 且带 supplierId；SR-UI-BATCH 修字段序(先供应商后批次)+补「确认流转」；finance GET=200；page=0=400。
 - 验证：auth+supplier-returns **256 passed/0 failed/0 skipped**；后端 vitest **656 passed/0 failed 零回归**。
-- **待用户：PR base**——c36031fc 本地未推(=origin/codex/abc-productization-phase0-1+2docs)；**PR#8 的 e2e 文件与本线不同**，本修复对应 codex/abc-productization 线非 PR#8，需定落点再推送开 PR。
+- **✅ PR 已开 = [#12](https://github.com/Mazikorn/Coreone-Procurement-Sales-and-Inventory-PSI-Management-System/pull/12)**（用户拍：落本线；base=`codex/abc-productization-phase0-1-2026-06-15`，MERGEABLE，单独可合）。⚠️ **PR#8(feat/partner-cost-profit) 的 e2e 文件与本线不同**，#12 修的是本线套件、非 PR#8 的 CI；如需 PR#8 CI 转绿须在该线另行适配。
 
 **🩹✅ Phase 0「可信度止血」(PRD-0) 编码完成 + 多代理对抗复核收口 → 后端全量零回归 482 绿 + 黄金 ¥13,152 守住 + tsc 净 → 详见 `session-log/2026-06-29.md`、续 [[coreone-codex-deep-review]] [[coreone-abc-not-real-abc]]**
 - 分支 `feat/phase0-correctness`（worktree `coreone-bom-versioning`，off `codex-rereview-p0-p6`）。TDD 红测试先行、每条先红后绿。
