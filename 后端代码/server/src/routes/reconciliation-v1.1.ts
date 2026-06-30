@@ -13,6 +13,8 @@ import { requireAnyRole } from '../middleware/permissions.js'
 const router = Router()
 // 审批/驳回 BOM 修正提案限成本核准角色（admin/finance/lab_director）；propose 由挂载层 reconciliation R + 技术员 W 放行
 const requireReconcileApprove = requireAnyRole('admin', 'finance', 'lab_director')
+// 单次病例导入行数上限（防同步逐行 INSERT 阻塞事件循环的 DoS）。与 lis-cases /import 一致。
+const MAX_LIS_IMPORT_ROWS = 1000
 
 /**
  * GET /api/v1/reconciliation/summary
@@ -340,6 +342,10 @@ router.post('/cases/import', (req, res) => {
 
     if (!Array.isArray(items) || items.length === 0) {
       return error(res, '导入数据为空', 'BAD_REQUEST', 400)
+    }
+    // 防 DoS：node:sqlite 同步逐行 INSERT，行数过大会阻塞整个事件循环、令全站请求挂起。
+    if (items.length > MAX_LIS_IMPORT_ROWS) {
+      return error(res, `单次导入最多支持 ${MAX_LIS_IMPORT_ROWS} 条，请分批导入`, 'INVALID_PARAMETER', 400)
     }
 
     const importBatch = `IMPORT-${Date.now()}`

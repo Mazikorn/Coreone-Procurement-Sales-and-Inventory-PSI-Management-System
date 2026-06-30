@@ -20,12 +20,18 @@ const router = Router()
 const requireWrite = requirePermission('reconciliation', 'W')
 const SPECIMEN_TYPES = ['tissue', 'tissue_complex', 'cytology']
 
+// 单次导入行数上限。node:sqlite 是同步接口：/import 在单个 BEGIN IMMEDIATE 事务里逐行
+// INSERT、每行还做医院 upsert，/preview 也逐行同步查库 —— 行数过大会长时间阻塞整个 Node
+// 事件循环，令登录/库存等所有请求一起挂起（误传一个几万行文件即可触发）。超限即拒、提示分批。
+const MAX_LIS_IMPORT_ROWS = 1000
+
 /** POST /import —— 批量导入 LIS 病例（含医院 upsert + 数量 + 自动样本判定） */
 router.post('/import', authenticateToken, requireWrite, (req, res) => {
   try {
     const db = getDatabase()
     const { cases } = req.body as { cases: Record<string, unknown>[] }
     if (!Array.isArray(cases) || cases.length === 0) { error(res, '导入数据为空', 'BAD_REQUEST', 400); return }
+    if (cases.length > MAX_LIS_IMPORT_ROWS) { error(res, `单次导入最多支持 ${MAX_LIS_IMPORT_ROWS} 条，请分批导入`, 'INVALID_PARAMETER', 400); return }
 
     const importBatch = `LIS-${Date.now()}`
     const operator = (req as any).user?.id || null
@@ -99,6 +105,7 @@ router.post('/preview', authenticateToken, requireWrite, (req, res) => {
     const db = getDatabase()
     const { cases } = req.body as { cases: Record<string, unknown>[] }
     if (!Array.isArray(cases) || cases.length === 0) { error(res, '导入数据为空', 'BAD_REQUEST', 400); return }
+    if (cases.length > MAX_LIS_IMPORT_ROWS) { error(res, `单次导入最多支持 ${MAX_LIS_IMPORT_ROWS} 条，请分批导入`, 'INVALID_PARAMETER', 400); return }
     const partnerExists = db.prepare('SELECT 1 FROM partners WHERE name = ? AND is_deleted = 0')
     const hospitals = new Map<string, boolean>() // name -> existing
     const specimen = { tissue: 0, tissue_complex: 0, cytology: 0 }
