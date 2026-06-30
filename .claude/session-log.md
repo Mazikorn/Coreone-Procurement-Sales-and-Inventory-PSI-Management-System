@@ -10,7 +10,13 @@
 
 ## 当前状态（2026-06-29）
 
-**🆕🩹✅ Phase 0「可信度止血」(PRD-0) 编码完成 + 多代理对抗复核收口 → 后端全量零回归 482 绿 + 黄金 ¥13,152 守住 + tsc 净 → 详见 `session-log/2026-06-29.md`、续 [[coreone-codex-deep-review]] [[coreone-abc-not-real-abc]]**
+**🆕🩹✅ 独立修复 supplier-returns 既有 e2e 失败（commit 61ad7d8e，分支 claude/blissful-jang-aec669，仅改测试无后端改动）→ 详见 `session-log/2026-06-29.md`**
+- 复现定性：**无产品 bug，全是陈旧/欠规范 e2e**。fresh CI 库下创建用例 skip（掩盖问题）；seeded 库下 30 failed=裸 body 创建缺 supplierId（400 SUPPLIER_REQUIRED，**角色无关，admin 同样**，推翻「仓管/采购才建不了」假设）+ finance 只读(GET 200)/page=0 严格 400/getRefs 取非末级分类。
+- 用户拍：保留产品行为（P1-14 创建必带供应商、finance 只读、分页 fail-fast 均有意）、改测试、comprehensive。修：ensureReturnContext 自给自足建「末级分类+在职供应商+批次库存」物料→创建用例真实跑不再 skip 且带 supplierId；SR-UI-BATCH 修字段序(先供应商后批次)+补「确认流转」；finance GET=200；page=0=400。
+- 验证：auth+supplier-returns **256 passed/0 failed/0 skipped**；后端 vitest **656 passed/0 failed 零回归**。
+- **待用户：PR base**——c36031fc 本地未推(=origin/codex/abc-productization-phase0-1+2docs)；**PR#8 的 e2e 文件与本线不同**，本修复对应 codex/abc-productization 线非 PR#8，需定落点再推送开 PR。
+
+**🩹✅ Phase 0「可信度止血」(PRD-0) 编码完成 + 多代理对抗复核收口 → 后端全量零回归 482 绿 + 黄金 ¥13,152 守住 + tsc 净 → 详见 `session-log/2026-06-29.md`、续 [[coreone-codex-deep-review]] [[coreone-abc-not-real-abc]]**
 - 分支 `feat/phase0-correctness`（worktree `coreone-bom-versioning`，off `codex-rereview-p0-p6`）。TDD 红测试先行、每条先红后绿。
 - **T1.0 审计**：真实 `coreone.db` 是 pre-ABC 旧快照（lis_cases 6 行无 partner_id、无 ABC/case_revenue 表）→ `abcCaseNoAmbiguousCount=0` → 安全口径=「精确优先拒歧义」回填。审计函数已编码 + TC1.0 守门 + `/cross-partner-audit` 端点。
 - **T1 跨院串账全链路复合键 (partner_id, case_no)**：lis_cases 唯一键迁移（整表动态重建+复合唯一索引，NULL partner 不并入）/ LIS 导入 ON CONFLICT(partner_id,case_no) / 人工覆盖按 partnerId 精确·歧义 400 / P&L join 带 partner / case 成本 rollup 复合键 caseCostKey / ABC 回填拒歧义 + skippedAmbiguous。**grep 补漏**：case-revenue + ngs 的 lisCanonical 随机选院 → 新 `resolveLisCanonicalPartner`（精确单院才规范化，歧义退回账单医院名）。
