@@ -11,10 +11,10 @@
 import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../database/DatabaseManager.js'
-import { success, error } from '../utils/response.js'
+import { success, successList, error } from '../utils/response.js'
 import { authenticateToken } from '../middleware/auth.js'
 import { requireAnyRole } from '../middleware/permissions.js'
-import { loadConfig, saveConfig, getChanges, rollbackConfig, setBaseline } from '../utils/partner-config.js'
+import { loadConfig, saveConfig, getChanges, rollbackConfig, setBaseline, normalizeConfig } from '../utils/partner-config.js'
 
 const router = Router()
 const requireConfig = requireAnyRole('finance') // 财务 + 管理员（admin 始终放行）
@@ -24,6 +24,20 @@ const userId = (req: any): string | undefined => req.user?.id
 function partnerExists(db: any, id: string): boolean {
   return !!db.prepare('SELECT 1 FROM partners WHERE id = ? AND is_deleted = 0').get(id)
 }
+
+// 合作医院列表（配置页/测试台/向导左侧选院）。**按配置权限(财务/管理员)守卫**——
+// 财务无 partners 模块能力，故不能走 /partners；这里在配置域内提供，口径与配置写一致。
+router.get('/', authenticateToken, requireConfig, (req, res) => {
+  try {
+    const db = getDatabase()
+    const keyword = (req.query.keyword as string) || ''
+    let where = 'is_deleted = 0'
+    const params: unknown[] = []
+    if (keyword) { where += ' AND (name LIKE ? OR code LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`) }
+    const rows = db.prepare(`SELECT id, code, name, short_name, service_scope, status FROM partners WHERE ${where} ORDER BY name LIMIT 300`).all(...params) as any[]
+    successList(res, rows.map((r) => ({ id: r.id, code: r.code, name: r.name, shortName: r.short_name, serviceScope: r.service_scope, status: r.status === 1 ? 'active' : 'inactive' })), 1, rows.length, rows.length)
+  } catch (e: any) { error(res, e.message) }
+})
 
 router.get('/:id', authenticateToken, requireConfig, (req, res) => {
   try {
@@ -39,9 +53,11 @@ router.put('/:id', authenticateToken, requireConfig, (req, res) => {
     const db = getDatabase()
     if (!partnerExists(db, req.params.id)) { error(res, '医院不存在', 'NOT_FOUND', 404); return }
     const { config, expectedVersion, tab } = req.body as any
-    if (!config || !Array.isArray(config.lines)) { error(res, '配置格式无效（缺 lines）', 'BAD_REQUEST', 400); return }
+    // codex HIGH-4 + MEDIUM-1：保存前归一扣率(90→0.9)+校验形状；非法不写版本，返回 400。
+    let normalized
+    try { normalized = normalizeConfig(config) } catch (ve: any) { error(res, ve.message || '配置格式无效', 'BAD_REQUEST', 400); return }
     loadConfig(db, req.params.id, genId) // 确保已 seed
-    const r = saveConfig(db, req.params.id, config, { changedBy: userId(req), tab, genId, expectedVersion })
+    const r = saveConfig(db, req.params.id, normalized, { changedBy: userId(req), tab, genId, expectedVersion })
     success(res, { partnerId: req.params.id, version: r.version, diffs: r.diffs }, r.diffs.length ? `已保存 v${r.version}（${r.diffs.length} 项变更）` : '无改动')
   } catch (e: any) {
     if (/版本冲突/.test(e.message)) { error(res, e.message, 'CONFLICT', 409); return }

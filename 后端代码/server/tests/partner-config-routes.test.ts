@@ -29,6 +29,20 @@ beforeAll(async () => {
   pathoToken = await login('yishi1', 'CoreOne2026!')
 })
 
+describe('GET /（配置域医院列表，财务可访问·病理 403）', () => {
+  it('finance GET /partner-config → 200 + list 含本院（财务无 partners 能力也能在配置域取列表）', async () => {
+    const request = await st()
+    const res = await request(app).get('/api/v1/partner-config').set('Authorization', `Bearer ${financeToken}`)
+    expect(res.status).toBe(200)
+    expect(res.body.data.list.some((p: any) => p.id === PID)).toBe(true)
+  })
+  it('pathologist GET /partner-config → 403', async () => {
+    const request = await st()
+    const res = await request(app).get('/api/v1/partner-config').set('Authorization', `Bearer ${pathoToken}`)
+    expect(res.status).toBe(403)
+  })
+})
+
 describe('GET /:id（首访默认 seed）+ RBAC', () => {
   it('admin GET → 200，默认 8 业务线，version 1', async () => {
     const request = await st()

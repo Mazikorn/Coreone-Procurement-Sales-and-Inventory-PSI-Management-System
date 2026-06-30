@@ -59,6 +59,11 @@ const ALL_MAIN_MENU: MenuItem[] = [
   { label: '物料分类', path: '/categories', icon: FolderTree },
   { label: '耗材管理', path: '/materials', icon: Boxes },
   { label: '预警中心', path: '/alerts', icon: Bell },
+  // ===== 按医院成本/盈利 =====
+  { label: '医院盈利看板', path: '/hospital-pnl', icon: TrendingUp },
+  { label: '合作医院配置', path: '/partner-config', icon: Settings },
+  { label: '导入测试台', path: '/import-console', icon: FlaskConical },
+  { label: '财务月度导入', path: '/import-wizard', icon: FileText },
   // ===== ABC 成本核算导航（移植自 abc-productization 分支）=====
   { label: 'ABC成本看板', path: '/abc/dashboard', icon: BarChart3 },
   { label: '单片成本分析', path: '/abc/slide-cost', icon: Layers },
@@ -179,9 +184,11 @@ export default function AppSidebar() {
       {/* Mobile toggle button */}
       <button
         onClick={() => setMobileOpen(!mobileOpen)}
+        aria-label={mobileOpen ? '关闭导航菜单' : '打开导航菜单'}
+        aria-expanded={mobileOpen}
         className="fixed top-4 left-4 z-50 lg:hidden w-10 h-10 bg-white rounded-lg shadow-md flex items-center justify-center text-gray-600 hover:text-[#3b82f6] transition-colors"
       >
-        {mobileOpen ? <PanelRight className="w-5 h-5" /> : <PanelLeft className="w-5 h-5" />}
+        {mobileOpen ? <PanelRight className="w-5 h-5" aria-hidden="true" /> : <PanelLeft className="w-5 h-5" aria-hidden="true" />}
       </button>
 
       {/* Sidebar */}
@@ -238,8 +245,10 @@ export default function AppSidebar() {
               collapsed && 'justify-center'
             )}
             title={collapsed ? '展开侧边栏' : '收起侧边栏'}
+            aria-label={collapsed ? '展开侧边栏' : '收起侧边栏'}
+            aria-expanded={!collapsed}
           >
-            {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
+            {collapsed ? <ChevronRight className="w-4 h-4" aria-hidden="true" /> : <ChevronLeft className="w-4 h-4" aria-hidden="true" />}
             {!collapsed && <span>收起侧边栏</span>}
           </button>
         </div>
