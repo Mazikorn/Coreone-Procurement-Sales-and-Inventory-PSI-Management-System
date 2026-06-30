@@ -122,6 +122,7 @@ export interface PartnerPnl {
   qualityCounts: Record<RevenueQuality, number>
   sourceCounts: Record<RevenueSource, number> // 已对账(statement)/估算(estimated)/已修正(corrected) case 数
   costMatched: boolean // 该院是否有已归集的 ABC 成本（否=成本未接通，毛利仅供参考）
+  costMonthAxis: 'service_month' | 'all' // 单月口径标注：'service_month'=成本已按服务月对齐到收入同月（单月视图）；'all'=全量未分月（与 trend 的双轴透明一致）
   benchmarkCorrected: false // 恒 false：v1 benchmark 未做病种校正（UI 必标注）
   // —— NGS 外购转销（独立渠道，非 LIS/对账单；外包成本独立于 ABC）——
   ngsRevenue: number // NGS 售价合计（已核成本单）
@@ -175,6 +176,8 @@ export function buildPartnerPnl(db: DbLike, opts: { serviceMonth?: string; partn
   const catalog = loadChargeCatalog(db)
   const cases = loadCasePnls(db, catalog, opts)
   const revenue = rollupPartnerRevenue(cases)
+  // 单月视图：成本经 case_no 关联 case_revenue.service_month 对齐到服务月（与收入同轴），避免跨月 case 单月毛利错期。
+  const costMonthAxis: 'service_month' | 'all' = opts.serviceMonth ? 'service_month' : 'all'
   const costMap = getPartnerCostRollup(db, { serviceMonth: opts.serviceMonth })
   const ngsMap = loadNgsByPartner(db, opts)
 
@@ -200,6 +203,7 @@ export function buildPartnerPnl(db: DbLike, opts: { serviceMonth?: string; partn
       qualityCounts: rev.qualityCounts,
       sourceCounts: rev.sourceCounts,
       costMatched: !!cost,
+      costMonthAxis,
       benchmarkCorrected: false,
       ngsRevenue: ngs?.revenue || 0,
       ngsCost: ngs?.cost || 0,
@@ -221,7 +225,7 @@ export function buildPartnerPnl(db: DbLike, opts: { serviceMonth?: string; partn
       avgLabRevenuePerCase: 0, avgCostPerCase: 0, avgMarginPerCase: 0,
       qualityCounts: { ok: 0, partial_quantities: 0, no_quantities: 0 },
       sourceCounts: { statement: 0, estimated: 0, corrected: 0 },
-      costMatched: false, benchmarkCorrected: false,
+      costMatched: false, costMonthAxis, benchmarkCorrected: false,
       ngsRevenue: ngs.revenue, ngsCost: ngs.cost, ngsMargin: ngs.margin, ngsOrderCount: ngs.orderCount,
       ngsUnconfirmedRevenue: ngs.unconfirmedRevenue, ngsUnconfirmedCount: ngs.unconfirmedCount,
       totalMargin: ngs.margin,

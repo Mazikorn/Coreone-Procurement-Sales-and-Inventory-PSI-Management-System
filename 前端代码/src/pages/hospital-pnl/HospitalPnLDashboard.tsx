@@ -126,6 +126,11 @@ export default function HospitalPnLDashboard() {
                     <AlertTriangle className="w-3.5 h-3.5" /> {kpi.lossCount} 家负毛利
                   </span>
                 )}
+                {rows[0]?.costMonthAxis === 'service_month' && (
+                  <span className="inline-flex items-center gap-1 text-slate-400" title="本月成本已按服务月对齐：跨月使用的耗材成本归入病例的服务当月，与收入同月，避免单月毛利错期。">
+                    <Info className="w-3.5 h-3.5" /> 成本按服务月对齐
+                  </span>
+                )}
                 <span className="inline-flex items-center gap-1 text-slate-400"><Info className="w-3.5 h-3.5" /> 参考值未按病种校正</span>
               </div>
             </div>

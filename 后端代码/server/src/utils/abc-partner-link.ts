@@ -59,17 +59,39 @@ export interface PartnerCost {
 
 // 与既有 ABC 口径一致（cost-calculator.ts / abc-v1.1.ts）：只计已核算成本，排除待核算/异常/作废。
 const COST_OK = "COALESCE(cost_status, 'costed') NOT IN ('pending_cost', 'cost_exception', 'voided')"
+const COST_OK_D = "COALESCE(d.cost_status, 'costed') NOT IN ('pending_cost', 'cost_exception', 'voided')" // 带表别名 d.（join case_revenue 时避免列歧义）
 const r2 = (n: number) => Math.round((Number(n) + Number.EPSILON) * 100) / 100
 
-/** 按医院上卷 ABC 成本（total_cost）。可选服务月(cost_month)过滤。 */
-export function getPartnerCostRollup(db: DbLike, opts: { serviceMonth?: string } = {}): Map<string, PartnerCost> {
-  let where = `partner_id IS NOT NULL AND ${COST_OK}`
-  const params: unknown[] = []
-  if (opts.serviceMonth) { where += ' AND cost_month = ?'; params.push(opts.serviceMonth) }
+/**
+ * 月份轴对齐 SQL 片段（成本明细 d 与单月口径对齐）：
+ *  - serviceMonth：经 (partner_id, case_no) 关联 case_revenue.service_month 对齐到【服务月】。
+ *    单月院级 P&L 用——使跨月 case（服务月 ≠ 成本月）的成本与其收入落在同一个月，避免单月毛利错期。
+ *    收入侧 loadCasePnls 同样按 cr.service_month 过滤，两侧同轴。
+ *  - costMonth：按成本明细自身的 cost_month 过滤（趋势/诊断口径，与 getPartnerCostByMonth 一致）。
+ *  - 都不传：全量（不分月），与历史行为一致。
+ */
+function monthAxisClause(opts: { serviceMonth?: string; costMonth?: string }): { join: string; cond: string; params: unknown[] } {
+  if (opts.serviceMonth) {
+    return {
+      join: 'JOIN case_revenue cr ON cr.partner_id = d.partner_id AND cr.case_no = d.case_no',
+      cond: ' AND cr.service_month = ?', params: [opts.serviceMonth],
+    }
+  }
+  if (opts.costMonth) return { join: '', cond: ' AND d.cost_month = ?', params: [opts.costMonth] }
+  return { join: '', cond: '', params: [] }
+}
+
+/**
+ * 按医院上卷 ABC 成本（total_cost）。月份轴见 monthAxisClause：serviceMonth=按服务月对齐 / costMonth=按成本月 / 都不传=全量。
+ * case_revenue 唯一键含 service_month → join 后每 (partner, case) 至多匹配一条收入行，成本不会因 join 翻倍。
+ */
+export function getPartnerCostRollup(db: DbLike, opts: { serviceMonth?: string; costMonth?: string } = {}): Map<string, PartnerCost> {
+  const axis = monthAxisClause(opts)
   const rows = db.prepare(`
-    SELECT partner_id AS partnerId, COALESCE(SUM(total_cost), 0) AS costTotal, COUNT(*) AS rows
-    FROM outbound_abc_details WHERE ${where} GROUP BY partner_id
-  `).all(...params) as Array<{ partnerId: string; costTotal: number; rows: number }>
+    SELECT d.partner_id AS partnerId, COALESCE(SUM(d.total_cost), 0) AS costTotal, COUNT(*) AS rows
+    FROM outbound_abc_details d ${axis.join}
+    WHERE d.partner_id IS NOT NULL AND ${COST_OK_D}${axis.cond} GROUP BY d.partner_id
+  `).all(...axis.params) as Array<{ partnerId: string; costTotal: number; rows: number }>
   const map = new Map<string, PartnerCost>()
   for (const r of rows) map.set(r.partnerId, { partnerId: r.partnerId, costTotal: r2(r.costTotal), rows: Number(r.rows) })
   return map
@@ -78,15 +100,15 @@ export function getPartnerCostRollup(db: DbLike, opts: { serviceMonth?: string }
 /**
  * 按 case 上卷 ABC 成本（total_cost）。供 case 级毛利下钻/CM 筛查。
  * T1.5：键 = (partner_id, case_no) 复合键（caseCostKey），跨院同号成本不混算。查询方用 caseCostKey(partnerId, caseNo) 取值。
+ * 月份轴见 monthAxisClause（serviceMonth 对齐时 partner_id 为空的歧义成本行因 join 不匹配而自然排除，与既有取值口径一致）。
  */
-export function getCaseCostRollup(db: DbLike, opts: { serviceMonth?: string } = {}): Map<string, number> {
-  let where = `case_no IS NOT NULL AND ${COST_OK}`
-  const params: unknown[] = []
-  if (opts.serviceMonth) { where += ' AND cost_month = ?'; params.push(opts.serviceMonth) }
+export function getCaseCostRollup(db: DbLike, opts: { serviceMonth?: string; costMonth?: string } = {}): Map<string, number> {
+  const axis = monthAxisClause(opts)
   const rows = db.prepare(`
-    SELECT partner_id AS partnerId, case_no AS caseNo, COALESCE(SUM(total_cost), 0) AS costTotal
-    FROM outbound_abc_details WHERE ${where} GROUP BY partner_id, case_no
-  `).all(...params) as Array<{ partnerId: string | null; caseNo: string; costTotal: number }>
+    SELECT d.partner_id AS partnerId, d.case_no AS caseNo, COALESCE(SUM(d.total_cost), 0) AS costTotal
+    FROM outbound_abc_details d ${axis.join}
+    WHERE d.case_no IS NOT NULL AND ${COST_OK_D}${axis.cond} GROUP BY d.partner_id, d.case_no
+  `).all(...axis.params) as Array<{ partnerId: string | null; caseNo: string; costTotal: number }>
   const map = new Map<string, number>()
   for (const r of rows) map.set(caseCostKey(r.partnerId, r.caseNo), r2(r.costTotal))
   return map
