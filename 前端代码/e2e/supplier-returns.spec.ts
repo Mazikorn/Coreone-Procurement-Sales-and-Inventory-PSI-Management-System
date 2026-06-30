@@ -15,7 +15,8 @@ type RoleKey = keyof typeof ROLES
 const ROLE_KEYS: RoleKey[] = ['admin', 'warehouse_manager', 'technician', 'pathologist', 'procurement', 'finance']
 const WRITE_ROLES: RoleKey[] = ['admin', 'warehouse_manager', 'procurement']
 const READ_ROLES: RoleKey[] = ['admin', 'warehouse_manager', 'procurement']
-const NO_ACCESS_ROLES: RoleKey[] = ['technician', 'pathologist', 'finance']
+// P1-14：finance 仅获供应商退货「只读」访问（退款应收对账），仍不可写。technician/pathologist 完全无权限。
+const NO_ACCESS_ROLES: RoleKey[] = ['technician', 'pathologist']
 
 async function loginAs(page: Page, role: RoleKey) {
   await page.goto(`${FE_BASE}/login`, { waitUntil: 'domcontentloaded' })
@@ -49,29 +50,57 @@ async function apiFetch(token: string, method: string, path: string, body?: any)
   return { status: res.status, data: (await res.json().catch(() => null)) as any }
 }
 
-async function getAnyMaterialId(token: string): Promise<string> {
-  const r = await apiFetch(token, 'GET', '/materials?page=1&pageSize=1')
-  return r.data?.data?.list?.[0]?.id || ''
+// ────────────────────────────────────────────
+// 共享「可退货上下文」(自给自足)
+// ────────────────────────────────────────────
+// 创建一个 末级分类 + 在职供应商 + 库位 + 充足批次库存 的物料，使创建/状态/删除用例在任意数据库
+// （含全新 CI 库，initializeDatabase 不 seed 业务数据）下都能真实运行，不再 test.skip()。
+// 前置数据统一用 admin 建（采购/仓管对 categories/locations 写权限不一），被测动作仍用各角色 token。
+// 供应商退货创建要求可解析的供应商（P1-14 财务闭环），与真实前端表单（必选供应商+批次）一致，
+// 故创建体必须带 supplierId；后端会按该供应商自动选取 FIFO 批次。
+type ReturnCtx = { materialId: string; supplierId: string; batchId: string; locationId: string; categoryId: string }
+let returnCtx: ReturnCtx | null = null
+
+async function ensureReturnContext(): Promise<ReturnCtx> {
+  if (returnCtx) return returnCtx
+  const admin = await apiLogin('admin')
+  const suffix = `${Date.now()}`
+  const cat = await apiFetch(admin, 'POST', '/categories', { code: `E2E-SRCAT-${suffix}`, name: `E2E退货分类-${suffix}` })
+  expect(cat.status, `创建末级分类失败: ${JSON.stringify(cat.data)}`).toBe(201)
+  const loc = await apiFetch(admin, 'POST', '/locations', { code: `E2E-SRLOC-${suffix}`, name: `E2E退货库位-${suffix}`, type: 'shelf', zone: 'E2E退货区', shelf: 'E2E货架', position: 'E2E位', capacity: 1000000 })
+  expect(loc.status, `创建库位失败: ${JSON.stringify(loc.data)}`).toBe(201)
+  const sup = await apiFetch(admin, 'POST', '/suppliers', { code: `E2E-SRSUP-${suffix}`, name: `E2E退货供应商-${suffix}`, status: 'active' })
+  expect(sup.status, `创建供应商失败: ${JSON.stringify(sup.data)}`).toBe(201)
+  const categoryId = cat.data?.data?.id
+  const locationId = loc.data?.data?.id
+  const supplierId = sup.data?.data?.id
+  const mat = await apiFetch(admin, 'POST', '/materials', {
+    code: `E2E-SRMAT-${suffix}`, name: `E2E退货物料-${suffix}`, spec: '1ml', unit: '瓶',
+    categoryId, supplierId, locationId, price: 200, minStock: 0, maxStock: 1000000, safetyStock: 0,
+    remark: 'E2E供应商退货共享物料',
+  })
+  expect(mat.status, `创建物料失败: ${JSON.stringify(mat.data)}`).toBe(201)
+  const materialId = mat.data?.data?.id
+  const batchNo = `E2E-SRB-${suffix}`
+  const inb = await apiFetch(admin, 'POST', '/inbound', {
+    type: 'direct', materialId, batchNo, quantity: 5000, price: 200, supplierId, locationId, expiryDate: '2030-12-31',
+  })
+  expect(inb.status, `入库失败: ${JSON.stringify(inb.data)}`).toBe(201)
+  const inv = await apiFetch(admin, 'GET', `/inventory?page=1&pageSize=100&materialId=${encodeURIComponent(materialId)}`)
+  const row = (inv.data?.data?.list || []).find((m: any) => m.batchNo === batchNo)
+  returnCtx = { materialId, supplierId, batchId: row?.batchId, locationId, categoryId }
+  return returnCtx
 }
 
-async function getMaterialWithStock(token: string, minStock: number = 3): Promise<string> {
-  const r = await apiFetch(token, 'GET', `/inventory?page=1&pageSize=200`)
-  const list = r.data?.data?.list || []
-  const mat = list.find((m: any) => m.stock >= minStock)
-  return mat?.materialId || ''
+// 构造创建供应商退货的请求体：默认带共享物料 + 供应商（真实前端表单必选项），调用方按需覆盖字段。
+function srBody(ctx: ReturnCtx, extra: Record<string, unknown> = {}) {
+  return { materialId: ctx.materialId, supplierId: ctx.supplierId, ...extra }
 }
 
-async function getRefs(token: string) {
-  const [categories, locations, suppliers] = await Promise.all([
-    apiFetch(token, 'GET', '/categories?page=1&pageSize=1'),
-    apiFetch(token, 'GET', '/locations?page=1&pageSize=1'),
-    apiFetch(token, 'GET', '/suppliers?page=1&pageSize=1&status=active'),
-  ])
-  return {
-    category: categories.data?.data?.list?.[0],
-    location: locations.data?.data?.list?.[0],
-    supplier: suppliers.data?.data?.list?.[0],
-  }
+async function getRefs(_token: string) {
+  // 复用共享上下文的「末级分类/库位/在职供应商」，避免裸取首个分类（可能是非末级父类 → 物料 409 不能绑定）。
+  const ctx = await ensureReturnContext()
+  return { category: { id: ctx.categoryId }, location: { id: ctx.locationId }, supplier: { id: ctx.supplierId } }
 }
 
 async function createSupplierReturnMaterial(token: string, suffix: number, categoryId: string, locationId: string, supplierId: string) {
@@ -120,7 +149,8 @@ async function cleanupTestData(token: string) {
     const r = await apiFetch(token, 'GET', '/supplier-returns?page=1&pageSize=200')
     const list = r.data?.data?.list || []
     for (const item of list) {
-      if (item.returnNo?.startsWith('TEST-') || item.remark?.includes('E2E')) {
+      // 清掉测试遗留：TEST- 单号、E2E 备注、或共享物料上的退货（仅 pending 可删，删除即恢复库存）。
+      if (item.returnNo?.startsWith('TEST-') || item.remark?.includes('E2E') || (returnCtx && item.materialId === returnCtx.materialId)) {
         await apiFetch(token, 'DELETE', `/supplier-returns/${item.id}`)
       }
     }
@@ -156,6 +186,11 @@ test.describe('退货给供应商 -> 查看列表', () => {
       expect(res.status).toBe(403)
     })
   }
+  test('SR-LIST-03-finance. 权限：finance只读访问退货列表返回200（P1-14 退款应收对账）', async () => {
+    const token = await apiLogin('finance')
+    const res = await apiFetch(token, 'GET', '/supplier-returns')
+    expect(res.status).toBe(200)
+  })
   test('SR-LIST-04. UI差异：admin显示新建退货按钮', async ({ page }) => {
     await loginAs(page, 'admin')
     await page.goto(`${FE_BASE}/supplier-returns`)
@@ -198,77 +233,61 @@ test.describe('退货给供应商 -> 状态筛选', () => {
 // 3. 创建退货记录 (18 tests)
 // ────────────────────────────────────────────
 test.describe('退货给供应商 -> 创建退货记录', () => {
-  test('SR-CREATE-01. 正常用例：admin创建退货成功', async ({ page }) => {
+  test('SR-CREATE-01. 正常用例：admin创建退货成功', async () => {
     const token = await apiLogin('admin')
-    const mid = await getMaterialWithStock(token)
-    if (!mid) { test.skip(); return }
-    const res = await apiFetch(token, 'POST', '/supplier-returns', {
-      materialId: mid, quantity: 1, reason: 'quality_issue', remark: 'E2E测试退货',
-    })
+    const ctx = await ensureReturnContext()
+    const res = await apiFetch(token, 'POST', '/supplier-returns', srBody(ctx, { quantity: 1, reason: 'quality_issue', remark: 'E2E测试退货' }))
     expect(res.status).toBe(200)
     expect(res.data?.data?.id).toBeTruthy()
   })
-  test('SR-CREATE-02. 正常用例：warehouse_manager创建退货成功', async ({ page }) => {
+  test('SR-CREATE-02. 正常用例：warehouse_manager创建退货成功', async () => {
     const token = await apiLogin('warehouse_manager')
-    const mid = await getMaterialWithStock(token)
-    if (!mid) { test.skip(); return }
-    const res = await apiFetch(token, 'POST', '/supplier-returns', {
-      materialId: mid, quantity: 1, reason: 'damaged', remark: 'E2E',
-    })
+    const ctx = await ensureReturnContext()
+    const res = await apiFetch(token, 'POST', '/supplier-returns', srBody(ctx, { quantity: 1, reason: 'damaged', remark: 'E2E' }))
     expect(res.status).toBe(200)
   })
-  test('SR-CREATE-03. 正常用例：procurement创建退货成功', async ({ page }) => {
+  test('SR-CREATE-03. 正常用例：procurement创建退货成功', async () => {
     const token = await apiLogin('procurement')
-    const mid = await getMaterialWithStock(token)
-    if (!mid) { test.skip(); return }
-    const res = await apiFetch(token, 'POST', '/supplier-returns', {
-      materialId: mid, quantity: 1, reason: 'quantity_mismatch', remark: 'E2E',
-    })
+    const ctx = await ensureReturnContext()
+    const res = await apiFetch(token, 'POST', '/supplier-returns', srBody(ctx, { quantity: 1, reason: 'quantity_mismatch', remark: 'E2E' }))
     expect(res.status).toBe(200)
   })
-  test('SR-CREATE-04. 表单校验：缺少materialId返回400', async ({ page }) => {
+  test('SR-CREATE-04. 表单校验：缺少materialId返回400', async () => {
     const token = await apiLogin('admin')
     const res = await apiFetch(token, 'POST', '/supplier-returns', { quantity: 1, reason: 'quality_issue' })
     expect(res.status).toBe(400)
   })
-  test('SR-CREATE-05. 表单校验：缺少quantity返回400', async ({ page }) => {
+  test('SR-CREATE-05. 表单校验：缺少quantity返回400', async () => {
     const token = await apiLogin('admin')
-    const mid = await getMaterialWithStock(token)
-    if (!mid) { test.skip(); return }
-    const res = await apiFetch(token, 'POST', '/supplier-returns', { materialId: mid, reason: 'quality_issue' })
+    const ctx = await ensureReturnContext()
+    const res = await apiFetch(token, 'POST', '/supplier-returns', srBody(ctx, { reason: 'quality_issue' }))
     expect(res.status).toBe(400)
   })
-  test('SR-CREATE-06. 表单校验：缺少reason返回400', async ({ page }) => {
+  test('SR-CREATE-06. 表单校验：缺少reason返回400', async () => {
     const token = await apiLogin('admin')
-    const mid = await getMaterialWithStock(token)
-    if (!mid) { test.skip(); return }
-    const res = await apiFetch(token, 'POST', '/supplier-returns', { materialId: mid, quantity: 1 })
+    const ctx = await ensureReturnContext()
+    const res = await apiFetch(token, 'POST', '/supplier-returns', srBody(ctx, { quantity: 1 }))
     expect(res.status).toBe(400)
   })
-  test('SR-CREATE-07. 表单校验：quantity=0返回400', async ({ page }) => {
+  test('SR-CREATE-07. 表单校验：quantity=0返回400', async () => {
     const token = await apiLogin('admin')
-    const mid = await getMaterialWithStock(token)
-    if (!mid) { test.skip(); return }
-    const res = await apiFetch(token, 'POST', '/supplier-returns', { materialId: mid, quantity: 0, reason: 'quality_issue' })
+    const ctx = await ensureReturnContext()
+    const res = await apiFetch(token, 'POST', '/supplier-returns', srBody(ctx, { quantity: 0, reason: 'quality_issue' }))
     expect(res.status).toBe(400)
   })
-  test('SR-CREATE-08. 表单校验：负数quantity返回400', async ({ page }) => {
+  test('SR-CREATE-08. 表单校验：负数quantity返回400', async () => {
     const token = await apiLogin('admin')
-    const mid = await getMaterialWithStock(token)
-    if (!mid) { test.skip(); return }
-    const res = await apiFetch(token, 'POST', '/supplier-returns', { materialId: mid, quantity: -1, reason: 'quality_issue' })
+    const ctx = await ensureReturnContext()
+    const res = await apiFetch(token, 'POST', '/supplier-returns', srBody(ctx, { quantity: -1, reason: 'quality_issue' }))
     expect(res.status).toBe(400)
   })
-  test('SR-CREATE-09. 业务冲突：库存不足返回422', async ({ page }) => {
+  test('SR-CREATE-09. 业务冲突：库存不足返回422', async () => {
     const token = await apiLogin('admin')
-    const mid = await getMaterialWithStock(token)
-    if (!mid) { test.skip(); return }
-    const res = await apiFetch(token, 'POST', '/supplier-returns', {
-      materialId: mid, quantity: 999999, reason: 'quality_issue',
-    })
+    const ctx = await ensureReturnContext()
+    const res = await apiFetch(token, 'POST', '/supplier-returns', srBody(ctx, { quantity: 999999, reason: 'quality_issue' }))
     expect([400, 422]).toContain(res.status)
   })
-  test('SR-CREATE-10. 业务冲突：物料不存在返回404', async ({ page }) => {
+  test('SR-CREATE-10. 业务冲突：物料不存在返回404', async () => {
     const token = await apiLogin('admin')
     const res = await apiFetch(token, 'POST', '/supplier-returns', {
       materialId: 'non-existent-id', quantity: 1, reason: 'quality_issue',
@@ -278,59 +297,45 @@ test.describe('退货给供应商 -> 创建退货记录', () => {
   for (const role of ['technician', 'pathologist', 'finance'] as RoleKey[]) {
     test(`SR-CREATE-11-${role}. 权限：${role}创建退货返回403`, async () => {
       const token = await apiLogin(role)
-      const adminToken = await apiLogin('admin')
-      const mid = await getAnyMaterialId(adminToken)
-      if (!mid) { test.skip(); return }
-      const res = await apiFetch(token, 'POST', '/supplier-returns', {
-        materialId: mid, quantity: 1, reason: 'quality_issue',
-      })
+      const ctx = await ensureReturnContext()
+      const res = await apiFetch(token, 'POST', '/supplier-returns', srBody(ctx, { quantity: 1, reason: 'quality_issue' }))
       expect(res.status).toBe(403)
     })
   }
-  test('SR-CREATE-12. 并发：快速双击提交', async ({ page }) => {
+  test('SR-CREATE-12. 并发：快速双击提交', async () => {
     const token = await apiLogin('admin')
-    const mid = await getMaterialWithStock(token)
-    if (!mid) { test.skip(); return }
-    const body = { materialId: mid, quantity: 1, reason: 'quality_issue' }
+    const ctx = await ensureReturnContext()
+    const body = srBody(ctx, { quantity: 1, reason: 'quality_issue' })
     const [r1, r2] = await Promise.all([
       apiFetch(token, 'POST', '/supplier-returns', body),
       apiFetch(token, 'POST', '/supplier-returns', body),
     ])
     expect(r1.status === 200 || r2.status === 200).toBe(true)
   })
-  test('SR-CREATE-13. 正常用例：退货后库存扣减', async ({ page }) => {
+  test('SR-CREATE-13. 正常用例：退货后库存扣减', async () => {
     const token = await apiLogin('admin')
-    const mid = await getMaterialWithStock(token)
-    if (!mid) { test.skip(); return }
-    const before = await apiFetch(token, 'GET', `/materials/${mid}`)
+    const ctx = await ensureReturnContext()
+    const before = await apiFetch(token, 'GET', `/materials/${ctx.materialId}`)
     const bStock = before.data?.data?.stock || 0
-    await apiFetch(token, 'POST', '/supplier-returns', {
-      materialId: mid, quantity: 1, reason: 'quality_issue', remark: 'E2E库存测试',
-    })
-    const after = await apiFetch(token, 'GET', `/materials/${mid}`)
+    await apiFetch(token, 'POST', '/supplier-returns', srBody(ctx, { quantity: 1, reason: 'quality_issue', remark: 'E2E库存测试' }))
+    const after = await apiFetch(token, 'GET', `/materials/${ctx.materialId}`)
     const aStock = after.data?.data?.stock || 0
     expect(aStock).toBe(bStock - 1)
   })
-  test('SR-CREATE-14. 正常用例：退货单号格式SR-YYYYMMDD-XXX', async ({ page }) => {
+  test('SR-CREATE-14. 正常用例：退货单号格式SR-YYYYMMDD-XXX', async () => {
     const token = await apiLogin('admin')
-    const mid = await getMaterialWithStock(token)
-    if (!mid) { test.skip(); return }
-    const res = await apiFetch(token, 'POST', '/supplier-returns', {
-      materialId: mid, quantity: 1, reason: 'quality_issue',
-    })
+    const ctx = await ensureReturnContext()
+    const res = await apiFetch(token, 'POST', '/supplier-returns', srBody(ctx, { quantity: 1, reason: 'quality_issue' }))
     expect(res.status).toBe(200)
     const id = res.data?.data?.id
     const detail = await apiFetch(token, 'GET', `/supplier-returns/${id}`)
     const no = detail.data?.data?.returnNo || ''
     expect(no).toMatch(/^SR-\d{8}-\d{6}-\d{3}$/)
   })
-  test('SR-CREATE-15. 正常用例：创建时包含退款金额和物流单号', async ({ page }) => {
+  test('SR-CREATE-15. 正常用例：创建时包含退款金额和物流单号', async () => {
     const token = await apiLogin('admin')
-    const mid = await getMaterialWithStock(token)
-    if (!mid) { test.skip(); return }
-    const res = await apiFetch(token, 'POST', '/supplier-returns', {
-      materialId: mid, quantity: 1, reason: 'damaged', refundAmount: 100, trackingNo: 'SF123456', remark: 'E2E完整字段',
-    })
+    const ctx = await ensureReturnContext()
+    const res = await apiFetch(token, 'POST', '/supplier-returns', srBody(ctx, { quantity: 1, reason: 'damaged', refundAmount: 100, trackingNo: 'SF123456', remark: 'E2E完整字段' }))
     expect(res.status).toBe(200)
   })
 })
@@ -339,61 +344,46 @@ test.describe('退货给供应商 -> 创建退货记录', () => {
 // 4. 状态流转 (12 tests)
 // ────────────────────────────────────────────
 test.describe('退货给供应商 -> 状态流转', () => {
-  test('SR-STATUS-01. 正常用例：pending→shipped', async ({ page }) => {
+  test('SR-STATUS-01. 正常用例：pending→shipped', async () => {
     const token = await apiLogin('admin')
-    const mid = await getMaterialWithStock(token)
-    if (!mid) { test.skip(); return }
-    const create = await apiFetch(token, 'POST', '/supplier-returns', {
-      materialId: mid, quantity: 1, reason: 'quality_issue', remark: 'E2E状态流',
-    })
+    const ctx = await ensureReturnContext()
+    const create = await apiFetch(token, 'POST', '/supplier-returns', srBody(ctx, { quantity: 1, reason: 'quality_issue', remark: 'E2E状态流' }))
     expect(create.status).toBe(200)
     const id = create.data?.data?.id
     const res = await apiFetch(token, 'PUT', `/supplier-returns/${id}/status`, { status: 'shipped' })
     expect(res.status).toBe(200)
   })
-  test('SR-STATUS-02. 正常用例：shipped→received', async ({ page }) => {
+  test('SR-STATUS-02. 正常用例：shipped→received', async () => {
     const token = await apiLogin('admin')
-    const mid = await getMaterialWithStock(token)
-    if (!mid) { test.skip(); return }
-    const create = await apiFetch(token, 'POST', '/supplier-returns', {
-      materialId: mid, quantity: 1, reason: 'quality_issue',
-    })
+    const ctx = await ensureReturnContext()
+    const create = await apiFetch(token, 'POST', '/supplier-returns', srBody(ctx, { quantity: 1, reason: 'quality_issue' }))
     const id = create.data?.data?.id
     await apiFetch(token, 'PUT', `/supplier-returns/${id}/status`, { status: 'shipped' })
     const res = await apiFetch(token, 'PUT', `/supplier-returns/${id}/status`, { status: 'received' })
     expect(res.status).toBe(200)
   })
-  test('SR-STATUS-03. 正常用例：received→refunded', async ({ page }) => {
+  test('SR-STATUS-03. 正常用例：received→refunded', async () => {
     const token = await apiLogin('admin')
-    const mid = await getMaterialWithStock(token)
-    if (!mid) { test.skip(); return }
-    const create = await apiFetch(token, 'POST', '/supplier-returns', {
-      materialId: mid, quantity: 1, reason: 'quality_issue',
-    })
+    const ctx = await ensureReturnContext()
+    const create = await apiFetch(token, 'POST', '/supplier-returns', srBody(ctx, { quantity: 1, reason: 'quality_issue' }))
     const id = create.data?.data?.id
     await apiFetch(token, 'PUT', `/supplier-returns/${id}/status`, { status: 'shipped' })
     await apiFetch(token, 'PUT', `/supplier-returns/${id}/status`, { status: 'received' })
     const res = await apiFetch(token, 'PUT', `/supplier-returns/${id}/status`, { status: 'refunded' })
     expect(res.status).toBe(200)
   })
-  test('SR-STATUS-04. 正常用例：pending→cancelled', async ({ page }) => {
+  test('SR-STATUS-04. 正常用例：pending→cancelled', async () => {
     const token = await apiLogin('admin')
-    const mid = await getMaterialWithStock(token)
-    if (!mid) { test.skip(); return }
-    const create = await apiFetch(token, 'POST', '/supplier-returns', {
-      materialId: mid, quantity: 1, reason: 'quality_issue',
-    })
+    const ctx = await ensureReturnContext()
+    const create = await apiFetch(token, 'POST', '/supplier-returns', srBody(ctx, { quantity: 1, reason: 'quality_issue' }))
     const id = create.data?.data?.id
     const res = await apiFetch(token, 'PUT', `/supplier-returns/${id}/status`, { status: 'cancelled' })
     expect(res.status).toBe(200)
   })
-  test('SR-STATUS-05. 业务冲突：refunded→shipped非法流转返回400', async ({ page }) => {
+  test('SR-STATUS-05. 业务冲突：refunded→shipped非法流转返回400', async () => {
     const token = await apiLogin('admin')
-    const mid = await getMaterialWithStock(token)
-    if (!mid) { test.skip(); return }
-    const create = await apiFetch(token, 'POST', '/supplier-returns', {
-      materialId: mid, quantity: 1, reason: 'quality_issue',
-    })
+    const ctx = await ensureReturnContext()
+    const create = await apiFetch(token, 'POST', '/supplier-returns', srBody(ctx, { quantity: 1, reason: 'quality_issue' }))
     const id = create.data?.data?.id
     await apiFetch(token, 'PUT', `/supplier-returns/${id}/status`, { status: 'shipped' })
     await apiFetch(token, 'PUT', `/supplier-returns/${id}/status`, { status: 'received' })
@@ -401,48 +391,36 @@ test.describe('退货给供应商 -> 状态流转', () => {
     const res = await apiFetch(token, 'PUT', `/supplier-returns/${id}/status`, { status: 'shipped' })
     expect(res.status).toBe(400)
   })
-  test('SR-STATUS-06. 业务冲突：shipped→pending回退返回400', async ({ page }) => {
+  test('SR-STATUS-06. 业务冲突：shipped→pending回退返回400', async () => {
     const token = await apiLogin('admin')
-    const mid = await getMaterialWithStock(token)
-    if (!mid) { test.skip(); return }
-    const create = await apiFetch(token, 'POST', '/supplier-returns', {
-      materialId: mid, quantity: 1, reason: 'quality_issue',
-    })
+    const ctx = await ensureReturnContext()
+    const create = await apiFetch(token, 'POST', '/supplier-returns', srBody(ctx, { quantity: 1, reason: 'quality_issue' }))
     const id = create.data?.data?.id
     await apiFetch(token, 'PUT', `/supplier-returns/${id}/status`, { status: 'shipped' })
     const res = await apiFetch(token, 'PUT', `/supplier-returns/${id}/status`, { status: 'pending' })
     expect(res.status).toBe(400)
   })
-  test('SR-STATUS-07. 表单校验：无效状态值返回400', async ({ page }) => {
+  test('SR-STATUS-07. 表单校验：无效状态值返回400', async () => {
     const token = await apiLogin('admin')
-    const mid = await getMaterialWithStock(token)
-    if (!mid) { test.skip(); return }
-    const create = await apiFetch(token, 'POST', '/supplier-returns', {
-      materialId: mid, quantity: 1, reason: 'quality_issue',
-    })
+    const ctx = await ensureReturnContext()
+    const create = await apiFetch(token, 'POST', '/supplier-returns', srBody(ctx, { quantity: 1, reason: 'quality_issue' }))
     const id = create.data?.data?.id
     const res = await apiFetch(token, 'PUT', `/supplier-returns/${id}/status`, { status: 'invalid_status' })
     expect(res.status).toBe(400)
   })
-  test('SR-STATUS-08. 权限：technician更新状态返回403', async ({ page }) => {
+  test('SR-STATUS-08. 权限：technician更新状态返回403', async () => {
     const token = await apiLogin('technician')
     const adminToken = await apiLogin('admin')
-    const mid = await getAnyMaterialId(adminToken)
-    if (!mid) { test.skip(); return }
-    const create = await apiFetch(adminToken, 'POST', '/supplier-returns', {
-      materialId: mid, quantity: 1, reason: 'quality_issue',
-    })
+    const ctx = await ensureReturnContext()
+    const create = await apiFetch(adminToken, 'POST', '/supplier-returns', srBody(ctx, { quantity: 1, reason: 'quality_issue' }))
     const id = create.data?.data?.id
     const res = await apiFetch(token, 'PUT', `/supplier-returns/${id}/status`, { status: 'shipped' })
     expect(res.status).toBe(403)
   })
-  test('SR-STATUS-09. 并发：并发更新同一记录状态', async ({ page }) => {
+  test('SR-STATUS-09. 并发：并发更新同一记录状态', async () => {
     const token = await apiLogin('admin')
-    const mid = await getMaterialWithStock(token)
-    if (!mid) { test.skip(); return }
-    const create = await apiFetch(token, 'POST', '/supplier-returns', {
-      materialId: mid, quantity: 1, reason: 'quality_issue',
-    })
+    const ctx = await ensureReturnContext()
+    const create = await apiFetch(token, 'POST', '/supplier-returns', srBody(ctx, { quantity: 1, reason: 'quality_issue' }))
     const id = create.data?.data?.id
     const [r1, r2] = await Promise.all([
       apiFetch(token, 'PUT', `/supplier-returns/${id}/status`, { status: 'shipped' }),
@@ -450,7 +428,7 @@ test.describe('退货给供应商 -> 状态流转', () => {
     ])
     expect(r1.status === 200 || r2.status === 200).toBe(true)
   })
-  test('SR-STATUS-10. 异常恢复：更新不存在的记录返回404', async ({ page }) => {
+  test('SR-STATUS-10. 异常恢复：更新不存在的记录返回404', async () => {
     const token = await apiLogin('admin')
     const res = await apiFetch(token, 'PUT', '/supplier-returns/non-existent-id/status', { status: 'shipped' })
     expect(res.status).toBe(404)
@@ -460,13 +438,10 @@ test.describe('退货给供应商 -> 状态流转', () => {
     await page.goto(`${FE_BASE}/supplier-returns`)
     await page.waitForTimeout(1000)
   })
-  test('SR-STATUS-12. 正常用例：cancelled后不能再次流转', async ({ page }) => {
+  test('SR-STATUS-12. 正常用例：cancelled后不能再次流转', async () => {
     const token = await apiLogin('admin')
-    const mid = await getMaterialWithStock(token)
-    if (!mid) { test.skip(); return }
-    const create = await apiFetch(token, 'POST', '/supplier-returns', {
-      materialId: mid, quantity: 1, reason: 'quality_issue',
-    })
+    const ctx = await ensureReturnContext()
+    const create = await apiFetch(token, 'POST', '/supplier-returns', srBody(ctx, { quantity: 1, reason: 'quality_issue' }))
     const id = create.data?.data?.id
     await apiFetch(token, 'PUT', `/supplier-returns/${id}/status`, { status: 'cancelled' })
     const res = await apiFetch(token, 'PUT', `/supplier-returns/${id}/status`, { status: 'shipped' })
@@ -478,51 +453,39 @@ test.describe('退货给供应商 -> 状态流转', () => {
 // 5. 删除退货记录 (12 tests)
 // ────────────────────────────────────────────
 test.describe('退货给供应商 -> 删除退货记录', () => {
-  test('SR-DELETE-01. 正常用例：admin删除pending状态退货记录', async ({ page }) => {
+  test('SR-DELETE-01. 正常用例：admin删除pending状态退货记录', async () => {
     const token = await apiLogin('admin')
-    const mid = await getMaterialWithStock(token)
-    if (!mid) { test.skip(); return }
-    const create = await apiFetch(token, 'POST', '/supplier-returns', {
-      materialId: mid, quantity: 1, reason: 'quality_issue', remark: 'E2E删除测试',
-    })
+    const ctx = await ensureReturnContext()
+    const create = await apiFetch(token, 'POST', '/supplier-returns', srBody(ctx, { quantity: 1, reason: 'quality_issue', remark: 'E2E删除测试' }))
     expect(create.status).toBe(200)
     const id = create.data?.data?.id
     const res = await apiFetch(token, 'DELETE', `/supplier-returns/${id}`)
     expect(res.status).toBe(200)
   })
-  test('SR-DELETE-02. 正常用例：warehouse_manager删除pending退货', async ({ page }) => {
+  test('SR-DELETE-02. 正常用例：warehouse_manager删除pending退货', async () => {
     const token = await apiLogin('warehouse_manager')
     const adminToken = await apiLogin('admin')
-    const mid = await getMaterialWithStock(adminToken)
-    if (!mid) { test.skip(); return }
-    const create = await apiFetch(adminToken, 'POST', '/supplier-returns', {
-      materialId: mid, quantity: 1, reason: 'quality_issue',
-    })
+    const ctx = await ensureReturnContext()
+    const create = await apiFetch(adminToken, 'POST', '/supplier-returns', srBody(ctx, { quantity: 1, reason: 'quality_issue' }))
     expect(create.status).toBe(200)
     const id = create.data?.data?.id
-    if (!id) { test.skip(); return }
+    expect(id).toBeTruthy()
     const res = await apiFetch(token, 'DELETE', `/supplier-returns/${id}`)
     expect(res.status).toBe(200)
   })
-  test('SR-DELETE-03. 业务冲突：删除shipped状态返回400', async ({ page }) => {
+  test('SR-DELETE-03. 业务冲突：删除shipped状态返回400', async () => {
     const token = await apiLogin('admin')
-    const mid = await getMaterialWithStock(token)
-    if (!mid) { test.skip(); return }
-    const create = await apiFetch(token, 'POST', '/supplier-returns', {
-      materialId: mid, quantity: 1, reason: 'quality_issue',
-    })
+    const ctx = await ensureReturnContext()
+    const create = await apiFetch(token, 'POST', '/supplier-returns', srBody(ctx, { quantity: 1, reason: 'quality_issue' }))
     const id = create.data?.data?.id
     await apiFetch(token, 'PUT', `/supplier-returns/${id}/status`, { status: 'shipped' })
     const res = await apiFetch(token, 'DELETE', `/supplier-returns/${id}`)
     expect(res.status).toBe(400)
   })
-  test('SR-DELETE-04. 业务冲突：删除refunded状态返回400', async ({ page }) => {
+  test('SR-DELETE-04. 业务冲突：删除refunded状态返回400', async () => {
     const token = await apiLogin('admin')
-    const mid = await getMaterialWithStock(token)
-    if (!mid) { test.skip(); return }
-    const create = await apiFetch(token, 'POST', '/supplier-returns', {
-      materialId: mid, quantity: 1, reason: 'quality_issue',
-    })
+    const ctx = await ensureReturnContext()
+    const create = await apiFetch(token, 'POST', '/supplier-returns', srBody(ctx, { quantity: 1, reason: 'quality_issue' }))
     const id = create.data?.data?.id
     await apiFetch(token, 'PUT', `/supplier-returns/${id}/status`, { status: 'shipped' })
     await apiFetch(token, 'PUT', `/supplier-returns/${id}/status`, { status: 'received' })
@@ -534,58 +497,46 @@ test.describe('退货给供应商 -> 删除退货记录', () => {
     test(`SR-DELETE-05-${role}. 权限：${role}删除退货记录返回403`, async () => {
       const token = await apiLogin(role)
       const adminToken = await apiLogin('admin')
-      const mid = await getAnyMaterialId(adminToken)
-      if (!mid) { test.skip(); return }
-      const create = await apiFetch(adminToken, 'POST', '/supplier-returns', {
-        materialId: mid, quantity: 1, reason: 'quality_issue',
-      })
+      const ctx = await ensureReturnContext()
+      const create = await apiFetch(adminToken, 'POST', '/supplier-returns', srBody(ctx, { quantity: 1, reason: 'quality_issue' }))
       const id = create.data?.data?.id
       const res = await apiFetch(token, 'DELETE', `/supplier-returns/${id}`)
       expect(res.status).toBe(403)
     })
   }
-  test('SR-DELETE-06. 并发：并发删除同一退货记录', async ({ page }) => {
+  test('SR-DELETE-06. 并发：并发删除同一退货记录', async () => {
     const token = await apiLogin('admin')
-    const mid = await getMaterialWithStock(token)
-    if (!mid) { test.skip(); return }
-    const create = await apiFetch(token, 'POST', '/supplier-returns', {
-      materialId: mid, quantity: 1, reason: 'quality_issue',
-    })
+    const ctx = await ensureReturnContext()
+    const create = await apiFetch(token, 'POST', '/supplier-returns', srBody(ctx, { quantity: 1, reason: 'quality_issue' }))
     const id = create.data?.data?.id
-    if (!id) { test.skip(); return }
+    expect(id).toBeTruthy()
     const [r1, r2] = await Promise.all([
       apiFetch(token, 'DELETE', `/supplier-returns/${id}`),
       apiFetch(token, 'DELETE', `/supplier-returns/${id}`),
     ])
     expect(r1.status === 200 || r2.status === 200 || r1.status === 404 || r2.status === 404).toBe(true)
   })
-  test('SR-DELETE-07. 正常用例：删除后库存恢复', async ({ page }) => {
+  test('SR-DELETE-07. 正常用例：删除后库存恢复', async () => {
     const token = await apiLogin('admin')
-    const mid = await getMaterialWithStock(token)
-    if (!mid) { test.skip(); return }
-    const before = await apiFetch(token, 'GET', `/materials/${mid}`)
+    const ctx = await ensureReturnContext()
+    const before = await apiFetch(token, 'GET', `/materials/${ctx.materialId}`)
     const bStock = before.data?.data?.stock || 0
-    const create = await apiFetch(token, 'POST', '/supplier-returns', {
-      materialId: mid, quantity: 2, reason: 'quality_issue', remark: 'E2E库存恢复',
-    })
+    const create = await apiFetch(token, 'POST', '/supplier-returns', srBody(ctx, { quantity: 2, reason: 'quality_issue', remark: 'E2E库存恢复' }))
     const id = create.data?.data?.id
     await apiFetch(token, 'DELETE', `/supplier-returns/${id}`)
-    const after = await apiFetch(token, 'GET', `/materials/${mid}`)
+    const after = await apiFetch(token, 'GET', `/materials/${ctx.materialId}`)
     const aStock = after.data?.data?.stock || 0
     expect(aStock).toBe(bStock)
   })
-  test('SR-DELETE-08. 表单校验：删除不存在的记录返回404', async ({ page }) => {
+  test('SR-DELETE-08. 表单校验：删除不存在的记录返回404', async () => {
     const token = await apiLogin('admin')
     const res = await apiFetch(token, 'DELETE', '/supplier-returns/non-existent-id')
     expect(res.status).toBe(404)
   })
-  test('SR-DELETE-09. 异常恢复：删除后再次删除返回404', async ({ page }) => {
+  test('SR-DELETE-09. 异常恢复：删除后再次删除返回404', async () => {
     const token = await apiLogin('admin')
-    const mid = await getMaterialWithStock(token)
-    if (!mid) { test.skip(); return }
-    const create = await apiFetch(token, 'POST', '/supplier-returns', {
-      materialId: mid, quantity: 1, reason: 'quality_issue',
-    })
+    const ctx = await ensureReturnContext()
+    const create = await apiFetch(token, 'POST', '/supplier-returns', srBody(ctx, { quantity: 1, reason: 'quality_issue' }))
     const id = create.data?.data?.id
     await apiFetch(token, 'DELETE', `/supplier-returns/${id}`)
     const res2 = await apiFetch(token, 'DELETE', `/supplier-returns/${id}`)
@@ -596,25 +547,19 @@ test.describe('退货给供应商 -> 删除退货记录', () => {
     await page.goto(`${FE_BASE}/supplier-returns`)
     await page.waitForTimeout(1000)
   })
-  test('SR-DELETE-11. 正常用例：删除后stock_logs有记录', async ({ page }) => {
+  test('SR-DELETE-11. 正常用例：删除后stock_logs有记录', async () => {
     const token = await apiLogin('admin')
-    const mid = await getMaterialWithStock(token)
-    if (!mid) { test.skip(); return }
-    const create = await apiFetch(token, 'POST', '/supplier-returns', {
-      materialId: mid, quantity: 1, reason: 'quality_issue',
-    })
+    const ctx = await ensureReturnContext()
+    const create = await apiFetch(token, 'POST', '/supplier-returns', srBody(ctx, { quantity: 1, reason: 'quality_issue' }))
     const id = create.data?.data?.id
     await apiFetch(token, 'DELETE', `/supplier-returns/${id}`)
-    const logs = await apiFetch(token, 'GET', `/materials/${mid}`)
+    const logs = await apiFetch(token, 'GET', `/materials/${ctx.materialId}`)
     expect(logs.status).toBe(200)
   })
-  test('SR-DELETE-12. 异常恢复：删除cancelled状态返回400', async ({ page }) => {
+  test('SR-DELETE-12. 异常恢复：删除cancelled状态返回400', async () => {
     const token = await apiLogin('admin')
-    const mid = await getMaterialWithStock(token)
-    if (!mid) { test.skip(); return }
-    const create = await apiFetch(token, 'POST', '/supplier-returns', {
-      materialId: mid, quantity: 1, reason: 'quality_issue',
-    })
+    const ctx = await ensureReturnContext()
+    const create = await apiFetch(token, 'POST', '/supplier-returns', srBody(ctx, { quantity: 1, reason: 'quality_issue' }))
     const id = create.data?.data?.id
     await apiFetch(token, 'PUT', `/supplier-returns/${id}/status`, { status: 'cancelled' })
     const res = await apiFetch(token, 'DELETE', `/supplier-returns/${id}`)
@@ -650,13 +595,14 @@ test.describe('退货给供应商 -> 页面批次退货与恢复', () => {
     await expect(page.getByRole('heading', { name: '退货给供应商' })).toBeVisible({ timeout: 15000 })
 
     await page.getByRole('button', { name: '新建退货' }).click()
+    // 注意字段顺序：供应商决定可退批次（选供应商会清空已选批次），故必须先选物料→供应商→再选批次。
     await page.getByTestId('supplier-return-material-select').click()
     await page.getByTestId(`option-${material.id}`).click()
+    await page.getByTestId('supplier-return-supplier-select').click()
+    await page.getByTestId(`option-${supplier.id}`).click()
     await page.getByTestId('supplier-return-batch-select').click()
     await page.getByTestId(`option-${rowA.batchId}`).click()
     await page.getByTestId('supplier-return-quantity-input').fill('3')
-    await page.getByTestId('supplier-return-supplier-select').click()
-    await page.getByTestId(`option-${supplier.id}`).click()
     await page.getByTestId('supplier-return-reason-select').click()
     await page.getByTestId('option-quality_issue').click()
     await page.getByTestId('supplier-return-confirm-btn').click()
@@ -707,13 +653,14 @@ test.describe('退货给供应商 -> 页面批次退货与恢复', () => {
     await expect(page.getByRole('heading', { name: '退货给供应商' })).toBeVisible({ timeout: 15000 })
 
     await page.getByRole('button', { name: '新建退货' }).click()
+    // 注意字段顺序：供应商决定可退批次（选供应商会清空已选批次），故必须先选物料→供应商→再选批次。
     await page.getByTestId('supplier-return-material-select').click()
     await page.getByTestId(`option-${material.id}`).click()
+    await page.getByTestId('supplier-return-supplier-select').click()
+    await page.getByTestId(`option-${supplier.id}`).click()
     await page.getByTestId('supplier-return-batch-select').click()
     await page.getByTestId(`option-${rowA.batchId}`).click()
     await page.getByTestId('supplier-return-quantity-input').fill('4')
-    await page.getByTestId('supplier-return-supplier-select').click()
-    await page.getByTestId(`option-${supplier.id}`).click()
     await page.getByTestId('supplier-return-reason-select').click()
     await page.getByTestId('option-damaged').click()
     await page.getByTestId('supplier-return-confirm-btn').click()
@@ -726,6 +673,8 @@ test.describe('退货给供应商 -> 页面批次退货与恢复', () => {
     const detailDialog = page.getByRole('dialog', { name: '退货详情' })
     await expect(detailDialog).toBeVisible({ timeout: 15000 })
     await page.getByRole('button', { name: '标记为已发货' }).click()
+    // 状态流转需二次确认（"确认状态流转"弹层 → "确认流转"）
+    await page.getByRole('button', { name: '确认流转' }).click()
     await expect(page.getByText('状态更新成功')).toBeVisible({ timeout: 15000 })
     await expect(detailDialog.getByText('已发货', { exact: true })).toBeVisible({ timeout: 15000 })
     await detailDialog.getByRole('button', { name: '取消退货' }).click()
@@ -753,18 +702,19 @@ test.describe('退货给供应商 -> 分页切换', () => {
     await page.waitForTimeout(800)
     await expect(page.locator('body')).toBeVisible()
   })
-  test('SR-PAGE-02. 边界：page=0后端修正为1', async ({ page }) => {
+  test('SR-PAGE-02. 边界：page=0为非法页码后端返回400', async () => {
+    // 供应商退货分页采用「快速失败」严格校验（与 inventory/logs/scraps/stocktaking 一致）：
+    // 非正整数页码直接 400，而非静默修正为 1，给出清晰错误。
     const token = await apiLogin('admin')
     const res = await apiFetch(token, 'GET', '/supplier-returns?page=0')
-    expect(res.status).toBe(200)
-    expect(res.data?.data?.page).toBeGreaterThanOrEqual(1)
+    expect(res.status).toBe(400)
   })
-  test('SR-PAGE-03. 边界：page=999返回空列表', async ({ page }) => {
+  test('SR-PAGE-03. 边界：page=999返回空列表', async () => {
     const token = await apiLogin('admin')
     const res = await apiFetch(token, 'GET', '/supplier-returns?page=999&pageSize=20')
     expect(res.status).toBe(200)
   })
-  test('SR-PAGE-04. 边界：pageSize=1', async ({ page }) => {
+  test('SR-PAGE-04. 边界：pageSize=1', async () => {
     const token = await apiLogin('admin')
     const res = await apiFetch(token, 'GET', '/supplier-returns?page=1&pageSize=1')
     expect(res.status).toBe(200)
@@ -794,7 +744,8 @@ test.describe('退货给供应商 -> 角色权限矩阵', () => {
   const permScenes = [
     { id: 'TC-PERM-SR-001', role: 'technician' as RoleKey, method: 'GET', path: '/supplier-returns', expect: 403 },
     { id: 'TC-PERM-SR-002', role: 'pathologist' as RoleKey, method: 'GET', path: '/supplier-returns', expect: 403 },
-    { id: 'TC-PERM-SR-003', role: 'finance' as RoleKey, method: 'GET', path: '/supplier-returns', expect: 403 },
+    // P1-14：finance 获供应商退货只读访问（退款应收对账），GET 返回 200。
+    { id: 'TC-PERM-SR-003', role: 'finance' as RoleKey, method: 'GET', path: '/supplier-returns', expect: 200 },
     { id: 'TC-PERM-SR-004', role: 'technician' as RoleKey, method: 'POST', path: '/supplier-returns', expect: 403 },
     { id: 'TC-PERM-SR-005', role: 'pathologist' as RoleKey, method: 'POST', path: '/supplier-returns', expect: 403 },
     { id: 'TC-PERM-SR-006', role: 'finance' as RoleKey, method: 'POST', path: '/supplier-returns', expect: 403 },
@@ -808,8 +759,8 @@ test.describe('退货给供应商 -> 角色权限矩阵', () => {
       let res
       if (scene.method === 'GET') res = await apiFetch(token, 'GET', scene.path)
       else if (scene.method === 'POST') {
-        const mid = await getMaterialWithStock(token)
-        res = await apiFetch(token, 'POST', scene.path, { materialId: mid || 'x', quantity: 1, reason: 'quality_issue' })
+        const ctx = await ensureReturnContext()
+        res = await apiFetch(token, 'POST', scene.path, srBody(ctx, { quantity: 1, reason: 'quality_issue' }))
       } else {
         res = await apiFetch(token, 'DELETE', scene.path)
       }
@@ -827,13 +778,10 @@ test.describe('退货给供应商 -> 角色权限矩阵', () => {
 // 8. 业务流程树 (6 tests)
 // ────────────────────────────────────────────
 test.describe('退货给供应商 -> 业务流程树', () => {
-  test('BF-SR-01. 主路径：创建退货→发货→收货→退款', async ({ page }) => {
+  test('BF-SR-01. 主路径：创建退货→发货→收货→退款', async () => {
     const token = await apiLogin('admin')
-    const mid = await getMaterialWithStock(token)
-    if (!mid) { test.skip(); return }
-    const create = await apiFetch(token, 'POST', '/supplier-returns', {
-      materialId: mid, quantity: 1, reason: 'quality_issue', remark: 'E2E主路径',
-    })
+    const ctx = await ensureReturnContext()
+    const create = await apiFetch(token, 'POST', '/supplier-returns', srBody(ctx, { quantity: 1, reason: 'quality_issue', remark: 'E2E主路径' }))
     expect(create.status).toBe(200)
     const id = create.data?.data?.id
     const r1 = await apiFetch(token, 'PUT', `/supplier-returns/${id}/status`, { status: 'shipped' })
@@ -843,59 +791,44 @@ test.describe('退货给供应商 -> 业务流程树', () => {
     const r3 = await apiFetch(token, 'PUT', `/supplier-returns/${id}/status`, { status: 'refunded' })
     expect(r3.status).toBe(200)
   })
-  test('BF-SR-02. 分支：创建退货→取消', async ({ page }) => {
+  test('BF-SR-02. 分支：创建退货→取消', async () => {
     const token = await apiLogin('admin')
-    const mid = await getMaterialWithStock(token)
-    if (!mid) { test.skip(); return }
-    const create = await apiFetch(token, 'POST', '/supplier-returns', {
-      materialId: mid, quantity: 1, reason: 'other', remark: 'E2E取消路径',
-    })
+    const ctx = await ensureReturnContext()
+    const create = await apiFetch(token, 'POST', '/supplier-returns', srBody(ctx, { quantity: 1, reason: 'other', remark: 'E2E取消路径' }))
     const id = create.data?.data?.id
     const res = await apiFetch(token, 'PUT', `/supplier-returns/${id}/status`, { status: 'cancelled' })
     expect(res.status).toBe(200)
   })
-  test('BF-SR-03. 分支：创建退货→删除', async ({ page }) => {
+  test('BF-SR-03. 分支：创建退货→删除', async () => {
     const token = await apiLogin('admin')
-    const mid = await getMaterialWithStock(token)
-    if (!mid) { test.skip(); return }
-    const create = await apiFetch(token, 'POST', '/supplier-returns', {
-      materialId: mid, quantity: 1, reason: 'quality_issue', remark: 'E2E删除路径',
-    })
+    const ctx = await ensureReturnContext()
+    const create = await apiFetch(token, 'POST', '/supplier-returns', srBody(ctx, { quantity: 1, reason: 'quality_issue', remark: 'E2E删除路径' }))
     const id = create.data?.data?.id
     const res = await apiFetch(token, 'DELETE', `/supplier-returns/${id}`)
     expect(res.status).toBe(200)
   })
-  test('BF-SR-04. 异常：取消后不能删除', async ({ page }) => {
+  test('BF-SR-04. 异常：取消后不能删除', async () => {
     const token = await apiLogin('admin')
-    const mid = await getMaterialWithStock(token)
-    if (!mid) { test.skip(); return }
-    const create = await apiFetch(token, 'POST', '/supplier-returns', {
-      materialId: mid, quantity: 1, reason: 'other',
-    })
+    const ctx = await ensureReturnContext()
+    const create = await apiFetch(token, 'POST', '/supplier-returns', srBody(ctx, { quantity: 1, reason: 'other' }))
     const id = create.data?.data?.id
     await apiFetch(token, 'PUT', `/supplier-returns/${id}/status`, { status: 'cancelled' })
     const res = await apiFetch(token, 'DELETE', `/supplier-returns/${id}`)
     expect(res.status).toBe(400)
   })
-  test('BF-SR-05. 边界：创建时库存为0', async ({ page }) => {
+  test('BF-SR-05. 边界：创建时库存为0', async () => {
     const token = await apiLogin('admin')
-    const mid = await getMaterialWithStock(token)
-    if (!mid) { test.skip(); return }
-    const res = await apiFetch(token, 'POST', '/supplier-returns', {
-      materialId: mid, quantity: 999999, reason: 'quality_issue',
-    })
+    const ctx = await ensureReturnContext()
+    const res = await apiFetch(token, 'POST', '/supplier-returns', srBody(ctx, { quantity: 999999, reason: 'quality_issue' }))
     expect([400, 422]).toContain(res.status)
   })
-  test('BF-SR-06. 正常用例：创建后检查库存流水', async ({ page }) => {
+  test('BF-SR-06. 正常用例：创建后检查库存流水', async () => {
     const token = await apiLogin('admin')
-    const mid = await getMaterialWithStock(token)
-    if (!mid) { test.skip(); return }
-    const before = await apiFetch(token, 'GET', `/materials/${mid}`)
+    const ctx = await ensureReturnContext()
+    const before = await apiFetch(token, 'GET', `/materials/${ctx.materialId}`)
     const bStock = before.data?.data?.stock || 0
-    await apiFetch(token, 'POST', '/supplier-returns', {
-      materialId: mid, quantity: 1, reason: 'quality_issue', remark: 'E2E流水检查',
-    })
-    const after = await apiFetch(token, 'GET', `/materials/${mid}`)
+    await apiFetch(token, 'POST', '/supplier-returns', srBody(ctx, { quantity: 1, reason: 'quality_issue', remark: 'E2E流水检查' }))
+    const after = await apiFetch(token, 'GET', `/materials/${ctx.materialId}`)
     const aStock = after.data?.data?.stock || 0
     expect(aStock).toBe(Math.max(0, bStock - 1))
   })
