@@ -14,7 +14,11 @@
 - **codex 复核结论**：金额本身通过（codex 独立重算 = 我复现 = ¥27,870 / 诊断桶 27,671 / 守恒 55,541，A–E 主张成立）；挑 2 HIGH + 5 MED + 1 LOW，**口径实质通过**，HIGH 是"开工正确姿势"。**工作方式**：codex 在另一台设备跑、push 到 `origin/feat/phase2-lab-revenue-split`（findings 提交 3d8fd893），本机 VPN 不跑 codex。
 - **✅ Phase 2 实现**（分支 `feat/phase2-lab-revenue-split`，worktree `~/Documents/coreone-phase2`，commit **0e84271f**）：scope 加 `split`(制片拆)/`diagnosis`(诊断桶)，**opt-in**（默认模板全 in/out→零回归）；`computeStatementRevenue(rows,config,{lisWorkload})` 两趟拆分 + **对账单×LIS 按病理号 join**（制片份额=36×LIS蜡块/(36×蜡块+105) 逐病例）；parser 加 qty 列；classifier/partner-config 加 LineScope+splitProcRate+splitWorkload。**红→绿 ¥27,870**（三方交叉验证：config路径=regex脚本=codex重算，逐线 组织13079/染色11648/TCT3106/冰冻37），**零回归后端 507 全绿**、tsc 净、旧口径 13,152/46,763 守住。
 - **✅ codex 09 全修**：HIGH-1 红测试落地（it.todo→真断言+"无LIS则更低"有齿对照）· HIGH-2 fixture 隐私最小化（置空 伪名/性别/年龄/日期/MRN）+可审计字段清单 · MED-1 G1§2 两层fallback口径统一 · MED-3 复现脚本加硬断言(漂移 exit 1) · MED-4 逐线分账 · LOW-1 月份按结算表归属 · A/B 裁决措辞。工作模型项目版加 v1.1 变更记录（沉淀"讨论结论必须落成会失败的断言"）。
-- **⬜ 下一步**：① 接线 `/preview`·`/commit` 喂 LIS 蜡块（月结向导按病理号取 LIS；现路由不传→默认无 split 线零回归，函数级 join 已 golden 证明）② **push `feat/phase2-lab-revenue-split`（待用户点，供 codex 云端再审）** ③ 与用户讨论 codex 方法论启发（UU-4 数据治理第四层 / golden registry / 活文档硬门槛 / 通用版"适用场景矩阵"）。
+- **✅ 收尾（2026-07-01，按用户 3-2-1 顺序）**：
+  ③ **方法论并入工作模型**（commit `030db001`）：通用版 v1.1 加 UU-4(数据/权威错位)+机制8(讨论结论必须落成会失败的断言)+§6 适用场景矩阵+§7 活文档硬门槛；新建 `docs/golden-registry.md`（G-REV-1..4 登记，⬜ 显式标未落 CI 的黄金）。
+  ② **接线 `/preview`·`/commit` 喂 LIS 蜡块**（commit `139bf44f`）：从 `lis_cases.block_count` 按病理号取蜡块；`/preview` surface diagnosisSettle；`/commit` 落库新列 `case_revenue.diagnosis_revenue`，逐病例守恒 `net=lab+diagnosis+out`；新测试 `statement-split-route.test.ts`(3，含无-LIS 降级对照)。**零回归 510 全绿**。
+  ① **已 push** `feat/phase2-lab-revenue-split` → origin（`3d8fd893..139bf44f`），供 codex 云端再审本次实现。
+- **⬜ 下一步（待用户）**：codex 云端再审实现（回路照旧：另一台设备跑→push findings 回分支→我 fetch）；或开 PR（base=master，按 pr-governance 走看板）；或前端把"实验室收入 vs 诊断桶 vs 外送桶"三分展示（现看板仍旧口径）。
 
 ## 当前状态（2026-06-30）
 
