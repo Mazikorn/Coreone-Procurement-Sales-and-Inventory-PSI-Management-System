@@ -198,7 +198,13 @@ router.post('/classify-rule', authenticateToken, requireImport, (req, res) => {
       target = config.lines.find((l: PartnerConfigLine) => l.key === lineKey)
       if (!target) { error(res, '业务线不存在', 'NOT_FOUND', 404); return }
     } else if (newLine && newLine.name) {
-      target = { key: `l-${uuidv4().slice(0, 8)}`, name: String(newLine.name), on: true, scope: newLine.scope === 'out' ? 'out' : 'in', prefixes: [], keywords: [], remarks: [] }
+      // scope 支持四态：in(计入实验室) / out(移出) / split(制片拆) / diagnosis(诊断桶)。split 需 splitProcRate（normalizeConfig 校验>0）。
+      const scope: PartnerConfigLine['scope'] = ['in', 'out', 'split', 'diagnosis'].includes(newLine.scope) ? newLine.scope : 'in'
+      target = { key: `l-${uuidv4().slice(0, 8)}`, name: String(newLine.name), on: true, scope, prefixes: [], keywords: [], remarks: [] }
+      if (scope === 'split') {
+        target.splitProcRate = Number(newLine.splitProcRate)
+        target.splitWorkload = newLine.splitWorkload === 'lis_blk' ? 'lis_blk' : 'qty'
+      }
       config.lines.push(target)
     } else {
       error(res, '需指定 lineKey 或 newLine.name', 'BAD_REQUEST', 400); return
