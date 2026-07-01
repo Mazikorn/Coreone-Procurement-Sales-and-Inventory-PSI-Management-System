@@ -10,6 +10,8 @@
     "seed": "tsx scripts/seed-acceptance-data.ts",
     "lint": "eslint src/",
     "test": "vitest run",
+    "//test:scenarios": "遗留 tsx 场景脚本（非 vitest），需先在另一终端启动服务：PORT=3001 npx tsx src/app.ts，再运行 npm run test:scenarios",
+    "test:scenarios": "tsx tests/auth.test.ts && tsx tests/users.test.ts && tsx tests/suppliers.test.ts && tsx tests/categories.test.ts && tsx tests/inventory.test.ts && tsx tests/locations.test.ts && tsx tests/purchase-orders.test.ts",
     "test:accuracy": "vitest run tests/integration/abc-golden-accuracy.test.ts src/utils/abc-calculator.test.ts",
     "test:node": "node --experimental-sqlite node_modules/vitest/vitest.mjs run"
   },
