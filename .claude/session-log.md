@@ -33,7 +33,11 @@
   - **PR [#17](https://github.com/Mazikorn/Coreone-Procurement-Sales-and-Inventory-PSI-Management-System/pull/17)**（`feat/phase2-lab-revenue-split`→master，独立·MERGEABLE）= Phase 2 收入拆分主体，两轮 codex 收敛。
   - **PR [#18](https://github.com/Mazikorn/Coreone-Procurement-Sales-and-Inventory-PSI-Management-System/pull/18)**（`feat/phase2-pnl-diagnosis`→#17，**栈式·依赖#17·do-not-merge-alone**）= 看板单列诊断桶（`diagnosisRevenueTotal`），补"`/commit` 落库了 diagnosis_revenue 但看板把它藏在 net−lab 缺口"的漏。毛利口径不变，后端 511 绿。
   - **合并序：#17→#18**；#17 合后 #18 base 重定向 master。看板见 `pr-governance.md`。
-- **⬜ 下一步（大方向 fork，待用户）**：① **G2 成本闭环**（毛利另一半，codex 留作估算边界，需本地工资/折旧/房租校准）② **前端三分展示**（看板 UI 把 实验室/诊断桶/外送桶 拆开，按 [[coreone-frontend-standards]] mockup 先行）③ **配置 UI 支持 split/diagnosis**（现 `classify-rule` 路由硬编码 in/out，无法在测试台建 split 线 → 真给某院配新口径的可用性缺口）。
+- **🚧 ③ 配置支持 split/diagnosis 进行中**（用户选了这条，分支 `feat/phase2-config-split`，off #17）：
+  - **✅ 后端已就位**（commit `deb74a8c`）：`classify-rule` 新建业务线支持 scope in/out/**split/diagnosis**，split 带 splitProcRate/splitWorkload（normalizeConfig 校验 rate>0，缺则 400）；PUT 全量配置早已接受 split。测试：建 split/diagnosis 线 + 缺 rate→400。后端 **513 绿**。
+  - **🚧 前端待用户点头文案**：已出配置页 scope 选择器 mockup（四归类 `计入实验室/制片+诊断拆开算/只算诊断报告/移出` + 拆分字段 `每单位处理费/工作量按(LIS蜡块数|账单数量)`）。**用户确认文案后**：改 `前端代码/src/pages/partner-config/PartnerConfigPage.tsx`（scope 选择器 2→4 态 + split 条件字段）+ `types/partner-config.ts`（加 split/diagnosis + splitProcRate/splitWorkload），preview 验证。遵 [[coreone-frontend-standards]] + [[coreone-ui-copy-plain-chinese]]。
+  - 前端 PR 待做：`feat/phase2-config-split`→#17（栈式），前后端一起一个 PR。
+- **⬜ 其余 fork（待用户）**：① **G2 成本闭环**（毛利另一半，需本地工资/折旧/房租校准）② **前端看板三分展示**（#18 已备数据 diagnosisRevenueTotal，UI 把 实验室/诊断桶/外送桶 拆开）。
 
 ## 当前状态（2026-06-30）
 
