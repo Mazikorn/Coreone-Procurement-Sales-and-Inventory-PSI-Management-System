@@ -16,9 +16,14 @@
 - **workflow 调研+落地+对抗复核**（wf_fc75ea79，10 agent，62万token，4×CONFIRMED+1×PARTIALLY）：
   - **T1 桥接（CONFIRMED）**：老"制片+诊断"混合码不能整条接BOM；**桥接锚点从"收费码"下移到"物理工序单位(蜡块/免疫组化片/特染片)"**=收入侧拆分工作量与成本侧ABC动因的天然公共键；混合码先按 `36×蜡块/(36×蜡块+105)` 拆制片份额再接BOM,诊断份额进诊断桶零BOM。守恒 golden ¥27,870。承重墙风险=国标比例套溢价单价是政策分摊需敏感性区间。
   - **T2 调研（CONFIRMED）**：扁平"每样本用量"装不下真实工艺，缺4类维度：①计量粒度层级(每例/块/片/步)②批次摊销与损耗(1÷N共用缸+开瓶效期+耐用件寿命)③母液→工作液两级稀释(浓缩vs RTU)④质控对照分摊。特染=有序多步recipe非一行用量。落地=可配参数+行业默认值,增量校准。
-  - **现状（PARTIALLY，3处更正）**：bom_items是标量`usage_per_sample`;盘点system_stock服务端实时读;对账阈值warn|diff|>20%/danger diff>+50%单侧;**⚠️潜在bug=替代料可能双计入BOM标准成本(bom-v1.1.ts:734无is_alternative过滤)→已拆独立待办**。
-- **⚠️ 分支拓扑**：本codex基础库**无**charge_codes/statement-revenue，收入侧全链路在 `~/Documents/coreone-phase2` worktree；T1实现前须先定"基础线↔收入线合流方案"。
-- **下一步待用户**：①T1真数据裁决(几条真实老混合码+对应LIS病例手核 制片份额vs BOM成本)②T2按§4.4出BOM结构mockup先行(遵前端标准)或先schema红测试③T5轻量全盘mockup④修替代料双计⑤移除data_scope空壳。续 [[coreone-vibe-coding-intent-fidelity]] [[coreone-base-feature-audit]] [[adoption-first-design]] [[coreone-incremental-correction-architecture]]。
+  - **现状（PARTIALLY，3处更正）**：bom_items是标量`usage_per_sample`;盘点system_stock服务端实时读;对账阈值warn|diff|>20%/danger diff>+50%单侧;~~替代料双计bug~~=**误报**(is_alternative是辅料/都要用,累加正确,见 [[coreone-bom-is-alternative-misnomer]])。
+
+**🆕⭐ T1真数据手核(CONFIRMED) + 基础线↔收入线合流方案 → 详见 `docs/COREONE-T1真数据手核+基础线收入线合流方案-2026-07-01.md`（wf_fb6cdf72，独立重算复核+三线盘点+对抗复核）**
+- **T1手核=CONFIRMED**（独立重算逐项吻合、无双计/符号/join错）：和睦家26.2全月165例 纯实验室¥27,870=组织13079(260蜡块,毛利率20%薄)+染色11648(80抗体,77%利润中心)+TCT3106(9%)+冰冻37(噪声)；G2成本band 11288~15985~20682、毛利7188~11885~16582(43%中)。逐例：18块纯HE(S26-00472)收入647成本540-900**可能亏**；2块14免疫组化(S26-00783)毛利率58-83%。**桥接锚点=物理工序单位 被真数据验证可行**。caveat：染色77%是"口径不对称"(染色收入含诊断解读、组织侧却拆了诊断)→**开放问题:诊断桶零成本vs回填**决定免疫组化毛利可信度。
+- **认知修正(git实证)**：收入侧完整链路**已在origin/master**(charge_codes/case_revenue/partner_configs/statement-import全wire)，不是phase2独有；phase2=master+10 commit config-split增量。**真正分界=codex线(纯成本+多库位库存纵深)↔master(成本+收入都全)**。codex根cc8659c9 vs master根bfa51840 **无共同历史**→不能merge/rebase,只能手工移植/cherry-pick。4套检测项目词汇(projects.code/国标81码[无字典]/LIS名/对账单码)**无硬映射**,只靠classifier关键词/前缀软桥。
+- **合流方案(PARTIALLY,已并5处必改)**：**加"目录层"不合表**(catalog_items+catalog_process_units[物理单位锚]+catalog_mappings+mixed_code_split_rules)；master为主干,手工移植codex基础功能7表,一模块一PR守零回归+**双黄金¥13152+¥27870**。**必改**：①split/混合码拆分是phase2独有非master→phase2升为硬前置(步骤3)②scope='split'是partner-config.ts JSON字段非表列③lis_cases键=UNIQUE(partner_id,case_no,service_month)④projects两侧都有非codex独有⑤首版映射限黄金集/高频防全量盘点。
+- **需PM裁决的开放口径(阻塞实现)**：catalog粒度(ER/PR/HER2=3项vs抗体维度)/**诊断桶零成本vs回填(影响免疫组化77%)**/36-105通用vs逐院/映射置信门禁/国标81码入库合规/phase2本轮是否并。
+- **下一步**：先拍上面开放口径(尤诊断桶成本)；技术第一步=合流步骤0-1(master主干+立e2e零回归基线+移植codex基础功能表) ∥ T2 BOM结构mockup先行(前置会§4.4,遵前端标准)——两者不依赖口径决策可并行。续 [[coreone-base-feature-preflight]] [[coreone-branch-topology]] [[coreone-lab-revenue-scope-gap]] [[adoption-first-design]]。
 
 **✅⭐ codex 全弧复核（findings/09）通过 + Phase 2 纯实验室收入拆分落地（红→绿 ¥27,870，零回归 507）→ 续 [[coreone-lab-revenue-scope-gap]] [[coreone-vibe-coding-intent-fidelity]]**
 - **codex 复核结论**：金额本身通过（codex 独立重算 = 我复现 = ¥27,870 / 诊断桶 27,671 / 守恒 55,541，A–E 主张成立）；挑 2 HIGH + 5 MED + 1 LOW，**口径实质通过**，HIGH 是"开工正确姿势"。**工作方式**：codex 在另一台设备跑、push 到 `origin/feat/phase2-lab-revenue-split`（findings 提交 3d8fd893），本机 VPN 不跑 codex。
@@ -33,10 +38,11 @@
   - **PR [#17](https://github.com/Mazikorn/Coreone-Procurement-Sales-and-Inventory-PSI-Management-System/pull/17)**（`feat/phase2-lab-revenue-split`→master，独立·MERGEABLE）= Phase 2 收入拆分主体，两轮 codex 收敛。
   - **PR [#18](https://github.com/Mazikorn/Coreone-Procurement-Sales-and-Inventory-PSI-Management-System/pull/18)**（`feat/phase2-pnl-diagnosis`→#17，**栈式·依赖#17·do-not-merge-alone**）= 看板单列诊断桶（`diagnosisRevenueTotal`），补"`/commit` 落库了 diagnosis_revenue 但看板把它藏在 net−lab 缺口"的漏。毛利口径不变，后端 511 绿。
   - **合并序：#17→#18**；#17 合后 #18 base 重定向 master。看板见 `pr-governance.md`。
-- **🚧 ③ 配置支持 split/diagnosis 进行中**（用户选了这条，分支 `feat/phase2-config-split`，off #17）：
-  - **✅ 后端已就位**（commit `deb74a8c`）：`classify-rule` 新建业务线支持 scope in/out/**split/diagnosis**，split 带 splitProcRate/splitWorkload（normalizeConfig 校验 rate>0，缺则 400）；PUT 全量配置早已接受 split。测试：建 split/diagnosis 线 + 缺 rate→400。后端 **513 绿**。
-  - **🚧 前端待用户点头文案**：已出配置页 scope 选择器 mockup（四归类 `计入实验室/制片+诊断拆开算/只算诊断报告/移出` + 拆分字段 `每单位处理费/工作量按(LIS蜡块数|账单数量)`）。**用户确认文案后**：改 `前端代码/src/pages/partner-config/PartnerConfigPage.tsx`（scope 选择器 2→4 态 + split 条件字段）+ `types/partner-config.ts`（加 split/diagnosis + splitProcRate/splitWorkload），preview 验证。遵 [[coreone-frontend-standards]] + [[coreone-ui-copy-plain-chinese]]。
-  - 前端 PR 待做：`feat/phase2-config-split`→#17（栈式），前后端一起一个 PR。
+- **✅ ③ 配置支持 split/diagnosis 已实现（前后端）**（分支 `feat/phase2-config-split`，off #17；关键决策：**admin 拥有拆分口径决策**，财务只读）：
+  - **✅ 后端 3 提交**：`deb74a8c` classify-rule 支持建 split/diagnosis + splitProcRate/splitWorkload；`ff826382` **口径写入门禁**——`caliberSignature(config)` 只签 split/diagnosis 线，三条写入路径（classify-rule/PUT/rollback）本次改动了拆分线且非 admin→403（财务仍配 in/out+扣率+识别词，签名不变放行）。后端 **515 绿**、tsc 净。测试：admin 建 split/diagnosis→200、缺率→400；财务建 split→403、建 in/out→200。
+  - **✅ 前端 `aefc5fad`**：配置页 scope 2态→4态下拉（计入实验室/拆分只计制片/诊断报告不计/外送移出不计）+ 拆分线展开（处理费国标固定¥36/¥75 无自定义 + 工作量按 + 制片份额即时预览）+ **角色感知**（admin 可改；财务见拆分线只读锁 + 禁用字段）。前端 tsc 净。文案取自 v2 mockup（用户看过 v2，未逐字定；可再改）。
+  - **⚠️ 未做 live 截图验证**：preview harness 固定跑 `进销存` worktree（≠本 worktree），且本 worktree 前端未装 vite → 只能 tsc 验证，未在真实运行的 app 里看渲染。**残留待办**：在 phase2 worktree 起服务截图，或用户本地跑 app 眼验。
+  - **前端 PR 待开**：`feat/phase2-config-split`→#17（栈式，前后端一个 PR）。
 - **⬜ 其余 fork（待用户）**：① **G2 成本闭环**（毛利另一半，需本地工资/折旧/房租校准）② **前端看板三分展示**（#18 已备数据 diagnosisRevenueTotal，UI 把 实验室/诊断桶/外送桶 拆开）。
 
 ## 当前状态（2026-06-30）
