@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, beforeAll } from 'vitest'
 import { buildTestApp, getDb } from './p0-harness.js'
-import { seedDefaultConfig, saveConfig, normalizeConfig, type PartnerConfigLine } from '../src/utils/partner-config.js'
+import { seedDefaultConfig, saveConfig, normalizeConfig, loadConfig, type PartnerConfigLine } from '../src/utils/partner-config.js'
 
 let app: any, db: any, financeToken = ''
 const P_LIS = 'PT-SPLIT-LIS' // 有 LIS 蜡块
@@ -96,5 +96,32 @@ describe('/commit 落库诊断桶 + 逐病例守恒', () => {
     expect(row.gross_amount).toBe(600)
     // 逐病例守恒红线：net = lab + diagnosis + out
     expect(row.lab_revenue + row.diagnosis_revenue + row.out_revenue).toBe(row.net_amount)
+  })
+})
+
+describe('classify-rule 可建 split/diagnosis 线（配置新口径的可用性缺口修复）', () => {
+  const P_CFG = 'PT-SPLIT-CFG'
+  beforeAll(() => { db.prepare(`INSERT OR IGNORE INTO partners (id, code, name, status) VALUES (?, ?, ?, 1)`).run(P_CFG, P_CFG, P_CFG) })
+
+  it('建 split 线（带 splitProcRate/splitWorkload）→ 200，配置里如实存住', async () => {
+    const res = await post('classify-rule', { partnerId: P_CFG, newLine: { name: '组织制片', scope: 'split', splitProcRate: 36, splitWorkload: 'lis_blk' }, ruleType: 'keyword', value: '检查与诊断' })
+    expect(res.status).toBe(200)
+    expect(res.body.data.scope).toBe('split')
+    const line = loadConfig(db, P_CFG, genId).config.lines.find((l: any) => l.key === res.body.data.lineKey)!
+    expect(line.scope).toBe('split')
+    expect(line.splitProcRate).toBe(36)
+    expect(line.splitWorkload).toBe('lis_blk')
+    expect(line.keywords).toContain('检查与诊断')
+  })
+
+  it('建 split 线但缺 splitProcRate → 400（不静默存坏配置）', async () => {
+    const res = await post('classify-rule', { partnerId: P_CFG, newLine: { name: '坏制片', scope: 'split' }, ruleType: 'keyword', value: '啥' })
+    expect(res.status).toBe(400)
+  })
+
+  it('建 diagnosis 线（诊断桶）→ 200', async () => {
+    const res = await post('classify-rule', { partnerId: P_CFG, newLine: { name: '报告', scope: 'diagnosis' }, ruleType: 'keyword', value: '报告' })
+    expect(res.status).toBe(200)
+    expect(res.body.data.scope).toBe('diagnosis')
   })
 })
