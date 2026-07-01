@@ -41,9 +41,15 @@
 | 2 | [#10](https://github.com/Mazikorn/Coreone-Procurement-Sales-and-Inventory-PSI-Management-System/pull/10) | `fix/codex-p0-p6` → `master` | ✅ **MERGED**(2026-06-30) | codex 25 项修复；e2e=6 既有失败零新增。跨院串账半截，全链路在 #11。 | merge-order/2 |
 | 3 | [#11](https://github.com/Mazikorn/Coreone-Procurement-Sales-and-Inventory-PSI-Management-System/pull/11) | `feat/phase0-correctness` → `master` | ✅ **MERGED**(2026-06-30) | **完成 #10 跨院串账全链路** + 配置归一 + NGS 缺值；e2e 零新增；黄金 ¥13,152、后端 482。 | merge-order/3 |
 
-> ✅ **栈已全部落 master（2026-06-30，tip 1d4e1a50）。当前无开放 PR。** 后续新 PR 按本规范开（base/栈位/依赖/合并顺序 + 看板）。
+> ✅ 旧栈全部落 master（2026-06-30，tip 1d4e1a50）。
 
-**已合/关闭**：#9 引擎(MERGED→#8 线)、#7/#6/#4/#3/#2 已并 master；#5/#1 CLOSED。
+| 合并序 | PR | 分支 → base | 状态 | 关系 / 风险 | 标签 |
+|---|---|---|---|---|---|
+| 1 | [#17](https://github.com/Mazikorn/Coreone-Procurement-Sales-and-Inventory-PSI-Management-System/pull/17) | `feat/phase2-lab-revenue-split` → `master` | 🟢 **OPEN·MERGEABLE**(2026-07-01) | **独立非栈式**（merge-base==master tip）；Phase 2 纯实验室收入拆分。单独可合。两轮 codex 复核(09/10)收敛、后端 510 绿、golden ¥27,870 + 旧口径 ¥13,152 零回归。 | ready-to-merge, merge-order/1 |
+
+> 🟢 **当前唯一开放 PR = #17（独立、可合）**。合并前按 §5 复核；合后更新看板 + 留 session-log 指针。**注**：e2e 非 required check（门禁靠人/看板）；本 PR 后端联合已绿。
+
+**已合/关闭**：#8→#10→#11(2026-06-30 merge commit 落 master)；#9 引擎(MERGED→#8 线)、#7/#6/#4/#3/#2 已并 master；#5/#1 CLOSED。
 
 > ✅ **合并完成（2026-06-30，账单已修，"按序合栈+拆 e2e 债"）**：#8→#10→#11 依次 merge commit 落 master。**每步 e2e 复校**=三次跑均 **6 failed/251 passed、失败集完全一致**（supplier-returns 5 + auth-logout 1），全栈**零新增 e2e 失败**。这 6 个=master 既有 supplier-returns/auth bug（与本栈无关，已拆 task `c93e8188` 单独修；非 RBAC 403，权限本就授予）。黄金 ¥13,152 守住、后端联合 482 绿。
 >
