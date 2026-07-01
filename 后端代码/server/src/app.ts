@@ -52,8 +52,10 @@ const PORT = process.env.PORT || 3001
 
 // 中间件
 app.use(cors())
-app.use(express.json())
-app.use(express.urlencoded({ extended: true }))
+// 显式声明请求体大小上限（express 默认即 100kb，这里写明以锁定意图、防止日后被无意放大）。
+// LIS 病例导入走 JSON 体，行数上限在路由层（MAX_LIS_IMPORT_ROWS）兜底，此处再加一层体积约束。
+app.use(express.json({ limit: '100kb' }))
+app.use(express.urlencoded({ extended: true, limit: '100kb' }))
 
 // 请求日志
 app.use((req, res, next) => {
