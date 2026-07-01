@@ -13,7 +13,7 @@
 **🆕⭐ 重定「纯实验室收入」口径 + G1/G2 手核答案 + Phase 2 起点（讨论驱动）→ 待 codex 复核后开工 → 详见 `session-log/2026-06-30.md`、续 [[coreone-vibe-coding-intent-fidelity]] [[coreone-lab-revenue-scope-gap]]**
 - **产品级纠正**：原"实验室收入"把医生诊断/报告/现场服务都算进去了，**高估约 2 倍**。纯实验室=康湾实验室做的技术（制片/染色）；诊断/报告/现场=诊断桶(我们的钱非实验室)、外送/共建=外送桶(非我们的)。老捆绑码按国标比例拆(制片份额=`36×LIS蜡块/(36×LIS蜡块+105)`逐病例)。
 - **golden（守恒过）**：全月26.2 纯实验室=**¥27,870**（真蜡块，165病例100%LIS匹配，守恒55,541）；W4=¥7,118。**LIS双核验**：免疫组化80≈79、特染2=2、蜡块260>部位150。
-- **三份文档**（`docs/`）：G1收入口径 / G2成本基准 / 开发工作模型（讨论+摊假设+真数据产手核答案→BDD/TDD→mockup真人→独立复核；讨论延伸进实现段）。
+- **文档**（`docs/`）：G1收入口径 / G2成本基准 / **工作模型拆通用版+项目版**（活文档，CLAUDE.md 已加入口；讨论+摊假设+真数据产手核答案→BDD/TDD→mockup真人→独立复核，讨论延伸进实现段）。
 - **Phase 2 分支就位**：`feat/phase2-lab-revenue-split`（worktree `~/Documents/coreone-phase2`，off master，commit **e8e4a465**）。红测试 `tests/golden/hemujia-purelab-golden.test.ts`（守恒绿、27,870 待实现）。要建：split能力+scope诊断桶+**对账单×LIS按病理号join**（制片按真蜡块）。
 - **⬜ 下会话第一步**：codex 对抗复核 `docs/codex-review-request-…-2026-06-30.md`（主张A-E + 自担心5点），**通过再开工 Phase 2 实现**。真数据在 ~/Downloads（单据/对账单.7z/LIS病例导出/国标码/成本台账）。
 - 环境：本会话多崩+feature worktree被清，成果全落 docs/测试/git。
