@@ -45,9 +45,10 @@
 
 | 合并序 | PR | 分支 → base | 状态 | 关系 / 风险 | 标签 |
 |---|---|---|---|---|---|
-| 1 | [#17](https://github.com/Mazikorn/Coreone-Procurement-Sales-and-Inventory-PSI-Management-System/pull/17) | `feat/phase2-lab-revenue-split` → `master` | 🟢 **OPEN·MERGEABLE**(2026-07-01) | **独立非栈式**（merge-base==master tip）；Phase 2 纯实验室收入拆分。单独可合。两轮 codex 复核(09/10)收敛、后端 510 绿、golden ¥27,870 + 旧口径 ¥13,152 零回归。 | ready-to-merge, merge-order/1 |
+| 1 | [#17](https://github.com/Mazikorn/Coreone-Procurement-Sales-and-Inventory-PSI-Management-System/pull/17) | `feat/phase2-lab-revenue-split` → `master` | 🟢 **OPEN·MERGEABLE**(2026-07-01) | 栈底·**独立**（merge-base==master tip）；Phase 2 纯实验室收入拆分。单独可合。两轮 codex 复核(09/10)收敛、后端 510 绿、golden ¥27,870 + 旧口径 ¥13,152 零回归。 | ready-to-merge, merge-order/1 |
+| 2 | [#18](https://github.com/Mazikorn/Coreone-Procurement-Sales-and-Inventory-PSI-Management-System/pull/18) | `feat/phase2-pnl-diagnosis` → `feat/phase2-lab-revenue-split` | 🟡 **OPEN·栈式**(2026-07-01) | 栈第2层，**依赖 #17**（用其 diagnosis_revenue 列）。看板单列诊断桶。⚠️ 不可先于 #17 合。后端 511 绿、毛利口径不变。 | stacked, do-not-merge-alone, merge-order/2 |
 
-> 🟢 **当前唯一开放 PR = #17（独立、可合）**。合并前按 §5 复核；合后更新看板 + 留 session-log 指针。**注**：e2e 非 required check（门禁靠人/看板）；本 PR 后端联合已绿。
+> **合并顺序：先 #17 → 再 #18。** #17 落 master 后，把 #18 的 base 重定向到 master 并 rebase（栈式 base 悬空处理，见 §1.6）。合并前按 §5 复核；合后更新看板 + 留 session-log 指针。e2e 非 required check（门禁靠人/看板）；两 PR 后端联合已绿。
 
 **已合/关闭**：#8→#10→#11(2026-06-30 merge commit 落 master)；#9 引擎(MERGED→#8 线)、#7/#6/#4/#3/#2 已并 master；#5/#1 CLOSED。
 

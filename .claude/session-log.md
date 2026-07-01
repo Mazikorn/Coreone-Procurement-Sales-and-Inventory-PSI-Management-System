@@ -10,6 +10,16 @@
 
 ## 当前状态（2026-07-01）
 
+**🆕⭐ 非 ABC 基础功能 + 基础数据配置「前置会」完成（讨论驱动）→ 口径决策 + 标准耗材调研 + T1桥接落地设计 → 详见 `docs/COREONE-前置会-非ABC基础功能与基础数据-口径决策与调研-2026-07-01.md`**
+- **贯穿原则（本轮公约数）**：**粗放起步·轻量引导·增量精细**（adoption-first 最高否决）——实验室这块几乎零记录，系统价值=引导"从0到有"，功能一重→弃用。
+- **PM 拍板 8 决策**：A0 主数据=假种子(定结构非数字)；**T1 接对账侧真实收费码指向BOM**；**T2 BOM用量按行业标准调研(不问实验室,只改用量数字)**；T3/4/5 消耗/对账/盘点=轻量引导(一年一盘)；T6 采购不做财务账实源；T7 只有一个实验室("多院区"=合作医院)→移除data_scope空壳；T8 设备/工时无数据→粗放估算对齐G2。
+- **workflow 调研+落地+对抗复核**（wf_fc75ea79，10 agent，62万token，4×CONFIRMED+1×PARTIALLY）：
+  - **T1 桥接（CONFIRMED）**：老"制片+诊断"混合码不能整条接BOM；**桥接锚点从"收费码"下移到"物理工序单位(蜡块/免疫组化片/特染片)"**=收入侧拆分工作量与成本侧ABC动因的天然公共键；混合码先按 `36×蜡块/(36×蜡块+105)` 拆制片份额再接BOM,诊断份额进诊断桶零BOM。守恒 golden ¥27,870。承重墙风险=国标比例套溢价单价是政策分摊需敏感性区间。
+  - **T2 调研（CONFIRMED）**：扁平"每样本用量"装不下真实工艺，缺4类维度：①计量粒度层级(每例/块/片/步)②批次摊销与损耗(1÷N共用缸+开瓶效期+耐用件寿命)③母液→工作液两级稀释(浓缩vs RTU)④质控对照分摊。特染=有序多步recipe非一行用量。落地=可配参数+行业默认值,增量校准。
+  - **现状（PARTIALLY，3处更正）**：bom_items是标量`usage_per_sample`;盘点system_stock服务端实时读;对账阈值warn|diff|>20%/danger diff>+50%单侧;**⚠️潜在bug=替代料可能双计入BOM标准成本(bom-v1.1.ts:734无is_alternative过滤)→已拆独立待办**。
+- **⚠️ 分支拓扑**：本codex基础库**无**charge_codes/statement-revenue，收入侧全链路在 `~/Documents/coreone-phase2` worktree；T1实现前须先定"基础线↔收入线合流方案"。
+- **下一步待用户**：①T1真数据裁决(几条真实老混合码+对应LIS病例手核 制片份额vs BOM成本)②T2按§4.4出BOM结构mockup先行(遵前端标准)或先schema红测试③T5轻量全盘mockup④修替代料双计⑤移除data_scope空壳。续 [[coreone-vibe-coding-intent-fidelity]] [[coreone-base-feature-audit]] [[adoption-first-design]] [[coreone-incremental-correction-architecture]]。
+
 **✅⭐ codex 全弧复核（findings/09）通过 + Phase 2 纯实验室收入拆分落地（红→绿 ¥27,870，零回归 507）→ 续 [[coreone-lab-revenue-scope-gap]] [[coreone-vibe-coding-intent-fidelity]]**
 - **codex 复核结论**：金额本身通过（codex 独立重算 = 我复现 = ¥27,870 / 诊断桶 27,671 / 守恒 55,541，A–E 主张成立）；挑 2 HIGH + 5 MED + 1 LOW，**口径实质通过**，HIGH 是"开工正确姿势"。**工作方式**：codex 在另一台设备跑、push 到 `origin/feat/phase2-lab-revenue-split`（findings 提交 3d8fd893），本机 VPN 不跑 codex。
 - **✅ Phase 2 实现**（分支 `feat/phase2-lab-revenue-split`，worktree `~/Documents/coreone-phase2`，commit **0e84271f**）：scope 加 `split`(制片拆)/`diagnosis`(诊断桶)，**opt-in**（默认模板全 in/out→零回归）；`computeStatementRevenue(rows,config,{lisWorkload})` 两趟拆分 + **对账单×LIS 按病理号 join**（制片份额=36×LIS蜡块/(36×蜡块+105) 逐病例）；parser 加 qty 列；classifier/partner-config 加 LineScope+splitProcRate+splitWorkload。**红→绿 ¥27,870**（三方交叉验证：config路径=regex脚本=codex重算，逐线 组织13079/染色11648/TCT3106/冰冻37），**零回归后端 507 全绿**、tsc 净、旧口径 13,152/46,763 守住。
@@ -19,7 +29,11 @@
   ② **接线 `/preview`·`/commit` 喂 LIS 蜡块**（commit `139bf44f`）：从 `lis_cases.block_count` 按病理号取蜡块；`/preview` surface diagnosisSettle；`/commit` 落库新列 `case_revenue.diagnosis_revenue`，逐病例守恒 `net=lab+diagnosis+out`；新测试 `statement-split-route.test.ts`(3，含无-LIS 降级对照)。**零回归 510 全绿**。
   ① **已 push** `feat/phase2-lab-revenue-split` → origin（`3d8fd893..139bf44f`），供 codex 云端再审本次实现。
 - **✅ codex 10 复核实现（findings/10，2026-07-01）**：两个 HIGH 全闭环、四个 MED 全闭环，仅剩 1 个 **LOW**——`statement-revenue.ts` 曾用**字面 NUL** 拼 split 病例桶 key → Git 判 binary。**已修**（commit `f9ef2b8d`→origin）：`SPLIT_GROUP_SEP='::'`，HEAD blob 0 NUL、git 可文本搜索，行为不变（golden 27,870 / 后端 510 全绿 / tsc 净）。codex 明确 G2 成本本轮不要求闭环、docs 侧 `lis-hemujia-workload.json` 的 hosp/ihc/sp 非患者 PII 风险低（无需动）。**Phase 2 收入口径至此两轮 codex 复核收敛，无开放代码问题。**
-- **⬜ 下一步（待用户，属"做什么"非"还要不要讨论"）**：① 开 PR（base=master，按 pr-governance 走看板，附 golden/零回归证据）② G2 成本闭环（毛利另一半，codex 09/10 均留作估算边界）③ 前端把「实验室收入 vs 诊断桶 vs 外送桶」三分展示（现看板仍旧口径）。
+- **✅ 已开 PR + 续推进（2026-07-01）**：
+  - **PR [#17](https://github.com/Mazikorn/Coreone-Procurement-Sales-and-Inventory-PSI-Management-System/pull/17)**（`feat/phase2-lab-revenue-split`→master，独立·MERGEABLE）= Phase 2 收入拆分主体，两轮 codex 收敛。
+  - **PR [#18](https://github.com/Mazikorn/Coreone-Procurement-Sales-and-Inventory-PSI-Management-System/pull/18)**（`feat/phase2-pnl-diagnosis`→#17，**栈式·依赖#17·do-not-merge-alone**）= 看板单列诊断桶（`diagnosisRevenueTotal`），补"`/commit` 落库了 diagnosis_revenue 但看板把它藏在 net−lab 缺口"的漏。毛利口径不变，后端 511 绿。
+  - **合并序：#17→#18**；#17 合后 #18 base 重定向 master。看板见 `pr-governance.md`。
+- **⬜ 下一步（大方向 fork，待用户）**：① **G2 成本闭环**（毛利另一半，codex 留作估算边界，需本地工资/折旧/房租校准）② **前端三分展示**（看板 UI 把 实验室/诊断桶/外送桶 拆开，按 [[coreone-frontend-standards]] mockup 先行）③ **配置 UI 支持 split/diagnosis**（现 `classify-rule` 路由硬编码 in/out，无法在测试台建 split 线 → 真给某院配新口径的可用性缺口）。
 
 ## 当前状态（2026-06-30）
 
