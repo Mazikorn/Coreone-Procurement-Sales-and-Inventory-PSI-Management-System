@@ -1,44 +1,22 @@
 /**
- * 复现和睦家纯实验室 golden（全月 26.2）= ¥27,870，及 LIS 双核验。
- * 用法: node hemujia-golden-lis-join.cjs <xlsx模块路径> <LIS.xls> <结算表26.2.xlsx>
- *   xlsx 模块: 前端代码/node_modules/xlsx
- *   LIS: ~/Downloads/病例导出文档20260701 (1).xls
- *   结算表: 2026年对账单.7z 内 上海康湾-上海和睦家医院 结算表（26.2）.xlsx（py7zr 解压）
- * 口径: 制片份额 = 36×LIS蜡块 /(36×LIS蜡块+105) 逐病例；染色=IN整条；报告/现场=诊断桶；检诊/TCT/冰冻=拆。
+ * 复现和睦家纯实验室 golden（全月26.2）= ¥27,870（自足，无需 ~/Downloads，数据已脱敏 committed）。
+ * 用法: node docs/analysis/hemujia-golden-lis-join.cjs
+ * 数据（均已脱敏，无 PII，仅病理号+送检医院+金额/工作量数）:
+ *   - 后端代码/server/tests/fixtures/statements/out_line_item__hemujia_2602.json（结算表26.2）
+ *   - docs/analysis/data/lis-hemujia-workload.json（LIS 蜡块/免疫组化/特染 数）
+ * 口径: 制片份额=36×LIS蜡块/(36×LIS蜡块+105) 逐病例; 染色=IN整条; 报告/现场=诊断桶; 检诊/TCT/冰冻=拆。
  */
-const XLSX = require(process.argv[2]);
-const readGrid = (f, pick) => {
-  const wb = XLSX.readFile(f);
-  const sn = pick ? wb.SheetNames.find(pick) || wb.SheetNames[0] : wb.SheetNames[0];
-  return XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, defval: '' });
-};
+const fs = require('fs');
+const path = require('path');
+const root = path.resolve(__dirname, '../..');
+const fx = JSON.parse(fs.readFileSync(path.join(root, '后端代码/server/tests/fixtures/statements/out_line_item__hemujia_2602.json'), 'utf8'));
+const lisArr = JSON.parse(fs.readFileSync(path.join(__dirname, 'data/lis-hemujia-workload.json'), 'utf8'));
+const lis = {}; for (const r of lisArr) lis[String(r.no).toUpperCase()] = r;
 
-// ---- LIS: 病理号 -> {blk, ihc, sp}（和睦家系）----
-const lg = readGrid(process.argv[3]);
-const LH = lg[0].map((x) => String(x).trim());
-const lc = (n) => LH.indexOf(n);
-const [cNo, cH, cB, cI, cS] = ['病理号', '送检医院', '蜡块数', '免疫组化数', '特染数'].map(lc);
-const lis = {};
-for (let i = 1; i < lg.length; i++) {
-  if (!/和睦家/.test(String(lg[i][cH] || ''))) continue;
-  const no = String(lg[i][cNo] || '').trim().toUpperCase();
-  if (no) lis[no] = { blk: +lg[i][cB] || 0, ihc: +lg[i][cI] || 0, sp: +lg[i][cS] || 0 };
-}
-
-// ---- 结算表 26.2: 按病理号归类 ----
-const sg = readGrid(process.argv[4], (s) => /2026\.2|和睦家/.test(s));
-let hr = -1, C = {};
-for (let i = 0; i < 8; i++) {
-  const r = (sg[i] || []).map((x) => String(x));
-  if (r.some((c) => /病理号/.test(c))) {
-    hr = i;
-    r.forEach((c, j) => { if (/病理号/.test(c)) C.no = j; if (/项目名称/.test(c)) C.it = j; if (/数量/.test(c)) C.q = j; if (/结算金额/.test(c)) C.n = j; });
-    break;
-  }
-}
+// 结算表 grid 列: 病理号1 / 项目名称5 / 数量7 / 结算金额10
 const cases = {};
-for (let i = hr + 1; i < sg.length; i++) {
-  const no = String(sg[i][C.no] || '').trim().toUpperCase(), it = String(sg[i][C.it] || '').trim(), net = parseFloat(sg[i][C.n]), q = parseFloat(sg[i][C.q]) || 1;
+for (const r of fx.grid) {
+  const no = String(r[1] || '').trim().toUpperCase(), it = String(r[5] || '').trim(), net = parseFloat(r[10]), q = parseFloat(r[7]) || 1;
   if (!no || !it || isNaN(net) || /合计|小计/.test(no) || /合计|小计/.test(it)) continue;
   const c = (cases[no] = cases[no] || { histo: 0, tct: 0, frozen: 0, inW: 0, diag: 0, hq: 0, tq: 0, fq: 0 });
   if (/现场服务|报告/.test(it)) c.diag += net;
@@ -48,7 +26,6 @@ for (let i = hr + 1; i < sg.length; i++) {
   else if (/检查与诊断/.test(it)) { c.histo += net; c.hq += q; }
 }
 
-// ---- join + golden ----
 const DIAG = 105, RT = 36, RC = 75;
 const all = Object.keys(cases), matched = all.filter((no) => lis[no]);
 let IN = 0, D = 0;
@@ -60,4 +37,4 @@ for (const no of all) {
 }
 console.log('对账单病例:', all.length, '| LIS匹配:', matched.length, `(${(matched.length / all.length * 100).toFixed(0)}%)`);
 console.log('纯实验室 IN = ¥' + Math.round(IN), '| 诊断桶 = ¥' + Math.round(D), '| 守恒 =', Math.round(IN + D));
-console.log('预期: IN 27870 / 诊断 27671 / 守恒 55541');
+console.log('预期: IN 27870 / 诊断 27671 / 守恒 55541（165病例100%匹配）');
