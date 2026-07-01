@@ -33,20 +33,18 @@
 
 ## 4. 活跃 PR 看板（唯一事实源，随开/合/改实时更新）
 
-> 更新时间：2026-06-29。状态以 `gh pr list` 为准，本表是「关系 + 顺序 + 风险」的人读视图。
+> 更新时间：2026-06-30（partner 栈已全部并入 master）。状态以 `gh pr list` 为准。
 
-| 合并序 | PR | 分支 → base | 状态 | 关系 / 风险 | 标签 |
-|---|---|---|---|---|---|
-| 1 | [#8](https://github.com/Mazikorn/Coreone-Procurement-Sales-and-Inventory-PSI-Management-System/pull/8) | `feat/partner-cost-profit` → `master` | OPEN | 栈底（W1–W7 + 已并入的引擎 #9）。合后其下游 base 需重定向到 master。 | stacked |
-| 2 | [#10](https://github.com/Mazikorn/Coreone-Procurement-Sales-and-Inventory-PSI-Management-System/pull/10) | `fix/codex-p0-p6` → `feat/partner-cost-profit` | OPEN | **⚠️ 不可单独合并**：其跨院串账修复只做了 `case_revenue` 半截，全链路在 Phase 0 PR 完成。必须与 Phase 0 一起/先于其落地。 | stacked, do-not-merge-alone |
-| 3 | [#11](https://github.com/Mazikorn/Coreone-Procurement-Sales-and-Inventory-PSI-Management-System/pull/11) | `feat/phase0-correctness` → `fix/codex-p0-p6` | OPEN | **完成 #10 的跨院串账**（全链路复合键）+ 配置归一 + NGS 缺值；含 PRD-0/路线图/开发材料（codex-rereview 文档）。守黄金 ¥13,152、后端全量零回归 482。 | stacked, merge-order/3 |
+**🎉 partner 成本盈利栈已全部并入 master**：#8(W1–W7)/#9(导入器引擎)/#10(codex P0–P6)/#11(Phase0 可信度止血)/#13(partner-pnl 月份轴) 均 MERGED。栈式合并阶段结束。
 
-**已合/关闭**：#9 引擎(MERGED→#8 线)、#7/#6/#4/#3/#2 已并 master；#5/#1 CLOSED。
+| PR | 分支 → base | 状态 | 关系 / 风险 | 标签 |
+|---|---|---|---|---|
+| [#14](https://github.com/Mazikorn/Coreone-Procurement-Sales-and-Inventory-PSI-Management-System/pull/14) | `claude/pr8-e2e-fix` → `master` | OPEN | **修复 master 红色 e2e**：栈全并入 master 但未带本修复 → master 现存 6 确定性 e2e 失败（退货 RBAC 迁移缺口 + 登出守卫只看 user 不看 token）。已 rebase 到 master 顶（a7d566ed）+ retarget base=master。本地 master 状态复现 6 失败→**修后 e2e 257/257、后端 493 零断言失败**。base=master → 本 PR e2e CI 真跑（合并前最终确认）。单独可合 ✅。 | — |
+| [#12](https://github.com/Mazikorn/Coreone-Procurement-Sales-and-Inventory-PSI-Management-System/pull/12) | `claude/blissful-jang-aec669` → `codex/abc-productization-phase0-1-2026-06-15` | OPEN | codex 线的 supplier-returns e2e 修复（测试侧）。与 #14 是不同线的同类问题；codex 线未并入 master，价值有限，待用户定夺（可能 close）。 | — |
 
-> ⛔ **合并暂停（2026-06-29，用户决策：先修账单再合）**：GitHub Actions 因账单/spending-limit 停摆 → e2e job 2 秒未启动即 FAILURE（**非代码问题**，#8 mergeStateStatus=UNSTABLE）。三 PR 均无合并冲突、后端联合校验 482 全绿，但 e2e 拿不到真实信号。**待用户修复 GitHub Billing → e2e 真跑出绿 → 再按序合**。
+**已合/关闭**：#13/#11/#10/#9/#8/#7/#6/#4/#3/#2 → MERGED master；#5/#1 CLOSED。
 
-**合并顺序（恢复后执行）= #8 → 重定向 #10 base 到 master → #10 → 重定向 #11 base 到 master → #11**。每合一步立刻更新本表。
-**恢复 playbook**：①GitHub Settings→Billing 解决 spending limit；②对 #8/#10/#11 重跑 e2e（`gh run rerun <id>` 或重推空 commit / 关开 PR 触发）；③确认 e2e 绿 + `gh pr view` mergeable → 用 **merge commit**（保留栈共享历史，下游免 rebase）按序合。
+> ✅ **账单已修、栈已合**（2026-06-29 的「合并暂停（账单）」已解除）。当前唯一主干事项 = **#14 修 master 红色 e2e**：等其 e2e CI 跑绿 → 合入 master（修复主干 CI）。无栈式依赖、无 base 重定向。
 
 ## 5. 会话启动检查清单（30 秒）
 

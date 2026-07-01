@@ -8,6 +8,24 @@
 
 ---
 
+## 当前状态（2026-06-30）
+
+**🧹 分支/worktree 大清理（用户「太乱了」→ 拍板全清）**
+- **删除**：已并入 master 的 ~11 个分支（本地+远端）+ 2026-06-12/15 一批废弃 codex/collaboration 分支（远端 22 个、本地 15 个）+ 6 个陈旧 worktree（bom-versioning/engine-review/abc-integrate/wizardly/两个 .worktrees）。
+- **远端只剩 5 个**：`master`、`codex/abc-productization…`（文档/工作线，保留）、`claude/blissful-jang-aec669`（文档簇，保留）、`fix/inbound-outbound-idempotency`（→PR #16）、`fix/lis-import-dos-limit`（→PR #15）。
+- **Open PR**：#15 LIS 导入 DoS 上限（已 rebase 到含 #14 的 master，CI 跑绿后合）；#16 入/出库幂等键（新开，base=master）；#12 已关闭（被 #14 取代）。
+- **⚠️ 未清的文档簇（待专门收口）**：`codex/abc`(主仓 checkout)、`claude/blissful`、`claude/thirsty-wing` 三处都有**未提交的 session-log/pr-governance 编辑**（多会话各改各的）。本轮刻意不动，避免丢未提交文档。下一步=把最新文档统一到 codex/abc 单一事实源，再退休 blissful/thirsty-wing。
+- **保留**：`frontend/ui-redesign`(coreone-audit-p0，25 改动=待办④前端逐页重设计 WIP)、`backup/abc-phase0-pre-workflow-strip`(标注的备份快照)。
+
+**🩹✅ 修复 master 红色 e2e（6 既有失败）→ [PR #14](https://github.com/Mazikorn/Coreone-Procurement-Sales-and-Inventory-PSI-Management-System/pull/14)（已 retarget base=master，MERGEABLE）→ 续 [[coreone-pr8-e2e-rbac-migration-gap]]**
+- **🆕 栈已全并入 master**：开 PR 时栈未合（#14 原 base=feat/partner-cost-profit）；后整条栈 #8/#9/#10/#11/#13 全 MERGED→master **但未带本修复** → master 现存同样 6 个确定性 e2e 失败、CI 红（run 28437605380 / a7d566ed=failure）。已把 #14 **rebase 到 master 顶 + retarget base=master**（提交 `956ba024`）→ master 状态本地复现 6 失败、修后 **e2e 257/0、后端 493 零断言失败**。已 close+reopen 触发 #14 自身 e2e CI（run 28451382048，base=master 会真跑）。
+- **忠实复现 = 6 failed/251 passed（与 CI run 28342959051 完全一致）**。复现铁律：CI 不跑 seed 且 `coreone.db` 提交进库→本地必须 `git checkout coreone.db` 用提交版、勿 seed-pathology；本线 `main.tsx` 依赖 `@tanstack/react-query`（勿 symlink codex 线 node_modules，要本线自己 npm install）；playwright.config 本线非 CI 走死的 Windows chromium 路径→`PLAYWRIGHT_CHROMIUM_PATH`+关 video。
+- **根因①（5 个 supplier_returns 失败）**：数据驱动 RBAC 以 `roles.permissions` 为单一事实源；`SEED_MATRIX` 后加 supplier_returns 给仓管/采购 'W'，但既有库（含提交的 coreone.db、生产库）无此模块，`initializeDatabase` 回填只补「全空」权限不补「新增模块」→ 仓管/采购 403 + 前端看板隐藏。= **真实升级迁移缺口**。
+- **根因② AUTH-LOGOUT-05**：AppLayout 守卫只看 user 对象不看 token → 只删 token 留 user 时不跳登录。
+- **修复（用户拍：聚焦+加固）**：①`DatabaseManager.reconcileSupplierReturnsPerms` 启动时聚焦补齐仓管/采购 supplier_returns（代码自愈、**不提交 db diff**；刻意只动两角色避免改 finance/BF-PERM 现绿用例=有意不一致，已注明）+ TDD 4 绿；②AppLayout 守卫加 token 存在性检查。
+- **验证（master 状态 a7d566ed + 本修复）**：6 失败转绿；**完整 e2e 257/0**；**后端 vitest 493 passed/0 断言失败**（12 文件级=既有 ECONNREFUSED::3001 噪声）；FE/BE tsc 净。
+- **下一步**：等 #14 e2e CI（run 28451382048）跑绿 → 合入 master 修复主干红色 CI（无栈依赖、无 base 重定向）。另：#12 是 codex 线的同类修复，codex 线未并 master，价值有限，待用户定夺（可能 close）。
+
 ## 当前状态（2026-06-29）
 
 **🆕🩹✅ 独立修复 supplier-returns 既有 e2e 失败（commit 61ad7d8e，分支 claude/blissful-jang-aec669，仅改测试无后端改动）→ 详见 `session-log/2026-06-29.md`**
