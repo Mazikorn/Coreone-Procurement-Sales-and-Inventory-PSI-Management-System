@@ -18,7 +18,8 @@
   ③ **方法论并入工作模型**（commit `030db001`）：通用版 v1.1 加 UU-4(数据/权威错位)+机制8(讨论结论必须落成会失败的断言)+§6 适用场景矩阵+§7 活文档硬门槛；新建 `docs/golden-registry.md`（G-REV-1..4 登记，⬜ 显式标未落 CI 的黄金）。
   ② **接线 `/preview`·`/commit` 喂 LIS 蜡块**（commit `139bf44f`）：从 `lis_cases.block_count` 按病理号取蜡块；`/preview` surface diagnosisSettle；`/commit` 落库新列 `case_revenue.diagnosis_revenue`，逐病例守恒 `net=lab+diagnosis+out`；新测试 `statement-split-route.test.ts`(3，含无-LIS 降级对照)。**零回归 510 全绿**。
   ① **已 push** `feat/phase2-lab-revenue-split` → origin（`3d8fd893..139bf44f`），供 codex 云端再审本次实现。
-- **⬜ 下一步（待用户）**：codex 云端再审实现（回路照旧：另一台设备跑→push findings 回分支→我 fetch）；或开 PR（base=master，按 pr-governance 走看板）；或前端把"实验室收入 vs 诊断桶 vs 外送桶"三分展示（现看板仍旧口径）。
+- **✅ codex 10 复核实现（findings/10，2026-07-01）**：两个 HIGH 全闭环、四个 MED 全闭环，仅剩 1 个 **LOW**——`statement-revenue.ts` 曾用**字面 NUL** 拼 split 病例桶 key → Git 判 binary。**已修**（commit `f9ef2b8d`→origin）：`SPLIT_GROUP_SEP='::'`，HEAD blob 0 NUL、git 可文本搜索，行为不变（golden 27,870 / 后端 510 全绿 / tsc 净）。codex 明确 G2 成本本轮不要求闭环、docs 侧 `lis-hemujia-workload.json` 的 hosp/ihc/sp 非患者 PII 风险低（无需动）。**Phase 2 收入口径至此两轮 codex 复核收敛，无开放代码问题。**
+- **⬜ 下一步（待用户，属"做什么"非"还要不要讨论"）**：① 开 PR（base=master，按 pr-governance 走看板，附 golden/零回归证据）② G2 成本闭环（毛利另一半，codex 09/10 均留作估算边界）③ 前端把「实验室收入 vs 诊断桶 vs 外送桶」三分展示（现看板仍旧口径）。
 
 ## 当前状态（2026-06-30）
 
