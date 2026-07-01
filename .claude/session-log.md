@@ -25,6 +25,13 @@
 - **需PM裁决的开放口径(阻塞实现)**：catalog粒度(ER/PR/HER2=3项vs抗体维度)/**诊断桶零成本vs回填(影响免疫组化77%)**/36-105通用vs逐院/映射置信门禁/国标81码入库合规/phase2本轮是否并。
 - **下一步**：先拍上面开放口径(尤诊断桶成本)；技术第一步=合流步骤0-1(master主干+立e2e零回归基线+移植codex基础功能表) ∥ T2 BOM结构mockup先行(前置会§4.4,遵前端标准)——两者不依赖口径决策可并行。续 [[coreone-base-feature-preflight]] [[coreone-branch-topology]] [[coreone-lab-revenue-scope-gap]] [[adoption-first-design]]。
 
+**🆕⭐ Q1诊断怎么算 + Q2抗体逐项成本 调研结论 → 详见 `docs/COREONE-诊断费怎么算+抗体逐项成本-调研结论-2026-07-01.md`（wf_9c9c8cae，4路调研+盘点+对抗复核）**
+- **用户2回答**：Q1"诊断怎么算"很难定→**让我调研确认**；Q2→**逐一分项目、免疫组化必须细到每个抗体(成本差很大)**；**拒绝先做mockup、要先分析清楚页面才准**。
+- **Q1(诊断怎么算)——之前"免疫组化77%偏高/不对称"的担心基本推翻**：行业标准=病理服务分 技术组件(实验室:制片/染色)+专业组件(医生:判读),实验室只算技术、诊断不进实验室成本。**翻康湾真实账单(CONFIRMED)**:免疫组化/特染是**整条纯技术价、无独立判读行**;医生判读的钱在"检查与诊断"捆绑码里、**那条已拆走**→免疫组化整条进实验室**没重复算医生钱**,77%是真实技术毛利。**不对称真实来源=捆绑检诊码要拆、免疫组化纯技术不拆**(非bug)。**关键坑**:美国免疫组化含30%医生组件,**绝不能照搬美国70/30硬拆康湾账单**(中国老码不分、新政按张数收笼统诊断费→假精确)。**诊断桶对实验室零成本=正确**(那是医生的成本)。**统一规则**:纯技术项技术占比默认100%整条进/捆绑码按国标比例拆/诊断报告类划走;留可调"技术占比"旋钮标假设。**待PM确认业务事实**:康湾免疫组化¥200含不含医生判读。
+- **Q2(抗体逐项)——结构能建对,但有数据硬缺口**:抗体成本差344倍(¥0.29~99.82)+原液/即用6倍→必须逐抗体(确认用户判断)。**但康湾账单/LIS每例只给"免疫组化=6"、不给是哪6个抗体**(LIS零抗体名字段,CONFIRMED)→**逐抗体精算现做不到,只能数量×档位均价估**。落地=目录一次建全(抗体带剂型原液/即用+稀释+单价→单片成本可派生;显色系统解耦)+成本分三级(L0全院加权均价/L1病种套餐如乳腺ER/PR/HER2/Ki67/L2拿到抗体清单精算)+补数据路径(让LIS/申请单报抗体清单→命中自动升级)+**先分原液/即用两档(拿掉6倍误差最划算)**。
+- **诚实边界(复核)**:美国70/30=占位假设非标准(标低置信);抗体调研3处外部引用已剔除(IHC染色$56.28非$87.20/无"H&E vs IHC差400%"/无"RTU>7EUR片");G2是康湾单一台账非行业标准。
+- **下一步**：待PM拍§1.6业务事实(免疫组化¥200含不含判读)→Q1/Q2口径闭环→进T2 BOM结构mockup(遵前端标准)。续 [[coreone-base-feature-preflight]] [[coreone-lab-revenue-scope-gap]] [[coreone-incremental-correction-architecture]] [[coreone-ui-copy-plain-chinese]]。
+
 **✅⭐ codex 全弧复核（findings/09）通过 + Phase 2 纯实验室收入拆分落地（红→绿 ¥27,870，零回归 507）→ 续 [[coreone-lab-revenue-scope-gap]] [[coreone-vibe-coding-intent-fidelity]]**
 - **codex 复核结论**：金额本身通过（codex 独立重算 = 我复现 = ¥27,870 / 诊断桶 27,671 / 守恒 55,541，A–E 主张成立）；挑 2 HIGH + 5 MED + 1 LOW，**口径实质通过**，HIGH 是"开工正确姿势"。**工作方式**：codex 在另一台设备跑、push 到 `origin/feat/phase2-lab-revenue-split`（findings 提交 3d8fd893），本机 VPN 不跑 codex。
 - **✅ Phase 2 实现**（分支 `feat/phase2-lab-revenue-split`，worktree `~/Documents/coreone-phase2`，commit **0e84271f**）：scope 加 `split`(制片拆)/`diagnosis`(诊断桶)，**opt-in**（默认模板全 in/out→零回归）；`computeStatementRevenue(rows,config,{lisWorkload})` 两趟拆分 + **对账单×LIS 按病理号 join**（制片份额=36×LIS蜡块/(36×蜡块+105) 逐病例）；parser 加 qty 列；classifier/partner-config 加 LineScope+splitProcRate+splitWorkload。**红→绿 ¥27,870**（三方交叉验证：config路径=regex脚本=codex重算，逐线 组织13079/染色11648/TCT3106/冰冻37），**零回归后端 507 全绿**、tsc 净、旧口径 13,152/46,763 守住。
@@ -41,8 +48,8 @@
 - **✅ ③ 配置支持 split/diagnosis 已实现（前后端）**（分支 `feat/phase2-config-split`，off #17；关键决策：**admin 拥有拆分口径决策**，财务只读）：
   - **✅ 后端 3 提交**：`deb74a8c` classify-rule 支持建 split/diagnosis + splitProcRate/splitWorkload；`ff826382` **口径写入门禁**——`caliberSignature(config)` 只签 split/diagnosis 线，三条写入路径（classify-rule/PUT/rollback）本次改动了拆分线且非 admin→403（财务仍配 in/out+扣率+识别词，签名不变放行）。后端 **515 绿**、tsc 净。测试：admin 建 split/diagnosis→200、缺率→400；财务建 split→403、建 in/out→200。
   - **✅ 前端 `aefc5fad`**：配置页 scope 2态→4态下拉（计入实验室/拆分只计制片/诊断报告不计/外送移出不计）+ 拆分线展开（处理费国标固定¥36/¥75 无自定义 + 工作量按 + 制片份额即时预览）+ **角色感知**（admin 可改；财务见拆分线只读锁 + 禁用字段）。前端 tsc 净。文案取自 v2 mockup（用户看过 v2，未逐字定；可再改）。
-  - **⚠️ 未做 live 截图验证**：preview harness 固定跑 `进销存` worktree（≠本 worktree），且本 worktree 前端未装 vite → 只能 tsc 验证，未在真实运行的 app 里看渲染。**残留待办**：在 phase2 worktree 起服务截图，或用户本地跑 app 眼验。
-  - **前端 PR 待开**：`feat/phase2-config-split`→#17（栈式，前后端一个 PR）。
+  - **✅ live 截图验证完成**（用户要求）：绕过 preview 固定跑 `进销存` 的坑=phase2 前端 `npm install` 补 vite 后起 8081 + 后端 3001，用 preview 浏览器导到 8081。**admin 视图**：四态"这项怎么归"下拉 + 拆分面板（处理费¥36·组织/冰冻 + 工作量按 LIS蜡块 + 即时预览"制片41%计入·诊断59%不计"）✓；**财务视图**（caiwu）：拆分线只读🔒"管理员设定"+禁用字段+结果仍可见、in/out 线仍可编辑 ✓；admin 存 split 配置经门禁放行落库 ✓。已清理（删测试院、`git checkout` 还原 dev db，worktree clean）。
+  - **前端 PR 待开**：`feat/phase2-config-split`→#17（栈式，前后端一个 PR）。**live 已验，可开。**
 - **⬜ 其余 fork（待用户）**：① **G2 成本闭环**（毛利另一半，需本地工资/折旧/房租校准）② **前端看板三分展示**（#18 已备数据 diagnosisRevenueTotal，UI 把 实验室/诊断桶/外送桶 拆开）。
 
 ## 当前状态（2026-06-30）
