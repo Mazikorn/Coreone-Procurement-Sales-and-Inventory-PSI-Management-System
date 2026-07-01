@@ -8,9 +8,17 @@
 
 ---
 
+## 当前状态（2026-07-01）
+
+**✅⭐ codex 全弧复核（findings/09）通过 + Phase 2 纯实验室收入拆分落地（红→绿 ¥27,870，零回归 507）→ 续 [[coreone-lab-revenue-scope-gap]] [[coreone-vibe-coding-intent-fidelity]]**
+- **codex 复核结论**：金额本身通过（codex 独立重算 = 我复现 = ¥27,870 / 诊断桶 27,671 / 守恒 55,541，A–E 主张成立）；挑 2 HIGH + 5 MED + 1 LOW，**口径实质通过**，HIGH 是"开工正确姿势"。**工作方式**：codex 在另一台设备跑、push 到 `origin/feat/phase2-lab-revenue-split`（findings 提交 3d8fd893），本机 VPN 不跑 codex。
+- **✅ Phase 2 实现**（分支 `feat/phase2-lab-revenue-split`，worktree `~/Documents/coreone-phase2`，commit **0e84271f**）：scope 加 `split`(制片拆)/`diagnosis`(诊断桶)，**opt-in**（默认模板全 in/out→零回归）；`computeStatementRevenue(rows,config,{lisWorkload})` 两趟拆分 + **对账单×LIS 按病理号 join**（制片份额=36×LIS蜡块/(36×蜡块+105) 逐病例）；parser 加 qty 列；classifier/partner-config 加 LineScope+splitProcRate+splitWorkload。**红→绿 ¥27,870**（三方交叉验证：config路径=regex脚本=codex重算，逐线 组织13079/染色11648/TCT3106/冰冻37），**零回归后端 507 全绿**、tsc 净、旧口径 13,152/46,763 守住。
+- **✅ codex 09 全修**：HIGH-1 红测试落地（it.todo→真断言+"无LIS则更低"有齿对照）· HIGH-2 fixture 隐私最小化（置空 伪名/性别/年龄/日期/MRN）+可审计字段清单 · MED-1 G1§2 两层fallback口径统一 · MED-3 复现脚本加硬断言(漂移 exit 1) · MED-4 逐线分账 · LOW-1 月份按结算表归属 · A/B 裁决措辞。工作模型项目版加 v1.1 变更记录（沉淀"讨论结论必须落成会失败的断言"）。
+- **⬜ 下一步**：① 接线 `/preview`·`/commit` 喂 LIS 蜡块（月结向导按病理号取 LIS；现路由不传→默认无 split 线零回归，函数级 join 已 golden 证明）② **push `feat/phase2-lab-revenue-split`（待用户点，供 codex 云端再审）** ③ 与用户讨论 codex 方法论启发（UU-4 数据治理第四层 / golden registry / 活文档硬门槛 / 通用版"适用场景矩阵"）。
+
 ## 当前状态（2026-06-30）
 
-**🆕⭐ 重定「纯实验室收入」口径 + G1/G2 手核答案 + Phase 2 起点（讨论驱动）→ 待 codex 复核后开工 → 详见 `session-log/2026-06-30.md`、续 [[coreone-vibe-coding-intent-fidelity]] [[coreone-lab-revenue-scope-gap]]**
+**🆕⭐ 重定「纯实验室收入」口径 + G1/G2 手核答案 + Phase 2 起点（讨论驱动）→ ✅ 已由 2026-07-01 完成 → 详见 `session-log/2026-06-30.md`、续 [[coreone-vibe-coding-intent-fidelity]] [[coreone-lab-revenue-scope-gap]]**
 - **产品级纠正**：原"实验室收入"把医生诊断/报告/现场服务都算进去了，**高估约 2 倍**。纯实验室=康湾实验室做的技术（制片/染色）；诊断/报告/现场=诊断桶(我们的钱非实验室)、外送/共建=外送桶(非我们的)。老捆绑码按国标比例拆(制片份额=`36×LIS蜡块/(36×LIS蜡块+105)`逐病例)。
 - **golden（守恒过）**：全月26.2 纯实验室=**¥27,870**（真蜡块，165病例100%LIS匹配，守恒55,541）；W4=¥7,118。**LIS双核验**：免疫组化80≈79、特染2=2、蜡块260>部位150。
 - **文档**（`docs/`）：G1收入口径 / G2成本基准 / **工作模型拆通用版+项目版**（活文档，CLAUDE.md 已加入口；讨论+摊假设+真数据产手核答案→BDD/TDD→mockup真人→独立复核，讨论延伸进实现段）。
