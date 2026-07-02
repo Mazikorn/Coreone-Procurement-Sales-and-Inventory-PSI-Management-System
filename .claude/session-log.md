@@ -848,7 +848,17 @@ http://your-server-ip:8080
 
 **改动文件**：`src/utils/reconcile-account.ts`(NEW)、`src/utils/reconcile-compute.ts`(NEW)、`src/routes/account-reconcile-v1.1.ts`(NEW)、`tests/reconcile-account.test.ts`(NEW)、`tests/account-reconcile-routes.test.ts`(NEW)、`src/database/DatabaseManager.ts`、`src/middleware/rbac-matrix.ts`、`src/app.ts`、`tests/{rbac-p0-matrix-seed,rbac-p2-effective-perms,rbac-p4-capabilities-api,partner-p0-schema}.test.ts`。
 
-**PR**：[#27](https://github.com/Mazikorn/Coreone-Procurement-Sales-and-Inventory-PSI-Management-System/pull/27) OPEN（base=master，独立·单独可合，等 vitest required check）。看板 `pr-governance.md` 已记（#25/#26 号被他 PR 占用，合并前核对 `gh pr list`）。合并后 Phase 2 三页前端（mockup 先行红线）另起。
+**PR**：[#27](https://github.com/Mazikorn/Coreone-Procurement-Sales-and-Inventory-PSI-Management-System/pull/27) ✅ **MERGED**（2026-07-02, merge commit `5343b572`；base=master，独立）。vitest required 绿(1m0s) 后合入；合并前 `git merge origin/master` 消 #25 带来的 doc 冲突（session-log + 看板，二者均保留）。至此 Phase 0（#24）+ Phase 1（#27）落 master。
+
+---
+
+## 本次会话完成的工作（Phase 2 三页前端 · 启动，feat/reconcile-phase2，2026-07-02）
+
+**线/工作树**：#27 合并后从**已合 master**（tip `5343b572`）切 `feat/reconcile-phase2`（同 worktree）。
+**范围**：账实核对三页（①复核总览 / ②复核工作台 / ③补收追踪）+ 逐抗体成本页。**走 mockup 先行红线**（`docs/COREONE-前端标准-…-2026-06-27.md`：**未定稿不写真代码**）——先出 mockup 给真人拍板 + 过术语表/文案黑名单（基线 §3），批了再落 React。
+**已读实现依据**：设计基线全文（§2 三页元素 / §3 术语表+文案规范[万元·中文日期·说人话] / §4 状态机+权限[财务/管理员·单人·留痕兜底]）；后端 6 认定原因 + 状态串已与唯一术语串逐字对齐。
+**跟进**：前端 `PERMISSION_MODULES` 需补 `account_reconcile`（30→31，与后端对齐；运行时权限已 seed 不阻断）——可并入本 Phase 2 前端 PR。
+**下一步**：出三页 mockup（设计系统=Inter/blue-500/rounded 分级/gray-900·500/border-gray-200/shadow-sm·md/h-10）→ 真人拍板。
 
 ---
 
