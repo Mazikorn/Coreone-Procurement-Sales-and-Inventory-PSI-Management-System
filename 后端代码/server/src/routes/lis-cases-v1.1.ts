@@ -166,7 +166,7 @@ router.get('/', authenticateToken, (req, res) => {
       id: r.id, caseNo: r.case_no, partnerId: r.partner_id, partnerName: r.partner_name,
       specimenType: r.specimen_type, specimenTypeSource: r.specimen_type_source,
       quantities: { heSlide: r.he_slide_count, block: r.block_count, ihc: r.ihc_count, specialStain: r.special_stain_count, eber: r.eber_count, pdl1: r.pdl1_count },
-      status: r.status,
+      status: r.status, operateTime: r.operate_time, importBatch: r.import_batch,
     })), page, pageSize, total)
   } catch (e: any) { error(res, e.message) }
 })
@@ -258,6 +258,22 @@ router.post('/import-markers', authenticateToken, requireImport, (req, res) => {
       unmatchedCases: [...unmatchedCases].slice(0, 50),
     }, `导入 ${imported} 条抗体（${groups.size} 例）${unmatchedCases.size ? `；${unmatchedCases.size} 例病理号在工作量表里查无、未落（先导工作量表）` : ''}`)
   } catch (e: any) { error(res, e.message || '导入失败') }
+})
+
+/** GET /markers?partnerId&caseNo —— 某例的抗体清单（详情页"本例抗体"块）。真抗体在前，白片/深切随后。 */
+router.get('/markers', authenticateToken, (req, res) => {
+  try {
+    const db = getDatabase()
+    const partnerId = String(req.query.partnerId || '')
+    const caseNo = String(req.query.caseNo || '')
+    if (!caseNo) { error(res, '缺 caseNo', 'BAD_REQUEST', 400); return }
+    const where = partnerId ? 'partner_id = ? AND case_no = ?' : 'case_no = ?'
+    const params = partnerId ? [partnerId, caseNo] : [caseNo]
+    const rows = db.prepare(`SELECT marker_name, advice_type, wax_no, section_no FROM lis_case_markers WHERE ${where} ORDER BY section_no`).all(...params) as any[]
+    // adviceType 归类：真抗体(Y000001/Y000003) / 白片(Y000007) / HE深切重切(Y000006) / 其他
+    const kind = (t: string): string => t === 'Y000007' ? 'white' : t === 'Y000006' ? 'recut' : (t === 'Y000001' || t === 'Y000003') ? 'antibody' : 'other'
+    success(res, rows.map((r) => ({ markerName: r.marker_name, adviceType: r.advice_type, kind: kind(String(r.advice_type || '')), waxNo: r.wax_no, sectionNo: r.section_no })))
+  } catch (e: any) { error(res, e.message) }
 })
 
 /** GET /batches?limit=3 —— 最近 N 次工作量导入批次（导入弹窗底部展示补传历史）。 */
