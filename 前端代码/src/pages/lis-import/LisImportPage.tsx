@@ -14,7 +14,7 @@ const LIS_KEEP_COLS = [
   '送检部位', '亚专科', // 供后端自动判样本类型（组织/细胞）
 ]
 const DROPPED_HINT = '姓名 / 性别 / 年龄 / 证件 / 住院号(MRN) / 病史 / 临床诊断 / 病理诊断 / 大体描述'
-const CHUNK = 1000 // 后端单批上限，超过分批
+const CHUNK = 150 // 单批上限：既≤后端行数上限(1000)，又让 JSON 体 ≤ 后端 express.json '100kb'（1000行≈207KB 会 413，150行≈53KB 留足余量）
 
 /** grid → 最小化 case 对象数组（只保留白名单列 + 有病理号的行）。 */
 function toMinimalCases(grid: Grid): LisCaseRow[] {
@@ -78,18 +78,25 @@ export default function LisImportPage() {
   async function doImport() {
     if (!cases) return
     setBusy(true); setErr('')
+    let imported = 0, partnersCreated = 0
     try {
       const parts = chunk(cases, CHUNK)
-      let imported = 0, partnersCreated = 0; const matched = new Set<string>()
       for (const p of parts) {
         const r = await lisCasesApi.import(p)
         imported += r.imported; partnersCreated += r.partnersCreated
       }
-      cases.forEach((c) => { const n = String(c['送检医院'] ?? '').trim(); if (n) matched.add(n) })
+      const matched = new Set<string>()
+      cases.forEach((c) => { const nm = String(c['送检医院'] ?? '').trim(); if (nm) matched.add(nm) })
       setDone({ imported, partnersCreated, partnersMatched: matched.size })
       setPreview(null)
       toast.success(`已导入 ${imported} 例 LIS 病例`)
-    } catch (e: any) { setErr(e?.response?.data?.error?.message || e?.message || '导入失败') } finally { setBusy(false) }
+    } catch (e: any) {
+      const base = e?.response?.data?.error?.message || e?.message || '导入失败'
+      // 每批独立事务 + 幂等 upsert：中途失败时已成功批次已落库、不会丢；重导整份文件安全（幂等覆盖，不重复计数）
+      setErr(imported > 0
+        ? `${base}。已成功导入 ${imported} 例（分批提交，已入库部分不会丢失），可直接重新导入整份文件续导——幂等覆盖，安全。`
+        : base)
+    } finally { setBusy(false) }
   }
 
   function reset() { setCases(null); setPreview(null); setDone(null); setFileName(''); setErr('') }

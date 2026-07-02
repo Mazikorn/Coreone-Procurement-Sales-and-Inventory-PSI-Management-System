@@ -38,7 +38,7 @@ router.post('/import', authenticateToken, requireImport, (req, res) => {
     if (cases.length > MAX_LIS_IMPORT_ROWS) { error(res, `单次导入最多支持 ${MAX_LIS_IMPORT_ROWS} 条，请分批导入`, 'INVALID_PARAMETER', 400); return }
 
     const importBatch = `LIS-${Date.now()}`
-    const operator = (req as any).user?.id || null
+    const operator = (req as any).user?.userId || null // auth 挂载的是 userId，非 id（否则审计 operator 恒 NULL）
     const partnerCache = new Map<string, string>() // name -> partner_id
     let partnersCreated = 0
 
@@ -187,7 +187,7 @@ router.put('/:caseNo/specimen-type', authenticateToken, requireWrite, (req, res)
       db.prepare(`UPDATE lis_cases SET specimen_type = ?, specimen_type_source = 'manual' WHERE id = ?`).run(specimenType, target.id)
       db.prepare(`INSERT INTO reconciliation_logs (id, type, target_id, target_name, field, old_value, new_value, reason, operator)
                   VALUES (?, 'specimen_type_override', ?, ?, 'specimen_type', ?, ?, ?, ?)`)
-        .run(uuidv4(), caseNo, caseNo, target.specimen_type || null, specimenType, '人工覆盖样本类型', (req as any).user?.id || null)
+        .run(uuidv4(), caseNo, caseNo, target.specimen_type || null, specimenType, '人工覆盖样本类型', (req as any).user?.userId || null)
       db.exec('COMMIT')
     } catch (e) {
       db.exec('ROLLBACK')

@@ -54,9 +54,28 @@ function s(row: Record<string, unknown>, key: string): string {
 function n(row: Record<string, unknown>, key: string): number {
   const v = pick(row, key)
   if (v == null) return 0
+  // NFKC 先把全角数字(如 '３')归半角，否则被 [^\d.-] 剥光→静默归 0 丢计数。
   // 保留小数点再 parseFloat → 四舍五入为整数计数；避免 parseInt 把 '10.5' 误剥成 '105'(×10 放大)
-  const x = parseFloat(String(v).replace(/[^\d.-]/g, ''))
+  const x = parseFloat(String(v).normalize('NFKC').replace(/[^\d.-]/g, ''))
   return Number.isFinite(x) && x > 0 ? Math.round(x) : 0
+}
+
+/**
+ * 日期归一：readGrid 用 raw:true → 日期列(登记时间)以 Excel 序列号返回(如 46198.7)。
+ * 若原样 String() 存 operate_time，下游按月过滤 substr(operate_time,1,7) 永不等 'YYYY-MM'
+ * → lis-coverage 本期覆盖 / 反向缺口 / 向导预检 对真实数据恒失效。此处把序列号转 YYYY-MM-DD。
+ * 已是日期字符串('2026-06-25...'/'2026/06/25')则原样返回（下游 replace('/','-') 兼容斜杠）。
+ */
+function toDateish(v: unknown): string {
+  if (v == null || v === '') return ''
+  const raw = String(v).trim()
+  const num = typeof v === 'number' ? v : (/^\d+(\.\d+)?$/.test(raw) ? Number(raw) : NaN)
+  if (Number.isFinite(num) && num >= 20000 && num <= 90000) { // 合理日期区间(约 1954–2146)，避开计数值/小整数
+    const d = new Date(Math.round((num - 25569) * 86400000)) // 25569 = 1970-01-01 的 Excel 序列号
+    const p = (x: number): string => String(x).padStart(2, '0')
+    return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}`
+  }
+  return raw
 }
 
 /** 规范化一行 LIS 导出 → NormalizedLisCase（含自动样本类型判定） */
@@ -67,7 +86,7 @@ export function normalizeLisRow(row: Record<string, unknown>): NormalizedLisCase
     partnerName: s(row, 'partnerName'),
     registrationType: s(row, 'registrationType'),
     status: s(row, 'status'),
-    operateTime: s(row, 'operateTime'),
+    operateTime: toDateish(pick(row, 'operateTime')), // 账期锚=登记时间(FIELD.operateTime 首选)；Excel 序列号→YYYY-MM-DD
     heSlideCount: n(row, 'heSlide'),
     blockCount: n(row, 'block'),
     ihcCount: n(row, 'ihc'),

@@ -23,7 +23,7 @@ import { backfillAbcPartnerIds } from '../utils/abc-partner-link.js'
 const router = Router()
 const requireImport = requireAnyRole('finance')
 const genId = (): string => `PC-${uuidv4()}`
-const userId = (req: any): string | undefined => req.user?.id
+const userId = (req: any): string | undefined => req.user?.userId // auth 挂载 userId 非 id（配置 changedBy 防恒 NULL）
 /** 拆分/诊断口径 = 领域决策，仅 admin 可改（财务只配 in/out + 扣率 + 识别词）。 */
 const isAdmin = (req: any): boolean => req.user?.role === 'admin' || (req.user?.roles ?? []).includes('admin')
 const round2 = (n: number): number => Math.round((n + Number.EPSILON) * 100) / 100
@@ -163,34 +163,36 @@ router.post('/commit', authenticateToken, requireImport, (req, res) => {
     const importBatch = `STMT-${Date.now()}`
     // codex CRITICAL：唯一键含 partner_id，删插/冲突都按院隔离，防跨院同号同月串账。
     const upsert = db.prepare(`
-      INSERT INTO case_revenue (id, case_no, partner_id, partner_name, doc_no, gross_amount, net_amount, lab_revenue, diagnosis_revenue, out_revenue, discount_rate, revenue_source, service_month, config_version, line_count, import_batch)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'statement', ?, ?, ?, ?)
+      INSERT INTO case_revenue (id, case_no, partner_id, partner_name, doc_no, gross_amount, net_amount, lab_revenue, diagnosis_revenue, out_revenue, unallocated_amount, discount_rate, revenue_source, service_month, config_version, line_count, import_batch)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'statement', ?, ?, ?, ?)
       ON CONFLICT(partner_id, case_no, service_month) DO UPDATE SET
         partner_name = excluded.partner_name, doc_no = excluded.doc_no,
         gross_amount = excluded.gross_amount, net_amount = excluded.net_amount, lab_revenue = excluded.lab_revenue,
         diagnosis_revenue = excluded.diagnosis_revenue,
-        out_revenue = excluded.out_revenue, discount_rate = excluded.discount_rate, revenue_source = 'statement',
+        out_revenue = excluded.out_revenue, unallocated_amount = excluded.unallocated_amount, discount_rate = excluded.discount_rate, revenue_source = 'statement',
         config_version = excluded.config_version, line_count = excluded.line_count, import_batch = excluded.import_batch, updated_at = CURRENT_TIMESTAMP
     `)
     const delLines = db.prepare('DELETE FROM case_revenue_lines WHERE partner_id = ? AND case_no = ? AND service_month = ?')
     const insLine = db.prepare(`INSERT INTO case_revenue_lines (id, case_no, partner_id, partner_name, seq, charge_item, gross_amount, discount_rate, net_amount, scope, service_month, import_batch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 
-    let labTotal = 0, diagTotal = 0, outTotal = 0, caseCount = 0
+    let labTotal = 0, diagTotal = 0, outTotal = 0, unallocTotal = 0, caseCount = 0
     db.exec('BEGIN IMMEDIATE')
     try {
       for (const [no, lines] of linesByCase) {
-        let gross = 0, net = 0, lab = 0, diag = 0, out = 0
+        let gross = 0, net = 0, lab = 0, diag = 0, out = 0, unalloc = 0
         for (const r of lines) {
           gross = round2(gross + fin(r.bill)); net = round2(net + fin(r.settle))
           // in=labPortion(=settle) / split=分摊后的制片份额；diagnosis=diagPortion(=settle) / split=诊断份额；out=整条
           lab = round2(lab + fin(r.labPortion)); diag = round2(diag + fin(r.diagPortion))
           if (r.status === 'out') out = round2(out + fin(r.settle))
+          // confirm 强制落库的 未匹配/歧义 行：settle 进 net 却无桶承接 → 显式落 unallocated，维持守恒 net=lab+diag+out+unalloc
+          else if (r.status === 'unmatched' || r.status === 'ambiguous') unalloc = round2(unalloc + fin(r.settle))
         }
         const dr = gross > 0 ? round4(net / gross) : 0
-        upsert.run(`CR-${uuidv4()}`, no, partnerId, partner.name, docNo || null, gross, net, lab, diag, out, dr, serviceMonth, cfg.version, lines.length, importBatch)
+        upsert.run(`CR-${uuidv4()}`, no, partnerId, partner.name, docNo || null, gross, net, lab, diag, out, unalloc, dr, serviceMonth, cfg.version, lines.length, importBatch)
         delLines.run(partnerId, no, serviceMonth)
         lines.forEach((r, i) => insLine.run(`CRL-${uuidv4()}`, no, partnerId, partner.name, i + 1, r.item, fin(r.bill), fin(r.rate), fin(r.settle), r.status, serviceMonth, importBatch))
-        labTotal = round2(labTotal + lab); diagTotal = round2(diagTotal + diag); outTotal = round2(outTotal + out); caseCount++
+        labTotal = round2(labTotal + lab); diagTotal = round2(diagTotal + diag); outTotal = round2(outTotal + out); unallocTotal = round2(unallocTotal + unalloc); caseCount++
       }
       backfillAbcPartnerIds(db)
       db.exec('COMMIT')
@@ -198,7 +200,7 @@ router.post('/commit', authenticateToken, requireImport, (req, res) => {
 
     success(res, {
       partnerId, serviceMonth, configVersion: cfg.version, importBatch,
-      caseCount, labRevenue: labTotal, diagnosisSettle: diagTotal, outSettle: outTotal,
+      caseCount, labRevenue: labTotal, diagnosisSettle: diagTotal, outSettle: outTotal, unallocatedSettle: unallocTotal,
       unmatchedSettle: rev.unmatchedSettle, ambiguousSettle: rev.ambiguousSettle, skippedNoCase,
       splitLisExpected: rev.splitLisExpected, splitLisMissing: rev.splitLisMissing,
     }, `已入库 ${caseCount} case·实验室收入 ¥${labTotal}（诊断桶 ¥${diagTotal}，移出 ¥${outTotal}，未匹配 ¥${rev.unmatchedSettle}）`)

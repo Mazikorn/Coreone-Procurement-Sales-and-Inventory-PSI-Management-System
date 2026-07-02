@@ -1169,6 +1169,9 @@ export function initializeDatabase(): void {
   //   逐病例守恒：net_amount = lab_revenue + diagnosis_revenue + out_revenue。默认 0（旧配置全 in/out → 恒 0，零回归）。
   ensureColumn('case_revenue', 'diagnosis_revenue', 'DECIMAL(18, 4) NOT NULL DEFAULT 0')
   ensureColumn('case_revenue', 'revenue_source', 'TEXT')
+  // confirm 强制落库时，带病理号的 未匹配/歧义 行 settle 计入 net 却不进任何桶 → 无桶孤儿额。
+  //   显式承接，维持逐病例守恒：net_amount = lab_revenue + diagnosis_revenue + out_revenue + unallocated_amount。默认 0（识别率 100% 时恒 0，零回归）。
+  ensureColumn('case_revenue', 'unallocated_amount', 'DECIMAL(18, 4) NOT NULL DEFAULT 0')
   // PRD-0 T3：NGS 缺外包成本时落库但标记未核（cost_confirmed=0）→ 院级 P&L 不计入正常毛利、单列「未核 NGS 毛利」，不按 0 成本污染。默认 1（既有数据视为已核，向后兼容）。
   ensureColumn('ngs_orders', 'cost_confirmed', 'INTEGER NOT NULL DEFAULT 1')
   ensureColumn('case_revenue_lines', 'scope', 'TEXT') // in/out/unmatched/ambiguous（逐行分类留痕）
