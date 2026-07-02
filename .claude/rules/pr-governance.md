@@ -47,9 +47,9 @@
 | 合并序 | PR | 分支 → base | 状态 | 关系 / 风险 | 标签 |
 |---|---|---|---|---|---|
 | 1 | [#17](https://github.com/Mazikorn/Coreone-Procurement-Sales-and-Inventory-PSI-Management-System/pull/17) | `feat/phase2-lab-revenue-split` → `master` | ✅ **MERGED**(2026-07-02, merge commit `24d6eee0`) | Phase 2 纯实验室收入拆分；**并带来后端 golden CI 门禁**（`backend-tests.yml`）+ master 分支保护 required=vitest。vitest 绿(59s)；e2e 非必需（仅 auth+supplier-returns 既知失败，正交）。golden ¥27,870 + ¥13,152 零回归。 | merge-order/1 |
-| 2 | [#18](https://github.com/Mazikorn/Coreone-Procurement-Sales-and-Inventory-PSI-Management-System/pull/18) | `feat/phase2-pnl-diagnosis` → `master`（已重定向） | 🟢 **OPEN·独立·MERGEABLE**(2026-07-02) | 原栈第2层，#17 合并后 base 已**重定向 master**（§1.6）；diff 干净（仅诊断桶 +20/-5）。vitest 绿。看板单列诊断桶。可单独合。 | merge-order/2 |
+| 2 | [#18](https://github.com/Mazikorn/Coreone-Procurement-Sales-and-Inventory-PSI-Management-System/pull/18) | `feat/phase2-pnl-diagnosis` → `master` | ✅ **MERGED**(2026-07-02, merge commit `769f3f6d`) | 原栈第2层，#17 合并后 base 已重定向 master；diff 干净（仅诊断桶 +20/-5）；vitest + e2e 均绿。 | merge-order/2 |
 
-> **状态（2026-07-02）**：#17 已合入 master（vitest 门禁绿）。#18 base 已重定向 master、独立可合，vitest 绿——留待单独审后合。e2e 非 required check（门禁靠人/看板 + 新增的 vitest required）。
+> ✅ **该栈全部落 master（2026-07-02）**：#17 → #18 依次合入（均 merge commit），**当前无 open PR、栈已清空**。#17 顺带立了后端 golden CI 门禁（`backend-tests.yml`）+ master 分支保护 `required=vitest`。e2e 非 required check。
 
 **已合/关闭**：#8→#10→#11(2026-06-30 merge commit 落 master)；#9 引擎(MERGED→#8 线)、#7/#6/#4/#3/#2 已并 master；#5/#1 CLOSED。
 
