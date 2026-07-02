@@ -113,6 +113,7 @@ export interface PartnerPnl {
   caseCount: number
   netRevenueTotal: number // 财务实收合计
   labRevenueTotal: number // 实验室收入合计
+  diagnosisRevenueTotal: number // 诊断与报告合计（我们的钱但非实验室工序；只展示，不进毛利——与导入向导三分口径一致）
   costTotal: number // ABC 成本合计（按医院上卷）
   grossMargin: number // 毛利 = 实验室收入 − 成本
   marginRate: number // 毛利率 = grossMargin / labRevenue
@@ -181,6 +182,16 @@ export function buildPartnerPnl(db: DbLike, opts: { serviceMonth?: string; partn
   const costMap = getPartnerCostRollup(db, { serviceMonth: opts.serviceMonth })
   const ngsMap = loadNgsByPartner(db, opts)
 
+  // 诊断与报告（诊断桶）按院聚合：display-only，不进毛利。独立 SQL，不动 CasePnl 主链路。
+  let diagWhere = '1=1'
+  const diagParams: unknown[] = []
+  if (opts.serviceMonth) { diagWhere += ' AND service_month = ?'; diagParams.push(opts.serviceMonth) }
+  if (opts.partnerId) { diagWhere += ' AND partner_id = ?'; diagParams.push(opts.partnerId) }
+  const diagMap = new Map<string, number>(
+    (db.prepare(`SELECT partner_id AS pid, SUM(COALESCE(diagnosis_revenue, 0)) AS d FROM case_revenue WHERE ${diagWhere} GROUP BY partner_id`)
+      .all(...diagParams) as Array<{ pid: string; d: number }>).map((r) => [r.pid, r2(Number(r.d) || 0)]),
+  )
+
   const rows: PartnerPnl[] = revenue.map((rev) => {
     const cost = costMap.get(rev.partnerId)
     const costTotal = cost?.costTotal || 0
@@ -194,6 +205,7 @@ export function buildPartnerPnl(db: DbLike, opts: { serviceMonth?: string; partn
       caseCount: rev.caseCount,
       netRevenueTotal: rev.netTotal,
       labRevenueTotal: rev.labRevenueTotal,
+      diagnosisRevenueTotal: diagMap.get(rev.partnerId) || 0,
       costTotal,
       grossMargin,
       marginRate: rev.labRevenueTotal > 0 ? r4(grossMargin / rev.labRevenueTotal) : 0,
@@ -221,7 +233,7 @@ export function buildPartnerPnl(db: DbLike, opts: { serviceMonth?: string; partn
     if (seen.has(pid)) continue
     rows.push({
       partnerId: pid, partnerName: ngs.partnerName, caseCount: 0,
-      netRevenueTotal: 0, labRevenueTotal: 0, costTotal: 0, grossMargin: 0, marginRate: 0,
+      netRevenueTotal: 0, labRevenueTotal: 0, diagnosisRevenueTotal: 0, costTotal: 0, grossMargin: 0, marginRate: 0,
       avgLabRevenuePerCase: 0, avgCostPerCase: 0, avgMarginPerCase: 0,
       qualityCounts: { ok: 0, partial_quantities: 0, no_quantities: 0 },
       sourceCounts: { statement: 0, estimated: 0, corrected: 0 },
