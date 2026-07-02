@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { Database, Upload, Search, Loader2, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Database, Upload, Search, Loader2 } from 'lucide-react'
 import { lisCasesApi, type LisCaseItem } from '@/api/lis-cases'
+import { Pagination } from '@/components/ui/Pagination'
 import { useHospitals, inputCls, btnPri } from '@/pages/import-shared/ImportShared'
 import LisImportView from './LisImportView'
 import LisCaseDetail from './LisCaseDetail'
@@ -46,7 +47,6 @@ function ListView({ onImport, onOpen }: { onImport: () => void; onOpen: (c: LisC
     } catch (e: any) { toast.error(e?.response?.data?.error?.message || '改失败') }
   }
 
-  const totalPages = Math.max(1, Math.ceil(data.total / PAGE_SIZE))
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -113,17 +113,8 @@ function ListView({ onImport, onOpen }: { onImport: () => void; onOpen: (c: LisC
             ))}
           </tbody>
         </table>
-        {/* 分页 */}
-        <div className="flex items-center justify-between border-t border-gray-100 px-4 py-2.5 text-[12px] text-gray-500">
-          <span>共 {data.total.toLocaleString('zh-CN')} 例</span>
-          <span className="inline-flex items-center gap-3">
-            <span>第 {page} / {totalPages} 页</span>
-            <span className="inline-flex gap-1">
-              <button className="rounded p-1 hover:bg-gray-100 disabled:opacity-30" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} aria-label="上一页"><ChevronLeft className="h-4 w-4" /></button>
-              <button className="rounded p-1 hover:bg-gray-100 disabled:opacity-30" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} aria-label="下一页"><ChevronRight className="h-4 w-4" /></button>
-            </span>
-          </span>
-        </div>
+        {/* 分页（统一组件） */}
+        <Pagination page={page} pageSize={PAGE_SIZE} total={data.total} onChange={setPage} />
       </div>
     </div>
   )
