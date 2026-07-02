@@ -46,6 +46,24 @@ function loadLisWorkload(db: any, partnerId: string): Map<string, { blk: number 
   return m
 }
 
+/**
+ * GET /lis-coverage?partnerId&month —— 向导预检：导对账单之前先看该院 LIS 覆盖。
+ * total=0 → 前端提示"先让管理员导 LIS，不导也能算（拆分按账单数量估，偏下限）"。正确顺序引导：先 LIS 后对账单。
+ */
+router.get('/lis-coverage', authenticateToken, requireImport, (req, res) => {
+  try {
+    const db = getDatabase()
+    const partnerId = String(req.query.partnerId || '')
+    const month = String(req.query.month || '')
+    if (!partnerId || !partnerExists(db, partnerId)) { error(res, '医院不存在', 'NOT_FOUND', 404); return }
+    const agg = db.prepare('SELECT COUNT(*) AS total, SUM(CASE WHEN block_count > 0 THEN 1 ELSE 0 END) AS withBlocks FROM lis_cases WHERE partner_id = ?').get(partnerId) as any
+    const inPeriod = month
+      ? (db.prepare(`SELECT COUNT(*) AS n FROM lis_cases WHERE partner_id = ? AND replace(substr(COALESCE(operate_time, ''), 1, 7), '/', '-') = ?`).get(partnerId, month) as any).n
+      : null
+    success(res, { total: Number(agg?.total) || 0, withBlocks: Number(agg?.withBlocks) || 0, inPeriod: inPeriod == null ? null : Number(inPeriod) })
+  } catch (e: any) { error(res, e.message) }
+})
+
 router.post('/preview', authenticateToken, requireImport, (req, res) => {
   try {
     const db = getDatabase()
@@ -64,14 +82,16 @@ router.post('/preview', authenticateToken, requireImport, (req, res) => {
     }
 
     const rev = computeStatementRevenue(parsed.rows, cfg.config, { lisWorkload: loadLisWorkload(db, partnerId) })
-    // codex verify-M1：传了 serviceMonth 就按 LIS 登记月过滤本期病例，否则全院（无日期 LIS 不计入本期 backward 缺口）
-    const lisRows = (serviceMonth
+    // 两把尺分开（口径修正）：正向存在性 = 该院【全量】LIS（与拆分 join 同尺——结算月≠登记月，按月过滤会漏配跨月登记病例）；
+    // 反向缺口 = 【本期】LIS（按登记月过滤，缺口检查天然按期；未选账期则跳过）。
+    const lisAllRows = db.prepare('SELECT case_no FROM lis_cases WHERE partner_id = ?').all(partnerId) as any[]
+    const lisPeriodRows = (serviceMonth
       ? db.prepare(`SELECT case_no FROM lis_cases WHERE partner_id = ? AND replace(substr(COALESCE(operate_time, ''), 1, 7), '/', '-') = ?`).all(partnerId, serviceMonth)
-      : db.prepare('SELECT case_no FROM lis_cases WHERE partner_id = ?').all(partnerId)) as any[]
-    const lisCaseNos = lisRows.map((r) => r.case_no)
+      : []) as any[]
     const score = scoreStatement(rev, {
       declaredTotal: parsed.declaredTotal,
-      lisCaseNos,
+      lisAllCaseNos: lisAllRows.map((r) => r.case_no),
+      lisInPeriodCaseNos: lisPeriodRows.map((r) => r.case_no),
       goldenExpected: Number.isFinite(Number(goldenExpected)) ? Number(goldenExpected) : undefined,
     })
 
@@ -81,6 +101,7 @@ router.post('/preview', authenticateToken, requireImport, (req, res) => {
       revenue: {
         labRevenue: rev.labRevenue, diagnosisSettle: rev.diagnosisSettle, outSettle: rev.outSettle, unmatchedSettle: rev.unmatchedSettle,
         ambiguousSettle: rev.ambiguousSettle, totalSettle: rev.totalSettle, byLine: rev.byLine, counts: rev.counts,
+        splitLisExpected: rev.splitLisExpected, splitLisMissing: rev.splitLisMissing,
       },
       score,
       // 待人工归类的行（未匹配/歧义）供测试台内联建规则
@@ -179,6 +200,7 @@ router.post('/commit', authenticateToken, requireImport, (req, res) => {
       partnerId, serviceMonth, configVersion: cfg.version, importBatch,
       caseCount, labRevenue: labTotal, diagnosisSettle: diagTotal, outSettle: outTotal,
       unmatchedSettle: rev.unmatchedSettle, ambiguousSettle: rev.ambiguousSettle, skippedNoCase,
+      splitLisExpected: rev.splitLisExpected, splitLisMissing: rev.splitLisMissing,
     }, `已入库 ${caseCount} case·实验室收入 ¥${labTotal}（诊断桶 ¥${diagTotal}，移出 ¥${outTotal}，未匹配 ¥${rev.unmatchedSettle}）`)
   } catch (e: any) { error(res, e.message) }
 })

@@ -8,7 +8,7 @@ import { getRoles, getUserRole } from '@/lib/permissions'
 // —— 设计令牌（Stripe 风，主蓝 #3b82f6；按钮 h-10=项目标准）——
 const inputCls = 'h-10 w-full rounded-md border border-gray-200 bg-white px-3 text-[13px] text-gray-900 placeholder:text-gray-400 outline-none transition-colors focus:border-blue-500 focus:ring-[3px] focus:ring-blue-500/10'
 // 归类中文文案 + 拆分国标费率（固定，不开放自定义）+ 制片份额预览（以 2 蜡块为例）
-const SCOPE_LABEL: Record<LineScope, string> = { in: '计入实验室', out: '外送移出（不计）', split: '拆分（只计制片）', diagnosis: '诊断报告（不计）' }
+const SCOPE_LABEL: Record<LineScope, string> = { in: '计入实验室', out: '外送转出（不计）', split: '拆分（只计制片）', diagnosis: '诊断与报告（不计）' }
 const PROC_RATE_OPTS: Array<{ rate: number; label: string }> = [{ rate: 36, label: '¥36 · 组织/冰冻' }, { rate: 75, label: '¥75 · 细胞' }]
 const splitInPct = (rate: number): number => Math.round(((rate * 2) / (rate * 2 + 105)) * 100)
 const btnCls = 'inline-flex h-10 items-center gap-1.5 rounded-md border border-gray-200 bg-white px-3 text-[13px] font-medium text-gray-700 transition-colors hover:bg-gray-50 focus-visible:ring-[3px] focus-visible:ring-blue-500/10 focus-visible:border-blue-500 disabled:cursor-not-allowed disabled:opacity-50'
@@ -344,7 +344,7 @@ function LinesTab({ cfg, patch, askConfirm }: { cfg: PartnerConfig; patch: Patch
   const isAdmin = getRoles().includes('admin') || getUserRole() === 'admin'
   return (
     <div className="space-y-3">
-      <p className="text-[12.5px] text-gray-500">每条业务线：这项收费怎么归、以及怎么从对账单认出它（病理号前缀 / 项目名含词 / 备注含词，每条只检索对应那列）。{!isAdmin && <span className="text-gray-400">「拆分」「诊断报告」是口径设置，由管理员维护，这里只读。</span>}</p>
+      <p className="text-[12.5px] text-gray-500">每条业务线：这项收费怎么归、以及怎么从对账单认出它（病理号前缀 / 项目名含词 / 备注含词，每条只检索对应那列）。{!isAdmin && <span className="text-gray-400">「拆分」「诊断与报告」是口径设置，由管理员维护，这里只读。</span>}</p>
       {cfg.lines.map((l, i) => (
         <div key={l.key} className="rounded-md border border-gray-200 p-3">
           <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -371,8 +371,8 @@ function LinesTab({ cfg, patch, askConfirm }: { cfg: PartnerConfig; patch: Patch
                 className="h-8 rounded-md border border-gray-200 bg-white px-2 text-[12px] text-gray-900 outline-none transition-colors focus:border-blue-500">
                 <option value="in">计入实验室</option>
                 {isAdmin && <option value="split">拆分（只计制片）</option>}
-                {isAdmin && <option value="diagnosis">诊断报告（不计）</option>}
-                <option value="out">外送移出（不计）</option>
+                {isAdmin && <option value="diagnosis">诊断与报告（不计）</option>}
+                <option value="out">外送转出（不计）</option>
               </select>
             )}
             <button className="ml-auto text-gray-300 hover:text-red-500" aria-label={`删除业务线 ${l.name}`} onClick={() => askConfirm({ title: `删除业务线「${l.name}」？`, desc: '该业务线的识别词与归属设置将一并移除。', danger: true, onConfirm: () => patch((c) => { c.lines.splice(i, 1) }) })}><X className="h-4 w-4" /></button>
