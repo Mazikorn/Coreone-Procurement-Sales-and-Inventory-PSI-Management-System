@@ -816,4 +816,6 @@ http://your-server-ip:8080
 
 **旁注**：worktree 里 `.claude/skills-runtime/venv/`（技能运行时 Python venv，非本 PR 产物）未被 .gitignore 覆盖 → `git add -A` 会误纳；已改用显式 `git add 后端代码/server/{src,tests}` 只暂存本 PR 文件。建议后续把 `.claude/skills-runtime/` 加进 .gitignore。
 
+**PR**：[#24](https://github.com/Mazikorn/Coreone-Procurement-Sales-and-Inventory-PSI-Management-System/pull/24) OPEN（base=master，独立·单独可合，等 vitest required check）。看板 `pr-governance.md` 已记。合并后 Phase 1（账实核对引擎）在 master 新分支另起。
+
 *更新时间：2026-07-02*
