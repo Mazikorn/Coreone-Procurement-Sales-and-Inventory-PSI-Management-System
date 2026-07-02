@@ -848,4 +848,6 @@ http://your-server-ip:8080
 
 **改动文件**：`src/utils/reconcile-account.ts`(NEW)、`src/utils/reconcile-compute.ts`(NEW)、`src/routes/account-reconcile-v1.1.ts`(NEW)、`tests/reconcile-account.test.ts`(NEW)、`tests/account-reconcile-routes.test.ts`(NEW)、`src/database/DatabaseManager.ts`、`src/middleware/rbac-matrix.ts`、`src/app.ts`、`tests/{rbac-p0-matrix-seed,rbac-p2-effective-perms,rbac-p4-capabilities-api,partner-p0-schema}.test.ts`。
 
+**PR**：[#27](https://github.com/Mazikorn/Coreone-Procurement-Sales-and-Inventory-PSI-Management-System/pull/27) OPEN（base=master，独立·单独可合，等 vitest required check）。看板 `pr-governance.md` 已记（#25/#26 号被他 PR 占用，合并前核对 `gh pr list`）。合并后 Phase 2 三页前端（mockup 先行红线）另起。
+
 *更新时间：2026-07-02*
