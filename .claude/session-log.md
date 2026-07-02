@@ -822,6 +822,36 @@ http://your-server-ip:8080
 
 ---
 
+## 本次会话完成的工作（Phase 1 账实核对引擎，feat/reconcile-phase1，2026-07-02）
+
+**线/工作树**：#24 合并后（merge commit `36b8dda4`）从**已合 master** 切新分支 `feat/reconcile-phase1`（同 worktree `trusting-bartik-ba3dca`）。Phase 0 抗体地基已在此 base。
+
+**范围**：实现设计基线 §1.4/§1.5/§4 的**账实核对引擎（后端）**。差异定义按线不同——本轮只做**按数量收费的线（免疫组化/特染）= 账单片数 vs LIS 物理片数**；组织学捆绑码另定义（未决 B1，不在本轮）。
+
+**实现（TDD 先行 red→green）**：
+- `src/utils/reconcile-account.ts`(NEW) 纯口径引擎：`classifyChargeItem`（账单收费项→免疫组化/特染/null）+ `computeMatchStatus`（≥95 正常/80–95 匹配偏低仅参考/<80 先查/一边空 待对齐）+ `computeReconcile`（差异=账单-LIS，系统初判：账单>实际=疑似计费用错、实际>账单=疑似漏收；相等不出；未匹配单列「算不了」不混差异）+ `VERDICT_REASONS`（6 认定原因唯一串）+ `verdictFollowUp`（→3 下家/指标桶/了结）+ `drivesSupplement`（补收 gate 只对「漏收，需补收」）。
+- `src/utils/reconcile-compute.ts`(NEW) DB 编排：读 case_revenue_lines（账单，按 charge_item 分类逐 case 聚合）+ lis_cases（物理计数，operate_time 月过滤）→ 跑引擎 → 落 reconcile_hospital_months + reconcile_diffs。**关账后拒绝重算**（定版·迟到记次月）。
+- `src/routes/account-reconcile-v1.1.ts`(NEW) 三页 + 状态机：`/compute`·`/overview`(①)·`/workbench`(②)·`/diffs/:id/verdict`(认定+补收gate)·`/hospital-months/:id/complete`(复核完成·前置=全认定)·`/reopen`·`/close`(部分关账+挂起·前置=复核完成·定版)·`/reopen-close`(反关账)·`/supplements`(③)·`/collect`·`/giveup`·`/reopen`。**所有反向必填理由+记经手人**（writeAuditLog→abc_audit_logs；全站写另经 auditWrite→operation_logs）。
+- 3 表（reconcile_hospital_months 院·月状态机 / reconcile_diffs 逐差异 / supplement_orders 补收单）+ `account_reconcile` 权限模块（**独立于 BOM 消耗对账 reconciliation**——账实核对是财务域，避免技术员越权；finance=W/lab_director=R/admin 自动）。RBAC 计数 30→31 同步（4 快照）。
+
+**TDD**：`tests/reconcile-account.test.ts`(15 用例 引擎口径) + `tests/account-reconcile-routes.test.ts`(9 用例 端到端状态机)。**TDD 逮真 bug**：SQLite `verdict = ""` 被当标识符（非空串）→ 复核完成/认定 500；已修为 `verdict IS NULL`（verdict 只会是 NULL 或真原因、永不空串）。
+
+**验证**：`npm run build`(tsc) 绿；`vitest run` 全绿 **76 files / 557 tests**（+2 文件 +25 用例）；**golden ¥13,152 + ¥27,870 零回归**（引擎只读 case_revenue_lines/lis_cases/case_revenue，不写收入侧）。
+
+**独立对抗复核（机制5）已过 + 修 3 项**：
+- 🔴 **HIGH 修**：账单片数曾取 `case_revenue_lines.qty`，但 statement-import /commit **不落 qty**（ClassifiedRow 丢了 qty，不改 golden 核心 statement-revenue.ts）→ statement 数据 billCount=0 → **全院误报「漏收」¥0**。改为**每计费行按 max(qty,1) 计片**（floor·永不为 0），单价用行 unit_price 缺则 gross/片数反推。line-count 出的「疑似漏收」= 线索非定论·财务终判（§1.4）；对账单聚合行「免疫组化*16」的 qty 解析待增强（未决 A4 邻）。加回归测试锁死（statement 风格无 qty → billCount=行数非 0）。
+- 🟠 **MED 修**：重算清 diffs（含认定）时未清补收单 → `待补收` 单 source_diff_id 悬空孤儿、污染补收看板。改为重算同步清本院月 `待补收`（已补收/已放弃保留）。
+- 🟡 **LOW 修**：复核完成加幂等守卫（已复核完成再调 → 409，防重复快照 + 审计）。
+- 复核判 SOUND：差异方向/系统初判、匹配率门边界(≥)、补收 gate 无重复、状态机定版不可改+反向必填理由、SQL 参数绑定无注入、golden 零回归、`confirmed_lab_revenue` 存量口径为**已披露 gap**（非双计）。
+
+**诚实边界/未决（交接）**：① 补收额存**账单口径 gross（amount_impact=|delta|×单价）**，实收=×扣率的换算 + 已补收计入 case_revenue 的回填留 Phase 1b/2（现只标状态+collected_month）。② 系统初判现为**计数级**（账单vsLIS count）；同蜡块同抗体重复=返工 / 跨蜡块=多病灶 的细粒度初判需抗体级 LIS 导入（0702免组.xlsx），未接。③ 特染混进免疫组化的清洗（未决 A4）依赖 charge_item 关键词分类，边界情形待真数据校准。④ 组织学捆绑码差异（B1）不在本轮。⑤ 前端三页 = Phase 2（mockup 先行红线）。
+
+**改动文件**：`src/utils/reconcile-account.ts`(NEW)、`src/utils/reconcile-compute.ts`(NEW)、`src/routes/account-reconcile-v1.1.ts`(NEW)、`tests/reconcile-account.test.ts`(NEW)、`tests/account-reconcile-routes.test.ts`(NEW)、`src/database/DatabaseManager.ts`、`src/middleware/rbac-matrix.ts`、`src/app.ts`、`tests/{rbac-p0-matrix-seed,rbac-p2-effective-perms,rbac-p4-capabilities-api,partner-p0-schema}.test.ts`。
+
+**PR**：[#27](https://github.com/Mazikorn/Coreone-Procurement-Sales-and-Inventory-PSI-Management-System/pull/27) OPEN（base=master，独立·单独可合，等 vitest required check）。看板 `pr-governance.md` 已记（#25/#26 号被他 PR 占用，合并前核对 `gh pr list`）。合并后 Phase 2 三页前端（mockup 先行红线）另起。
+
+---
+
 ## 本次会话完成的工作（修 #24 遗留前端漂移：角色权限模块 27→30，2026-07-02）
 
 **线/工作树**：worktree `practical-mclaren-1a4747`，分支 `claude/practical-mclaren-1a4747`。

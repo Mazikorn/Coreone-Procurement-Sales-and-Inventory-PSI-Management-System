@@ -39,6 +39,7 @@ import indirectCostRoutes from './routes/indirect-cost-v1.1.js'
 import abcRoutes from './routes/abc-v1.1.js'
 import costAdjustmentRoutes from './routes/cost-adjustment-v1.1.js'
 import antibodyCostRoutes from './routes/antibody-cost-v1.1.js'
+import accountReconcileRoutes from './routes/account-reconcile-v1.1.js'
 // 按医院成本/盈利
 import partnerRoutes from './routes/partners-v1.1.js'
 import lisCaseRoutes from './routes/lis-cases-v1.1.js'
@@ -117,6 +118,7 @@ app.use('/api/v1/indirect-costs', authenticateToken, requirePermission('abc_conf
 app.use('/api/v1/abc', authenticateToken, requirePermission('abc_dashboard', 'R'), abcRoutes)
 app.use('/api/v1/cost-adjustments', authenticateToken, requirePermission('cost_analysis', 'R'), costAdjustmentRoutes)
 app.use('/api/v1/antibody-cost', authenticateToken, requirePermission('antibody_cost', 'R'), antibodyCostRoutes)
+app.use('/api/v1/account-reconcile', authenticateToken, requirePermission('account_reconcile', 'R'), accountReconcileRoutes)
 
 // 按医院成本/盈利：合作医院（客户）维度 CRUD（W2）。读 partners R，写由路由内 requirePermission('partners','W') 守卫。
 app.use('/api/v1/partners', authenticateToken, requirePermission('partners', 'R'), partnerRoutes)
