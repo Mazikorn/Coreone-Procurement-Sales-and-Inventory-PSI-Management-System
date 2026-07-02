@@ -59,9 +59,10 @@
 
 | 合并序 | PR | 分支 → base | 状态 | 关系 / 风险 | 标签 |
 |---|---|---|---|---|---|
-| — | [#24](https://github.com/Mazikorn/Coreone-Procurement-Sales-and-Inventory-PSI-Management-System/pull/24) | `feat/reconcile-cost` → `master` | 🟡 **OPEN**(2026-07-02) | **独立**（非栈式，无上下游）。账实复核+逐抗体成本 **Phase 0 成本地基**：抗体库主数据+每片成本派生+192 种真台账 seed+`antibody_cost` 权限模块；与收入侧物理隔离。tsc 绿 + vitest 74 files/532 tests 绿 + 独立对抗复核过；golden ¥13,152+¥27,870 零回归。**单独可合**。Phase 1 账实核对引擎另起。 | merge-order/1 |
+| — | [#24](https://github.com/Mazikorn/Coreone-Procurement-Sales-and-Inventory-PSI-Management-System/pull/24) | `feat/reconcile-cost` → `master` | ✅ **MERGED**(2026-07-02, merge commit `36b8dda4`) | **独立**（非栈式，无上下游）。账实复核+逐抗体成本 **Phase 0 成本地基**：抗体库主数据+每片成本派生+192 种真台账 seed+`antibody_cost` 权限模块；与收入侧物理隔离。vitest required 绿(58s)；golden ¥13,152+¥27,870 零回归。 | merge-order/1 |
+| — | Phase 1（PR 待创建） | `feat/reconcile-phase1` → `master` | 🟡 **进行中**(2026-07-02) | **独立**（非栈式，off 已合 #24 的 master）。账实复核+逐抗体成本 **Phase 1 核对引擎**：差异=账单片数vsLIS物理片数+匹配率门+6认定原因+补收gate+关账状态机+`account_reconcile` 权限模块（3 表，只读收入侧）。tsc 绿 + vitest 76 files/556 tests 绿；golden 零回归。PR 号创建后回填。 | merge-order/1 |
 
-> 🟡 **#24 OPEN（2026-07-02）**：独立 PR，等 vitest required check。合并后 Phase 1（账实核对引擎：reconcile 表+口径+状态机）在 master 新分支另起。
+> ✅ **#24 已合并（2026-07-02, merge commit `36b8dda4`）**；🟡 **Phase 1（feat/reconcile-phase1）进行中**：账实核对引擎，off 已合 #24 的 master；PR 创建后回填号 + 等 vitest required check。合并后 Phase 2（三页前端·走 mockup 先行红线）另起。
 
 **已合/关闭**：#19(2026-07-02 独立·merge commit `cd83153e`)；#17→#18(2026-07-02 栈·均 merge commit)；#8→#10→#11(2026-06-30 merge commit 落 master)；#9 引擎(MERGED→#8 线)、#7/#6/#4/#3/#2 已并 master；#5/#1 CLOSED。
 

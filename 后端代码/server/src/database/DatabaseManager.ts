@@ -1208,6 +1208,84 @@ export function initializeDatabase(): void {
   `)
   database.exec(`CREATE INDEX IF NOT EXISTS idx_antibodies_name ON antibodies(name)`)
   database.exec(`CREATE INDEX IF NOT EXISTS idx_antibodies_category ON antibodies(category)`)
+  // ── Phase 1 账实核对引擎（设计基线 §1.4/§1.5）──
+  //   reconcile_hospital_months: 院·月复核状态机（待复核→复核完成→已关账；匹配率/院名对齐/关账留痕）。
+  //   reconcile_diffs: 逐差异（账单片数 vs LIS 物理片数·¥影响·系统初判·6 认定原因·经手人）。
+  //   supplement_orders: 补收单（待补收→已补收/已放弃；仅「漏收，需补收」驱动；已补收计入本月实收）。
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS reconcile_hospital_months (
+      id TEXT PRIMARY KEY,
+      partner_id TEXT NOT NULL,
+      partner_name TEXT,
+      service_month TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT '待复核',
+      name_aligned INTEGER NOT NULL DEFAULT 0,
+      match_rate DECIMAL(10, 6) DEFAULT 0,
+      match_status TEXT,
+      statement_ready INTEGER NOT NULL DEFAULT 0,
+      lis_ready INTEGER NOT NULL DEFAULT 0,
+      diff_count INTEGER NOT NULL DEFAULT 0,
+      pending_count INTEGER NOT NULL DEFAULT 0,
+      unmatched_count INTEGER NOT NULL DEFAULT 0,
+      confirmed_lab_revenue DECIMAL(18, 4),
+      computed_at DATETIME,
+      completed_at DATETIME,
+      completed_by TEXT,
+      closed_at DATETIME,
+      closed_by TEXT,
+      reopened_at DATETIME,
+      reopen_reason TEXT,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(partner_id, service_month)
+    )
+  `)
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS reconcile_diffs (
+      id TEXT PRIMARY KEY,
+      hospital_month_id TEXT NOT NULL,
+      partner_id TEXT NOT NULL,
+      service_month TEXT NOT NULL,
+      case_no TEXT NOT NULL,
+      line_type TEXT NOT NULL,
+      bill_count DECIMAL(18, 4) NOT NULL DEFAULT 0,
+      lis_count DECIMAL(18, 4) NOT NULL DEFAULT 0,
+      delta DECIMAL(18, 4) NOT NULL DEFAULT 0,
+      amount_impact DECIMAL(18, 4) NOT NULL DEFAULT 0,
+      system_hint TEXT,
+      low_confidence INTEGER NOT NULL DEFAULT 0,
+      verdict TEXT,
+      verdict_reason TEXT,
+      verdict_by TEXT,
+      verdict_at DATETIME,
+      follow_up TEXT,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS supplement_orders (
+      id TEXT PRIMARY KEY,
+      partner_id TEXT NOT NULL,
+      service_month TEXT NOT NULL,
+      source_diff_id TEXT,
+      case_no TEXT,
+      amount DECIMAL(18, 4) NOT NULL DEFAULT 0,
+      case_count INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT '待补收',
+      collected_at DATETIME,
+      collected_month TEXT,
+      give_up_reason TEXT,
+      operator TEXT,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+  database.exec(`CREATE INDEX IF NOT EXISTS idx_recon_hm_partner_month ON reconcile_hospital_months(partner_id, service_month)`)
+  database.exec(`CREATE INDEX IF NOT EXISTS idx_recon_diffs_hm ON reconcile_diffs(hospital_month_id)`)
+  database.exec(`CREATE INDEX IF NOT EXISTS idx_recon_diffs_partner_month ON reconcile_diffs(partner_id, service_month)`)
+  database.exec(`CREATE INDEX IF NOT EXISTS idx_supplement_partner_month ON supplement_orders(partner_id, service_month)`)
+  database.exec(`CREATE INDEX IF NOT EXISTS idx_supplement_status ON supplement_orders(status)`)
   // 幂等补列（旧库迁移 + :memory: 新库统一）
   ensureColumn('fee_standards', 'project_type', 'TEXT')
   ensureColumn('fee_standards', 'fee_per_slide', 'DECIMAL(18, 4) DEFAULT 0')
