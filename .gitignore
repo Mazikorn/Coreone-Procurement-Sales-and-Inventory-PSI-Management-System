@@ -30,6 +30,7 @@ Thumbs.db
 
 # Claude Code / AI tools
 .claude/skills/
+.claude/skills-runtime/
 .claude/rules/skills-auto-trigger.md
 
 # Other IDE/AI plugins
