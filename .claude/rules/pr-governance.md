@@ -51,7 +51,13 @@
 
 > ✅ **该栈全部落 master（2026-07-02）**：#17 → #18 依次合入（均 merge commit），**当前无 open PR、栈已清空**。#17 顺带立了后端 golden CI 门禁（`backend-tests.yml`）+ master 分支保护 `required=vitest`。e2e 非 required check。
 
-**已合/关闭**：#8→#10→#11(2026-06-30 merge commit 落 master)；#9 引擎(MERGED→#8 线)、#7/#6/#4/#3/#2 已并 master；#5/#1 CLOSED。
+| 合并序 | PR | 分支 → base | 状态 | 关系 / 风险 | 标签 |
+|---|---|---|---|---|---|
+| — | [#19](https://github.com/Mazikorn/Coreone-Procurement-Sales-and-Inventory-PSI-Management-System/pull/19) | `claude/nervous-kilby-6788c2` → `master` | ✅ **MERGED**(2026-07-02, merge commit `cd83153e`) | **独立**（非栈式，无上下游）。审计收口：核实 admin 审计缺口=误报 + 新增全站写操作统一审计中间件（`middleware/audit-log.ts`，双轨/只记成功/脱敏）。vitest 绿(1m0s)；e2e 非必需。golden ¥27,870 + ¥13,152 零回归。 | merge-order/1 |
+
+> ✅ **#19 已合并（2026-07-02）**：独立 PR，vitest required check 绿后 merge commit 落 master。合并后**当前无 open PR**。
+
+**已合/关闭**：#19(2026-07-02 独立·merge commit `cd83153e`)；#17→#18(2026-07-02 栈·均 merge commit)；#8→#10→#11(2026-06-30 merge commit 落 master)；#9 引擎(MERGED→#8 线)、#7/#6/#4/#3/#2 已并 master；#5/#1 CLOSED。
 
 > ✅ **合并完成（2026-06-30，账单已修，"按序合栈+拆 e2e 债"）**：#8→#10→#11 依次 merge commit 落 master。**每步 e2e 复校**=三次跑均 **6 failed/251 passed、失败集完全一致**（supplier-returns 5 + auth-logout 1），全栈**零新增 e2e 失败**。这 6 个=master 既有 supplier-returns/auth bug（与本栈无关，已拆 task `c93e8188` 单独修；非 RBAC 403，权限本就授予）。黄金 ¥13,152 守住、后端联合 482 绿。
 >
